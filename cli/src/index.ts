@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -50,8 +50,11 @@ const terminalResetSequence = [
   '\x1b[?1006l',
   '\x1b[?25h', // show cursor
 ].join('');
+let terminalRestored = false;
 
 function restoreLocalTerminal() {
+  if (terminalRestored) return;
+  terminalRestored = true;
   if (process.stdout.isTTY) {
     try {
       process.stdout.write(terminalResetSequence);
@@ -61,7 +64,7 @@ function restoreLocalTerminal() {
   }
   if (process.platform !== 'win32') {
     try {
-      spawn('stty', ['sane'], { stdio: 'ignore' });
+      spawnSync('stty', ['sane'], { stdio: 'ignore' });
     } catch {
       // ignore
     }
@@ -471,7 +474,11 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
       ws.send(terminalResizePayload());
     }
   };
+  const onExit = () => {
+    restoreLocalTerminal();
+  };
   const onSignal = () => {
+    restoreLocalTerminal();
     if (ws.readyState === WebSocket.OPEN) {
       ws.close();
     }
@@ -496,11 +503,14 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
     process.off('SIGWINCH', onResize);
     process.off('SIGINT', onSignal);
     process.off('SIGTERM', onSignal);
+    process.off('SIGHUP', onSignal);
+    process.off('exit', onExit);
     restoreLocalTerminal();
   };
 
   await new Promise<void>((resolve, reject) => {
     ws.on('open', () => {
+      process.on('exit', onExit);
       if (stdin.isTTY) {
         stdin.setRawMode(true);
       }
@@ -512,6 +522,7 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
       process.on('SIGWINCH', onResize);
       process.on('SIGINT', onSignal);
       process.on('SIGTERM', onSignal);
+      process.on('SIGHUP', onSignal);
       ws.send(terminalResizePayload());
     });
 
