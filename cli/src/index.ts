@@ -28,6 +28,11 @@ type TerminalSessionInfo = {
   default_session?: string;
 };
 
+type TtyContext = {
+  ttyPath: string | null;
+  ttyState: string | null;
+};
+
 const defaultApiBase = 'http://localhost:8080';
 const requestTimeoutMs = Number.parseInt(process.env.SPRITZ_REQUEST_TIMEOUT_MS || '10000', 10);
 const headerId = process.env.SPRITZ_API_HEADER_ID || 'X-Spritz-User-Id';
@@ -64,9 +69,14 @@ const terminalResetSequence = [
 ].join('');
 const terminalHardResetSequence = `\x1bc${terminalResetSequence}${kittyKeyboardOffSequence}`;
 const watchdogFlag = 'SPRITZ_TTY_WATCHDOG';
+const ttyWatchdogIntervalMs = 250;
+const ttyRestoreBanner = '\r\n[spz] terminal restored after disconnect\r\n';
 const sttyBinary = process.env.SPRITZ_STTY_BINARY || 'stty';
 const resetBinary = process.env.SPRITZ_RESET_BINARY || 'reset';
 
+/**
+ * Build platform-specific stty args that target a specific tty path.
+ */
 function sttyArgsForPath(path: string, args: string[]): string[] {
   if (process.platform === 'darwin') {
     return ['-f', path, ...args];
@@ -74,6 +84,9 @@ function sttyArgsForPath(path: string, args: string[]): string[] {
   return ['-F', path, ...args];
 }
 
+/**
+ * Resolve the current terminal device path (e.g. /dev/ttys003) if available.
+ */
 function resolveTtyPath(): string | null {
   if (cachedTtyPath !== undefined) return cachedTtyPath;
   if (process.platform === 'win32') {
@@ -147,6 +160,9 @@ function writeToTty(payload: string, ttyPath?: string | null) {
   }, ttyPath);
 }
 
+/**
+ * Capture the terminal's current stty state for later restoration.
+ */
 function captureTtyState(ttyPath?: string | null): string | null {
   if (process.platform === 'win32') return null;
   let state: string | null = null;
@@ -175,6 +191,9 @@ function captureTtyState(ttyPath?: string | null): string | null {
   return state;
 }
 
+/**
+ * Restore tty modes + keyboard reporting and optionally issue a hard reset.
+ */
 function restoreLocalTerminal(ttyState?: string | null, ttyPath?: string | null, hard = false) {
   writeToTty(hard ? terminalHardResetSequence : terminalResetSequence, ttyPath);
   if (process.platform !== 'win32') {
@@ -214,10 +233,31 @@ function restoreLocalTerminal(ttyState?: string | null, ttyPath?: string | null,
   }
 }
 
-function startTtyWatchdog(ttyState?: string | null) {
+/**
+ * Capture a known-good tty baseline and return a context for later restoration.
+ */
+function captureTtyContext(): TtyContext {
+  const ttyPath = resolveTtyPath();
+  // Normalize to a sane baseline first so we restore to a known-good state.
+  restoreLocalTerminal(undefined, ttyPath);
+  const ttyState = captureTtyState(ttyPath);
+  return { ttyPath, ttyState };
+}
+
+/**
+ * Restore the tty based on a previously captured context.
+ */
+function restoreTtyContext(context: TtyContext, hard = false) {
+  restoreLocalTerminal(context.ttyState, context.ttyPath, hard);
+}
+
+/**
+ * Spawn a watchdog that resets the tty if the parent process is killed.
+ */
+function startTtyWatchdog(context: TtyContext) {
   if (process.env[watchdogFlag] === '1') return;
   if (!process.stdin.isTTY && !process.stdout.isTTY) return;
-  const ttyPath = resolveTtyPath();
+  const ttyPath = context.ttyPath;
   let inheritedTtyFd: number | null = null;
   try {
     const path = ttyPath || '/dev/tty';
@@ -235,7 +275,7 @@ function startTtyWatchdog(ttyState?: string | null) {
   }
   const payload = JSON.stringify(terminalResetSequence);
   const hardPayload = JSON.stringify(terminalHardResetSequence);
-  const state = ttyState ? JSON.stringify(ttyState) : 'null';
+  const state = context.ttyState ? JSON.stringify(context.ttyState) : 'null';
   const script = `
     const { openSync, writeSync, closeSync } = require('fs');
     const { spawnSync } = require('child_process');
@@ -288,6 +328,7 @@ function startTtyWatchdog(ttyState?: string | null) {
       }
     }
     const banner = "\\r\\n[spz] terminal restored after disconnect\\r\\n";
+    const banner = ${JSON.stringify(ttyRestoreBanner)};
     const interval = setInterval(() => {
       if (!alive()) {
         clearInterval(interval);
@@ -301,7 +342,7 @@ function startTtyWatchdog(ttyState?: string | null) {
         }
         process.exit(0);
       }
-    }, 250);
+    }, ${ttyWatchdogIntervalMs});
   `;
   const child = spawn(process.execPath, ['-e', script], {
     detached: true,
@@ -698,10 +739,8 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
     console.log(url);
     return;
   }
-  const ttyPath = resolveTtyPath();
-  restoreLocalTerminal(undefined, ttyPath);
-  const ttyState = captureTtyState(ttyPath);
-  startTtyWatchdog(ttyState);
+  const ttyContext = captureTtyContext();
+  startTtyWatchdog(ttyContext);
   const headers: Record<string, string> = {
     ...(await authHeaders()),
     Origin: origin,
@@ -726,10 +765,10 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
     }
   };
   const onExit = () => {
-    restoreLocalTerminal(ttyState, ttyPath);
+    restoreTtyContext(ttyContext);
   };
   const onSignal = () => {
-    restoreLocalTerminal(ttyState, ttyPath);
+    restoreTtyContext(ttyContext);
     if (ws.readyState === WebSocket.OPEN) {
       ws.close();
     }
@@ -756,7 +795,7 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
     process.off('SIGTERM', onSignal);
     process.off('SIGHUP', onSignal);
     process.off('exit', onExit);
-    restoreLocalTerminal(ttyState, ttyPath);
+    restoreTtyContext(ttyContext);
   };
 
   await new Promise<void>((resolve, reject) => {
