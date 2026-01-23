@@ -43,13 +43,16 @@ let cachedConfig: SpritzConfig | null = null;
 const [, , command, ...rest] = process.argv;
 
 const terminalResetSequence = [
+  '\x1b[>4;0m', // xterm modifyOtherKeys off (CSI u)
   '\x1b[?2004l', // bracketed paste off
   '\x1b[?2026l', // kitty keyboard protocol off
+  '\x1b[?1l', // application cursor keys off
   '\x1b[?1000l', // mouse tracking off
   '\x1b[?1002l',
   '\x1b[?1003l',
   '\x1b[?1006l',
   '\x1b[?25h', // show cursor
+  '\x1b[0m', // reset SGR
 ].join('');
 let terminalRestored = false;
 
