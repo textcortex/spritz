@@ -147,7 +147,7 @@ function startTtyWatchdog() {
     }, 250);
   `;
   const child = spawn(process.execPath, ['-e', script], {
-    detached: true,
+    detached: false,
     stdio: 'ignore',
     env: { ...process.env, [watchdogFlag]: '1' },
   });
