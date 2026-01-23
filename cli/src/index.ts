@@ -200,31 +200,47 @@ function startTtyWatchdog(ttyState?: string | null) {
     const ttyState = ${state};
     const stty = ${JSON.stringify(sttyBinary)};
     const reset = ${JSON.stringify(resetBinary)};
+    let fd = null;
+    function openFd() {
+      if (fd !== null) return fd;
+      const path = ttyPath || '/dev/tty';
+      try {
+        fd = openSync(path, 'r+');
+        return fd;
+      } catch {}
+      try {
+        fd = openSync(path, 'w');
+        return fd;
+      } catch {}
+      try {
+        fd = openSync(path, 'r');
+        return fd;
+      } catch {}
+      return null;
+    }
     function alive() {
       try { process.kill(pid, 0); return true; } catch { return false; }
     }
     function reset(hard) {
-      try {
-        const path = ttyPath || '/dev/tty';
-        const fd = openSync(path, 'w');
-        try { writeSync(fd, hard ? hardPayload : payload); } finally { closeSync(fd); }
-      } catch {}
-      try {
-        const path = ttyPath || '/dev/tty';
-        const fd = openSync(path, 'r');
-        const args = ttyState ? [ttyState] : ['sane'];
-        try { spawnSync(stty, args, { stdio: [fd, 'ignore', 'ignore'] }); } finally { closeSync(fd); }
-      } catch {}
-      try {
-        const path = ttyPath || '/dev/tty';
-        const fd = openSync(path, 'r');
-        try { spawnSync(reset, [], { stdio: [fd, 'ignore', 'ignore'] }); } finally { closeSync(fd); }
-      } catch {}
+      const handle = openFd();
+      if (handle !== null) {
+        try { writeSync(handle, hard ? hardPayload : payload); } catch {}
+        try {
+          const args = ttyState ? [ttyState] : ['sane'];
+          spawnSync(stty, args, { stdio: [handle, handle, 'ignore'] });
+        } catch {}
+        try {
+          spawnSync(reset, [], { stdio: [handle, handle, 'ignore'] });
+        } catch {}
+      }
     }
     const interval = setInterval(() => {
       if (!alive()) {
         clearInterval(interval);
         reset(true);
+        if (fd !== null) {
+          try { closeSync(fd); } catch {}
+        }
         process.exit(0);
       }
     }, 250);
