@@ -54,7 +54,7 @@ const terminalResetSequence = [
   '\x1b[?25h', // show cursor
   '\x1b[0m', // reset SGR
 ].join('');
-let terminalRestored = false;
+const watchdogFlag = 'SPRITZ_TTY_WATCHDOG';
 
 function withTtyFd(mode: 'r' | 'w', fn: (fd: number) => void) {
   try {
@@ -88,8 +88,6 @@ function writeToTty(payload: string) {
 }
 
 function restoreLocalTerminal() {
-  if (terminalRestored) return;
-  terminalRestored = true;
   writeToTty(terminalResetSequence);
   if (process.platform !== 'win32') {
     try {
@@ -104,6 +102,44 @@ function restoreLocalTerminal() {
       // ignore
     }
   }
+}
+
+function startTtyWatchdog() {
+  if (process.env[watchdogFlag] === '1') return;
+  if (!process.stdin.isTTY && !process.stdout.isTTY) return;
+  const payload = JSON.stringify(terminalResetSequence);
+  const script = `
+    const { openSync, writeSync, closeSync } = require('fs');
+    const { spawnSync } = require('child_process');
+    const pid = ${process.pid};
+    const payload = ${payload};
+    function alive() {
+      try { process.kill(pid, 0); return true; } catch { return false; }
+    }
+    function reset() {
+      try {
+        const fd = openSync('/dev/tty', 'w');
+        try { writeSync(fd, payload); } finally { closeSync(fd); }
+      } catch {}
+      try {
+        const fd = openSync('/dev/tty', 'r');
+        try { spawnSync('stty', ['sane'], { stdio: [fd, 'ignore', 'ignore'] }); } finally { closeSync(fd); }
+      } catch {}
+    }
+    const interval = setInterval(() => {
+      if (!alive()) {
+        clearInterval(interval);
+        reset();
+        process.exit(0);
+      }
+    }, 250);
+  `;
+  const child = spawn(process.execPath, ['-e', script], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env, [watchdogFlag]: '1' },
+  });
+  child.unref();
 }
 
 function usage() {
@@ -486,6 +522,8 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
     console.log(url);
     return;
   }
+  restoreLocalTerminal();
+  startTtyWatchdog();
   const headers: Record<string, string> = {
     ...(await authHeaders()),
     Origin: origin,
