@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spritz-operator
+  namespace: spritz-system
+  labels:
+    app.kubernetes.io/name: spritz-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: spritz-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spritz-operator
+    spec:
+      serviceAccountName: spritz-operator
+      containers:
+        - name: manager
+          image: spritz-operator:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SPRITZ_TTL_GRACE_PERIOD
+              value: "5m"
+            - name: SPRITZ_WORKSPACE_SIZE_LIMIT
+              value: "10Gi"
+            - name: SPRITZ_HOME_SIZE_LIMIT
+              value: "5Gi"

@@ -1,0 +1,32 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spritz-api
+  namespace: {{ .Values.spritz.namespace }}
+rules:
+  - apiGroups: ["spritz.sh"]
+    resources: ["spritzes", "spritzes/status"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spritz-api
+  namespace: {{ .Values.spritz.namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.api.serviceAccountName }}
+    namespace: {{ .Values.api.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: spritz-api

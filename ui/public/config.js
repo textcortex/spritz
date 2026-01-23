@@ -1,0 +1,32 @@
+window.SPRITZ_CONFIG = {
+  apiBaseUrl: '__SPRITZ_API_BASE_URL__',
+  ownerId: '__SPRITZ_OWNER_ID__',
+  basePath: '__SPRITZ_BASE_PATH__',
+  presets: '__SPRITZ_UI_PRESETS__',
+  repoDefaults: {
+    url: '__SPRITZ_UI_DEFAULT_REPO_URL__',
+    dir: '__SPRITZ_UI_DEFAULT_REPO_DIR__',
+    branch: '__SPRITZ_UI_DEFAULT_REPO_BRANCH__',
+    hideInputs: '__SPRITZ_UI_HIDE_REPO_INPUTS__',
+  },
+  auth: {
+    mode: '__SPRITZ_UI_AUTH_MODE__',
+    tokenStorage: '__SPRITZ_UI_AUTH_TOKEN_STORAGE__',
+    tokenStorageKeys: '__SPRITZ_UI_AUTH_TOKEN_STORAGE_KEYS__',
+    bearerTokenParam: '__SPRITZ_UI_AUTH_BEARER_TOKEN_PARAM__',
+    loginUrl: '__SPRITZ_UI_AUTH_LOGIN_URL__',
+    returnToMode: '__SPRITZ_UI_AUTH_RETURN_TO_MODE__',
+    returnToParam: '__SPRITZ_UI_AUTH_RETURN_TO_PARAM__',
+    redirectOnUnauthorized: '__SPRITZ_UI_AUTH_REDIRECT_ON_UNAUTHORIZED__',
+    refresh: {
+      enabled: '__SPRITZ_UI_AUTH_REFRESH_ENABLED__',
+      url: '__SPRITZ_UI_AUTH_REFRESH_URL__',
+      method: '__SPRITZ_UI_AUTH_REFRESH_METHOD__',
+      credentials: '__SPRITZ_UI_AUTH_REFRESH_CREDENTIALS__',
+      tokenStorageKeys: '__SPRITZ_UI_AUTH_REFRESH_TOKEN_STORAGE_KEYS__',
+      timeoutMs: '__SPRITZ_UI_AUTH_REFRESH_TIMEOUT_MS__',
+      cooldownMs: '__SPRITZ_UI_AUTH_REFRESH_COOLDOWN_MS__',
+      headers: '__SPRITZ_UI_AUTH_REFRESH_HEADERS__',
+    },
+  },
+};

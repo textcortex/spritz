@@ -1,0 +1,290 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spritz-api
+  namespace: {{ .Values.api.namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: spritz-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spritz-api
+      {{- if or .Values.api.rolloutAt .Values.api.podAnnotations }}
+      annotations:
+        {{- if .Values.api.rolloutAt }}
+        spritz.sh/rollout-at: {{ .Values.api.rolloutAt | quote }}
+        {{- end }}
+        {{- with .Values.api.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ .Values.api.serviceAccountName }}
+      containers:
+        - name: api
+          image: {{ .Values.api.image }}
+          imagePullPolicy: {{ .Values.api.imagePullPolicy | default "IfNotPresent" }}
+          {{- if .Values.api.securityContext }}
+          securityContext:
+            {{- toYaml .Values.api.securityContext | nindent 12 }}
+          {{- end }}
+          {{- if .Values.api.resources }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          {{- end }}
+          env:
+            - name: SPRITZ_NAMESPACE
+              value: {{ .Values.spritz.namespace | quote }}
+            {{- if .Values.api.defaultAnnotations }}
+            - name: SPRITZ_DEFAULT_ANNOTATIONS
+              value: {{ .Values.api.defaultAnnotations | quote }}
+            {{- end }}
+            - name: SPRITZ_AUTH_MODE
+              value: {{ .Values.api.auth.mode | quote }}
+            - name: SPRITZ_AUTH_HEADER_ID
+              value: {{ .Values.api.auth.headerId | quote }}
+            - name: SPRITZ_AUTH_HEADER_EMAIL
+              value: {{ .Values.api.auth.headerEmail | quote }}
+            - name: SPRITZ_AUTH_HEADER_TEAMS
+              value: {{ .Values.api.auth.headerTeams | quote }}
+            {{- if .Values.api.auth.adminIds }}
+            - name: SPRITZ_AUTH_ADMIN_IDS
+              value: {{ join "," .Values.api.auth.adminIds | quote }}
+            {{- end }}
+            {{- if .Values.api.auth.adminTeams }}
+            - name: SPRITZ_AUTH_ADMIN_TEAMS
+              value: {{ join "," .Values.api.auth.adminTeams | quote }}
+            {{- end }}
+            {{- if .Values.api.auth.bearer.introspectionUrl }}
+            - name: SPRITZ_AUTH_BEARER_INTROSPECTION_URL
+              value: {{ .Values.api.auth.bearer.introspectionUrl | quote }}
+            {{- end }}
+            {{- if .Values.api.auth.bearer.introspectionAuthHeader }}
+            - name: SPRITZ_AUTH_BEARER_INTROSPECTION_AUTH_HEADER
+              value: {{ .Values.api.auth.bearer.introspectionAuthHeader | quote }}
+            {{- end }}
+            {{- if .Values.api.auth.bearer.method }}
+            - name: SPRITZ_AUTH_BEARER_METHOD
+              value: {{ .Values.api.auth.bearer.method | quote }}
+            {{- end }}
+            {{- if .Values.api.auth.bearer.timeout }}
+            - name: SPRITZ_AUTH_BEARER_TIMEOUT
+              value: {{ .Values.api.auth.bearer.timeout | quote }}
+            {{- end }}
+            {{- if .Values.api.auth.bearer.tokenParam }}
+            - name: SPRITZ_AUTH_BEARER_TOKEN_PARAM
+              value: {{ .Values.api.auth.bearer.tokenParam | quote }}
+            {{- end }}
+            {{- if hasKey .Values.api.auth.bearer "forwardToken" }}
+            - name: SPRITZ_AUTH_BEARER_FORWARD_TOKEN
+              value: {{ .Values.api.auth.bearer.forwardToken | quote }}
+            {{- end }}
+            {{- if .Values.api.auth.bearer.idPaths }}
+            - name: SPRITZ_AUTH_BEARER_ID_PATHS
+              value: {{ join "," .Values.api.auth.bearer.idPaths | quote }}
+            {{- end }}
+            {{- if .Values.api.auth.bearer.emailPaths }}
+            - name: SPRITZ_AUTH_BEARER_EMAIL_PATHS
+              value: {{ join "," .Values.api.auth.bearer.emailPaths | quote }}
+            {{- end }}
+            {{- if .Values.api.auth.bearer.teamsPaths }}
+            - name: SPRITZ_AUTH_BEARER_TEAMS_PATHS
+              value: {{ join "," .Values.api.auth.bearer.teamsPaths | quote }}
+            {{- end }}
+            {{- if .Values.api.auth.bearer.jwks.url }}
+            - name: SPRITZ_AUTH_BEARER_JWKS_URL
+              value: {{ .Values.api.auth.bearer.jwks.url | quote }}
+            {{- end }}
+            {{- if .Values.api.auth.bearer.jwks.issuer }}
+            - name: SPRITZ_AUTH_BEARER_ISSUER
+              value: {{ .Values.api.auth.bearer.jwks.issuer | quote }}
+            {{- end }}
+            {{- if .Values.api.auth.bearer.jwks.audiences }}
+            - name: SPRITZ_AUTH_BEARER_AUDIENCES
+              value: {{ join "," .Values.api.auth.bearer.jwks.audiences | quote }}
+            {{- end }}
+            {{- if .Values.api.auth.bearer.jwks.algos }}
+            - name: SPRITZ_AUTH_BEARER_JWKS_ALGOS
+              value: {{ join "," .Values.api.auth.bearer.jwks.algos | quote }}
+            {{- end }}
+            {{- if .Values.api.auth.bearer.jwks.leeway }}
+            - name: SPRITZ_AUTH_BEARER_JWKS_LEEWAY
+              value: {{ .Values.api.auth.bearer.jwks.leeway | quote }}
+            {{- end }}
+            {{- if .Values.api.auth.bearer.jwks.refreshInterval }}
+            - name: SPRITZ_AUTH_BEARER_JWKS_REFRESH_INTERVAL
+              value: {{ .Values.api.auth.bearer.jwks.refreshInterval | quote }}
+            {{- end }}
+            {{- if .Values.api.auth.bearer.jwks.refreshTimeout }}
+            - name: SPRITZ_AUTH_BEARER_JWKS_REFRESH_TIMEOUT
+              value: {{ .Values.api.auth.bearer.jwks.refreshTimeout | quote }}
+            {{- end }}
+            {{- if .Values.api.auth.bearer.jwks.rateLimit }}
+            - name: SPRITZ_AUTH_BEARER_JWKS_RATE_LIMIT
+              value: {{ .Values.api.auth.bearer.jwks.rateLimit | quote }}
+            {{- end }}
+            {{- if hasKey .Values.api.auth.bearer.jwks "fallbackToIntrospection" }}
+            - name: SPRITZ_AUTH_BEARER_JWKS_FALLBACK
+              value: {{ .Values.api.auth.bearer.jwks.fallbackToIntrospection | quote }}
+            {{- end }}
+            {{- if .Values.api.cors.origins }}
+            - name: SPRITZ_CORS_ORIGINS
+              value: {{ join "," .Values.api.cors.origins | quote }}
+            {{- end }}
+            {{- if .Values.api.cors.allowHeaders }}
+            - name: SPRITZ_CORS_ALLOW_HEADERS
+              value: {{ .Values.api.cors.allowHeaders | quote }}
+            {{- end }}
+            {{- if .Values.api.cors.allowMethods }}
+            - name: SPRITZ_CORS_ALLOW_METHODS
+              value: {{ .Values.api.cors.allowMethods | quote }}
+            {{- end }}
+            - name: SPRITZ_CORS_ALLOW_CREDENTIALS
+              value: {{ .Values.api.cors.allowCredentials | quote }}
+            {{- if .Values.api.defaultIngress.mode }}
+            - name: SPRITZ_DEFAULT_INGRESS_MODE
+              value: {{ .Values.api.defaultIngress.mode | quote }}
+            {{- end }}
+            {{- if .Values.api.defaultIngress.hostTemplate }}
+            - name: SPRITZ_DEFAULT_INGRESS_HOST_TEMPLATE
+              value: {{ .Values.api.defaultIngress.hostTemplate | quote }}
+            {{- end }}
+            {{- if .Values.api.defaultIngress.path }}
+            - name: SPRITZ_DEFAULT_INGRESS_PATH
+              value: {{ .Values.api.defaultIngress.path | quote }}
+            {{- end }}
+            {{- if .Values.api.defaultIngress.className }}
+            - name: SPRITZ_DEFAULT_INGRESS_CLASS_NAME
+              value: {{ .Values.api.defaultIngress.className | quote }}
+            {{- end }}
+            {{- if .Values.api.defaultIngress.gatewayName }}
+            - name: SPRITZ_DEFAULT_INGRESS_GATEWAY_NAME
+              value: {{ .Values.api.defaultIngress.gatewayName | quote }}
+            {{- end }}
+            {{- if .Values.api.defaultIngress.gatewayNamespace }}
+            - name: SPRITZ_DEFAULT_INGRESS_GATEWAY_NAMESPACE
+              value: {{ .Values.api.defaultIngress.gatewayNamespace | quote }}
+            {{- end }}
+            {{- if .Values.api.defaultIngress.gatewaySectionName }}
+            - name: SPRITZ_DEFAULT_INGRESS_GATEWAY_SECTION_NAME
+              value: {{ .Values.api.defaultIngress.gatewaySectionName | quote }}
+            {{- end }}
+            {{- if hasKey .Values.api "terminal" }}
+            {{- if .Values.api.terminal.enabled }}
+            - name: SPRITZ_TERMINAL_ENABLED
+              value: {{ .Values.api.terminal.enabled | quote }}
+            {{- end }}
+            {{- if .Values.api.terminal.container }}
+            - name: SPRITZ_TERMINAL_CONTAINER
+              value: {{ .Values.api.terminal.container | quote }}
+            {{- end }}
+            {{- if .Values.api.terminal.command }}
+            - name: SPRITZ_TERMINAL_COMMAND
+              value: {{ .Values.api.terminal.command | quote }}
+            {{- end }}
+            {{- if .Values.api.terminal.origins }}
+            - name: SPRITZ_TERMINAL_ORIGINS
+              value: {{ join "," .Values.api.terminal.origins | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if hasKey .Values.api "sshGateway" }}
+            - name: SPRITZ_SSH_GATEWAY_ENABLED
+              value: {{ .Values.api.sshGateway.enabled | quote }}
+            - name: SPRITZ_SSH_GATEWAY_PORT
+              value: {{ .Values.api.sshGateway.port | quote }}
+            - name: SPRITZ_SSH_PUBLIC_HOST
+              value: {{ .Values.api.sshGateway.publicHost | quote }}
+            - name: SPRITZ_SSH_PUBLIC_PORT
+              value: {{ .Values.api.sshGateway.publicPort | quote }}
+            - name: SPRITZ_SSH_USER
+              value: {{ .Values.api.sshGateway.user | quote }}
+            - name: SPRITZ_SSH_PRINCIPAL_PREFIX
+              value: {{ .Values.api.sshGateway.principalPrefix | quote }}
+            - name: SPRITZ_SSH_CERT_TTL
+              value: {{ .Values.api.sshGateway.certTtl | quote }}
+            - name: SPRITZ_SSH_MINT_LIMIT
+              value: {{ .Values.api.sshGateway.mintLimit | quote }}
+            - name: SPRITZ_SSH_MINT_WINDOW
+              value: {{ .Values.api.sshGateway.mintWindow | quote }}
+            - name: SPRITZ_SSH_MINT_BURST
+              value: {{ .Values.api.sshGateway.mintBurst | quote }}
+            - name: SPRITZ_SSH_MINT_BUCKET_TTL
+              value: {{ .Values.api.sshGateway.mintBucketTtl | quote }}
+            - name: SPRITZ_SSH_MINT_BUCKET_CLEANUP
+              value: {{ .Values.api.sshGateway.mintBucketCleanup | quote }}
+            - name: SPRITZ_SSH_CONTAINER
+              value: {{ .Values.api.sshGateway.container | quote }}
+            - name: SPRITZ_SSH_COMMAND
+              value: {{ .Values.api.sshGateway.command | quote }}
+            {{- if .Values.api.sshGateway.secretName }}
+            - name: SPRITZ_SSH_CA_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.sshGateway.secretName | quote }}
+                  key: {{ .Values.api.sshGateway.caKeySecretKey | quote }}
+            - name: SPRITZ_SSH_HOST_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.sshGateway.secretName | quote }}
+                  key: {{ .Values.api.sshGateway.hostKeySecretKey | quote }}
+            {{- else }}
+            {{- if .Values.api.sshGateway.caKey }}
+            - name: SPRITZ_SSH_CA_KEY
+              value: {{ .Values.api.sshGateway.caKey | quote }}
+            {{- end }}
+            {{- if .Values.api.sshGateway.caKeyFile }}
+            - name: SPRITZ_SSH_CA_KEY_FILE
+              value: {{ .Values.api.sshGateway.caKeyFile | quote }}
+            {{- end }}
+            {{- if .Values.api.sshGateway.hostKey }}
+            - name: SPRITZ_SSH_HOST_KEY
+              value: {{ .Values.api.sshGateway.hostKey | quote }}
+            {{- end }}
+            {{- if .Values.api.sshGateway.hostKeyFile }}
+            - name: SPRITZ_SSH_HOST_KEY_FILE
+              value: {{ .Values.api.sshGateway.hostKeyFile | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if hasKey .Values.api "sshDefaults" }}
+            - name: SPRITZ_DEFAULT_SSH_ENABLED
+              value: {{ .Values.api.sshDefaults.enabled | quote }}
+            - name: SPRITZ_DEFAULT_SSH_MODE
+              value: {{ .Values.api.sshDefaults.mode | quote }}
+            - name: SPRITZ_DEFAULT_SSH_GATEWAY_SERVICE
+              value: {{ .Values.api.sshDefaults.gatewayService | quote }}
+            - name: SPRITZ_DEFAULT_SSH_GATEWAY_NAMESPACE
+              value: {{ .Values.api.sshDefaults.gatewayNamespace | quote }}
+            - name: SPRITZ_DEFAULT_SSH_GATEWAY_PORT
+              value: {{ .Values.api.sshDefaults.gatewayPort | quote }}
+            - name: SPRITZ_DEFAULT_SSH_USER
+              value: {{ .Values.api.sshDefaults.user | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+            {{- if and (hasKey .Values.api "sshGateway") .Values.api.sshGateway.enabled }}
+            - name: ssh
+              containerPort: {{ .Values.api.sshGateway.port }}
+            {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spritz-api
+  namespace: {{ .Values.api.namespace }}
+spec:
+  selector:
+    app.kubernetes.io/name: spritz-api
+  ports:
+    - name: http
+      port: {{ .Values.api.service.port }}
+      targetPort: 8080
+    {{- if and (hasKey .Values.api "sshGateway") .Values.api.sshGateway.enabled }}
+    - name: ssh
+      port: {{ .Values.api.sshGateway.publicPort }}
+      targetPort: {{ .Values.api.sshGateway.port }}
+    {{- end }}

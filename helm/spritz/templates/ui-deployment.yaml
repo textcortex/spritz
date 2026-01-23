@@ -1,0 +1,136 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spritz-ui
+  namespace: {{ .Values.ui.namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: spritz-ui
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spritz-ui
+      {{- if .Values.ui.rolloutAt }}
+      annotations:
+        spritz.sh/rollout-at: {{ .Values.ui.rolloutAt | quote }}
+      {{- end }}
+    spec:
+      containers:
+        - name: ui
+          image: {{ .Values.ui.image }}
+          imagePullPolicy: {{ .Values.ui.imagePullPolicy | default "IfNotPresent" }}
+          {{- if .Values.ui.securityContext }}
+          securityContext:
+            {{- toYaml .Values.ui.securityContext | nindent 12 }}
+          {{- end }}
+          {{- if .Values.ui.resources }}
+          resources:
+            {{- toYaml .Values.ui.resources | nindent 12 }}
+          {{- end }}
+          env:
+            - name: SPRITZ_API_BASE_URL
+              {{- if .Values.ui.apiBaseUrl }}
+              value: {{ .Values.ui.apiBaseUrl | quote }}
+              {{- else if .Values.ui.basePath }}
+              value: {{ printf "%s/api" (.Values.ui.basePath | trimSuffix "/") | quote }}
+              {{- else }}
+              value: {{ printf "http://spritz-api.%s.svc.cluster.local:%d" .Values.api.namespace .Values.api.service.port | quote }}
+              {{- end }}
+            - name: SPRITZ_UI_BASE_PATH
+              value: {{ .Values.ui.basePath | quote }}
+            - name: SPRITZ_UI_OWNER_ID
+              value: {{ .Values.ui.ownerId | quote }}
+            - name: SPRITZ_UI_AUTH_MODE
+              value: {{ .Values.ui.auth.mode | quote }}
+            - name: SPRITZ_UI_AUTH_TOKEN_STORAGE
+              value: {{ .Values.ui.auth.tokenStorage | quote }}
+            - name: SPRITZ_UI_AUTH_BEARER_TOKEN_PARAM
+              value: {{ .Values.ui.auth.bearerTokenParam | quote }}
+            - name: SPRITZ_UI_AUTH_LOGIN_URL
+              value: {{ .Values.ui.auth.loginUrl | quote }}
+            - name: SPRITZ_UI_AUTH_RETURN_TO_MODE
+              value: {{ .Values.ui.auth.returnToMode | quote }}
+            - name: SPRITZ_UI_AUTH_RETURN_TO_PARAM
+              value: {{ .Values.ui.auth.returnToParam | quote }}
+            - name: SPRITZ_UI_AUTH_REDIRECT_ON_UNAUTHORIZED
+              value: {{ .Values.ui.auth.redirectOnUnauthorized | quote }}
+            - name: SPRITZ_UI_AUTH_REFRESH_ENABLED
+              value: {{ .Values.ui.auth.refresh.enabled | quote }}
+            - name: SPRITZ_UI_AUTH_REFRESH_URL
+              value: {{ .Values.ui.auth.refresh.url | quote }}
+            - name: SPRITZ_UI_AUTH_REFRESH_METHOD
+              value: {{ .Values.ui.auth.refresh.method | quote }}
+            - name: SPRITZ_UI_AUTH_REFRESH_CREDENTIALS
+              value: {{ .Values.ui.auth.refresh.credentials | quote }}
+            - name: SPRITZ_UI_AUTH_REFRESH_TIMEOUT_MS
+              value: {{ .Values.ui.auth.refresh.timeoutMs | quote }}
+            - name: SPRITZ_UI_AUTH_REFRESH_COOLDOWN_MS
+              value: {{ .Values.ui.auth.refresh.cooldownMs | quote }}
+            - name: SPRITZ_UI_AUTH_REFRESH_HEADERS
+              value: {{ .Values.ui.auth.refresh.headers | toJson | quote }}
+            {{- if .Values.ui.auth.refresh.tokenStorageKeys }}
+            - name: SPRITZ_UI_AUTH_REFRESH_TOKEN_STORAGE_KEYS
+              value: {{ join "," .Values.ui.auth.refresh.tokenStorageKeys | quote }}
+            {{- end }}
+            - name: SPRITZ_UI_DEFAULT_REPO_URL
+              value: {{ .Values.ui.repoDefaults.url | quote }}
+            - name: SPRITZ_UI_DEFAULT_REPO_DIR
+              value: {{ .Values.ui.repoDefaults.dir | quote }}
+            - name: SPRITZ_UI_DEFAULT_REPO_BRANCH
+              value: {{ .Values.ui.repoDefaults.branch | quote }}
+            - name: SPRITZ_UI_HIDE_REPO_INPUTS
+              value: {{ .Values.ui.repoDefaults.hideInputs | quote }}
+            {{- if .Values.ui.assetVersion }}
+            - name: SPRITZ_UI_ASSET_VERSION
+              value: {{ .Values.ui.assetVersion | quote }}
+            {{- else if .Values.ui.rolloutAt }}
+            - name: SPRITZ_UI_ASSET_VERSION
+              value: {{ .Values.ui.rolloutAt | quote }}
+            {{- end }}
+            {{- if .Values.ui.presets }}
+            - name: SPRITZ_UI_PRESETS
+              value: {{ .Values.ui.presets | toJson | quote }}
+            {{- end }}
+            {{- if .Values.ui.auth.tokenStorageKeys }}
+            - name: SPRITZ_UI_AUTH_TOKEN_STORAGE_KEYS
+              value: {{ join "," .Values.ui.auth.tokenStorageKeys | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.ui.containerPort }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spritz-ui
+  namespace: {{ .Values.ui.namespace }}
+spec:
+  selector:
+    app.kubernetes.io/name: spritz-ui
+  ports:
+    - name: http
+      port: {{ .Values.ui.service.port }}
+      targetPort: {{ .Values.ui.containerPort }}
+---
+{{- if .Values.ui.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: spritz-ui
+  namespace: {{ .Values.ui.namespace }}
+spec:
+  ingressClassName: {{ .Values.ui.ingress.className }}
+  rules:
+    - host: {{ .Values.ui.ingress.host }}
+      http:
+        paths:
+          - path: {{ .Values.ui.ingress.path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: spritz-ui
+                port:
+                  number: {{ .Values.ui.service.port }}
+{{- end }}

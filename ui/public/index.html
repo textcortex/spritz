@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spritz</title>
+    <link rel="stylesheet" href="__SPRITZ_BASE_PATH__/styles.css?v=__SPRITZ_UI_ASSET_VERSION__" />
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <h1>Spritz</h1>
+        <p>Ephemeral dev environments, managed by API.</p>
+      </header>
+      <div id="notice" class="notice" hidden></div>
+
+      <section class="card">
+        <h2>Create</h2>
+        <form id="create-form">
+          <label>
+            Name
+            <input name="name" required />
+          </label>
+          <label>
+            Image
+            <input name="image" required />
+          </label>
+          <label>
+            Repo URL
+            <input name="repo" />
+          </label>
+          <label>
+            Branch
+            <input name="branch" />
+          </label>
+          <label>
+            TTL (e.g. 8h)
+            <input name="ttl" />
+          </label>
+          <label>
+            Namespace
+            <input name="namespace" />
+          </label>
+          <button type="submit">Create spritz</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <div class="list-header">
+          <h2>Active spritzes</h2>
+          <button id="refresh">Refresh</button>
+        </div>
+        <div id="list"></div>
+      </section>
+    </main>
+
+    <script src="__SPRITZ_BASE_PATH__/config.js?v=__SPRITZ_UI_ASSET_VERSION__"></script>
+    <script src="__SPRITZ_BASE_PATH__/app.js?v=__SPRITZ_UI_ASSET_VERSION__"></script>
+  </body>
+</html>

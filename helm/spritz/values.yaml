@@ -1,0 +1,205 @@
+operator:
+  image: spritz-operator:latest
+  imagePullPolicy: IfNotPresent
+  rolloutAt: ""
+  namespace: spritz-system
+  serviceAccountName: spritz-operator
+  ttlGracePeriod: 5m
+  workspaceSizeLimit: 10Gi
+  homeSizeLimit: 5Gi
+  podNodeSelector: ""
+  homePVC:
+    enabled: false
+    prefix: spritz-home
+    size: 5Gi
+    accessModes:
+      - ReadWriteOnce
+    storageClass: ""
+    mountPaths:
+      - /home/dev
+  sharedConfigPVC:
+    enabled: false
+    prefix: spritz-shared-config
+    size: 100Mi
+    accessModes:
+      - ReadWriteMany
+    storageClass: ""
+    mountPath: /shared
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+api:
+  image: spritz-api:latest
+  imagePullPolicy: IfNotPresent
+  rolloutAt: ""
+  namespace: spritz-system
+  serviceAccountName: spritz-api
+  defaultAnnotations: ""
+  podAnnotations: {}
+  service:
+    port: 8080
+  auth:
+    mode: none
+    headerId: X-Spritz-User-Id
+    headerEmail: X-Spritz-User-Email
+    headerTeams: X-Spritz-User-Teams
+    adminIds: []
+    adminTeams: []
+    bearer:
+      introspectionUrl: ""
+      introspectionAuthHeader: ""
+      method: GET
+      timeout: 5s
+      tokenParam: token
+      forwardToken: false
+      idPaths:
+        - sub
+      emailPaths:
+        - email
+      teamsPaths: []
+      jwks:
+        url: ""
+        issuer: ""
+        audiences: []
+        algos:
+          - RS256
+        leeway: 0s
+        refreshInterval: 5m
+        refreshTimeout: 5s
+        rateLimit: 10s
+        fallbackToIntrospection: false
+  cors:
+    origins: []
+    allowHeaders: Content-Type,Authorization,X-Spritz-User-Id,X-Spritz-User-Email,X-Spritz-User-Teams
+    allowMethods: GET,POST,DELETE,OPTIONS
+    allowCredentials: true
+  defaultIngress:
+    mode: ""
+    hostTemplate: ""
+    path: ""
+    className: ""
+    gatewayName: ""
+    gatewayNamespace: ""
+    gatewaySectionName: ""
+  terminal:
+    enabled: true
+    container: spritz
+    command: "bash -l"
+    origins: []
+  sshGateway:
+    enabled: false
+    port: 2222
+    publicHost: ""
+    publicPort: 22
+    user: spritz
+    principalPrefix: spritz
+    certTtl: 15m
+    mintLimit: 5
+    mintWindow: 1m
+    mintBurst: 5
+    mintBucketTtl: 30m
+    mintBucketCleanup: 5m
+    container: spritz
+    command: "bash -l"
+    secretName: ""
+    caKeySecretKey: ca_key
+    hostKeySecretKey: host_key
+    caKey: ""
+    caKeyFile: ""
+    hostKey: ""
+    hostKeyFile: ""
+  sshDefaults:
+    enabled: false
+    mode: gateway
+    gatewayService: spritz-api
+    gatewayNamespace: spritz-system
+    gatewayPort: 22
+    user: spritz
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+ui:
+  image: spritz-ui:latest
+  imagePullPolicy: IfNotPresent
+  rolloutAt: ""
+  namespace: spritz-system
+  service:
+    port: 80
+  containerPort: 8080
+  ingress:
+    enabled: false
+    host: spritz.sh
+    className: nginx
+    path: /
+  apiBaseUrl: ""
+  basePath: ""
+  ownerId: ""
+  assetVersion: ""
+  presets: []
+  repoDefaults:
+    url: ""
+    dir: ""
+    branch: ""
+    hideInputs: false
+  auth:
+    mode: ""
+    tokenStorage: localStorage
+    tokenStorageKeys: []
+    bearerTokenParam: token
+    loginUrl: ""
+    returnToMode: auto
+    returnToParam: ""
+    redirectOnUnauthorized: true
+    refresh:
+      enabled: false
+      url: ""
+      method: POST
+      credentials: include
+      tokenStorageKeys: []
+      timeoutMs: 5000
+      cooldownMs: 30000
+      headers: {}
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+    runAsGroup: 101
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+spritz:
+  namespace: spritz
