@@ -282,10 +282,15 @@ function startTtyWatchdog(ttyState?: string | null) {
         } catch {}
       }
     }
+    const banner = "\\r\\n[spz] terminal restored after disconnect\\r\\n";
     const interval = setInterval(() => {
       if (!alive()) {
         clearInterval(interval);
         doReset(true);
+        const handle = openFd();
+        if (handle !== null) {
+          try { writeSync(handle, banner); } catch {}
+        }
         if (fd !== null && inheritedFd === null) {
           try { closeSync(fd); } catch {}
         }
