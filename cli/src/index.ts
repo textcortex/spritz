@@ -57,6 +57,7 @@ const terminalResetSequence = [
   '\x1b[?25h', // show cursor
   '\x1b[0m', // reset SGR
 ].join('');
+const terminalHardResetSequence = `${terminalResetSequence}\x1bc`;
 const watchdogFlag = 'SPRITZ_TTY_WATCHDOG';
 const sttyBinary = process.env.SPRITZ_STTY_BINARY || 'stty';
 const resetBinary = process.env.SPRITZ_RESET_BINARY || 'reset';
@@ -148,8 +149,8 @@ function captureTtyState(ttyPath?: string | null): string | null {
   return state;
 }
 
-function restoreLocalTerminal(ttyState?: string | null, ttyPath?: string | null) {
-  writeToTty(terminalResetSequence, ttyPath);
+function restoreLocalTerminal(ttyState?: string | null, ttyPath?: string | null, hard = false) {
+  writeToTty(hard ? terminalHardResetSequence : terminalResetSequence, ttyPath);
   if (process.platform !== 'win32') {
     try {
       const args = ttyState ? [ttyState] : ['sane'];
@@ -182,12 +183,14 @@ function startTtyWatchdog(ttyState?: string | null) {
   if (!process.stdin.isTTY && !process.stdout.isTTY) return;
   const ttyPath = resolveTtyPath();
   const payload = JSON.stringify(terminalResetSequence);
+  const hardPayload = JSON.stringify(terminalHardResetSequence);
   const state = ttyState ? JSON.stringify(ttyState) : 'null';
   const script = `
     const { openSync, writeSync, closeSync } = require('fs');
     const { spawnSync } = require('child_process');
     const pid = ${process.pid};
     const payload = ${payload};
+    const hardPayload = ${hardPayload};
     const ttyPath = ${ttyPath ? JSON.stringify(ttyPath) : 'null'};
     const ttyState = ${state};
     const stty = ${JSON.stringify(sttyBinary)};
@@ -195,11 +198,11 @@ function startTtyWatchdog(ttyState?: string | null) {
     function alive() {
       try { process.kill(pid, 0); return true; } catch { return false; }
     }
-    function reset() {
+    function reset(hard) {
       try {
         const path = ttyPath || '/dev/tty';
         const fd = openSync(path, 'w');
-        try { writeSync(fd, payload); } finally { closeSync(fd); }
+        try { writeSync(fd, hard ? hardPayload : payload); } finally { closeSync(fd); }
       } catch {}
       try {
         const path = ttyPath || '/dev/tty';
@@ -216,13 +219,13 @@ function startTtyWatchdog(ttyState?: string | null) {
     const interval = setInterval(() => {
       if (!alive()) {
         clearInterval(interval);
-        reset();
+        reset(true);
         process.exit(0);
       }
     }, 250);
   `;
   const child = spawn(process.execPath, ['-e', script], {
-    detached: Boolean(ttyPath),
+    detached: true,
     stdio: 'ignore',
     env: { ...process.env, [watchdogFlag]: '1' },
   });
