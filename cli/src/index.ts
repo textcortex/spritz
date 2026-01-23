@@ -41,6 +41,33 @@ let cachedConfig: SpritzConfig | null = null;
 
 const [, , command, ...rest] = process.argv;
 
+const terminalResetSequence = [
+  '\x1b[?2004l', // bracketed paste off
+  '\x1b[?2026l', // kitty keyboard protocol off
+  '\x1b[?1000l', // mouse tracking off
+  '\x1b[?1002l',
+  '\x1b[?1003l',
+  '\x1b[?1006l',
+  '\x1b[?25h', // show cursor
+].join('');
+
+function restoreLocalTerminal() {
+  if (process.stdout.isTTY) {
+    try {
+      process.stdout.write(terminalResetSequence);
+    } catch {
+      // ignore
+    }
+  }
+  if (process.platform !== 'win32') {
+    try {
+      spawn('stty', ['sane'], { stdio: 'ignore' });
+    } catch {
+      // ignore
+    }
+  }
+}
+
 function usage() {
   console.log(`Spritz CLI
 
@@ -469,6 +496,7 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
     process.off('SIGWINCH', onResize);
     process.off('SIGINT', onSignal);
     process.off('SIGTERM', onSignal);
+    restoreLocalTerminal();
   };
 
   await new Promise<void>((resolve, reject) => {
