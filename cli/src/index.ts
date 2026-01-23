@@ -72,6 +72,10 @@ function resolveTtyPath(): string | null {
     cachedTtyPath = null;
     return null;
   }
+  if (process.env.TTY) {
+    cachedTtyPath = process.env.TTY;
+    return cachedTtyPath;
+  }
   const candidates = ['/dev/fd/0', '/proc/self/fd/0', '/dev/fd/1', '/proc/self/fd/1'];
   for (const candidate of candidates) {
     try {
@@ -85,7 +89,8 @@ function resolveTtyPath(): string | null {
     }
   }
   try {
-    const result = spawnSync('tty', [], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const stdin = process.stdin.isTTY ? 0 : 'ignore';
+    const result = spawnSync('tty', [], { stdio: [stdin, 'pipe', 'ignore'] });
     const output = result.stdout?.toString().trim();
     if (output && output.startsWith('/dev/')) {
       cachedTtyPath = output;
