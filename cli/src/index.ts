@@ -58,6 +58,8 @@ const terminalResetSequence = [
   '\x1b[0m', // reset SGR
 ].join('');
 const watchdogFlag = 'SPRITZ_TTY_WATCHDOG';
+const sttyBinary = process.env.SPRITZ_STTY_BINARY || 'stty';
+const resetBinary = process.env.SPRITZ_RESET_BINARY || 'reset';
 
 function resolveTtyPath(): string | null {
   if (cachedTtyPath !== undefined) return cachedTtyPath;
@@ -109,7 +111,7 @@ function withTtyFd(mode: 'r' | 'w', fn: (fd: number) => void, ttyPath?: string |
   }
 }
 
-function writeToTty(payload: string) {
+function writeToTty(payload: string, ttyPath?: string | null) {
   if (process.stdout.isTTY) {
     try {
       process.stdout.write(payload);
@@ -124,30 +126,50 @@ function writeToTty(payload: string) {
     } catch {
       // ignore
     }
-  });
+  }, ttyPath);
 }
 
-function restoreLocalTerminal() {
-  writeToTty(terminalResetSequence);
+function captureTtyState(ttyPath?: string | null): string | null {
+  if (process.platform === 'win32') return null;
+  let state: string | null = null;
+  try {
+    if (process.stdin.isTTY) {
+      const result = spawnSync(sttyBinary, ['-g'], { stdio: [0, 'pipe', 'ignore'] });
+      state = result.stdout?.toString().trim() || null;
+    } else {
+      withTtyFd('r', (fd) => {
+        const result = spawnSync(sttyBinary, ['-g'], { stdio: [fd, 'pipe', 'ignore'] });
+        state = result.stdout?.toString().trim() || null;
+      }, ttyPath);
+    }
+  } catch {
+    return null;
+  }
+  return state;
+}
+
+function restoreLocalTerminal(ttyState?: string | null, ttyPath?: string | null) {
+  writeToTty(terminalResetSequence, ttyPath);
   if (process.platform !== 'win32') {
     try {
+      const args = ttyState ? [ttyState] : ['sane'];
       if (process.stdin.isTTY) {
-        spawnSync('stty', ['sane'], { stdio: [0, 'ignore', 'ignore'] });
+        spawnSync(sttyBinary, args, { stdio: [0, 'ignore', 'ignore'] });
       } else {
         withTtyFd('r', (fd) => {
-          spawnSync('stty', ['sane'], { stdio: [fd, 'ignore', 'ignore'] });
-        });
+          spawnSync(sttyBinary, args, { stdio: [fd, 'ignore', 'ignore'] });
+        }, ttyPath);
       }
     } catch {
       // ignore
     }
     try {
       if (process.stdin.isTTY) {
-        spawnSync('reset', [], { stdio: [0, 'ignore', 'ignore'] });
+        spawnSync(resetBinary, [], { stdio: [0, 'ignore', 'ignore'] });
       } else {
         withTtyFd('r', (fd) => {
-          spawnSync('reset', [], { stdio: [fd, 'ignore', 'ignore'] });
-        });
+          spawnSync(resetBinary, [], { stdio: [fd, 'ignore', 'ignore'] });
+        }, ttyPath);
       }
     } catch {
       // ignore
@@ -155,17 +177,21 @@ function restoreLocalTerminal() {
   }
 }
 
-function startTtyWatchdog() {
+function startTtyWatchdog(ttyState?: string | null) {
   if (process.env[watchdogFlag] === '1') return;
   if (!process.stdin.isTTY && !process.stdout.isTTY) return;
   const ttyPath = resolveTtyPath();
   const payload = JSON.stringify(terminalResetSequence);
+  const state = ttyState ? JSON.stringify(ttyState) : 'null';
   const script = `
     const { openSync, writeSync, closeSync } = require('fs');
     const { spawnSync } = require('child_process');
     const pid = ${process.pid};
     const payload = ${payload};
     const ttyPath = ${ttyPath ? JSON.stringify(ttyPath) : 'null'};
+    const ttyState = ${state};
+    const stty = ${JSON.stringify(sttyBinary)};
+    const reset = ${JSON.stringify(resetBinary)};
     function alive() {
       try { process.kill(pid, 0); return true; } catch { return false; }
     }
@@ -178,7 +204,13 @@ function startTtyWatchdog() {
       try {
         const path = ttyPath || '/dev/tty';
         const fd = openSync(path, 'r');
-        try { spawnSync('stty', ['sane'], { stdio: [fd, 'ignore', 'ignore'] }); } finally { closeSync(fd); }
+        const args = ttyState ? [ttyState] : ['sane'];
+        try { spawnSync(stty, args, { stdio: [fd, 'ignore', 'ignore'] }); } finally { closeSync(fd); }
+      } catch {}
+      try {
+        const path = ttyPath || '/dev/tty';
+        const fd = openSync(path, 'r');
+        try { spawnSync(reset, [], { stdio: [fd, 'ignore', 'ignore'] }); } finally { closeSync(fd); }
       } catch {}
     }
     const interval = setInterval(() => {
@@ -578,7 +610,8 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
     return;
   }
   restoreLocalTerminal();
-  startTtyWatchdog();
+  const ttyState = captureTtyState();
+  startTtyWatchdog(ttyState);
   const headers: Record<string, string> = {
     ...(await authHeaders()),
     Origin: origin,
@@ -603,10 +636,10 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
     }
   };
   const onExit = () => {
-    restoreLocalTerminal();
+    restoreLocalTerminal(ttyState);
   };
   const onSignal = () => {
-    restoreLocalTerminal();
+    restoreLocalTerminal(ttyState);
     if (ws.readyState === WebSocket.OPEN) {
       ws.close();
     }
@@ -633,7 +666,7 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
     process.off('SIGTERM', onSignal);
     process.off('SIGHUP', onSignal);
     process.off('exit', onExit);
-    restoreLocalTerminal();
+    restoreLocalTerminal(ttyState);
   };
 
   await new Promise<void>((resolve, reject) => {
