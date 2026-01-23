@@ -45,7 +45,7 @@ const [, , command, ...rest] = process.argv;
 
 const terminalResetSequence = [
   '\x1b[!p', // soft reset (DECSTR)
-  '\x1b[>0u', // kitty keyboard protocol off (CSI u)
+  '\x1b[<999u', // kitty keyboard protocol: pop enhancement stack
   '\x1b[>4;0m', // xterm modifyOtherKeys off (CSI u)
   '\x1b[?2004l', // bracketed paste off
   '\x1b[?2026l', // kitty keyboard protocol off
@@ -187,6 +187,21 @@ function startTtyWatchdog(ttyState?: string | null) {
   if (process.env[watchdogFlag] === '1') return;
   if (!process.stdin.isTTY && !process.stdout.isTTY) return;
   const ttyPath = resolveTtyPath();
+  let inheritedTtyFd: number | null = null;
+  try {
+    const path = ttyPath || '/dev/tty';
+    try {
+      inheritedTtyFd = openSync(path, 'r+');
+    } catch {
+      try {
+        inheritedTtyFd = openSync(path, 'w');
+      } catch {
+        inheritedTtyFd = null;
+      }
+    }
+  } catch {
+    inheritedTtyFd = null;
+  }
   const payload = JSON.stringify(terminalResetSequence);
   const hardPayload = JSON.stringify(terminalHardResetSequence);
   const state = ttyState ? JSON.stringify(ttyState) : 'null';
@@ -197,11 +212,13 @@ function startTtyWatchdog(ttyState?: string | null) {
     const payload = ${payload};
     const hardPayload = ${hardPayload};
     const ttyPath = ${ttyPath ? JSON.stringify(ttyPath) : 'null'};
+    const inheritedFd = ${inheritedTtyFd !== null ? 3 : 'null'};
     const ttyState = ${state};
-    const stty = ${JSON.stringify(sttyBinary)};
-    const reset = ${JSON.stringify(resetBinary)};
+    const sttyBin = ${JSON.stringify(sttyBinary)};
+    const resetBin = ${JSON.stringify(resetBinary)};
     let fd = null;
     function openFd() {
+      if (inheritedFd !== null) return inheritedFd;
       if (fd !== null) return fd;
       const path = ttyPath || '/dev/tty';
       try {
@@ -221,24 +238,24 @@ function startTtyWatchdog(ttyState?: string | null) {
     function alive() {
       try { process.kill(pid, 0); return true; } catch { return false; }
     }
-    function reset(hard) {
+    function doReset(hard) {
       const handle = openFd();
       if (handle !== null) {
         try { writeSync(handle, hard ? hardPayload : payload); } catch {}
         try {
           const args = ttyState ? [ttyState] : ['sane'];
-          spawnSync(stty, args, { stdio: [handle, handle, 'ignore'] });
+          spawnSync(sttyBin, args, { stdio: [handle, handle, 'ignore'] });
         } catch {}
         try {
-          spawnSync(reset, [], { stdio: [handle, handle, 'ignore'] });
+          spawnSync(resetBin, [], { stdio: [handle, handle, 'ignore'] });
         } catch {}
       }
     }
     const interval = setInterval(() => {
       if (!alive()) {
         clearInterval(interval);
-        reset(true);
-        if (fd !== null) {
+        doReset(true);
+        if (fd !== null && inheritedFd === null) {
           try { closeSync(fd); } catch {}
         }
         process.exit(0);
@@ -247,10 +264,17 @@ function startTtyWatchdog(ttyState?: string | null) {
   `;
   const child = spawn(process.execPath, ['-e', script], {
     detached: true,
-    stdio: 'ignore',
+    stdio: inheritedTtyFd !== null ? ['ignore', 'ignore', 'ignore', inheritedTtyFd] : 'ignore',
     env: { ...process.env, [watchdogFlag]: '1' },
   });
   child.unref();
+  if (inheritedTtyFd !== null) {
+    try {
+      closeSync(inheritedTtyFd);
+    } catch {
+      // ignore
+    }
+  }
 }
 
 function usage() {
