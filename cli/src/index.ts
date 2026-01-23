@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process';
+import { closeSync, openSync, writeSync } from 'node:fs';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -52,19 +53,50 @@ const terminalResetSequence = [
 ].join('');
 let terminalRestored = false;
 
-function restoreLocalTerminal() {
-  if (terminalRestored) return;
-  terminalRestored = true;
+function withTtyFd(mode: 'r' | 'w', fn: (fd: number) => void) {
+  try {
+    const fd = openSync('/dev/tty', mode);
+    try {
+      fn(fd);
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function writeToTty(payload: string) {
   if (process.stdout.isTTY) {
     try {
-      process.stdout.write(terminalResetSequence);
+      process.stdout.write(payload);
+      return;
     } catch {
       // ignore
     }
   }
+  withTtyFd('w', (fd) => {
+    try {
+      writeSync(fd, payload);
+    } catch {
+      // ignore
+    }
+  });
+}
+
+function restoreLocalTerminal() {
+  if (terminalRestored) return;
+  terminalRestored = true;
+  writeToTty(terminalResetSequence);
   if (process.platform !== 'win32') {
     try {
-      spawnSync('stty', ['sane'], { stdio: 'ignore' });
+      if (process.stdin.isTTY) {
+        spawnSync('stty', ['sane'], { stdio: [0, 'ignore', 'ignore'] });
+      } else {
+        withTtyFd('r', (fd) => {
+          spawnSync('stty', ['sane'], { stdio: [fd, 'ignore', 'ignore'] });
+        });
+      }
     } catch {
       // ignore
     }
