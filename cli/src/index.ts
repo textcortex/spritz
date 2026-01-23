@@ -43,6 +43,7 @@ let cachedConfig: SpritzConfig | null = null;
 const [, , command, ...rest] = process.argv;
 
 const terminalResetSequence = [
+  '\x1b[!p', // soft reset (DECSTR)
   '\x1b[>4;0m', // xterm modifyOtherKeys off (CSI u)
   '\x1b[?2004l', // bracketed paste off
   '\x1b[?2026l', // kitty keyboard protocol off
@@ -96,6 +97,17 @@ function restoreLocalTerminal() {
       } else {
         withTtyFd('r', (fd) => {
           spawnSync('stty', ['sane'], { stdio: [fd, 'ignore', 'ignore'] });
+        });
+      }
+    } catch {
+      // ignore
+    }
+    try {
+      if (process.stdin.isTTY) {
+        spawnSync('reset', [], { stdio: [0, 'ignore', 'ignore'] });
+      } else {
+        withTtyFd('r', (fd) => {
+          spawnSync('reset', [], { stdio: [fd, 'ignore', 'ignore'] });
         });
       }
     } catch {
