@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, openSync, writeSync } from 'node:fs';
+import { closeSync, openSync, readlinkSync, writeSync } from 'node:fs';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -39,11 +39,13 @@ const terminalTransportDefault = (process.env.SPRITZ_TERMINAL_TRANSPORT || 'ws')
 const configRoot = process.env.SPRITZ_CONFIG_DIR || path.join(os.homedir(), '.config', 'spritz');
 const configPath = path.join(configRoot, 'config.json');
 let cachedConfig: SpritzConfig | null = null;
+let cachedTtyPath: string | null | undefined;
 
 const [, , command, ...rest] = process.argv;
 
 const terminalResetSequence = [
   '\x1b[!p', // soft reset (DECSTR)
+  '\x1b[>0u', // kitty keyboard protocol off (CSI u)
   '\x1b[>4;0m', // xterm modifyOtherKeys off (CSI u)
   '\x1b[?2004l', // bracketed paste off
   '\x1b[?2026l', // kitty keyboard protocol off
@@ -57,9 +59,46 @@ const terminalResetSequence = [
 ].join('');
 const watchdogFlag = 'SPRITZ_TTY_WATCHDOG';
 
-function withTtyFd(mode: 'r' | 'w', fn: (fd: number) => void) {
+function resolveTtyPath(): string | null {
+  if (cachedTtyPath !== undefined) return cachedTtyPath;
+  if (process.platform === 'win32') {
+    cachedTtyPath = null;
+    return null;
+  }
+  if (!process.stdin.isTTY && !process.stdout.isTTY) {
+    cachedTtyPath = null;
+    return null;
+  }
+  const candidates = ['/dev/fd/0', '/proc/self/fd/0', '/dev/fd/1', '/proc/self/fd/1'];
+  for (const candidate of candidates) {
+    try {
+      const target = readlinkSync(candidate);
+      if (target && target.startsWith('/dev/')) {
+        cachedTtyPath = target;
+        return target;
+      }
+    } catch {
+      // ignore
+    }
+  }
   try {
-    const fd = openSync('/dev/tty', mode);
+    const result = spawnSync('tty', [], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const output = result.stdout?.toString().trim();
+    if (output && output.startsWith('/dev/')) {
+      cachedTtyPath = output;
+      return output;
+    }
+  } catch {
+    // ignore
+  }
+  cachedTtyPath = null;
+  return null;
+}
+
+function withTtyFd(mode: 'r' | 'w', fn: (fd: number) => void, ttyPath?: string | null) {
+  try {
+    const path = ttyPath || resolveTtyPath() || '/dev/tty';
+    const fd = openSync(path, mode);
     try {
       fn(fd);
     } finally {
@@ -119,22 +158,26 @@ function restoreLocalTerminal() {
 function startTtyWatchdog() {
   if (process.env[watchdogFlag] === '1') return;
   if (!process.stdin.isTTY && !process.stdout.isTTY) return;
+  const ttyPath = resolveTtyPath();
   const payload = JSON.stringify(terminalResetSequence);
   const script = `
     const { openSync, writeSync, closeSync } = require('fs');
     const { spawnSync } = require('child_process');
     const pid = ${process.pid};
     const payload = ${payload};
+    const ttyPath = ${ttyPath ? JSON.stringify(ttyPath) : 'null'};
     function alive() {
       try { process.kill(pid, 0); return true; } catch { return false; }
     }
     function reset() {
       try {
-        const fd = openSync('/dev/tty', 'w');
+        const path = ttyPath || '/dev/tty';
+        const fd = openSync(path, 'w');
         try { writeSync(fd, payload); } finally { closeSync(fd); }
       } catch {}
       try {
-        const fd = openSync('/dev/tty', 'r');
+        const path = ttyPath || '/dev/tty';
+        const fd = openSync(path, 'r');
         try { spawnSync('stty', ['sane'], { stdio: [fd, 'ignore', 'ignore'] }); } finally { closeSync(fd); }
       } catch {}
     }
@@ -147,7 +190,7 @@ function startTtyWatchdog() {
     }, 250);
   `;
   const child = spawn(process.execPath, ['-e', script], {
-    detached: false,
+    detached: Boolean(ttyPath),
     stdio: 'ignore',
     env: { ...process.env, [watchdogFlag]: '1' },
   });
