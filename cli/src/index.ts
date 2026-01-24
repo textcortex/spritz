@@ -308,7 +308,6 @@ function startTtyWatchdog(context: TtyContext) {
         } catch {}
       }
     }
-    const banner = "\\r\\n[spz] terminal restored after disconnect\\r\\n";
     const banner = ${JSON.stringify(ttyRestoreBanner)};
     const interval = setInterval(() => {
       if (!alive()) {

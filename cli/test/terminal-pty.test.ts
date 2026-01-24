@@ -20,7 +20,7 @@ async function waitForOutput(buffer: { value: string }, pattern: RegExp, timeout
 }
 
 test('terminal returns to canonical mode after SIGKILL', { timeout: 15000 }, async (t) => {
-  if (!process.env.SPRITZ_PTY_TEST) {
+  if (process.env.SPRITZ_PTY_TEST !== '1') {
     t.skip();
     return;
   }
