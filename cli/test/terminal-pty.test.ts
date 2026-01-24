@@ -19,13 +19,16 @@ async function waitForOutput(buffer: { value: string }, pattern: RegExp, timeout
   throw new Error(`Timed out waiting for ${pattern}`);
 }
 
-test('terminal returns to canonical mode after SIGKILL', async (t) => {
+test('terminal returns to canonical mode after SIGKILL', { timeout: 15000 }, async (t) => {
   if (!process.env.SPRITZ_PTY_TEST) {
     t.skip();
     return;
   }
 
   const wss = new WebSocketServer({ port: 0 });
+  t.after(() => {
+    wss.close();
+  });
   await once(wss, 'listening');
   const address = wss.address();
   const port = typeof address === 'object' && address ? address.port : 0;
@@ -47,6 +50,13 @@ test('terminal returns to canonical mode after SIGKILL', async (t) => {
     cwd: process.cwd(),
     env,
   });
+  t.after(() => {
+    try {
+      ptyProcess.kill();
+    } catch {
+      // ignore
+    }
+  });
 
   const buffer = { value: '' };
   ptyProcess.onData((data) => {
@@ -62,16 +72,17 @@ test('terminal returns to canonical mode after SIGKILL', async (t) => {
   const pid = Number.parseInt(match![1], 10);
   assert.ok(Number.isFinite(pid), 'pid must be numeric');
 
-  await once(wss, 'connection');
+  await Promise.race([
+    once(wss, 'connection'),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('WS connect timeout')), 3000)),
+  ]);
   await new Promise((resolve) => setTimeout(resolve, 300));
   process.kill(pid, 'SIGKILL');
+  await new Promise((resolve) => setTimeout(resolve, 500));
 
   ptyProcess.write('stty -a\r');
   await waitForOutput(buffer, /(isig|icanon)/);
   const sttyOut = buffer.value;
   assert.ok(!/-isig/.test(sttyOut), 'ISIG should be enabled after reset');
   assert.ok(!/-icanon/.test(sttyOut), 'ICANON should be enabled after reset');
-
-  ptyProcess.kill();
-  wss.close();
 });
