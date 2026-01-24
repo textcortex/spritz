@@ -44,12 +44,20 @@ test('terminal returns to canonical mode after SIGKILL', { timeout: 15000 }, asy
     SPRITZ_USER_ID: 'test-user',
     SPRITZ_USER_EMAIL: 'test@example.com',
   };
-  const ptyProcess = pty.spawn(shell, [], {
-    cols: 80,
-    rows: 24,
-    cwd: process.cwd(),
-    env,
-  });
+  let ptyProcess: pty.IPty;
+  try {
+    ptyProcess = pty.spawn(shell, [], {
+      cols: 80,
+      rows: 24,
+      cwd: process.cwd(),
+      env,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    t.skip(`pty spawn failed in this environment: ${message}`);
+    wss.close();
+    return;
+  }
   t.after(() => {
     try {
       ptyProcess.kill();
