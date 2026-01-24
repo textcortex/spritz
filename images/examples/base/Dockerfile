@@ -18,7 +18,9 @@ RUN apt-get update \
     ca-certificates \
     curl \
     git \
+    nano \
     openssh-client \
+    vim \
   && rm -rf /var/lib/apt/lists/*
 
 COPY scripts/install-zmx.sh /tmp/install-zmx.sh
