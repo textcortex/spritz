@@ -109,7 +109,7 @@ function resolveTtyPath(): string | null {
   return null;
 }
 
-function withTtyFd(mode: 'r' | 'w', fn: (fd: number) => void, ttyPath?: string | null) {
+function withTtyFd(mode: 'r' | 'w' | 'r+' | 'w+', fn: (fd: number) => void, ttyPath?: string | null) {
   try {
     const path = ttyPath || resolveTtyPath() || '/dev/tty';
     const fd = openSync(path, mode);
