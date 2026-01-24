@@ -195,7 +195,7 @@ function restoreLocalTerminal(ttyState?: string | null, ttyPath?: string | null,
     try {
       if (ttyPath) {
         withTtyFd(
-          'r',
+          'r+',
           (fd) => {
             spawnSync(resetBinary, [], { stdio: [fd, fd, 'ignore'] });
           },
@@ -204,7 +204,7 @@ function restoreLocalTerminal(ttyState?: string | null, ttyPath?: string | null,
       } else if (process.stdin.isTTY) {
         spawnSync(resetBinary, [], { stdio: [0, 'ignore', 'ignore'] });
       } else {
-        withTtyFd('r', (fd) => {
+        withTtyFd('r+', (fd) => {
           spawnSync(resetBinary, [], { stdio: [fd, 'ignore', 'ignore'] });
         }, ttyPath);
       }
@@ -219,9 +219,11 @@ function restoreLocalTerminal(ttyState?: string | null, ttyPath?: string | null,
  */
 function captureTtyContext(): TtyContext {
   const ttyPath = resolveTtyPath();
-  // Normalize to a sane baseline first so we restore to a known-good state.
-  restoreLocalTerminal(undefined, ttyPath);
   const ttyState = captureTtyState(ttyPath);
+  if (!ttyState) {
+    // Best effort fallback to recover a broken terminal when state capture fails.
+    restoreLocalTerminal(undefined, ttyPath);
+  }
   return { ttyPath, ttyState };
 }
 
