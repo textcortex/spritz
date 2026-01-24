@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, openSync, readlinkSync, writeSync } from 'node:fs';
+import { closeSync, openSync, readlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -237,10 +237,14 @@ function restoreTtyContext(context: TtyContext, hard = false) {
 /**
  * Spawn a watchdog that resets the tty if the parent process is killed.
  */
-function startTtyWatchdog(context: TtyContext) {
-  if (process.env[watchdogFlag] === '1') return;
-  if (!process.stdin.isTTY && !process.stdout.isTTY) return;
+function startTtyWatchdog(context: TtyContext): (() => void) | null {
+  if (process.env[watchdogFlag] === '1') return null;
+  if (!process.stdin.isTTY && !process.stdout.isTTY) return null;
   const ttyPath = context.ttyPath;
+  const cancelPath = path.join(
+    os.tmpdir(),
+    `spritz-tty-cancel-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  );
   let inheritedTtyFd: number | null = null;
   try {
     const path = ttyPath || '/dev/tty';
@@ -260,13 +264,14 @@ function startTtyWatchdog(context: TtyContext) {
   const hardPayload = JSON.stringify(terminalHardResetSequence);
   const state = context.ttyState ? JSON.stringify(context.ttyState) : 'null';
   const script = `
-    const { openSync, writeSync, closeSync } = require('fs');
+    const { openSync, writeSync, closeSync, existsSync, unlinkSync } = require('fs');
     const { spawnSync } = require('child_process');
     const pid = ${process.pid};
     const payload = ${payload};
     const hardPayload = ${hardPayload};
     const ttyPath = ${ttyPath ? JSON.stringify(ttyPath) : 'null'};
     const inheritedFd = ${inheritedTtyFd !== null ? 3 : 'null'};
+    const cancelPath = ${JSON.stringify(cancelPath)};
     const ttyState = ${state};
     const sttyBin = ${JSON.stringify(sttyBinary)};
     const resetBin = ${JSON.stringify(resetBinary)};
@@ -314,6 +319,10 @@ function startTtyWatchdog(context: TtyContext) {
     const interval = setInterval(() => {
       if (!alive()) {
         clearInterval(interval);
+        if (existsSync(cancelPath)) {
+          try { unlinkSync(cancelPath); } catch {}
+          process.exit(0);
+        }
         doReset(true);
         const handle = openFd();
         if (handle !== null) {
@@ -339,6 +348,13 @@ function startTtyWatchdog(context: TtyContext) {
       // ignore
     }
   }
+  return () => {
+    try {
+      writeFileSync(cancelPath, '1');
+    } catch {
+      // ignore
+    }
+  };
 }
 
 function usage() {
@@ -722,7 +738,7 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
     return;
   }
   const ttyContext = captureTtyContext();
-  startTtyWatchdog(ttyContext);
+  const cancelWatchdog = startTtyWatchdog(ttyContext);
   const headers: Record<string, string> = {
     ...(await authHeaders()),
     Origin: origin,
@@ -747,9 +763,11 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
     }
   };
   const onExit = () => {
+    cancelWatchdog?.();
     restoreTtyContext(ttyContext);
   };
   const onSignal = () => {
+    cancelWatchdog?.();
     restoreTtyContext(ttyContext);
     if (ws.readyState === WebSocket.OPEN) {
       ws.close();
@@ -777,6 +795,7 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
     process.off('SIGTERM', onSignal);
     process.off('SIGHUP', onSignal);
     process.off('exit', onExit);
+    cancelWatchdog?.();
     restoreTtyContext(ttyContext);
   };
 
