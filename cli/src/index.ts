@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { closeSync, openSync, readlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import WebSocket, { RawData } from 'ws';
+import { terminalHardResetSequence, terminalResetSequence } from './terminal_sequences.js';
 
 type ProfileConfig = {
   apiUrl?: string;
@@ -27,6 +29,11 @@ type TerminalSessionInfo = {
   default_session?: string;
 };
 
+type TtyContext = {
+  ttyPath: string | null;
+  ttyState: string | null;
+};
+
 const defaultApiBase = 'http://localhost:8080';
 const requestTimeoutMs = Number.parseInt(process.env.SPRITZ_REQUEST_TIMEOUT_MS || '10000', 10);
 const headerId = process.env.SPRITZ_API_HEADER_ID || 'X-Spritz-User-Id';
@@ -38,8 +45,317 @@ const terminalTransportDefault = (process.env.SPRITZ_TERMINAL_TRANSPORT || 'ws')
 const configRoot = process.env.SPRITZ_CONFIG_DIR || path.join(os.homedir(), '.config', 'spritz');
 const configPath = path.join(configRoot, 'config.json');
 let cachedConfig: SpritzConfig | null = null;
+let cachedTtyPath: string | null | undefined;
 
 const [, , command, ...rest] = process.argv;
+
+const watchdogFlag = 'SPRITZ_TTY_WATCHDOG';
+const ttyWatchdogIntervalMs = 250;
+const ttyRestoreBanner = '\r\n[spz] terminal restored after disconnect\r\n';
+const sttyBinary = process.env.SPRITZ_STTY_BINARY || 'stty';
+const resetBinary = process.env.SPRITZ_RESET_BINARY || 'reset';
+
+/**
+ * Build platform-specific stty args that target a specific tty path.
+ */
+function sttyArgsForPath(path: string, args: string[]): string[] {
+  if (process.platform === 'darwin') {
+    return ['-f', path, ...args];
+  }
+  return ['-F', path, ...args];
+}
+
+/**
+ * Resolve the current terminal device path (e.g. /dev/ttys003) if available.
+ */
+function resolveTtyPath(): string | null {
+  if (cachedTtyPath !== undefined) return cachedTtyPath;
+  if (process.platform === 'win32') {
+    cachedTtyPath = null;
+    return null;
+  }
+  if (!process.stdin.isTTY && !process.stdout.isTTY) {
+    cachedTtyPath = null;
+    return null;
+  }
+  if (process.env.TTY) {
+    cachedTtyPath = process.env.TTY;
+    return cachedTtyPath;
+  }
+  const candidates = ['/dev/fd/0', '/proc/self/fd/0', '/dev/fd/1', '/proc/self/fd/1'];
+  for (const candidate of candidates) {
+    try {
+      const target = readlinkSync(candidate);
+      if (target && target.startsWith('/dev/')) {
+        cachedTtyPath = target;
+        return target;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  try {
+    const stdin = process.stdin.isTTY ? 0 : 'ignore';
+    const result = spawnSync('tty', [], { stdio: [stdin, 'pipe', 'ignore'] });
+    const output = result.stdout?.toString().trim();
+    if (output && output.startsWith('/dev/')) {
+      cachedTtyPath = output;
+      return output;
+    }
+  } catch {
+    // ignore
+  }
+  cachedTtyPath = null;
+  return null;
+}
+
+function withTtyFd(mode: 'r' | 'w' | 'r+' | 'w+', fn: (fd: number) => void, ttyPath?: string | null) {
+  try {
+    const path = ttyPath || resolveTtyPath() || '/dev/tty';
+    const fd = openSync(path, mode);
+    try {
+      fn(fd);
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function writeToTty(payload: string, ttyPath?: string | null) {
+  if (process.stdout.isTTY) {
+    try {
+      process.stdout.write(payload);
+      return;
+    } catch {
+      // ignore
+    }
+  }
+  withTtyFd('w', (fd) => {
+    try {
+      writeSync(fd, payload);
+    } catch {
+      // ignore
+    }
+  }, ttyPath);
+}
+
+/**
+ * Capture the terminal's current stty state for later restoration.
+ */
+function captureTtyState(ttyPath?: string | null): string | null {
+  if (process.platform === 'win32') return null;
+  let state: string | null = null;
+  try {
+    if (ttyPath) {
+      const result = spawnSync(sttyBinary, sttyArgsForPath(ttyPath, ['-g']), {
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      state = result.stdout?.toString().trim() || null;
+    } else if (process.stdin.isTTY) {
+      const result = spawnSync(sttyBinary, ['-g'], { stdio: [0, 'pipe', 'ignore'] });
+      state = result.stdout?.toString().trim() || null;
+    } else {
+      withTtyFd(
+        'r',
+        (fd) => {
+          const result = spawnSync(sttyBinary, ['-g'], { stdio: [fd, 'pipe', 'ignore'] });
+          state = result.stdout?.toString().trim() || null;
+        },
+        ttyPath
+      );
+    }
+  } catch {
+    return null;
+  }
+  return state;
+}
+
+/**
+ * Restore tty modes + keyboard reporting and optionally issue a hard reset.
+ */
+function restoreLocalTerminal(ttyState?: string | null, ttyPath?: string | null, hard = false) {
+  writeToTty(hard ? terminalHardResetSequence : terminalResetSequence, ttyPath);
+  if (process.platform !== 'win32') {
+    try {
+      const args = ttyState ? [ttyState] : ['sane'];
+      if (ttyPath) {
+        spawnSync(sttyBinary, sttyArgsForPath(ttyPath, args), { stdio: ['ignore', 'ignore', 'ignore'] });
+      } else if (process.stdin.isTTY) {
+        spawnSync(sttyBinary, args, { stdio: [0, 'ignore', 'ignore'] });
+      } else {
+        withTtyFd('r', (fd) => {
+          spawnSync(sttyBinary, args, { stdio: [fd, 'ignore', 'ignore'] });
+        }, ttyPath);
+      }
+    } catch {
+      // ignore
+    }
+    try {
+      if (ttyPath) {
+        withTtyFd(
+          'r+',
+          (fd) => {
+            spawnSync(resetBinary, [], { stdio: [fd, fd, 'ignore'] });
+          },
+          ttyPath
+        );
+      } else if (process.stdin.isTTY) {
+        spawnSync(resetBinary, [], { stdio: [0, 'ignore', 'ignore'] });
+      } else {
+        withTtyFd('r+', (fd) => {
+          spawnSync(resetBinary, [], { stdio: [fd, 'ignore', 'ignore'] });
+        }, ttyPath);
+      }
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Capture a known-good tty baseline and return a context for later restoration.
+ */
+function captureTtyContext(): TtyContext {
+  const ttyPath = resolveTtyPath();
+  const ttyState = captureTtyState(ttyPath);
+  if (!ttyState) {
+    // Best effort fallback to recover a broken terminal when state capture fails.
+    restoreLocalTerminal(undefined, ttyPath);
+  }
+  return { ttyPath, ttyState };
+}
+
+/**
+ * Restore the tty based on a previously captured context.
+ */
+function restoreTtyContext(context: TtyContext, hard = false) {
+  restoreLocalTerminal(context.ttyState, context.ttyPath, hard);
+}
+
+/**
+ * Spawn a watchdog that resets the tty if the parent process is killed.
+ */
+function startTtyWatchdog(context: TtyContext): (() => void) | null {
+  if (process.env[watchdogFlag] === '1') return null;
+  if (!process.stdin.isTTY && !process.stdout.isTTY) return null;
+  const ttyPath = context.ttyPath;
+  const cancelPath = path.join(
+    os.tmpdir(),
+    `spritz-tty-cancel-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  );
+  let inheritedTtyFd: number | null = null;
+  try {
+    const path = ttyPath || '/dev/tty';
+    try {
+      inheritedTtyFd = openSync(path, 'r+');
+    } catch {
+      try {
+        inheritedTtyFd = openSync(path, 'w');
+      } catch {
+        inheritedTtyFd = null;
+      }
+    }
+  } catch {
+    inheritedTtyFd = null;
+  }
+  const payload = JSON.stringify(terminalResetSequence);
+  const hardPayload = JSON.stringify(terminalHardResetSequence);
+  const state = context.ttyState ? JSON.stringify(context.ttyState) : 'null';
+  const script = `
+    const { openSync, writeSync, closeSync, existsSync, unlinkSync } = require('fs');
+    const { spawnSync } = require('child_process');
+    const pid = ${process.pid};
+    const payload = ${payload};
+    const hardPayload = ${hardPayload};
+    const ttyPath = ${ttyPath ? JSON.stringify(ttyPath) : 'null'};
+    const inheritedFd = ${inheritedTtyFd !== null ? 3 : 'null'};
+    const cancelPath = ${JSON.stringify(cancelPath)};
+    const ttyState = ${state};
+    const sttyBin = ${JSON.stringify(sttyBinary)};
+    const resetBin = ${JSON.stringify(resetBinary)};
+    const sttyFlag = ${JSON.stringify(process.platform === 'darwin' ? '-f' : '-F')};
+    let fd = null;
+    function openFd() {
+      if (inheritedFd !== null) return inheritedFd;
+      if (fd !== null) return fd;
+      const path = ttyPath || '/dev/tty';
+      try {
+        fd = openSync(path, 'r+');
+        return fd;
+      } catch {}
+      try {
+        fd = openSync(path, 'w');
+        return fd;
+      } catch {}
+      try {
+        fd = openSync(path, 'r');
+        return fd;
+      } catch {}
+      return null;
+    }
+    function alive() {
+      try { process.kill(pid, 0); return true; } catch { return false; }
+    }
+    function doReset(hard) {
+      const handle = openFd();
+      if (handle !== null) {
+        try { writeSync(handle, hard ? hardPayload : payload); } catch {}
+        try {
+          const args = ttyState ? [ttyState] : ['sane'];
+          if (ttyPath) {
+            spawnSync(sttyBin, [sttyFlag, ttyPath, ...args], { stdio: ['ignore', 'ignore', 'ignore'] });
+          } else {
+            spawnSync(sttyBin, args, { stdio: [handle, handle, 'ignore'] });
+          }
+        } catch {}
+        try {
+          spawnSync(resetBin, [], { stdio: [handle, handle, 'ignore'] });
+        } catch {}
+      }
+    }
+    const banner = ${JSON.stringify(ttyRestoreBanner)};
+    const interval = setInterval(() => {
+      if (!alive()) {
+        clearInterval(interval);
+        if (existsSync(cancelPath)) {
+          try { unlinkSync(cancelPath); } catch {}
+          process.exit(0);
+        }
+        doReset(true);
+        const handle = openFd();
+        if (handle !== null) {
+          try { writeSync(handle, banner); } catch {}
+        }
+        if (fd !== null && inheritedFd === null) {
+          try { closeSync(fd); } catch {}
+        }
+        process.exit(0);
+      }
+    }, ${ttyWatchdogIntervalMs});
+  `;
+  const child = spawn(process.execPath, ['-e', script], {
+    detached: true,
+    stdio: inheritedTtyFd !== null ? ['ignore', 'ignore', 'ignore', inheritedTtyFd] : 'ignore',
+    env: { ...process.env, [watchdogFlag]: '1' },
+  });
+  child.unref();
+  if (inheritedTtyFd !== null) {
+    try {
+      closeSync(inheritedTtyFd);
+    } catch {
+      // ignore
+    }
+  }
+  return () => {
+    try {
+      writeFileSync(cancelPath, '1');
+    } catch {
+      // ignore
+    }
+  };
+}
 
 function usage() {
   console.log(`Spritz CLI
@@ -421,6 +737,8 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
     console.log(url);
     return;
   }
+  const ttyContext = captureTtyContext();
+  const cancelWatchdog = startTtyWatchdog(ttyContext);
   const headers: Record<string, string> = {
     ...(await authHeaders()),
     Origin: origin,
@@ -444,7 +762,13 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
       ws.send(terminalResizePayload());
     }
   };
+  const onExit = () => {
+    cancelWatchdog?.();
+    restoreTtyContext(ttyContext);
+  };
   const onSignal = () => {
+    cancelWatchdog?.();
+    restoreTtyContext(ttyContext);
     if (ws.readyState === WebSocket.OPEN) {
       ws.close();
     }
@@ -469,10 +793,15 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
     process.off('SIGWINCH', onResize);
     process.off('SIGINT', onSignal);
     process.off('SIGTERM', onSignal);
+    process.off('SIGHUP', onSignal);
+    process.off('exit', onExit);
+    cancelWatchdog?.();
+    restoreTtyContext(ttyContext);
   };
 
   await new Promise<void>((resolve, reject) => {
     ws.on('open', () => {
+      process.on('exit', onExit);
       if (stdin.isTTY) {
         stdin.setRawMode(true);
       }
@@ -484,6 +813,7 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
       process.on('SIGWINCH', onResize);
       process.on('SIGINT', onSignal);
       process.on('SIGTERM', onSignal);
+      process.on('SIGHUP', onSignal);
       ws.send(terminalResizePayload());
     });
 

@@ -10,12 +10,14 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node --enable-source-maps dist/index.js",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "test": "node --test --import tsx"
   },
   "dependencies": {
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "node-pty": "^1.0.0",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"
   }

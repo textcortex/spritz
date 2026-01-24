@@ -1,0 +1,40 @@
+name: cli-tests
+
+on:
+  pull_request:
+    paths:
+      - "cli/**"
+  push:
+    branches:
+      - main
+    paths:
+      - "cli/**"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: "10.28.0"
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: "cli/pnpm-lock.yaml"
+
+      - name: Install
+        run: pnpm install
+
+      - name: Test
+        env:
+          SPRITZ_PTY_TEST: "0"
+        run: pnpm test
