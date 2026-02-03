@@ -219,7 +219,7 @@ spec:
               value: {{ .Values.api.sshGateway.container | quote }}
             - name: SPRITZ_SSH_COMMAND
               value: {{ .Values.api.sshGateway.command | quote }}
-            {{- if .Values.api.sshGateway.secretName }}
+            {{- if and .Values.api.sshGateway.enabled .Values.api.sshGateway.secretName }}
             - name: SPRITZ_SSH_CA_KEY
               valueFrom:
                 secretKeyRef:
@@ -231,19 +231,19 @@ spec:
                   name: {{ .Values.api.sshGateway.secretName | quote }}
                   key: {{ .Values.api.sshGateway.hostKeySecretKey | quote }}
             {{- else }}
-            {{- if .Values.api.sshGateway.caKey }}
+            {{- if and .Values.api.sshGateway.enabled .Values.api.sshGateway.caKey }}
             - name: SPRITZ_SSH_CA_KEY
               value: {{ .Values.api.sshGateway.caKey | quote }}
             {{- end }}
-            {{- if .Values.api.sshGateway.caKeyFile }}
+            {{- if and .Values.api.sshGateway.enabled .Values.api.sshGateway.caKeyFile }}
             - name: SPRITZ_SSH_CA_KEY_FILE
               value: {{ .Values.api.sshGateway.caKeyFile | quote }}
             {{- end }}
-            {{- if .Values.api.sshGateway.hostKey }}
+            {{- if and .Values.api.sshGateway.enabled .Values.api.sshGateway.hostKey }}
             - name: SPRITZ_SSH_HOST_KEY
               value: {{ .Values.api.sshGateway.hostKey | quote }}
             {{- end }}
-            {{- if .Values.api.sshGateway.hostKeyFile }}
+            {{- if and .Values.api.sshGateway.enabled .Values.api.sshGateway.hostKeyFile }}
             - name: SPRITZ_SSH_HOST_KEY_FILE
               value: {{ .Values.api.sshGateway.hostKeyFile | quote }}
             {{- end }}
