@@ -1,7 +1,9 @@
+{{- $clusterRoleName := default "spritz-operator" .Values.operator.clusterRoleName -}}
+{{- $clusterRoleBindingName := default $clusterRoleName .Values.operator.clusterRoleBindingName -}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: spritz-operator
+  name: {{ $clusterRoleName }}
 rules:
   - apiGroups: ["spritz.sh"]
     resources: ["spritzes", "spritzes/status", "spritzes/finalizers"]
@@ -22,7 +24,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: spritz-operator
+  name: {{ $clusterRoleBindingName }}
 subjects:
   - kind: ServiceAccount
     name: spritz-operator
@@ -30,4 +32,4 @@ subjects:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: spritz-operator
+  name: {{ $clusterRoleName }}

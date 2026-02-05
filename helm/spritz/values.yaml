@@ -4,6 +4,8 @@ operator:
   rolloutAt: ""
   namespace: spritz-system
   serviceAccountName: spritz-operator
+  clusterRoleName: spritz-operator
+  clusterRoleBindingName: spritz-operator
   ttlGracePeriod: 5m
   workspaceSizeLimit: 10Gi
   homeSizeLimit: 5Gi
