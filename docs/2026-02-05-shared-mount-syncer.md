@@ -23,9 +23,9 @@ and each pod syncs one or more shared mounts into local paths.
 - Source of truth: object storage bucket.
 - Writer: Spritz API (single writer).
 - Readers: per-pod syncer (init + optional sidecar).
-- Local target: `emptyDir` mounted at `/shared`.
-- Each mount is materialized under `/shared/<mount-name>`.
-- Workloads read from `/shared/<mount-name>/live`.
+- Local target: `emptyDir` mounted per mount path (configurable per mount).
+- Each mount is materialized under `<mountPath>/live`.
+- Workloads read/write from `<mountPath>/live` (a stable symlink).
 
 ## Shared Mount Model
 
@@ -39,13 +39,12 @@ Example config (conceptual):
 ```yaml
 sharedMounts:
   - name: config
-    mountPath: /shared/config
+    mountPath: /home/dev/.config
     scope: owner
-    mode: read-only
-    syncMode: poll
-    pollSeconds: 30
+    mode: snapshot
+    syncMode: manual
   - name: workspace
-    mountPath: /shared/workspace
+    mountPath: /home/dev/workspace
     scope: owner
     mode: snapshot
     syncMode: manual
@@ -64,7 +63,7 @@ Field expectations:
 Each mount has its own prefix and versioned bundle:
 
 - `spritz-shared/<scope>/<scope-id>/<mount>/latest.json`
-- `spritz-shared/<scope>/<scope-id>/<mount>/revisions/<revision>.tar.zst`
+- `spritz-shared/<scope>/<scope-id>/<mount>/revisions/<revision>.tar.gz`
 
 Example `latest.json`:
 
@@ -84,8 +83,8 @@ Init (startup):
 2. Download the tarball from object storage.
 3. Extract into a temp dir (for example `/shared/<mount>/.incoming`).
 4. Atomically swap:
-   - `mv /shared/<mount>/.incoming /shared/<mount>/current`
-   - `ln -sfn /shared/<mount>/current /shared/<mount>/live`
+   - `mv <mountPath>/.incoming <mountPath>/current`
+   - `ln -sfn <mountPath>/current <mountPath>/live`
 
 Sidecar (optional polling):
 
@@ -117,10 +116,10 @@ Two portable options keep the implementation cloud-agnostic:
 
 Internal endpoints for the syncer and writer:
 
-- `GET /internal/v1/shared-mounts/{scope}/{scopeId}/{mount}/latest`
-- `GET /internal/v1/shared-mounts/{scope}/{scopeId}/{mount}/revisions/{revision}`
-- `PUT /internal/v1/shared-mounts/{scope}/{scopeId}/{mount}/revisions/{revision}`
-- `PUT /internal/v1/shared-mounts/{scope}/{scopeId}/{mount}/latest`
+- `GET /internal/v1/shared-mounts/owner/{ownerId}/{mount}/latest`
+- `GET /internal/v1/shared-mounts/owner/{ownerId}/{mount}/revisions/{revision}`
+- `PUT /internal/v1/shared-mounts/owner/{ownerId}/{mount}/revisions/{revision}`
+- `PUT /internal/v1/shared-mounts/owner/{ownerId}/{mount}/latest`
 
 Expected behavior:
 
@@ -139,6 +138,47 @@ Scope controls who can read or publish a mount:
 
 The API enforces scope checks. Pods only receive credentials for their allowed scopes.
 
+Initial implementation scope:
+
+- `owner` only.
+  - Other scopes are defined here but not implemented yet.
+
+## Internal Auth (Current)
+
+The internal endpoints are protected by a shared bearer token:
+
+- Syncer sends `Authorization: Bearer <SPRITZ_INTERNAL_TOKEN>`.
+- API checks the token on all `/internal/v1/...` endpoints.
+
+This is intentionally simple and works for initial rollout, but it is coarse:
+
+- Any process with the token can read or write any owner scope within the same
+  environment.
+- Staging/production remain isolated because each environment has separate tokens
+  and buckets.
+
+## Recommended Long-Term Auth (Best Practice)
+
+Replace the shared token with a short-lived, per-workspace token that is scoped
+to one owner (and optionally one mount).
+
+Preferred model:
+
+1. Operator mints a JWT per workspace pod with claims:
+   - `owner_id`
+   - `mount` (optional)
+   - `exp` (short TTL, 30-60 minutes)
+   - `pod_uid` (optional)
+2. Token is stored only in that pod (projected secret).
+3. API verifies JWT with a public key.
+4. API enforces `owner_id` to match the request path.
+5. Operator rotates tokens periodically.
+
+Alternative (Kubernetes-native):
+
+- Use Bound ServiceAccount tokens and `TokenReview` in the API.
+- Map pod identity to `owner_id` using labels or annotations.
+
 ## Snapshot Writes (No RWX)
 
 `snapshot` mode never exposes live RWX semantics. Writers publish bundles explicitly:
@@ -147,7 +187,8 @@ The API enforces scope checks. Pods only receive credentials for their allowed s
 2. API writes the revision tarball.
 3. API updates `latest.json` if the expected revision matches.
 
-## Deprecated: Shared Config PVC
+For Spritz pods, the shared mount is writable. The syncer sidecar periodically
+packages the mount and publishes a new revision when content changes.
 
 ## Deprecated: Shared Config PVC
 
