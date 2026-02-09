@@ -1089,7 +1089,8 @@ if (form && refreshBtn) {
       try {
         const mounts = parseSharedMountsInput(sharedMountsRaw);
         if (mounts && mounts.length > 0) {
-          payload.spec.sharedMounts = mounts;
+          payload.userConfig = payload.userConfig || {};
+          payload.userConfig.sharedMounts = mounts;
         }
       } catch (err) {
         showNotice(err.message || 'Invalid shared mounts YAML.');

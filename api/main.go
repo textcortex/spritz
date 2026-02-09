@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -40,6 +42,7 @@ type server struct {
 	defaultMetadata   map[string]string
 	sharedMounts      sharedMountsConfig
 	sharedMountsStore *sharedMountsStore
+	userConfigPolicy  userConfigPolicy
 }
 
 func main() {
@@ -85,6 +88,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "invalid shared mounts config: %v\n", err)
 		os.Exit(1)
 	}
+	userConfigPolicy := newUserConfigPolicy()
 	if sharedMounts.enabled && !internalAuth.enabled {
 		fmt.Fprintln(os.Stderr, "SPRITZ_INTERNAL_TOKEN must be set when shared mounts are enabled")
 		os.Exit(1)
@@ -116,6 +120,7 @@ func main() {
 		defaultMetadata:   defaultAnnotations,
 		sharedMounts:      sharedMounts,
 		sharedMountsStore: sharedStore,
+		userConfigPolicy:  userConfigPolicy,
 	}
 
 	e := echo.New()
@@ -177,6 +182,7 @@ func (s *server) registerRoutes(e *echo.Echo) {
 	secured.POST("/spritzes", s.createSpritz)
 	secured.GET("/spritzes/:name", s.getSpritz)
 	secured.DELETE("/spritzes/:name", s.deleteSpritz)
+	secured.PATCH("/spritzes/:name/user-config", s.updateUserConfig)
 	secured.POST("/spritzes/:name/ssh", s.mintSSHCert)
 	if s.terminal.enabled {
 		secured.GET("/spritzes/:name/terminal", s.openTerminal)
@@ -192,6 +198,7 @@ type createRequest struct {
 	Name        string              `json:"name"`
 	Namespace   string              `json:"namespace,omitempty"`
 	Spec        spritzv1.SpritzSpec `json:"spec"`
+	UserConfig  json.RawMessage     `json:"userConfig,omitempty"`
 	Labels      map[string]string   `json:"labels,omitempty"`
 	Annotations map[string]string   `json:"annotations,omitempty"`
 }
@@ -210,6 +217,20 @@ func (s *server) createSpritz(c echo.Context) error {
 	if body.Name == "" {
 		return writeError(c, http.StatusBadRequest, "name is required")
 	}
+
+	userConfigKeys, userConfigPayload, err := parseUserConfig(body.UserConfig)
+	if err != nil {
+		return writeError(c, http.StatusBadRequest, err.Error())
+	}
+	if len(userConfigKeys) > 0 {
+		normalized, err := normalizeUserConfig(s.userConfigPolicy, userConfigKeys, userConfigPayload)
+		if err != nil {
+			return writeError(c, http.StatusBadRequest, err.Error())
+		}
+		userConfigPayload = normalized
+		applyUserConfig(&body.Spec, userConfigKeys, userConfigPayload)
+	}
+
 	if body.Spec.Image == "" {
 		return writeError(c, http.StatusBadRequest, "spec.image is required")
 	}
@@ -268,6 +289,17 @@ func (s *server) createSpritz(c echo.Context) error {
 		labels[k] = v
 	}
 	annotations := mergeStringMap(s.defaultMetadata, body.Annotations)
+	if len(userConfigKeys) > 0 {
+		encoded, err := encodeUserConfig(userConfigKeys, userConfigPayload)
+		if err != nil {
+			return writeError(c, http.StatusBadRequest, "invalid userConfig")
+		}
+		if encoded != "" {
+			annotations = mergeStringMap(annotations, map[string]string{
+				userConfigAnnotationKey: encoded,
+			})
+		}
+	}
 
 	body.Spec.Owner = owner
 	applyIngressDefaults(&body.Spec, body.Name, namespace, s.ingressDefaults)
@@ -358,6 +390,94 @@ func (s *server) getSpritz(c echo.Context) error {
 	}
 	if s.auth.enabled() && !principal.IsAdmin && spritz.Spec.Owner.ID != principal.ID {
 		return writeError(c, http.StatusForbidden, "forbidden")
+	}
+
+	return writeJSON(c, http.StatusOK, spritz)
+}
+
+func (s *server) updateUserConfig(c echo.Context) error {
+	name := c.Param("name")
+	if name == "" {
+		return writeError(c, http.StatusNotFound, "not found")
+	}
+	principal, ok := principalFromContext(c)
+	if s.auth.enabled() && (!ok || principal.ID == "") {
+		return writeError(c, http.StatusUnauthorized, "unauthenticated")
+	}
+
+	namespace := s.namespace
+	if namespace == "" {
+		namespace = c.QueryParam("namespace")
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	spritz := &spritzv1.Spritz{}
+	if err := s.client.Get(c.Request().Context(), client.ObjectKey{Name: name, Namespace: namespace}, spritz); err != nil {
+		return writeError(c, http.StatusNotFound, err.Error())
+	}
+	if s.auth.enabled() && !principal.IsAdmin && spritz.Spec.Owner.ID != principal.ID {
+		return writeError(c, http.StatusForbidden, "forbidden")
+	}
+
+	raw, err := io.ReadAll(c.Request().Body)
+	if err != nil {
+		return writeError(c, http.StatusBadRequest, "invalid userConfig")
+	}
+	userConfigKeys, userConfigPayload, err := parseUserConfig(raw)
+	if err != nil {
+		return writeError(c, http.StatusBadRequest, err.Error())
+	}
+	if len(userConfigKeys) == 0 {
+		return writeError(c, http.StatusBadRequest, "userConfig is required")
+	}
+	normalized, err := normalizeUserConfig(s.userConfigPolicy, userConfigKeys, userConfigPayload)
+	if err != nil {
+		return writeError(c, http.StatusBadRequest, err.Error())
+	}
+	applyUserConfig(&spritz.Spec, userConfigKeys, normalized)
+
+	if spritz.Spec.Repo != nil && len(spritz.Spec.Repos) > 0 {
+		return writeError(c, http.StatusBadRequest, "spec.repo cannot be set when spec.repos is provided")
+	}
+	if spritz.Spec.Repo != nil {
+		if err := validateRepoDir(spritz.Spec.Repo.Dir); err != nil {
+			return writeError(c, http.StatusBadRequest, err.Error())
+		}
+	}
+	for _, repo := range spritz.Spec.Repos {
+		if err := validateRepoDir(repo.Dir); err != nil {
+			return writeError(c, http.StatusBadRequest, err.Error())
+		}
+	}
+	if len(spritz.Spec.SharedMounts) > 0 {
+		normalizedMounts, err := normalizeSharedMounts(spritz.Spec.SharedMounts)
+		if err != nil {
+			return writeError(c, http.StatusBadRequest, err.Error())
+		}
+		spritz.Spec.SharedMounts = normalizedMounts
+	}
+
+	annotations := spritz.Annotations
+	encoded, err := encodeUserConfig(userConfigKeys, normalized)
+	if err != nil {
+		return writeError(c, http.StatusBadRequest, "invalid userConfig")
+	}
+	if encoded == "" {
+		if annotations != nil {
+			delete(annotations, userConfigAnnotationKey)
+		}
+	} else {
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[userConfigAnnotationKey] = encoded
+	}
+	spritz.Annotations = annotations
+
+	if err := s.client.Update(c.Request().Context(), spritz); err != nil {
+		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
 
 	return writeJSON(c, http.StatusOK, spritz)
