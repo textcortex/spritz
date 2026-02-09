@@ -186,6 +186,11 @@ function parsePresets(raw) {
 }
 
 const presets = parsePresets(config.presets) ?? defaultPresets;
+const defaultSharedMountsYaml = `- name: config
+  mountPath: /home/dev/.config
+  scope: owner
+  mode: snapshot
+  syncMode: manual`;
 
 function normalizePresetEnv(env) {
   if (!env) return null;
@@ -209,6 +214,15 @@ function normalizePresetEnv(env) {
       .filter((item) => item.name.trim() !== '');
   }
   return null;
+}
+
+function applySharedMountsDefaults() {
+  if (!form) return;
+  const textarea = form.querySelector('textarea[name="shared_mounts"]');
+  if (!textarea) return;
+  if (!textarea.value.trim()) {
+    textarea.value = defaultSharedMountsYaml;
+  }
 }
 
 function applyRepoDefaults() {
@@ -1022,17 +1036,18 @@ function cleanupTerminal() {
 
 function handleRoute() {
   const terminalName = terminalNameFromPath();
-  if (terminalName) {
-    renderTerminalPage(terminalName);
-  } else {
-    if (activeTerminalName) cleanupTerminal();
-    if (form && refreshBtn) {
-      applyRepoDefaults();
-      setupPresets();
-      fetchSpritzes();
+    if (terminalName) {
+      renderTerminalPage(terminalName);
+    } else {
+      if (activeTerminalName) cleanupTerminal();
+      if (form && refreshBtn) {
+        applyRepoDefaults();
+        applySharedMountsDefaults();
+        setupPresets();
+        fetchSpritzes();
+      }
     }
   }
-}
 
 window.addEventListener('hashchange', handleRoute);
 
@@ -1098,6 +1113,7 @@ if (form && refreshBtn) {
         if (help) help.textContent = '';
       }
       applyRepoDefaults();
+      applySharedMountsDefaults();
       await fetchSpritzes();
       showNotice('');
     } catch (err) {
