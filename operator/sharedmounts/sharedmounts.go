@@ -177,10 +177,11 @@ func ValidateMounts(mounts []MountSpec) error {
 		}
 		seenNames[mount.Name] = true
 		cleaned := strings.TrimRight(strings.TrimSpace(mount.MountPath), "/")
-		if !seenPaths[cleaned] {
-			paths = append(paths, cleaned)
-			seenPaths[cleaned] = true
+		if seenPaths[cleaned] {
+			return fmt.Errorf("duplicate shared mount path: %s", cleaned)
 		}
+		paths = append(paths, cleaned)
+		seenPaths[cleaned] = true
 	}
 	for i, base := range paths {
 		for j, other := range paths {
