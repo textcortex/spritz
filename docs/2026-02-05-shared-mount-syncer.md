@@ -34,6 +34,10 @@ directories, each with its own scope and sync policy.
 
 Config is just a mount named `config`; it has no special handling.
 
+Per-spritz configuration is supported. Each Spritz can set its own mount list
+and mount paths. If no mounts are provided in the Spritz spec, the operator can
+fall back to a platform default list.
+
 Example config (conceptual):
 
 ```yaml
@@ -108,9 +112,15 @@ Two portable options keep the implementation cloud-agnostic:
 
 ## Kubernetes Wiring (High Level)
 
-- `emptyDir` volume mounted at `/shared`.
+- One `emptyDir` volume per mount, mounted at `mountPath`.
 - `initContainer` runs the first sync for all mounts.
 - `sidecar` keeps mounts current (optional, per mount).
+
+When using per-spritz mounts:
+
+- The Spritz spec supplies `sharedMounts`.
+- The operator uses those mounts for that pod.
+- The syncer receives the mount list via env JSON (`SPRITZ_SHARED_MOUNTS`).
 
 ## API Surface (Spec)
 

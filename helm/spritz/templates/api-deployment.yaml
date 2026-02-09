@@ -263,6 +263,37 @@ spec:
             - name: SPRITZ_DEFAULT_SSH_USER
               value: {{ .Values.api.sshDefaults.user | quote }}
             {{- end }}
+            {{- if and .Values.api.sharedMounts .Values.api.sharedMounts.enabled }}
+            - name: SPRITZ_SHARED_MOUNTS
+              value: {{ toJson .Values.api.sharedMounts.mounts | quote }}
+            - name: SPRITZ_SHARED_MOUNTS_PREFIX
+              value: {{ .Values.api.sharedMounts.prefix | quote }}
+            - name: SPRITZ_SHARED_MOUNTS_RCLONE_REMOTE
+              value: {{ .Values.api.sharedMounts.rclone.remote | quote }}
+            - name: SPRITZ_SHARED_MOUNTS_BUCKET
+              value: {{ .Values.api.sharedMounts.rclone.bucket | quote }}
+            {{- if .Values.api.sharedMounts.maxBundleBytes }}
+            - name: SPRITZ_SHARED_MOUNTS_MAX_BUNDLE_BYTES
+              value: {{ .Values.api.sharedMounts.maxBundleBytes | quote }}
+            {{- end }}
+            {{- if .Values.api.sharedMounts.rclone.configSecret.name }}
+            - name: SPRITZ_SHARED_MOUNTS_RCLONE_CONFIG
+              value: /etc/spritz/rclone/{{ .Values.api.sharedMounts.rclone.configSecret.key }}
+            {{- end }}
+            {{- if .Values.api.sharedMounts.internalTokenSecret.name }}
+            - name: SPRITZ_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.sharedMounts.internalTokenSecret.name | quote }}
+                  key: {{ .Values.api.sharedMounts.internalTokenSecret.key | quote }}
+            {{- end }}
+            {{- end }}
+          {{- if and .Values.api.sharedMounts .Values.api.sharedMounts.enabled .Values.api.sharedMounts.rclone.configSecret.name }}
+          volumeMounts:
+            - name: spritz-shared-mounts-rclone
+              mountPath: /etc/spritz/rclone
+              readOnly: true
+          {{- end }}
           ports:
             - name: http
               containerPort: 8080
@@ -270,6 +301,12 @@ spec:
             - name: ssh
               containerPort: {{ .Values.api.sshGateway.port }}
             {{- end }}
+      {{- if and .Values.api.sharedMounts .Values.api.sharedMounts.enabled .Values.api.sharedMounts.rclone.configSecret.name }}
+      volumes:
+        - name: spritz-shared-mounts-rclone
+          secret:
+            secretName: {{ .Values.api.sharedMounts.rclone.configSecret.name | quote }}
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service

@@ -4,6 +4,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+
+	"spritz.sh/operator/sharedmounts"
 )
 
 //go:generate ../../hack/generate-crd.sh
@@ -16,6 +18,8 @@ type SpritzSpec struct {
 	Repo  *SpritzRepo     `json:"repo,omitempty"`
 	Repos []SpritzRepo    `json:"repos,omitempty"`
 	Env   []corev1.EnvVar `json:"env,omitempty"`
+	// SharedMounts configures per-spritz shared directories.
+	SharedMounts []sharedmounts.MountSpec `json:"sharedMounts,omitempty"`
 	// +kubebuilder:validation:Pattern="^([0-9]+h)?([0-9]+m)?([0-9]+s)?$"
 	TTL         string                      `json:"ttl,omitempty"`
 	Resources   corev1.ResourceRequirements `json:"resources,omitempty"`

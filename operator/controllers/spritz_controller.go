@@ -29,19 +29,19 @@ import (
 )
 
 const (
-	defaultRepoDir             = "/workspace/repo"
-	defaultWebPort             = int32(8080)
-	defaultSSHPort             = int32(22)
-	defaultSSHUser             = "spritz"
-	defaultSSHMode             = "service"
-	spritzContainerName        = "spritz"
-	spritzFinalizer            = "spritz.sh/finalizer"
-	defaultTTLGrace            = 5 * time.Minute
-	defaultRepoInitImage       = "alpine/git:2.45.2"
-	repoAuthMountPath          = "/var/run/spritz/repo-auth"
-	repoInitHomeDir            = "/home/dev"
-	repoInitGroupID      int64 = 65532
-	defaultSharedConfigMount   = "/shared"
+	defaultRepoDir                 = "/workspace/repo"
+	defaultWebPort                 = int32(8080)
+	defaultSSHPort                 = int32(22)
+	defaultSSHUser                 = "spritz"
+	defaultSSHMode                 = "service"
+	spritzContainerName            = "spritz"
+	spritzFinalizer                = "spritz.sh/finalizer"
+	defaultTTLGrace                = 5 * time.Minute
+	defaultRepoInitImage           = "alpine/git:2.45.2"
+	repoAuthMountPath              = "/var/run/spritz/repo-auth"
+	repoInitHomeDir                = "/home/dev"
+	repoInitGroupID          int64 = 65532
+	defaultSharedConfigMount       = "/shared"
 )
 
 var (
@@ -310,21 +310,25 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 		env = append(env, spritz.Spec.Env...)
 
 		ports := containerPorts(spritz)
-	homeSettings := loadHomePVCSettings()
-	if err := validateMountPaths(homeSettings.mountPaths); err != nil {
-		return err
-	}
-	sharedSettings := loadSharedConfigPVCSettings()
-	if sharedSettings.enabled {
-		if err := validateSharedConfigMountPath(sharedSettings.mountPath); err != nil {
+		homeSettings := loadHomePVCSettings()
+		if err := validateMountPaths(homeSettings.mountPaths); err != nil {
 			return err
 		}
-	}
-	homeVolumeSource := corev1.VolumeSource{
-		EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: homeSizeLimit},
-	}
-	homePVCEnabled := homeSettings.enabled && spritz.Spec.Owner.ID != ""
-	if homePVCEnabled {
+		sharedSettings := loadSharedConfigPVCSettings()
+		if sharedSettings.enabled {
+			if err := validateSharedConfigMountPath(sharedSettings.mountPath); err != nil {
+				return err
+			}
+		}
+		sharedMountsSettings, err := loadSharedMountsSettings()
+		if err != nil {
+			return err
+		}
+		homeVolumeSource := corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: homeSizeLimit},
+		}
+		homePVCEnabled := homeSettings.enabled && spritz.Spec.Owner.ID != ""
+		if homePVCEnabled {
 			homePVCName := ownerPVCName(homeSettings.prefix, spritz.Spec.Owner.ID)
 			if err := r.ensureHomePVC(ctx, spritz, homePVCName, homeSettings); err != nil {
 				return fmt.Errorf("failed to ensure home PVC %s: %w", homePVCName, err)
@@ -335,19 +339,19 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 				},
 			}
 		}
-	sharedPVCEnabled := sharedSettings.enabled && spritz.Spec.Owner.ID != ""
-	sharedVolumeSource := corev1.VolumeSource{}
-	if sharedPVCEnabled {
-		sharedPVCName := ownerPVCName(sharedSettings.prefix, spritz.Spec.Owner.ID)
-		if err := r.ensureSharedConfigPVC(ctx, spritz, sharedPVCName, sharedSettings); err != nil {
-			return fmt.Errorf("failed to ensure shared config PVC %s: %w", sharedPVCName, err)
+		sharedPVCEnabled := sharedSettings.enabled && spritz.Spec.Owner.ID != ""
+		sharedVolumeSource := corev1.VolumeSource{}
+		if sharedPVCEnabled {
+			sharedPVCName := ownerPVCName(sharedSettings.prefix, spritz.Spec.Owner.ID)
+			if err := r.ensureSharedConfigPVC(ctx, spritz, sharedPVCName, sharedSettings); err != nil {
+				return fmt.Errorf("failed to ensure shared config PVC %s: %w", sharedPVCName, err)
+			}
+			sharedVolumeSource = corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: sharedPVCName,
+				},
+			}
 		}
-		sharedVolumeSource = corev1.VolumeSource{
-			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-				ClaimName: sharedPVCName,
-			},
-		}
-	}
 		nodeSelector, err := loadPodNodeSelector()
 		if err != nil {
 			return err
@@ -358,21 +362,34 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 			return err
 		}
 
-	volumes := []corev1.Volume{
-		{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: workspaceSizeLimit}}},
-		{Name: "home", VolumeSource: homeVolumeSource},
-	}
-	if sharedPVCEnabled {
-		volumes = append(volumes, corev1.Volume{Name: "shared-config", VolumeSource: sharedVolumeSource})
-	}
+		volumes := []corev1.Volume{
+			{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: workspaceSizeLimit}}},
+			{Name: "home", VolumeSource: homeVolumeSource},
+		}
+		if sharedPVCEnabled {
+			volumes = append(volumes, corev1.Volume{Name: "shared-config", VolumeSource: sharedVolumeSource})
+		}
 		if len(repoAuthVolumes) > 0 {
 			volumes = append(volumes, repoAuthVolumes...)
 		}
 
-	volumeMounts := append([]corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}}, homeMounts...)
-	if sharedPVCEnabled {
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{Name: "shared-config", MountPath: sharedSettings.mountPath})
-	}
+		volumeMounts := append([]corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}}, homeMounts...)
+		if sharedPVCEnabled {
+			volumeMounts = append(volumeMounts, corev1.VolumeMount{Name: "shared-config", MountPath: sharedSettings.mountPath})
+		}
+		sharedMountRuntime, err := buildSharedMountRuntime(spritz, sharedMountsSettings)
+		if err != nil {
+			return err
+		}
+		if len(sharedMountRuntime.volumes) > 0 {
+			volumes = append(volumes, sharedMountRuntime.volumes...)
+		}
+		if len(sharedMountRuntime.volumeMounts) > 0 {
+			volumeMounts = append(volumeMounts, sharedMountRuntime.volumeMounts...)
+		}
+		if len(sharedMountRuntime.env) > 0 {
+			env = append(env, sharedMountRuntime.env...)
+		}
 		volumeMounts = appendRepoDirMounts(volumeMounts, repoDirs, homeMounts)
 		podSpec := corev1.PodSpec{
 			Containers: []corev1.Container{
@@ -387,9 +404,19 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 			},
 			Volumes: volumes,
 		}
-		podSpec.SecurityContext = buildPodSecurityContext(homePVCEnabled, sharedPVCEnabled, len(repoInitContainers) > 0)
+		podSpec.SecurityContext = buildPodSecurityContext(homePVCEnabled, sharedPVCEnabled, sharedMountsSettings.enabled, len(repoInitContainers) > 0)
+		initContainers := []corev1.Container{}
+		if sharedMountRuntime.initContainer != nil {
+			initContainers = append(initContainers, *sharedMountRuntime.initContainer)
+		}
 		if len(repoInitContainers) > 0 {
-			podSpec.InitContainers = repoInitContainers
+			initContainers = append(initContainers, repoInitContainers...)
+		}
+		if len(initContainers) > 0 {
+			podSpec.InitContainers = initContainers
+		}
+		if sharedMountRuntime.sidecarContainer != nil {
+			podSpec.Containers = append(podSpec.Containers, *sharedMountRuntime.sidecarContainer)
 		}
 		if len(nodeSelector) > 0 {
 			podSpec.NodeSelector = nodeSelector
@@ -873,8 +900,8 @@ func parseNodeSelector(raw string) (map[string]string, error) {
 	return selector, nil
 }
 
-func buildPodSecurityContext(homePVCEnabled bool, sharedConfigPVCEnabled bool, repoInitEnabled bool) *corev1.PodSecurityContext {
-	if !homePVCEnabled && !sharedConfigPVCEnabled && !repoInitEnabled {
+func buildPodSecurityContext(homePVCEnabled bool, sharedConfigPVCEnabled bool, sharedMountsEnabled bool, repoInitEnabled bool) *corev1.PodSecurityContext {
+	if !homePVCEnabled && !sharedConfigPVCEnabled && !sharedMountsEnabled && !repoInitEnabled {
 		return nil
 	}
 	fsGroup := repoInitGroupID

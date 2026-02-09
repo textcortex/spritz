@@ -352,6 +352,51 @@ spec:
                 required:
                 - url
                 type: object
+              repos:
+                items:
+                  description: SpritzRepo describes the repository to clone inside
+                    the workload.
+                  properties:
+                    auth:
+                      description: SpritzRepoAuth describes how to authenticate git
+                        clone operations.
+                      properties:
+                        netrcKey:
+                          description: NetrcKey points to a Secret key containing
+                            a full .netrc file.
+                          type: string
+                        passwordKey:
+                          description: PasswordKey points to a Secret key containing
+                            the password/token to use.
+                          type: string
+                        secretName:
+                          minLength: 1
+                          type: string
+                        usernameKey:
+                          description: UsernameKey points to a Secret key containing
+                            the username to use.
+                          type: string
+                      required:
+                      - secretName
+                      type: object
+                    branch:
+                      type: string
+                    depth:
+                      minimum: 1
+                      type: integer
+                    dir:
+                      type: string
+                    revision:
+                      type: string
+                    submodules:
+                      type: boolean
+                    url:
+                      format: uri
+                      type: string
+                  required:
+                  - url
+                  type: object
+                type: array
               resources:
                 description: ResourceRequirements describes the compute resource requirements.
                 properties:
@@ -411,6 +456,34 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              sharedMounts:
+                description: SharedMounts configures per-spritz shared directories.
+                items:
+                  properties:
+                    mode:
+                      type: string
+                    mountPath:
+                      type: string
+                    name:
+                      type: string
+                    pollSeconds:
+                      type: integer
+                    publishSeconds:
+                      type: integer
+                    scope:
+                      type: string
+                    syncMode:
+                      type: string
+                  required:
+                  - mode
+                  - mountPath
+                  - name
+                  - pollSeconds
+                  - publishSeconds
+                  - scope
+                  - syncMode
+                  type: object
+                type: array
               ssh:
                 description: SpritzSSH configures SSH access behavior.
                 properties:
@@ -450,6 +523,9 @@ spec:
             - image
             - owner
             type: object
+            x-kubernetes-validations:
+            - message: spec.repo and spec.repos are mutually exclusive
+              rule: '!(has(self.repo) && has(self.repos) && size(self.repos) > 0)'
           status:
             description: SpritzStatus defines the observed state of Spritz.
             properties:
