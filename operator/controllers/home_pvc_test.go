@@ -203,6 +203,18 @@ func TestBuildRepoInitContainerDedupesHomeMount(t *testing.T) {
 	}
 }
 
+func TestRepoDirNeedsWorkspaceMountHonorsSharedMounts(t *testing.T) {
+	mountRoots := []corev1.VolumeMount{
+		{Name: "shared", MountPath: "/shared"},
+	}
+	if repoDirNeedsWorkspaceMount("/shared/repo", mountRoots) {
+		t.Fatal("expected repo dir under shared mount to skip workspace mount")
+	}
+	if repoDirNeedsWorkspaceMount("/workspace/repo", mountRoots) {
+		t.Fatal("expected repo dir under /workspace to skip workspace mount")
+	}
+}
+
 func TestValidateRepoDir(t *testing.T) {
 	cases := []struct {
 		name    string
