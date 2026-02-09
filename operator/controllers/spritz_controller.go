@@ -357,7 +357,18 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 			return err
 		}
 		homeMounts := buildHomeMounts(homeSettings)
-		repoInitContainers, repoAuthVolumes, err := buildRepoInitContainers(spritz, repos, homeMounts)
+		sharedMountRuntime, err := buildSharedMountRuntime(spritz, sharedMountsSettings)
+		if err != nil {
+			return err
+		}
+		repoMountRoots := append([]corev1.VolumeMount{}, homeMounts...)
+		if sharedPVCEnabled {
+			repoMountRoots = append(repoMountRoots, corev1.VolumeMount{Name: "shared-config", MountPath: sharedSettings.mountPath})
+		}
+		if len(sharedMountRuntime.volumeMounts) > 0 {
+			repoMountRoots = append(repoMountRoots, sharedMountRuntime.volumeMounts...)
+		}
+		repoInitContainers, repoAuthVolumes, err := buildRepoInitContainers(spritz, repos, repoMountRoots)
 		if err != nil {
 			return err
 		}
@@ -377,10 +388,6 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 		if sharedPVCEnabled {
 			volumeMounts = append(volumeMounts, corev1.VolumeMount{Name: "shared-config", MountPath: sharedSettings.mountPath})
 		}
-		sharedMountRuntime, err := buildSharedMountRuntime(spritz, sharedMountsSettings)
-		if err != nil {
-			return err
-		}
 		if len(sharedMountRuntime.volumes) > 0 {
 			volumes = append(volumes, sharedMountRuntime.volumes...)
 		}
@@ -390,7 +397,7 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 		if len(sharedMountRuntime.env) > 0 {
 			env = append(env, sharedMountRuntime.env...)
 		}
-		volumeMounts = appendRepoDirMounts(volumeMounts, repoDirs, homeMounts)
+		volumeMounts = appendRepoDirMounts(volumeMounts, repoDirs, repoMountRoots)
 		podSpec := corev1.PodSpec{
 			Containers: []corev1.Container{
 				{
@@ -939,11 +946,11 @@ func pathHasPrefix(path, prefix string) bool {
 	return strings.HasPrefix(path, prefix+"/")
 }
 
-func repoDirNeedsWorkspaceMount(repoDir string, homeMounts []corev1.VolumeMount) bool {
+func repoDirNeedsWorkspaceMount(repoDir string, mountRoots []corev1.VolumeMount) bool {
 	if pathHasPrefix(repoDir, "/workspace") {
 		return false
 	}
-	for _, mount := range homeMounts {
+	for _, mount := range mountRoots {
 		if pathHasPrefix(repoDir, mount.MountPath) {
 			return false
 		}
@@ -958,7 +965,7 @@ func appendRepoDirMount(mounts []corev1.VolumeMount, repoDir string, needsMount 
 	return append(mounts, corev1.VolumeMount{Name: "workspace", MountPath: repoDir})
 }
 
-func appendRepoDirMounts(mounts []corev1.VolumeMount, repoDirs []string, homeMounts []corev1.VolumeMount) []corev1.VolumeMount {
+func appendRepoDirMounts(mounts []corev1.VolumeMount, repoDirs []string, mountRoots []corev1.VolumeMount) []corev1.VolumeMount {
 	seen := map[string]bool{}
 	for _, mount := range mounts {
 		seen[mount.MountPath] = true
@@ -967,7 +974,7 @@ func appendRepoDirMounts(mounts []corev1.VolumeMount, repoDirs []string, homeMou
 		if repoDir == "" {
 			continue
 		}
-		if !repoDirNeedsWorkspaceMount(repoDir, homeMounts) {
+		if !repoDirNeedsWorkspaceMount(repoDir, mountRoots) {
 			continue
 		}
 		if seen[repoDir] {
@@ -1070,7 +1077,7 @@ fi
 func buildRepoInitContainers(
 	spritz *spritzv1.Spritz,
 	repos []spritzv1.SpritzRepo,
-	homeMounts []corev1.VolumeMount,
+	mountRoots []corev1.VolumeMount,
 ) ([]corev1.Container, []corev1.Volume, error) {
 	if len(repos) == 0 {
 		return nil, nil, nil
@@ -1083,8 +1090,8 @@ func buildRepoInitContainers(
 			continue
 		}
 		repoDir := repoDirFor(repo, i, len(repos))
-		needsRepoDirMount := repoDirNeedsWorkspaceMount(repoDir, homeMounts)
-		container, authVolume, err := buildRepoInitContainerForRepo(spritz, &repo, repoDir, needsRepoDirMount, homeMounts, i)
+		needsRepoDirMount := repoDirNeedsWorkspaceMount(repoDir, mountRoots)
+		container, authVolume, err := buildRepoInitContainerForRepo(spritz, &repo, repoDir, needsRepoDirMount, mountRoots, i)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1107,7 +1114,7 @@ func buildRepoInitContainerForRepo(
 	repo *spritzv1.SpritzRepo,
 	repoDir string,
 	needsRepoDirMount bool,
-	homeMounts []corev1.VolumeMount,
+	mountRoots []corev1.VolumeMount,
 	index int,
 ) (*corev1.Container, *corev1.Volume, error) {
 	if repo == nil || strings.TrimSpace(repo.URL) == "" {
@@ -1143,7 +1150,7 @@ func buildRepoInitContainerForRepo(
 	volumeMounts := []corev1.VolumeMount{
 		{Name: "workspace", MountPath: "/workspace"},
 	}
-	volumeMounts = appendUniqueMounts(volumeMounts, homeMounts...)
+	volumeMounts = appendUniqueMounts(volumeMounts, mountRoots...)
 	volumeMounts = ensureMount(volumeMounts, corev1.VolumeMount{Name: "home", MountPath: repoInitHomeDir})
 	volumeMounts = appendRepoDirMount(volumeMounts, repoDir, needsRepoDirMount)
 	if authConfig != nil {

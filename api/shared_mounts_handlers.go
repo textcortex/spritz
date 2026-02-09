@@ -180,17 +180,32 @@ func (s *server) ensureLatestMatch(ctx context.Context, ownerID, mountName strin
 		expected = strings.TrimSpace(req.Header.Get("If-Match"))
 	}
 	expected = strings.Trim(expected, "\"")
-	if expected == "" {
-		return nil
-	}
 	current, err := s.fetchSharedMountLatest(ctx, ownerID, mountName)
+	if expected == "" {
+		if errors.Is(err, errSharedMountNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		return sharedMountError{status: http.StatusConflict, message: "if-match required"}
+	}
+	if expected == "*" {
+		if errors.Is(err, errSharedMountNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		return sharedMountError{status: http.StatusConflict, message: "revision mismatch"}
+	}
 	if err != nil {
 		if errors.Is(err, errSharedMountNotFound) {
 			return sharedMountError{status: http.StatusConflict, message: "revision mismatch"}
 		}
 		return err
 	}
-	if expected != "*" && current.Revision != expected {
+	if current.Revision != expected {
 		return sharedMountError{status: http.StatusConflict, message: "revision mismatch"}
 	}
 	return nil
