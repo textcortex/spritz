@@ -329,8 +329,8 @@ func bundleLive(mountPath string) (string, string, error) {
 		}
 	}()
 	hasher := sha256.New()
-	gzipWriter := gzip.NewWriter(io.MultiWriter(file, hasher))
-	tarWriter := tar.NewWriter(gzipWriter)
+	gzipWriter := gzip.NewWriter(file)
+	tarWriter := tar.NewWriter(io.MultiWriter(gzipWriter, hasher))
 	if err := writeTarContents(tarWriter, realPath); err != nil {
 		_ = tarWriter.Close()
 		_ = gzipWriter.Close()
