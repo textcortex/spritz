@@ -85,6 +85,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "invalid shared mounts config: %v\n", err)
 		os.Exit(1)
 	}
+	if sharedMounts.enabled && !internalAuth.enabled {
+		fmt.Fprintln(os.Stderr, "SPRITZ_INTERNAL_TOKEN must be set when shared mounts are enabled")
+		os.Exit(1)
+	}
 	var sharedStore *sharedMountsStore
 	if sharedMounts.enabled {
 		sharedStore = newSharedMountsStore(sharedMounts)
