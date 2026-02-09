@@ -206,7 +206,8 @@ func publishLoop(ctx context.Context, logger *log.Logger, client *sharedMountCli
 				logger.Printf("bundle error for %s: %v", state.spec.Name, err)
 				continue
 			}
-			if checksum == state.currentChecksum {
+			checksumValue := "sha256:" + checksum
+			if checksumValue == state.currentChecksum {
 				_ = os.Remove(bundle)
 				continue
 			}
@@ -218,7 +219,7 @@ func publishLoop(ctx context.Context, logger *log.Logger, client *sharedMountCli
 			}
 			manifest := sharedmounts.LatestManifest{
 				Revision:  revision,
-				Checksum:  "sha256:" + checksum,
+				Checksum:  checksumValue,
 				UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 			}
 			if err := client.updateLatest(ctx, ownerID, state.spec.Name, manifest, state.currentRevision); err != nil {
@@ -291,8 +292,17 @@ func applyRevision(ctx context.Context, client *sharedMountClient, ownerID strin
 
 func updateLiveSymlink(mountPath, target string) error {
 	livePath := filepath.Join(mountPath, "live")
-	_ = os.RemoveAll(livePath)
-	return os.Symlink(target, livePath)
+	tmpName := fmt.Sprintf(".live-tmp-%d", time.Now().UnixNano())
+	tmpPath := filepath.Join(mountPath, tmpName)
+	_ = os.RemoveAll(tmpPath)
+	if err := os.Symlink(target, tmpPath); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, livePath); err != nil {
+		_ = os.RemoveAll(tmpPath)
+		return err
+	}
+	return nil
 }
 
 func bundleLive(mountPath string) (string, string, error) {
