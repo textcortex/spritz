@@ -248,6 +248,10 @@ func (in *SpritzSpec) DeepCopyInto(out *SpritzSpec) {
 			in.Env[i].DeepCopyInto(&out.Env[i])
 		}
 	}
+	if in.SharedMounts != nil {
+		out.SharedMounts = make([]sharedmounts.MountSpec, len(in.SharedMounts))
+		copy(out.SharedMounts, in.SharedMounts)
+	}
 	in.Resources.DeepCopyInto(&out.Resources)
 	if in.Labels != nil {
 		out.Labels = make(map[string]string, len(in.Labels))

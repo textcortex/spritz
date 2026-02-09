@@ -53,6 +53,8 @@ func ParseMountsJSON(raw string) ([]MountSpec, error) {
 }
 
 func NormalizeMount(mount MountSpec) MountSpec {
+	mount.Name = strings.TrimSpace(mount.Name)
+	mount.MountPath = strings.TrimSpace(mount.MountPath)
 	scope := strings.TrimSpace(strings.ToLower(mount.Scope))
 	if scope == "" {
 		scope = ScopeOwner
