@@ -93,70 +93,168 @@ function parseYamlKeyValue(line) {
   return { key, value: parseYamlScalar(value) };
 }
 
-function normalizeSharedMountsPayload(payload) {
-  if (Array.isArray(payload)) return payload;
-  if (payload && typeof payload === 'object' && Array.isArray(payload.sharedMounts)) {
-    return payload.sharedMounts;
+function normalizeUserConfigPayload(payload) {
+  if (payload === null || payload === undefined) return null;
+  if (Array.isArray(payload)) {
+    return { sharedMounts: payload };
   }
-  throw new Error('Shared mounts must be a YAML list or JSON array.');
+  if (payload && typeof payload === 'object') {
+    return payload;
+  }
+  throw new Error('User config must be a YAML mapping or JSON object (or a shared mounts list).');
 }
 
-function parseSharedMountsYaml(raw) {
-  const lines = raw
+function countIndent(line) {
+  const match = line.match(/^\s*/);
+  return match ? match[0].length : 0;
+}
+
+function prepareYamlLines(raw) {
+  return raw
     .split(/\r?\n/)
     .map((line) => {
       const hashIndex = line.indexOf('#');
       const sanitized = hashIndex >= 0 ? line.slice(0, hashIndex) : line;
-      return sanitized.replace(/\t/g, '  ').trimEnd();
+      const withoutTabs = sanitized.replace(/\t/g, '  ').replace(/\s+$/, '');
+      if (!withoutTabs.trim()) return null;
+      return { text: withoutTabs, indent: countIndent(withoutTabs) };
     })
-    .filter((line) => line.trim() !== '');
+    .filter(Boolean);
+}
 
-  if (lines.length === 0) return null;
-  let index = 0;
-  if (/^sharedMounts\s*:\s*$/.test(lines[0].trim())) {
-    index = 1;
+function collectYamlBlock(lines, startIndex) {
+  const baseIndent = lines[startIndex].indent;
+  const block = [];
+  let i = startIndex + 1;
+  for (; i < lines.length; i += 1) {
+    if (lines[i].indent <= baseIndent) break;
+    block.push(lines[i]);
   }
-  const mounts = [];
+  return { block, nextIndex: i };
+}
+
+function parseYamlListBlock(lines) {
+  const items = [];
   let current = null;
-  for (; index < lines.length; index += 1) {
-    const line = lines[index];
-    if (/^-\s*/.test(line.trim())) {
-      if (current) mounts.push(current);
+  for (const line of lines) {
+    const trimmed = line.text.trim();
+    if (trimmed.startsWith('-')) {
+      if (current) items.push(current);
       current = {};
-      const rest = line.trim().replace(/^-\s*/, '').trim();
+      const rest = trimmed.replace(/^-\s*/, '').trim();
       if (rest) {
         const kv = parseYamlKeyValue(rest);
         if (!kv) {
-          throw new Error(`Invalid shared mounts YAML entry: ${rest}`);
+          throw new Error(`Invalid user config list entry: ${rest}`);
         }
         current[kv.key] = kv.value;
       }
       continue;
     }
     if (!current) {
-      throw new Error('Shared mounts YAML must be a list (start each item with "-").');
+      throw new Error('User config YAML list must start each item with "-".');
     }
-    const kv = parseYamlKeyValue(line.trim());
+    const kv = parseYamlKeyValue(trimmed);
     if (!kv) {
-      throw new Error(`Invalid shared mounts YAML line: ${line.trim()}`);
+      throw new Error(`Invalid user config YAML line: ${trimmed}`);
     }
     current[kv.key] = kv.value;
   }
-  if (current) mounts.push(current);
-  if (mounts.length === 0) {
-    throw new Error('Shared mounts YAML must contain at least one item.');
+  if (current) items.push(current);
+  if (items.length === 0) {
+    throw new Error('User config YAML list must contain at least one item.');
   }
-  return mounts;
+  return items;
 }
 
-function parseSharedMountsInput(value) {
+function parseYamlObjectBlock(lines, baseIndent) {
+  const obj = {};
+  for (let i = 0; i < lines.length; ) {
+    const line = lines[i];
+    if (line.indent <= baseIndent) {
+      i += 1;
+      continue;
+    }
+    const trimmed = line.text.trim();
+    if (trimmed.startsWith('-')) {
+      throw new Error('User config YAML object entries cannot start with "-".');
+    }
+    const kv = parseYamlKeyValue(trimmed);
+    if (!kv) {
+      throw new Error(`Invalid user config YAML line: ${trimmed}`);
+    }
+    if (kv.value !== '') {
+      obj[kv.key] = kv.value;
+      i += 1;
+      continue;
+    }
+    const { block, nextIndex } = collectYamlBlock(lines, i);
+    if (block.length === 0) {
+      obj[kv.key] = null;
+      i = nextIndex;
+      continue;
+    }
+    const firstBlockLine = block[0].text.trim();
+    if (firstBlockLine.startsWith('-')) {
+      obj[kv.key] = parseYamlListBlock(block);
+    } else {
+      obj[kv.key] = parseYamlObjectBlock(block, line.indent);
+    }
+    i = nextIndex;
+  }
+  return obj;
+}
+
+function parseUserConfigYaml(raw) {
+  const lines = prepareYamlLines(raw);
+  if (lines.length === 0) return null;
+  const firstLine = lines[0].text.trim();
+  if (firstLine.startsWith('-')) {
+    return { sharedMounts: parseYamlListBlock(lines) };
+  }
+
+  const config = {};
+  for (let i = 0; i < lines.length; ) {
+    const line = lines[i];
+    if (line.indent !== 0) {
+      throw new Error('User config YAML must start at column 1.');
+    }
+    const trimmed = line.text.trim();
+    const kv = parseYamlKeyValue(trimmed);
+    if (!kv) {
+      throw new Error(`Invalid user config YAML line: ${trimmed}`);
+    }
+    if (kv.value !== '') {
+      config[kv.key] = kv.value;
+      i += 1;
+      continue;
+    }
+    const { block, nextIndex } = collectYamlBlock(lines, i);
+    if (block.length === 0) {
+      config[kv.key] = null;
+      i = nextIndex;
+      continue;
+    }
+    const firstBlockLine = block[0].text.trim();
+    if (firstBlockLine.startsWith('-')) {
+      config[kv.key] = parseYamlListBlock(block);
+    } else {
+      config[kv.key] = parseYamlObjectBlock(block, line.indent);
+    }
+    i = nextIndex;
+  }
+  return config;
+}
+
+function parseUserConfigInput(value) {
   const raw = String(value || '').trim();
   if (!raw) return null;
   if (raw.startsWith('{') || raw.startsWith('[')) {
     const parsed = JSON.parse(raw);
-    return normalizeSharedMountsPayload(parsed);
+    return normalizeUserConfigPayload(parsed);
   }
-  return parseSharedMountsYaml(raw);
+  const parsed = parseUserConfigYaml(raw);
+  return normalizeUserConfigPayload(parsed);
 }
 
 function parseStorageKeys(value) {
@@ -186,11 +284,12 @@ function parsePresets(raw) {
 }
 
 const presets = parsePresets(config.presets) ?? defaultPresets;
-const defaultSharedMountsYaml = `- name: config
-  mountPath: /home/dev/.config
-  scope: owner
-  mode: snapshot
-  syncMode: manual`;
+const defaultUserConfigYaml = `sharedMounts:
+  - name: config
+    mountPath: /home/dev/.config
+    scope: owner
+    mode: snapshot
+    syncMode: manual`;
 
 function normalizePresetEnv(env) {
   if (!env) return null;
@@ -216,12 +315,12 @@ function normalizePresetEnv(env) {
   return null;
 }
 
-function applySharedMountsDefaults() {
+function applyUserConfigDefaults() {
   if (!form) return;
-  const textarea = form.querySelector('textarea[name="shared_mounts"]');
+  const textarea = form.querySelector('textarea[name="user_config"]');
   if (!textarea) return;
   if (!textarea.value.trim()) {
-    textarea.value = defaultSharedMountsYaml;
+    textarea.value = defaultUserConfigYaml;
   }
 }
 
@@ -1042,7 +1141,7 @@ function handleRoute() {
       if (activeTerminalName) cleanupTerminal();
       if (form && refreshBtn) {
         applyRepoDefaults();
-        applySharedMountsDefaults();
+        applyUserConfigDefaults();
         setupPresets();
         fetchSpritzes();
       }
@@ -1073,7 +1172,7 @@ if (form && refreshBtn) {
     const repo = data.get('repo');
     const branch = data.get('branch');
     const ttl = data.get('ttl');
-    const sharedMountsRaw = data.get('shared_mounts');
+    const userConfigRaw = data.get('user_config');
     const repoUrl = (repo || defaultRepoUrl || '').toString().trim();
     const repoBranch = (branch || defaultRepoBranch || '').toString().trim();
     if (repoUrl) {
@@ -1085,15 +1184,14 @@ if (form && refreshBtn) {
     if (activePresetEnv && activePresetEnv.length > 0) {
       payload.spec.env = activePresetEnv;
     }
-    if (sharedMountsRaw) {
+    if (userConfigRaw) {
       try {
-        const mounts = parseSharedMountsInput(sharedMountsRaw);
-        if (mounts && mounts.length > 0) {
-          payload.userConfig = payload.userConfig || {};
-          payload.userConfig.sharedMounts = mounts;
+        const userConfig = parseUserConfigInput(userConfigRaw);
+        if (userConfig && Object.keys(userConfig).length > 0) {
+          payload.userConfig = userConfig;
         }
       } catch (err) {
-        showNotice(err.message || 'Invalid shared mounts YAML.');
+        showNotice(err.message || 'Invalid user config YAML/JSON.');
         return;
       }
     }
@@ -1114,7 +1212,7 @@ if (form && refreshBtn) {
         if (help) help.textContent = '';
       }
       applyRepoDefaults();
-      applySharedMountsDefaults();
+      applyUserConfigDefaults();
       await fetchSpritzes();
       showNotice('');
     } catch (err) {
