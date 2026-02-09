@@ -30,12 +30,11 @@ API validates and merges into a server-owned template.
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `imagePreset` | string | Must match a server-provided preset. |
 | `image` | string | Allowed only when policy permits custom images. |
 | `repo` | object | `url`, `branch`, `dir`, `revision`, `depth`, `submodules`. |
 | `ttl` | string | Duration like `8h` or `30m`. |
 | `env` | list | Key/value list, subject to allowlist. |
-| `resources` | object | CPU and memory with min/max caps. |
+| `resources` | object | CPU/memory (allowed only when enabled; no caps enforced by default). |
 | `sharedMounts` | list | Same shape as `spec.sharedMounts`. |
 
 ## Policy and Validation
@@ -43,13 +42,18 @@ API validates and merges into a server-owned template.
 The API enforces a **UserConfigPolicy** that defines what is allowed.
 The policy is server-owned and can vary by environment.
 
-Minimum policy controls:
+Policy controls (env-configurable):
 
-- Allowed mount roots, for example `/home/dev` and `/workspace`.
-- Allowed scopes, currently `owner` only.
-- Allowed env keys or allowed prefixes.
-- Max TTL and resource caps.
-- Allowed image presets and allowed registries.
+- `SPRITZ_USER_CONFIG_ALLOW_IMAGE` + `SPRITZ_USER_CONFIG_ALLOWED_IMAGE_PREFIXES`
+- `SPRITZ_USER_CONFIG_ALLOW_REPO`
+- `SPRITZ_USER_CONFIG_ALLOW_TTL` + `SPRITZ_USER_CONFIG_MAX_TTL`
+- `SPRITZ_USER_CONFIG_ALLOW_ENV` + `SPRITZ_USER_CONFIG_ALLOWED_ENV_KEYS` + `SPRITZ_USER_CONFIG_ALLOWED_ENV_PREFIXES`
+- `SPRITZ_USER_CONFIG_ALLOW_RESOURCES`
+- `SPRITZ_USER_CONFIG_ALLOW_SHARED_MOUNTS` + `SPRITZ_USER_CONFIG_ALLOWED_MOUNT_ROOTS` (default `/home/dev,/workspace`)
+
+Notes:
+
+- Shared mounts are restricted to `scope=owner`.
 
 Validation is always server-side. UI validation is helpful but not trusted.
 
@@ -64,9 +68,8 @@ If validation fails, the API returns a clear error and the spec is unchanged.
 
 ## Storage and Audit
 
-The API stores `userConfig` on the Spritz resource for auditability.
-Recommended storage is `spec.userConfig` with a `spec.userConfigVersion` or
-`metadata.annotations["spritz.sh/user-config"]` containing a JSON payload.
+The API stores `userConfig` on the Spritz resource for auditability in
+`metadata.annotations["spritz.sh/user-config"]` as JSON.
 
 The server remains the only writer of sensitive spec fields.
 
@@ -75,12 +78,11 @@ The server remains the only writer of sensitive spec fields.
 Recommended endpoints:
 
 - `POST /spritzes` accepts `userConfig` on create.
-- `PATCH /spritzes/{name}/user-config` updates only the user subset.
-- `GET /spritzes/{name}` returns the stored `userConfig`.
 
 ## UI Behavior
 
-The UI should expose a YAML editor for `userConfig` only.
+The UI should expose a YAML/JSON editor for `userConfig` only. JSON is
+recommended for nested objects like `resources`.
 This keeps power-user flexibility while retaining guardrails.
 
 ## Validation Notes for Shared Mounts

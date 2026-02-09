@@ -42,18 +42,22 @@
             <input name="namespace" />
           </label>
           <label class="span-all">
-            Shared mounts (YAML)
+            User config (YAML/JSON)
             <textarea
-              name="shared_mounts"
-              rows="8"
+              name="user_config"
+              rows="10"
               spellcheck="false"
-              placeholder="- name: config
-  mountPath: /home/dev/.config
-  scope: owner
-  mode: snapshot
-  syncMode: manual"
+              placeholder="sharedMounts:
+  - name: config
+    mountPath: /home/dev/.config
+    scope: owner
+    mode: snapshot
+    syncMode: manual
+ttl: 8h"
             ></textarea>
-            <small class="hint">Optional. Overrides platform defaults for this spritz.</small>
+            <small class="hint">
+              Optional. Provide a user config subset (shared mounts, ttl, repo, env, resources). JSON is accepted and is valid YAML.
+            </small>
           </label>
           <button type="submit">Create spritz</button>
         </form>
