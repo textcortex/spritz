@@ -1,10 +1,13 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -41,5 +44,19 @@ func TestUploadRevisionSetsContentLength(t *testing.T) {
 	}
 	if gotLength != int64(len(payload)) {
 		t.Fatalf("expected content length %d, got %d", len(payload), gotLength)
+	}
+}
+
+func TestWriteTarContentsRejectsEscapingSymlink(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Symlink("../outside", filepath.Join(root, "bad")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	err := writeTarContents(tw, root)
+	_ = tw.Close()
+	if err == nil {
+		t.Fatal("expected error for escaping symlink")
 	}
 }
