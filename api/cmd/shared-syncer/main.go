@@ -527,11 +527,16 @@ func (c *sharedMountClient) uploadRevision(ctx context.Context, ownerID, mount, 
 		return err
 	}
 	defer file.Close()
+	stat, err := file.Stat()
+	if err != nil {
+		return err
+	}
 	endpoint := c.endpoint(ownerID, mount, "revisions", revision)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, file)
 	if err != nil {
 		return err
 	}
+	req.ContentLength = stat.Size()
 	c.applyAuth(req)
 	req.Header.Set("Content-Type", "application/gzip")
 	resp, err := c.client.Do(req)
