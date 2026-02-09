@@ -163,6 +163,9 @@ func ValidateMounts(mounts []MountSpec) error {
 		if err := ValidateScope(mount.Scope); err != nil {
 			return err
 		}
+		if mount.SyncMode != SyncPoll && mount.SyncMode != SyncManual {
+			return fmt.Errorf("syncMode must be %s or %s: %s", SyncPoll, SyncManual, mount.SyncMode)
+		}
 		if mount.Mode == ModeSnapshot && mount.SyncMode == SyncPoll {
 			return fmt.Errorf("snapshot mounts do not support syncMode=poll")
 		}

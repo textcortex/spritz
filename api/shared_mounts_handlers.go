@@ -96,8 +96,13 @@ func (s *server) putSharedMountRevision(c echo.Context) error {
 	if err := sharedmounts.ValidateRevision(revision); err != nil {
 		return writeError(c, http.StatusBadRequest, err.Error())
 	}
-	if s.sharedMounts.maxBundleBytes > 0 && c.Request().ContentLength > s.sharedMounts.maxBundleBytes {
-		return writeError(c, http.StatusRequestEntityTooLarge, "bundle exceeds max size")
+	if s.sharedMounts.maxBundleBytes > 0 {
+		if c.Request().ContentLength <= 0 {
+			return writeError(c, http.StatusLengthRequired, "content-length required")
+		}
+		if c.Request().ContentLength > s.sharedMounts.maxBundleBytes {
+			return writeError(c, http.StatusRequestEntityTooLarge, "bundle exceeds max size")
+		}
 	}
 	objectPath := s.sharedMountsStore.revisionPath(ownerID, mountName, revision)
 	if err := s.sharedMountsStore.writeObject(c.Request().Context(), objectPath, c.Request().Body); err != nil {
