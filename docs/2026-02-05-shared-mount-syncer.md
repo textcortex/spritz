@@ -38,6 +38,10 @@ Per-spritz configuration is supported. Each Spritz can set its own mount list
 and mount paths. If no mounts are provided in the Spritz spec, the operator can
 fall back to a platform default list.
 
+Mount definitions are supplied via the Spritz spec (name + mountPath + scope).
+Bucket names and credentials are platform-managed; users do not bring their own
+buckets.
+
 Example config (conceptual):
 
 ```yaml
@@ -105,11 +109,19 @@ Only the API writes to object storage. Clients must include the expected revisio
 
 ## Provider-Agnostic Options
 
-Two portable options keep the implementation cloud-agnostic:
+We keep the storage layer provider-agnostic, but standardize on rclone in the
+initial rollout.
 
-- S3-compatible API (preferred): use one client across GCS, S3, MinIO by swapping
+- `rclone` (current): one binary that supports GCS, S3, and many providers.
+- S3-compatible API (future): use one client across GCS, S3, MinIO by swapping
   endpoint and credentials.
-- `rclone`: single binary that supports GCS, S3, and many other providers.
+
+## Initial Implementation Decisions
+
+- Driver: `rclone`.
+- Scope: `owner` only.
+- Write mode: shared mounts are writable inside the pod, and the syncer publishes
+  snapshots on change. No RWX semantics are exposed.
 
 ## Kubernetes Wiring (High Level)
 
