@@ -23,12 +23,12 @@ const (
 
 type MountSpec struct {
 	Name           string `json:"name"`
-	Scope          string `json:"scope"`
+	Scope          string `json:"scope,omitempty"`
 	MountPath      string `json:"mountPath"`
-	Mode           string `json:"mode"`
-	SyncMode       string `json:"syncMode"`
-	PollSeconds    int    `json:"pollSeconds"`
-	PublishSeconds int    `json:"publishSeconds"`
+	Mode           string `json:"mode,omitempty"`
+	SyncMode       string `json:"syncMode,omitempty"`
+	PollSeconds    int    `json:"pollSeconds,omitempty"`
+	PublishSeconds int    `json:"publishSeconds,omitempty"`
 }
 
 type LatestManifest struct {
@@ -160,6 +160,9 @@ func ValidateMounts(mounts []MountSpec) error {
 		}
 		if err := ValidateScope(mount.Scope); err != nil {
 			return err
+		}
+		if mount.Mode == ModeSnapshot && mount.SyncMode == SyncPoll {
+			return fmt.Errorf("snapshot mounts do not support syncMode=poll")
 		}
 		if err := ValidateMountPath(mount.MountPath); err != nil {
 			return err

@@ -61,6 +61,7 @@ Field expectations:
 - `scope`: one of `owner`, `org`, `project`, `spritz`.
 - `mode`: `read-only` or `snapshot` (no RWX semantics).
 - `syncMode`: `poll` or `manual`.
+  - `snapshot` mounts must use `manual` (poll is for read-only).
 
 ## Storage Layout
 

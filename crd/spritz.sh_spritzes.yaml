@@ -475,13 +475,8 @@ spec:
                     syncMode:
                       type: string
                   required:
-                  - mode
                   - mountPath
                   - name
-                  - pollSeconds
-                  - publishSeconds
-                  - scope
-                  - syncMode
                   type: object
                 type: array
               ssh:
