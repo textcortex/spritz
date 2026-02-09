@@ -375,17 +375,21 @@ func writeTarContents(tw *tar.Writer, root string) error {
 			return err
 		}
 		header.Name = filepath.ToSlash(rel)
-		if entry.Type()&os.ModeSymlink != 0 {
-			link, err := os.Readlink(path)
-			if err != nil {
-				return err
+			if entry.Type()&os.ModeSymlink != 0 {
+				link, err := os.Readlink(path)
+				if err != nil {
+					return err
+				}
+				if filepath.IsAbs(link) {
+					return fmt.Errorf("absolute symlinks are not supported: %s", path)
+				}
+				cleaned := filepath.Clean(link)
+				if cleaned == "." || strings.HasPrefix(cleaned, "..") {
+					return fmt.Errorf("symlink target escapes bundle: %s", path)
+				}
+				header.Typeflag = tar.TypeSymlink
+				header.Linkname = link
 			}
-			if filepath.IsAbs(link) {
-				return fmt.Errorf("absolute symlinks are not supported: %s", path)
-			}
-			header.Typeflag = tar.TypeSymlink
-			header.Linkname = link
-		}
 		if err := tw.WriteHeader(header); err != nil {
 			return err
 		}
