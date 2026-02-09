@@ -322,6 +322,12 @@ func bundleLive(mountPath string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(file.Name())
+		}
+	}()
 	hasher := sha256.New()
 	gzipWriter := gzip.NewWriter(io.MultiWriter(file, hasher))
 	tarWriter := tar.NewWriter(gzipWriter)
@@ -343,7 +349,9 @@ func bundleLive(mountPath string) (string, string, error) {
 	if err := file.Close(); err != nil {
 		return "", "", err
 	}
-	return hex.EncodeToString(hasher.Sum(nil)), file.Name(), nil
+	checksum := hex.EncodeToString(hasher.Sum(nil))
+	cleanup = false
+	return checksum, file.Name(), nil
 }
 
 func writeTarContents(tw *tar.Writer, root string) error {
@@ -450,6 +458,10 @@ func extractTarGz(archivePath, dest string) error {
 			link := header.Linkname
 			if filepath.IsAbs(link) {
 				return fmt.Errorf("absolute symlink in archive: %s", header.Name)
+			}
+			cleanLink := filepath.Clean(link)
+			if cleanLink == ".." || strings.HasPrefix(cleanLink, ".."+string(os.PathSeparator)) {
+				return fmt.Errorf("symlink escapes mount: %s", header.Name)
 			}
 			_ = os.RemoveAll(target)
 			if err := os.Symlink(link, target); err != nil {
