@@ -32,3 +32,19 @@ func TestValidateMountsAcceptsValidSyncMode(t *testing.T) {
 		t.Fatalf("expected valid syncMode, got error: %v", err)
 	}
 }
+
+func TestValidateMountsRejectsDuplicatePaths(t *testing.T) {
+	mounts := []MountSpec{
+		NormalizeMount(MountSpec{
+			Name:      "config",
+			MountPath: "/config",
+		}),
+		NormalizeMount(MountSpec{
+			Name:      "config-copy",
+			MountPath: "/config",
+		}),
+	}
+	if err := ValidateMounts(mounts); err == nil {
+		t.Fatal("expected error for duplicate mount paths")
+	}
+}
