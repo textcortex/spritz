@@ -148,23 +148,28 @@ func TestEnsureHomePVCAllowsPending(t *testing.T) {
 }
 
 func TestBuildPodSecurityContext(t *testing.T) {
-	if ctx := buildPodSecurityContext(false, false, false); ctx != nil {
+	if ctx := buildPodSecurityContext(false, false, false, false); ctx != nil {
 		t.Fatal("expected nil security context when no repo init or home PVC")
 	}
 
-	ctx := buildPodSecurityContext(true, false, false)
+	ctx := buildPodSecurityContext(true, false, false, false)
 	if ctx == nil || ctx.FSGroup == nil || *ctx.FSGroup != repoInitGroupID {
 		t.Fatalf("expected fsGroup %d when home PVC enabled, got %+v", repoInitGroupID, ctx)
 	}
 
-	ctx = buildPodSecurityContext(false, false, true)
+	ctx = buildPodSecurityContext(false, false, false, true)
 	if ctx == nil || ctx.FSGroup == nil || *ctx.FSGroup != repoInitGroupID {
 		t.Fatalf("expected fsGroup %d when repo init present, got %+v", repoInitGroupID, ctx)
 	}
 
-	ctx = buildPodSecurityContext(false, true, false)
+	ctx = buildPodSecurityContext(false, true, false, false)
 	if ctx == nil || ctx.FSGroup == nil || *ctx.FSGroup != repoInitGroupID {
 		t.Fatalf("expected fsGroup %d when shared config PVC enabled, got %+v", repoInitGroupID, ctx)
+	}
+
+	ctx = buildPodSecurityContext(false, false, true, false)
+	if ctx == nil || ctx.FSGroup == nil || *ctx.FSGroup != repoInitGroupID {
+		t.Fatalf("expected fsGroup %d when shared mounts enabled, got %+v", repoInitGroupID, ctx)
 	}
 }
 

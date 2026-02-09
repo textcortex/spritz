@@ -75,6 +75,20 @@ spec:
               value: {{ .Values.operator.sharedConfigPVC.mountPath | quote }}
             {{- end }}
             {{- end }}
+            {{- if and .Values.operator.sharedMounts .Values.operator.sharedMounts.enabled }}
+            - name: SPRITZ_SHARED_MOUNTS
+              value: {{ toJson .Values.operator.sharedMounts.mounts | quote }}
+            - name: SPRITZ_SHARED_MOUNTS_API_URL
+              value: {{ .Values.operator.sharedMounts.apiUrl | quote }}
+            - name: SPRITZ_SHARED_MOUNTS_TOKEN_SECRET_NAME
+              value: {{ .Values.operator.sharedMounts.tokenSecret.name | quote }}
+            - name: SPRITZ_SHARED_MOUNTS_TOKEN_SECRET_KEY
+              value: {{ .Values.operator.sharedMounts.tokenSecret.key | quote }}
+            - name: SPRITZ_SHARED_MOUNTS_SYNCER_IMAGE
+              value: {{ default .Values.api.image .Values.operator.sharedMounts.syncerImage | quote }}
+            - name: SPRITZ_SHARED_MOUNTS_SYNCER_IMAGE_PULL_POLICY
+              value: {{ default .Values.api.imagePullPolicy .Values.operator.sharedMounts.syncerImagePullPolicy | quote }}
+            {{- end }}
             {{- if .Values.operator.podNodeSelector }}
             - name: SPRITZ_POD_NODE_SELECTOR
               value: {{ .Values.operator.podNodeSelector | quote }}

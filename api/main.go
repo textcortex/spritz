@@ -25,18 +25,21 @@ import (
 )
 
 type server struct {
-	client          client.Client
-	clientset       *kubernetes.Clientset
-	restConfig      *rest.Config
-	scheme          *runtime.Scheme
-	namespace       string
-	auth            authConfig
-	ingressDefaults ingressDefaults
-	terminal        terminalConfig
-	sshGateway      sshGatewayConfig
-	sshDefaults     sshDefaults
-	sshMintLimiter  *sshMintLimiter
-	defaultMetadata map[string]string
+	client            client.Client
+	clientset         *kubernetes.Clientset
+	restConfig        *rest.Config
+	scheme            *runtime.Scheme
+	namespace         string
+	auth              authConfig
+	internalAuth      internalAuthConfig
+	ingressDefaults   ingressDefaults
+	terminal          terminalConfig
+	sshGateway        sshGatewayConfig
+	sshDefaults       sshDefaults
+	sshMintLimiter    *sshMintLimiter
+	defaultMetadata   map[string]string
+	sharedMounts      sharedMountsConfig
+	sharedMountsStore *sharedMountsStore
 }
 
 func main() {
@@ -76,6 +79,16 @@ func main() {
 		fmt.Fprintf(os.Stderr, "invalid ssh gateway config: %v\n", err)
 		os.Exit(1)
 	}
+	internalAuth := newInternalAuthConfig()
+	sharedMounts, err := newSharedMountsConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid shared mounts config: %v\n", err)
+		os.Exit(1)
+	}
+	var sharedStore *sharedMountsStore
+	if sharedMounts.enabled {
+		sharedStore = newSharedMountsStore(sharedMounts)
+	}
 	sshMintLimiter := newSSHMintLimiter()
 	defaultAnnotations, err := parseKeyValueCSV(os.Getenv("SPRITZ_DEFAULT_ANNOTATIONS"))
 	if err != nil {
@@ -84,18 +97,21 @@ func main() {
 	}
 
 	s := &server{
-		client:          k8sClient,
-		clientset:       clientset,
-		restConfig:      cfg,
-		scheme:          scheme,
-		namespace:       ns,
-		auth:            auth,
-		ingressDefaults: ingressDefaults,
-		terminal:        terminal,
-		sshGateway:      sshGateway,
-		sshDefaults:     sshDefaults,
-		sshMintLimiter:  sshMintLimiter,
-		defaultMetadata: defaultAnnotations,
+		client:            k8sClient,
+		clientset:         clientset,
+		restConfig:        cfg,
+		scheme:            scheme,
+		namespace:         ns,
+		auth:              auth,
+		internalAuth:      internalAuth,
+		ingressDefaults:   ingressDefaults,
+		terminal:          terminal,
+		sshGateway:        sshGateway,
+		sshDefaults:       sshDefaults,
+		sshMintLimiter:    sshMintLimiter,
+		defaultMetadata:   defaultAnnotations,
+		sharedMounts:      sharedMounts,
+		sharedMountsStore: sharedStore,
 	}
 
 	e := echo.New()
@@ -147,6 +163,11 @@ func main() {
 
 func (s *server) registerRoutes(e *echo.Echo) {
 	e.GET("/healthz", s.handleHealthz)
+	internal := e.Group("/internal/v1", s.internalAuthMiddleware())
+	internal.GET("/shared-mounts/owner/:owner/:mount/latest", s.getSharedMountLatest)
+	internal.GET("/shared-mounts/owner/:owner/:mount/revisions/:revision", s.getSharedMountRevision)
+	internal.PUT("/shared-mounts/owner/:owner/:mount/revisions/:revision", s.putSharedMountRevision)
+	internal.PUT("/shared-mounts/owner/:owner/:mount/latest", s.putSharedMountLatest)
 	secured := e.Group("", s.authMiddleware())
 	secured.GET("/spritzes", s.listSpritzes)
 	secured.POST("/spritzes", s.createSpritz)
@@ -200,6 +221,13 @@ func (s *server) createSpritz(c echo.Context) error {
 		if err := validateRepoDir(repo.Dir); err != nil {
 			return writeError(c, http.StatusBadRequest, err.Error())
 		}
+	}
+	if len(body.Spec.SharedMounts) > 0 {
+		normalized, err := normalizeSharedMounts(body.Spec.SharedMounts)
+		if err != nil {
+			return writeError(c, http.StatusBadRequest, err.Error())
+		}
+		body.Spec.SharedMounts = normalized
 	}
 
 	namespace := body.Namespace

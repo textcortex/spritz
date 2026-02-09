@@ -27,6 +27,15 @@ operator:
       - ReadWriteMany
     storageClass: ""
     mountPath: /shared
+  sharedMounts:
+    enabled: false
+    mounts: []
+    apiUrl: ""
+    tokenSecret:
+      name: ""
+      key: token
+    syncerImage: ""
+    syncerImagePullPolicy: ""
   resources:
     requests:
       cpu: 50m
@@ -145,6 +154,20 @@ api:
     capabilities:
       drop:
         - ALL
+  sharedMounts:
+    enabled: false
+    mounts: []
+    prefix: spritz-shared
+    rclone:
+      remote: ""
+      bucket: ""
+      configSecret:
+        name: ""
+        key: rclone.conf
+    internalTokenSecret:
+      name: ""
+      key: token
+    maxBundleBytes: ""
 
 ui:
   image: spritz-ui:latest
