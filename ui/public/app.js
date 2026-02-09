@@ -68,6 +68,97 @@ function parseNumber(value, fallback) {
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
+function parseYamlScalar(value) {
+  if (value === undefined || value === null) return '';
+  const trimmed = String(value).trim();
+  if (!trimmed) return '';
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    return trimmed.slice(1, -1);
+  }
+  const lowered = trimmed.toLowerCase();
+  if (lowered === 'true') return true;
+  if (lowered === 'false') return false;
+  if (lowered === 'null') return null;
+  const numeric = Number(trimmed);
+  if (!Number.isNaN(numeric) && trimmed !== '') return numeric;
+  return trimmed;
+}
+
+function parseYamlKeyValue(line) {
+  const idx = line.indexOf(':');
+  if (idx === -1) return null;
+  const key = line.slice(0, idx).trim();
+  if (!key) return null;
+  const value = line.slice(idx + 1).trim();
+  return { key, value: parseYamlScalar(value) };
+}
+
+function normalizeSharedMountsPayload(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (payload && typeof payload === 'object' && Array.isArray(payload.sharedMounts)) {
+    return payload.sharedMounts;
+  }
+  throw new Error('Shared mounts must be a YAML list or JSON array.');
+}
+
+function parseSharedMountsYaml(raw) {
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => {
+      const hashIndex = line.indexOf('#');
+      const sanitized = hashIndex >= 0 ? line.slice(0, hashIndex) : line;
+      return sanitized.replace(/\t/g, '  ').trimEnd();
+    })
+    .filter((line) => line.trim() !== '');
+
+  if (lines.length === 0) return null;
+  let index = 0;
+  if (/^sharedMounts\s*:\s*$/.test(lines[0].trim())) {
+    index = 1;
+  }
+  const mounts = [];
+  let current = null;
+  for (; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^-\s*/.test(line.trim())) {
+      if (current) mounts.push(current);
+      current = {};
+      const rest = line.trim().replace(/^-\s*/, '').trim();
+      if (rest) {
+        const kv = parseYamlKeyValue(rest);
+        if (!kv) {
+          throw new Error(`Invalid shared mounts YAML entry: ${rest}`);
+        }
+        current[kv.key] = kv.value;
+      }
+      continue;
+    }
+    if (!current) {
+      throw new Error('Shared mounts YAML must be a list (start each item with "-").');
+    }
+    const kv = parseYamlKeyValue(line.trim());
+    if (!kv) {
+      throw new Error(`Invalid shared mounts YAML line: ${line.trim()}`);
+    }
+    current[kv.key] = kv.value;
+  }
+  if (current) mounts.push(current);
+  if (mounts.length === 0) {
+    throw new Error('Shared mounts YAML must contain at least one item.');
+  }
+  return mounts;
+}
+
+function parseSharedMountsInput(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  if (raw.startsWith('{') || raw.startsWith('[')) {
+    const parsed = JSON.parse(raw);
+    return normalizeSharedMountsPayload(parsed);
+  }
+  return parseSharedMountsYaml(raw);
+}
+
 function parseStorageKeys(value) {
   if (!value) return [];
   if (Array.isArray(value)) {
@@ -967,6 +1058,7 @@ if (form && refreshBtn) {
     const repo = data.get('repo');
     const branch = data.get('branch');
     const ttl = data.get('ttl');
+    const sharedMountsRaw = data.get('shared_mounts');
     const repoUrl = (repo || defaultRepoUrl || '').toString().trim();
     const repoBranch = (branch || defaultRepoBranch || '').toString().trim();
     if (repoUrl) {
@@ -977,6 +1069,17 @@ if (form && refreshBtn) {
     if (ttl) payload.spec.ttl = ttl;
     if (activePresetEnv && activePresetEnv.length > 0) {
       payload.spec.env = activePresetEnv;
+    }
+    if (sharedMountsRaw) {
+      try {
+        const mounts = parseSharedMountsInput(sharedMountsRaw);
+        if (mounts && mounts.length > 0) {
+          payload.spec.sharedMounts = mounts;
+        }
+      } catch (err) {
+        showNotice(err.message || 'Invalid shared mounts YAML.');
+        return;
+      }
     }
 
     try {

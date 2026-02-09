@@ -41,6 +41,20 @@
             Namespace
             <input name="namespace" />
           </label>
+          <label class="span-all">
+            Shared mounts (YAML)
+            <textarea
+              name="shared_mounts"
+              rows="8"
+              spellcheck="false"
+              placeholder="- name: config
+  mountPath: /home/dev/.config
+  scope: owner
+  mode: snapshot
+  syncMode: manual"
+            ></textarea>
+            <small class="hint">Optional. Overrides platform defaults for this spritz.</small>
+          </label>
           <button type="submit">Create spritz</button>
         </form>
       </section>
