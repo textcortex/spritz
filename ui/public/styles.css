@@ -92,6 +92,16 @@ input {
   font-size: 14px;
 }
 
+.name-field {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.name-field input {
+  flex: 1;
+}
+
 textarea {
   padding: 10px 12px;
   border-radius: 10px;
@@ -118,6 +128,12 @@ button {
   background: #2e3a46;
   color: white;
   cursor: pointer;
+}
+
+button.ghost {
+  background: white;
+  border: 1px solid #d7dbe0;
+  color: #2e3a46;
 }
 
 .list-header {
