@@ -164,6 +164,11 @@ func (s *server) fetchSharedMountLatest(ctx context.Context, ownerID, mountName 
 	if err != nil {
 		return sharedmounts.LatestManifest{}, err
 	}
+	// Treat an empty/whitespace manifest as "not found" so new mounts can
+	// bootstrap without requiring an initial publish.
+	if len(bytes.TrimSpace(data)) == 0 {
+		return sharedmounts.LatestManifest{}, errSharedMountNotFound
+	}
 	var manifest sharedmounts.LatestManifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return sharedmounts.LatestManifest{}, err
