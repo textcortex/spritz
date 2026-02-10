@@ -29,6 +29,7 @@ const noticeEl = document.getElementById('notice');
 const listEl = document.getElementById('list');
 const refreshBtn = document.getElementById('refresh');
 const form = document.getElementById('create-form');
+const randomNameBtn = document.getElementById('name-random');
 const shellEl = document.querySelector('.shell');
 const createSection = form?.closest('section');
 const listSection = listEl?.closest('section');
@@ -41,6 +42,7 @@ let authRefreshInFlight = null;
 let authRefreshAttemptId = 0;
 let lastAuthRefreshAt = 0;
 let activeTerminalPoll = null;
+let knownSpritzNames = new Set();
 const presetPlaceholder = '__SPRITZ_UI_PRESETS__';
 const defaultPresets = [
   {
@@ -51,6 +53,108 @@ const defaultPresets = [
     branch: '',
     ttl: '',
   },
+];
+
+const NAME_ADJECTIVES = [
+  'amber',
+  'briny',
+  'brisk',
+  'calm',
+  'clear',
+  'cool',
+  'crisp',
+  'dawn',
+  'delta',
+  'ember',
+  'faint',
+  'fast',
+  'fresh',
+  'gentle',
+  'glow',
+  'good',
+  'grand',
+  'keen',
+  'kind',
+  'lucky',
+  'marine',
+  'mellow',
+  'mild',
+  'neat',
+  'nimble',
+  'nova',
+  'oceanic',
+  'plaid',
+  'quick',
+  'quiet',
+  'rapid',
+  'salty',
+  'sharp',
+  'swift',
+  'tender',
+  'tidal',
+  'tidy',
+  'tide',
+  'vivid',
+  'warm',
+  'wild',
+  'young',
+];
+
+const NAME_NOUNS = [
+  'atlas',
+  'basil',
+  'bison',
+  'bloom',
+  'breeze',
+  'canyon',
+  'cedar',
+  'claw',
+  'cloud',
+  'comet',
+  'coral',
+  'cove',
+  'crest',
+  'crustacean',
+  'daisy',
+  'dune',
+  'ember',
+  'falcon',
+  'fjord',
+  'forest',
+  'glade',
+  'gulf',
+  'harbor',
+  'haven',
+  'kelp',
+  'lagoon',
+  'lobster',
+  'meadow',
+  'mist',
+  'nudibranch',
+  'nexus',
+  'ocean',
+  'orbit',
+  'otter',
+  'pine',
+  'prairie',
+  'reef',
+  'ridge',
+  'river',
+  'rook',
+  'sable',
+  'sage',
+  'seaslug',
+  'shell',
+  'shoal',
+  'shore',
+  'slug',
+  'summit',
+  'tidepool',
+  'trail',
+  'valley',
+  'wharf',
+  'willow',
+  'zephyr',
 ];
 
 function parseBoolean(value, fallback) {
@@ -66,6 +170,48 @@ function parseNumber(value, fallback) {
   if (value === undefined || value === null || value === '') return fallback;
   const parsed = Number(value);
   return Number.isNaN(parsed) ? fallback : parsed;
+}
+
+function randomChoice(values, fallback) {
+  return values[Math.floor(Math.random() * values.length)] ?? fallback;
+}
+
+function createNameBase(words = 2) {
+  const parts = [randomChoice(NAME_ADJECTIVES, 'steady'), randomChoice(NAME_NOUNS, 'harbor')];
+  if (words > 2) {
+    parts.push(randomChoice(NAME_NOUNS, 'reef'));
+  }
+  return parts.join('-');
+}
+
+function createRandomName(isTaken) {
+  const isIdTaken = typeof isTaken === 'function' ? isTaken : () => false;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const base = createNameBase(2);
+    if (!isIdTaken(base)) {
+      return base;
+    }
+    for (let i = 2; i <= 12; i += 1) {
+      const candidate = `${base}-${i}`;
+      if (!isIdTaken(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const base = createNameBase(3);
+    if (!isIdTaken(base)) {
+      return base;
+    }
+    for (let i = 2; i <= 12; i += 1) {
+      const candidate = `${base}-${i}`;
+      if (!isIdTaken(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  const fallback = `${createNameBase(3)}-${Math.random().toString(36).slice(2, 5)}`;
+  return isIdTaken(fallback) ? `${fallback}-${Date.now().toString(36)}` : fallback;
 }
 
 function parseYamlScalar(value) {
@@ -321,6 +467,27 @@ function applyUserConfigDefaults() {
   if (!textarea) return;
   if (!textarea.value.trim()) {
     textarea.value = defaultUserConfigYaml;
+  }
+}
+
+function updateKnownSpritzNames(items) {
+  knownSpritzNames = new Set(
+    (items || [])
+      .map((item) => item?.metadata?.name)
+      .filter((name) => typeof name === 'string' && name.trim() !== ''),
+  );
+}
+
+function generateSpritzName() {
+  return createRandomName((candidate) => knownSpritzNames.has(candidate));
+}
+
+function applyNameDefaults() {
+  if (!form) return;
+  const input = form.querySelector('input[name="name"]');
+  if (!input) return;
+  if (!input.value.trim()) {
+    input.value = generateSpritzName();
   }
 }
 
@@ -689,6 +856,7 @@ async function fetchSpritzes() {
 }
 
 function renderList(items) {
+  updateKnownSpritzNames(items);
   if (!items.length) {
     listEl.innerHTML = '<p>No spritzes yet.</p>';
     return;
@@ -1140,6 +1308,7 @@ function handleRoute() {
     } else {
       if (activeTerminalName) cleanupTerminal();
       if (form && refreshBtn) {
+        applyNameDefaults();
         applyRepoDefaults();
         applyUserConfigDefaults();
         setupPresets();
@@ -1151,19 +1320,33 @@ function handleRoute() {
 window.addEventListener('hashchange', handleRoute);
 
 if (form && refreshBtn) {
+  if (randomNameBtn) {
+    randomNameBtn.addEventListener('click', () => {
+      const input = form.querySelector('input[name="name"]');
+      if (!input) return;
+      input.value = generateSpritzName();
+    });
+  }
+
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = new FormData(form);
     const name = data.get('name');
     const image = data.get('image');
+    const rawName = (name || '').toString().trim();
+    const resolvedName = rawName || generateSpritzName();
 
     const payload = {
-      name,
+      name: resolvedName,
       namespace: data.get('namespace') || undefined,
       spec: {
         image,
       },
     };
+    if (!rawName) {
+      const nameInput = form.querySelector('input[name="name"]');
+      if (nameInput) nameInput.value = resolvedName;
+    }
 
     if (config.ownerId) {
       payload.spec.owner = { id: config.ownerId };
@@ -1211,6 +1394,7 @@ if (form && refreshBtn) {
         const help = form.querySelector('.preset-help');
         if (help) help.textContent = '';
       }
+      applyNameDefaults();
       applyRepoDefaults();
       applyUserConfigDefaults();
       await fetchSpritzes();
