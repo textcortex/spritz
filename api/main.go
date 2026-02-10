@@ -15,6 +15,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -213,10 +214,7 @@ func (s *server) createSpritz(c echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return writeError(c, http.StatusBadRequest, "invalid json")
 	}
-
-	if body.Name == "" {
-		return writeError(c, http.StatusBadRequest, "name is required")
-	}
+	body.Name = strings.TrimSpace(body.Name)
 
 	userConfigKeys, userConfigPayload, err := parseUserConfig(body.UserConfig)
 	if err != nil {
@@ -266,6 +264,20 @@ func (s *server) createSpritz(c echo.Context) error {
 		namespace = "default"
 	}
 
+	nameProvided := body.Name != ""
+	var nameGenerator func() string
+	if !nameProvided {
+		generator, err := s.newSpritzNameGenerator(c.Request().Context(), namespace)
+		if err != nil {
+			return writeError(c, http.StatusInternalServerError, "failed to generate spritz name")
+		}
+		nameGenerator = generator
+		body.Name = nameGenerator()
+	}
+	if body.Name == "" {
+		return writeError(c, http.StatusInternalServerError, "failed to generate spritz name")
+	}
+
 	owner := body.Spec.Owner
 	if owner.ID == "" {
 		if s.auth.enabled() {
@@ -283,7 +295,6 @@ func (s *server) createSpritz(c echo.Context) error {
 
 	labels := map[string]string{
 		ownerLabelKey: ownerLabelValue(owner.ID),
-		nameLabelKey:  body.Name,
 	}
 	for k, v := range body.Labels {
 		labels[k] = v
@@ -302,31 +313,61 @@ func (s *server) createSpritz(c echo.Context) error {
 	}
 
 	body.Spec.Owner = owner
-	applyIngressDefaults(&body.Spec, body.Name, namespace, s.ingressDefaults)
 	applySSHDefaults(&body.Spec, s.sshDefaults, namespace)
-	if body.Spec.Ingress != nil && strings.EqualFold(body.Spec.Ingress.Mode, "gateway") && body.Spec.Ingress.Host == "" {
-		return writeError(c, http.StatusBadRequest, "spec.ingress.host is required when spec.ingress.mode=gateway")
-	}
-	if body.Spec.Ingress != nil && strings.EqualFold(body.Spec.Ingress.Mode, "gateway") && body.Spec.Ingress.GatewayName == "" {
-		return writeError(c, http.StatusBadRequest, "spec.ingress.gatewayName is required when spec.ingress.mode=gateway")
+	baseSpec := body.Spec
+
+	createSpritzResource := func(name string) (*spritzv1.Spritz, error) {
+		var spec spritzv1.SpritzSpec
+		baseSpec.DeepCopyInto(&spec)
+		applyIngressDefaults(&spec, name, namespace, s.ingressDefaults)
+		if spec.Ingress != nil && strings.EqualFold(spec.Ingress.Mode, "gateway") && spec.Ingress.Host == "" {
+			return nil, fmt.Errorf("spec.ingress.host is required when spec.ingress.mode=gateway")
+		}
+		if spec.Ingress != nil && strings.EqualFold(spec.Ingress.Mode, "gateway") && spec.Ingress.GatewayName == "" {
+			return nil, fmt.Errorf("spec.ingress.gatewayName is required when spec.ingress.mode=gateway")
+		}
+
+		resourceLabels := map[string]string{}
+		for k, v := range labels {
+			resourceLabels[k] = v
+		}
+		resourceLabels[nameLabelKey] = name
+
+		return &spritzv1.Spritz{
+			TypeMeta: metav1.TypeMeta{Kind: "Spritz", APIVersion: spritzv1.GroupVersion.String()},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        name,
+				Namespace:   namespace,
+				Labels:      resourceLabels,
+				Annotations: annotations,
+			},
+			Spec: spec,
+		}, nil
 	}
 
-	spritz := &spritzv1.Spritz{
-		TypeMeta: metav1.TypeMeta{Kind: "Spritz", APIVersion: spritzv1.GroupVersion.String()},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        body.Name,
-			Namespace:   namespace,
-			Labels:      labels,
-			Annotations: annotations,
-		},
-		Spec: body.Spec,
+	attempts := 1
+	if !nameProvided {
+		attempts = 8
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
+		name := body.Name
+		if !nameProvided && attempt > 0 {
+			name = nameGenerator()
+		}
+		spritz, err := createSpritzResource(name)
+		if err != nil {
+			return writeError(c, http.StatusBadRequest, err.Error())
+		}
+		if err := s.client.Create(c.Request().Context(), spritz); err != nil {
+			if !nameProvided && apierrors.IsAlreadyExists(err) {
+				continue
+			}
+			return writeError(c, http.StatusInternalServerError, err.Error())
+		}
+		return writeJSON(c, http.StatusCreated, spritz)
 	}
 
-	if err := s.client.Create(c.Request().Context(), spritz); err != nil {
-		return writeError(c, http.StatusInternalServerError, err.Error())
-	}
-
-	return writeJSON(c, http.StatusCreated, spritz)
+	return writeError(c, http.StatusInternalServerError, "failed to generate unique spritz name")
 }
 
 func (s *server) listSpritzes(c echo.Context) error {
