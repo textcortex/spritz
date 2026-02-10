@@ -486,8 +486,8 @@ function applyNameDefaults() {
   if (!form) return;
   const input = form.querySelector('input[name="name"]');
   if (!input) return;
-  if (!input.value.trim()) {
-    input.value = generateSpritzName();
+  if (!input.placeholder) {
+    input.placeholder = 'Leave blank to auto-generate.';
   }
 }
 
@@ -1334,18 +1334,15 @@ if (form && refreshBtn) {
     const name = data.get('name');
     const image = data.get('image');
     const rawName = (name || '').toString().trim();
-    const resolvedName = rawName || generateSpritzName();
 
     const payload = {
-      name: resolvedName,
       namespace: data.get('namespace') || undefined,
       spec: {
         image,
       },
     };
-    if (!rawName) {
-      const nameInput = form.querySelector('input[name="name"]');
-      if (nameInput) nameInput.value = resolvedName;
+    if (rawName) {
+      payload.name = rawName;
     }
 
     if (config.ownerId) {
