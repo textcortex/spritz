@@ -154,6 +154,9 @@ api:
     capabilities:
       drop:
         - ALL
+  extraEnv: []
+  extraVolumeMounts: []
+  extraVolumes: []
   sharedMounts:
     enabled: false
     mounts: []
