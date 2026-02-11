@@ -375,21 +375,21 @@ func writeTarContents(tw *tar.Writer, root string) error {
 			return err
 		}
 		header.Name = filepath.ToSlash(rel)
-			if entry.Type()&os.ModeSymlink != 0 {
-				link, err := os.Readlink(path)
-				if err != nil {
-					return err
-				}
-				if filepath.IsAbs(link) {
-					return fmt.Errorf("absolute symlinks are not supported: %s", path)
-				}
-				cleaned := filepath.Clean(link)
-				if cleaned == "." || strings.HasPrefix(cleaned, "..") {
-					return fmt.Errorf("symlink target escapes bundle: %s", path)
-				}
-				header.Typeflag = tar.TypeSymlink
-				header.Linkname = link
+		if entry.Type()&os.ModeSymlink != 0 {
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
 			}
+			if filepath.IsAbs(link) {
+				return fmt.Errorf("absolute symlinks are not supported: %s", path)
+			}
+			cleaned := filepath.Clean(link)
+			if cleaned == "." || strings.HasPrefix(cleaned, "..") {
+				return fmt.Errorf("symlink target escapes bundle: %s", path)
+			}
+			header.Typeflag = tar.TypeSymlink
+			header.Linkname = link
+		}
 		if err := tw.WriteHeader(header); err != nil {
 			return err
 		}
@@ -498,11 +498,33 @@ func (c *sharedMountClient) latest(ctx context.Context, ownerID, mount string) (
 		body, _ := io.ReadAll(resp.Body)
 		return sharedmounts.LatestManifest{}, false, fmt.Errorf("latest fetch failed: %s", strings.TrimSpace(string(body)))
 	}
-	var manifest sharedmounts.LatestManifest
-	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return sharedmounts.LatestManifest{}, false, err
+	}
+	manifest, err := parseLatestManifest(body)
+	if err != nil {
 		return sharedmounts.LatestManifest{}, false, err
 	}
 	return manifest, true, nil
+}
+
+func parseLatestManifest(body []byte) (sharedmounts.LatestManifest, error) {
+	type latestEnvelope struct {
+		Data *sharedmounts.LatestManifest `json:"data"`
+	}
+	var payload latestEnvelope
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return sharedmounts.LatestManifest{}, err
+	}
+	if payload.Data == nil {
+		return sharedmounts.LatestManifest{}, fmt.Errorf("latest decode failed: missing data payload")
+	}
+	manifest := *payload.Data
+	if manifest.Revision == "" || manifest.Checksum == "" {
+		return sharedmounts.LatestManifest{}, fmt.Errorf("latest decode failed: missing revision/checksum")
+	}
+	return manifest, nil
 }
 
 func (c *sharedMountClient) downloadRevision(ctx context.Context, ownerID, mount, revision string, dest io.Writer) error {
