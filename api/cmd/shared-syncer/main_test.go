@@ -101,3 +101,54 @@ func TestLatestRejectsInvalidPayload(t *testing.T) {
 		t.Fatal("expected error for invalid latest payload")
 	}
 }
+
+func TestEnsureEmptyLiveCreatesWritableCurrent(t *testing.T) {
+	mountPath := t.TempDir()
+	if err := ensureEmptyLive(mountPath); err != nil {
+		t.Fatalf("ensureEmptyLive failed: %v", err)
+	}
+
+	currentPath := filepath.Join(mountPath, "current")
+	info, err := os.Stat(currentPath)
+	if err != nil {
+		t.Fatalf("stat current path failed: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("expected current path to be a directory, got mode %v", info.Mode())
+	}
+	if info.Mode().Perm()&0o020 == 0 {
+		t.Fatalf("expected current directory to be group writable, got mode %v", info.Mode())
+	}
+}
+
+func TestEnforceGroupWritableTreeAddsGroupWrite(t *testing.T) {
+	root := t.TempDir()
+	subDir := filepath.Join(root, "sub")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	filePath := filepath.Join(subDir, "config.json")
+	if err := os.WriteFile(filePath, []byte(`{"ok":true}`), 0o644); err != nil {
+		t.Fatalf("write file failed: %v", err)
+	}
+
+	if err := enforceGroupWritableTree(root); err != nil {
+		t.Fatalf("enforceGroupWritableTree failed: %v", err)
+	}
+
+	dirInfo, err := os.Stat(subDir)
+	if err != nil {
+		t.Fatalf("stat dir failed: %v", err)
+	}
+	if dirInfo.Mode().Perm()&0o020 == 0 {
+		t.Fatalf("expected group writable directory, got mode %v", dirInfo.Mode())
+	}
+
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("stat file failed: %v", err)
+	}
+	if fileInfo.Mode().Perm()&0o020 == 0 {
+		t.Fatalf("expected group writable file, got mode %v", fileInfo.Mode())
+	}
+}

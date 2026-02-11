@@ -25,6 +25,8 @@ import (
 const (
 	defaultPollSeconds    = 30
 	defaultPublishSeconds = 60
+	sharedDirPerm         = 0o2775
+	sharedFilePermMask    = 0o020
 )
 
 type sharedMountClient struct {
@@ -244,12 +246,15 @@ func publishLoop(ctx context.Context, logger *log.Logger, client *sharedMountCli
 }
 
 func ensureMountPath(mountPath string) error {
-	return os.MkdirAll(mountPath, 0o755)
+	return os.MkdirAll(mountPath, sharedDirPerm)
 }
 
 func ensureEmptyLive(mountPath string) error {
 	currentPath := filepath.Join(mountPath, "current")
-	if err := os.MkdirAll(currentPath, 0o755); err != nil {
+	if err := os.MkdirAll(currentPath, sharedDirPerm); err != nil {
+		return err
+	}
+	if err := enforceGroupWritableTree(currentPath); err != nil {
 		return err
 	}
 	return updateLiveSymlink(mountPath, currentPath)
@@ -276,10 +281,13 @@ func applyRevision(ctx context.Context, client *sharedMountClient, ownerID strin
 	}
 	incoming := filepath.Join(spec.MountPath, ".incoming-"+revision)
 	_ = os.RemoveAll(incoming)
-	if err := os.MkdirAll(incoming, 0o755); err != nil {
+	if err := os.MkdirAll(incoming, sharedDirPerm); err != nil {
 		return err
 	}
 	if err := extractTarGz(tempPath, incoming); err != nil {
+		return err
+	}
+	if err := enforceGroupWritableTree(incoming); err != nil {
 		return err
 	}
 	currentPath := filepath.Join(spec.MountPath, "current")
@@ -439,11 +447,11 @@ func extractTarGz(archivePath, dest string) error {
 		}
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			if err := os.MkdirAll(target, sharedDirPerm); err != nil {
 				return err
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(target), sharedDirPerm); err != nil {
 				return err
 			}
 			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
@@ -455,8 +463,11 @@ func extractTarGz(archivePath, dest string) error {
 				return err
 			}
 			_ = out.Close()
+			if err := os.Chmod(target, os.FileMode(header.Mode)|sharedFilePermMask); err != nil {
+				return err
+			}
 		case tar.TypeSymlink:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(target), sharedDirPerm); err != nil {
 				return err
 			}
 			link := header.Linkname
@@ -475,6 +486,38 @@ func extractTarGz(archivePath, dest string) error {
 			continue
 		}
 	}
+}
+
+func enforceGroupWritableTree(root string) error {
+	return filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		mode := info.Mode()
+		switch {
+		case mode.IsDir():
+			desired := mode.Perm() | sharedFilePermMask | 0o2000
+			if mode.Perm() == desired&0o777 && mode&os.ModeSetgid != 0 {
+				return nil
+			}
+			return os.Chmod(path, desired)
+		case mode.IsRegular():
+			desired := mode.Perm() | sharedFilePermMask
+			if mode.Perm() == desired {
+				return nil
+			}
+			return os.Chmod(path, desired)
+		default:
+			return nil
+		}
+	})
 }
 
 var errConflict = errors.New("conflict")
