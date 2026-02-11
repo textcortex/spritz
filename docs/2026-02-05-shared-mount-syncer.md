@@ -219,6 +219,30 @@ The shared config PVC approach is sunsetted and is **not** planned for implement
 in the near future. Any existing PVC code should be treated as legacy and not enabled
 for new deployments. Use the object-storage syncer above.
 
+## GCS Uniform Bucket-Level Access (Important)
+
+When using GCS buckets with Uniform Bucket-Level Access (UBLA) enabled, rclone must
+be configured for bucket-policy mode. Otherwise uploads fail with:
+
+- `googleapi: Error 400: Cannot insert legacy ACL for an object when uniform bucket-level access is enabled`
+
+Required rclone config:
+
+```ini
+[gcs]
+type = google cloud storage
+provider = GCS
+env_auth = true
+bucket_policy_only = true
+```
+
+Equivalent environment override (if you do not want to embed it in `rclone.conf`):
+
+- `RCLONE_GCS_BUCKET_POLICY_ONLY=true`
+
+If this is missing, shared mount revision writes return 500 and cross-pod sync does not
+advance, even though the syncer loop is running.
+
 ## Validation
 
 - Start two pods for the same owner and confirm `/shared/live` matches.
