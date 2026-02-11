@@ -27,6 +27,12 @@ func TestValidateMountsAcceptsValidSyncMode(t *testing.T) {
 			MountPath: "/poll",
 			SyncMode:  SyncPoll,
 		}),
+		NormalizeMount(MountSpec{
+			Name:      "snapshot-poll",
+			MountPath: "/snapshot-poll",
+			Mode:      ModeSnapshot,
+			SyncMode:  SyncPoll,
+		}),
 	}
 	if err := ValidateMounts(tests); err != nil {
 		t.Fatalf("expected valid syncMode, got error: %v", err)
