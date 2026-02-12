@@ -191,16 +191,19 @@ func pollLoop(ctx context.Context, logger *log.Logger, client *sharedMountClient
 			continue
 		}
 		state.mu.Lock()
+		applyStartedAt := time.Now()
 		err = applyRevision(ctx, client, ownerID, state.spec, manifest.Revision)
+		applyDuration := time.Since(applyStartedAt)
 		if err == nil {
 			state.currentRevision = manifest.Revision
 			state.currentChecksum = manifest.Checksum
 		}
 		state.mu.Unlock()
 		if err != nil {
-			logger.Printf("apply error for %s: %v", state.spec.Name, err)
+			logger.Printf("apply error for %s after %s: %v", state.spec.Name, applyDuration, err)
 			continue
 		}
+		logger.Printf("applied %s revision=%s in %s", state.spec.Name, manifest.Revision, applyDuration)
 	}
 }
 
@@ -216,19 +219,28 @@ func publishLoop(ctx context.Context, logger *log.Logger, client *sharedMountCli
 	go watchMount(ctx, logger, state.spec.MountPath, trigger)
 
 	for {
+		reason := "interval"
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			reason = "interval"
 		case <-trigger:
+			reason = "fs"
 		}
 
 		state.mu.Lock()
+		bundleStartedAt := time.Now()
 		checksum, bundle, err := bundleMountRoot(state.spec.MountPath)
 		state.mu.Unlock()
 		if err != nil {
 			logger.Printf("bundle error for %s: %v", state.spec.Name, err)
 			continue
+		}
+		bundleDuration := time.Since(bundleStartedAt)
+		bundleSize := int64(0)
+		if info, statErr := os.Stat(bundle); statErr == nil {
+			bundleSize = info.Size()
 		}
 		checksumValue := "sha256:" + checksum
 		state.mu.Lock()
@@ -240,16 +252,19 @@ func publishLoop(ctx context.Context, logger *log.Logger, client *sharedMountCli
 			continue
 		}
 		revision := time.Now().UTC().Format("2006-01-02T15-04-05Z")
+		uploadStartedAt := time.Now()
 		if err := client.uploadRevision(ctx, ownerID, state.spec.Name, revision, bundle); err != nil {
 			_ = os.Remove(bundle)
 			logger.Printf("upload error for %s: %v", state.spec.Name, err)
 			continue
 		}
+		uploadDuration := time.Since(uploadStartedAt)
 		manifest := sharedmounts.LatestManifest{
 			Revision:  revision,
 			Checksum:  checksumValue,
 			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 		}
+		latestStartedAt := time.Now()
 		if err := client.updateLatest(ctx, ownerID, state.spec.Name, manifest, expectedRevision); err != nil {
 			if errors.Is(err, errConflict) {
 				latest, found, latestErr := client.latest(ctx, ownerID, state.spec.Name)
@@ -266,11 +281,23 @@ func publishLoop(ctx context.Context, logger *log.Logger, client *sharedMountCli
 			logger.Printf("latest update error for %s: %v", state.spec.Name, err)
 			continue
 		}
+		latestDuration := time.Since(latestStartedAt)
 		_ = os.Remove(bundle)
 		state.mu.Lock()
 		state.currentRevision = manifest.Revision
 		state.currentChecksum = manifest.Checksum
 		state.mu.Unlock()
+
+		logger.Printf(
+			"published %s revision=%s reason=%s bundle=%s upload=%s latest=%s bytes=%d",
+			state.spec.Name,
+			revision,
+			reason,
+			bundleDuration,
+			uploadDuration,
+			latestDuration,
+			bundleSize,
+		)
 	}
 }
 
@@ -287,7 +314,8 @@ func watchMount(ctx context.Context, logger *log.Logger, mountPath string, trigg
 		return
 	}
 
-	debounceDelay := 1 * time.Second
+	// Keep this small; bursty editors will naturally coalesce within a few hundred milliseconds.
+	debounceDelay := 200 * time.Millisecond
 	var debounceTimer *time.Timer
 	var debounceCh <-chan time.Time
 
@@ -545,7 +573,12 @@ func bundleMountRoot(mountPath string) (string, string, error) {
 		}
 	}()
 	hasher := sha256.New()
-	gzipWriter := gzip.NewWriter(file)
+	// Favor latency over compression ratio; these bundles are usually small and frequently updated.
+	gzipWriter, err := gzip.NewWriterLevel(file, gzip.BestSpeed)
+	if err != nil {
+		_ = file.Close()
+		return "", "", err
+	}
 	tarWriter := tar.NewWriter(io.MultiWriter(gzipWriter, hasher))
 	if err := writeTarContents(tarWriter, mountPath); err != nil {
 		_ = tarWriter.Close()
