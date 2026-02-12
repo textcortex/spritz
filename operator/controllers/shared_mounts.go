@@ -145,6 +145,8 @@ func buildSharedMountRuntime(spritz *spritzv1.Spritz, settings sharedMountsSetti
 		{Name: "SPRITZ_OWNER_ID", Value: spritz.Spec.Owner.ID},
 	}
 
+	syncerResources := defaultSharedMountSyncerResources()
+
 	initContainer := corev1.Container{
 		Name:            "shared-mounts-init",
 		Image:           settings.syncerImage,
@@ -152,6 +154,7 @@ func buildSharedMountRuntime(spritz *spritzv1.Spritz, settings sharedMountsSetti
 		Command:         []string{"/usr/local/bin/spritz-shared-syncer"},
 		Args:            []string{"--mode=init"},
 		Env:             syncerEnv,
+		Resources:       syncerResources,
 		VolumeMounts:    sharedMountVolumeMounts(runtimeMounts),
 	}
 	sidecarContainer := corev1.Container{
@@ -161,6 +164,7 @@ func buildSharedMountRuntime(spritz *spritzv1.Spritz, settings sharedMountsSetti
 		Command:         []string{"/usr/local/bin/spritz-shared-syncer"},
 		Args:            []string{"--mode=sidecar"},
 		Env:             syncerEnv,
+		Resources:       syncerResources,
 		VolumeMounts:    sharedMountVolumeMounts(runtimeMounts),
 	}
 
