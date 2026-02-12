@@ -398,13 +398,17 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 			env = append(env, sharedMountRuntime.env...)
 		}
 		volumeMounts = appendRepoDirMounts(volumeMounts, repoDirs, repoMountRoots)
+		spritzResources := spritz.Spec.Resources
+		if isEmptyResourceRequirements(spritzResources) {
+			spritzResources = defaultSpritzContainerResources()
+		}
 		podSpec := corev1.PodSpec{
 			Containers: []corev1.Container{
 				{
 					Name:         spritzContainerName,
 					Image:        spritz.Spec.Image,
 					Env:          env,
-					Resources:    spritz.Spec.Resources,
+					Resources:    spritzResources,
 					Ports:        ports,
 					VolumeMounts: volumeMounts,
 				},
