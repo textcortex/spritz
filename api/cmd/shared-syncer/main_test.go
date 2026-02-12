@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestUploadRevisionSetsContentLength(t *testing.T) {
@@ -180,5 +182,74 @@ func TestMigrateLegacyLayoutFlattensCurrent(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(mountPath, "live")); !os.IsNotExist(err) {
 		t.Fatalf("expected live symlink to be removed, got error: %v", err)
+	}
+}
+
+func TestExtractTarGzPreservesModTime(t *testing.T) {
+	root := t.TempDir()
+	archive := filepath.Join(root, "bundle.tar.gz")
+	out, err := os.Create(archive)
+	if err != nil {
+		t.Fatalf("create archive: %v", err)
+	}
+	gw := gzip.NewWriter(out)
+	tw := tar.NewWriter(gw)
+
+	mod := time.Unix(1_700_000_000, 0).UTC()
+
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     "d/",
+		Mode:     0o755,
+		Typeflag: tar.TypeDir,
+		ModTime:  mod,
+	}); err != nil {
+		t.Fatalf("write dir header: %v", err)
+	}
+	content := []byte("hello")
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     "d/a.txt",
+		Mode:     0o644,
+		Size:     int64(len(content)),
+		Typeflag: tar.TypeReg,
+		ModTime:  mod,
+	}); err != nil {
+		t.Fatalf("write file header: %v", err)
+	}
+	if _, err := tw.Write(content); err != nil {
+		t.Fatalf("write file content: %v", err)
+	}
+
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar: %v", err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatalf("close gzip: %v", err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatalf("close archive: %v", err)
+	}
+
+	dest := filepath.Join(root, "out")
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		t.Fatalf("mkdir dest: %v", err)
+	}
+	if err := extractTarGz(archive, dest); err != nil {
+		t.Fatalf("extractTarGz failed: %v", err)
+	}
+
+	fileInfo, err := os.Stat(filepath.Join(dest, "d", "a.txt"))
+	if err != nil {
+		t.Fatalf("stat extracted file: %v", err)
+	}
+	if !fileInfo.ModTime().Truncate(time.Second).Equal(mod) {
+		t.Fatalf("expected file modtime %s, got %s", mod, fileInfo.ModTime())
+	}
+
+	dirInfo, err := os.Stat(filepath.Join(dest, "d"))
+	if err != nil {
+		t.Fatalf("stat extracted dir: %v", err)
+	}
+	if !dirInfo.ModTime().Truncate(time.Second).Equal(mod) {
+		t.Fatalf("expected dir modtime %s, got %s", mod, dirInfo.ModTime())
 	}
 }
