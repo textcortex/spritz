@@ -113,7 +113,8 @@ This yields near-instant updates without RWX storage.
 Sidecar (publish for snapshot mounts):
 
 - A filesystem watcher watches the mount root.
-- Changes are debounced (coalesced) to avoid publishing on every write.
+- Changes are debounced (coalesced, ~200ms) to avoid publishing on every write.
+- Bundles are written as `tar.gz` using gzip best-speed compression (favoring latency).
 - When a bundle checksum differs from the current checksum, the syncer uploads a new
   revision and advances `latest.json`.
 - A periodic publish tick (`publishSeconds`) is retained as a safety net in case the
