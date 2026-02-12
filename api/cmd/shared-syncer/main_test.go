@@ -103,21 +103,20 @@ func TestLatestRejectsInvalidPayload(t *testing.T) {
 }
 
 func TestEnsureEmptyLiveCreatesWritableCurrent(t *testing.T) {
-	mountPath := t.TempDir()
-	if err := ensureEmptyLive(mountPath); err != nil {
-		t.Fatalf("ensureEmptyLive failed: %v", err)
+	mountPath := filepath.Join(t.TempDir(), "mount")
+	if err := ensureMountPath(mountPath); err != nil {
+		t.Fatalf("ensureMountPath failed: %v", err)
 	}
 
-	currentPath := filepath.Join(mountPath, "current")
-	info, err := os.Stat(currentPath)
+	info, err := os.Stat(mountPath)
 	if err != nil {
-		t.Fatalf("stat current path failed: %v", err)
+		t.Fatalf("stat mount path failed: %v", err)
 	}
 	if !info.IsDir() {
-		t.Fatalf("expected current path to be a directory, got mode %v", info.Mode())
+		t.Fatalf("expected mount path to be a directory, got mode %v", info.Mode())
 	}
 	if info.Mode().Perm()&0o020 == 0 {
-		t.Fatalf("expected current directory to be group writable, got mode %v", info.Mode())
+		t.Fatalf("expected mount directory to be group writable, got mode %v", info.Mode())
 	}
 }
 
@@ -150,5 +149,36 @@ func TestEnforceGroupWritableTreeAddsGroupWrite(t *testing.T) {
 	}
 	if fileInfo.Mode().Perm()&0o020 == 0 {
 		t.Fatalf("expected group writable file, got mode %v", fileInfo.Mode())
+	}
+}
+
+func TestMigrateLegacyLayoutFlattensCurrent(t *testing.T) {
+	mountPath := t.TempDir()
+	currentPath := filepath.Join(mountPath, "current")
+	if err := os.MkdirAll(currentPath, 0o755); err != nil {
+		t.Fatalf("mkdir current failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(currentPath, "a.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatalf("write legacy file failed: %v", err)
+	}
+	if err := os.Symlink(currentPath, filepath.Join(mountPath, "live")); err != nil {
+		t.Fatalf("create live symlink failed: %v", err)
+	}
+
+	migrated, err := migrateLegacyLayout(mountPath)
+	if err != nil {
+		t.Fatalf("migrateLegacyLayout failed: %v", err)
+	}
+	if !migrated {
+		t.Fatal("expected migrateLegacyLayout to migrate")
+	}
+	if _, err := os.Stat(filepath.Join(mountPath, "a.txt")); err != nil {
+		t.Fatalf("expected file to be moved to root, got error: %v", err)
+	}
+	if _, err := os.Stat(currentPath); !os.IsNotExist(err) {
+		t.Fatalf("expected current to be removed, got error: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(mountPath, "live")); !os.IsNotExist(err) {
+		t.Fatalf("expected live symlink to be removed, got error: %v", err)
 	}
 }
