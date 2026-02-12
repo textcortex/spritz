@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -57,14 +59,64 @@ func (s *server) getSharedMountLatest(c echo.Context) error {
 	if err != nil {
 		return writeSharedMountError(c, err)
 	}
-	manifest, err := s.fetchSharedMountLatest(c.Request().Context(), ownerID, mountName)
-	if err != nil {
-		if errors.Is(err, errSharedMountNotFound) {
-			return writeError(c, http.StatusNotFound, "not found")
+
+	waitSeconds := parseSharedMountWaitSeconds(c)
+	if waitSeconds <= 0 || s.sharedMountsLive == nil {
+		manifest, err := s.fetchSharedMountLatest(c.Request().Context(), ownerID, mountName)
+		if err != nil {
+			if errors.Is(err, errSharedMountNotFound) {
+				return writeError(c, http.StatusNotFound, "not found")
+			}
+			return writeError(c, http.StatusInternalServerError, err.Error())
 		}
-		return writeError(c, http.StatusInternalServerError, err.Error())
+		return writeJSON(c, http.StatusOK, manifest)
 	}
-	return writeJSON(c, http.StatusOK, manifest)
+
+	expected := strings.TrimSpace(c.QueryParam("ifNoneMatchRevision"))
+	if expected == "" {
+		expected = strings.TrimSpace(c.Request().Header.Get("If-None-Match"))
+	}
+	expected = strings.Trim(expected, "\"")
+
+	key := sharedMountLatestKey(ownerID, mountName)
+	ch := s.sharedMountsLive.subscribe(key)
+	defer s.sharedMountsLive.unsubscribe(key, ch)
+
+	manifest, fetchErr := s.fetchSharedMountLatest(c.Request().Context(), ownerID, mountName)
+	found := fetchErr == nil
+	if fetchErr != nil && !errors.Is(fetchErr, errSharedMountNotFound) {
+		return writeError(c, http.StatusInternalServerError, fetchErr.Error())
+	}
+	if found && (expected == "" || manifest.Revision != expected) {
+		return writeJSON(c, http.StatusOK, manifest)
+	}
+	// Client expects a revision but the mount has never been published.
+	if !found && expected != "" && expected != "*" {
+		return writeError(c, http.StatusNotFound, "not found")
+	}
+
+	waitCtx, cancel := context.WithTimeout(c.Request().Context(), time.Duration(waitSeconds)*time.Second)
+	defer cancel()
+
+	select {
+	case <-waitCtx.Done():
+		if found {
+			return c.NoContent(http.StatusNotModified)
+		}
+		return writeError(c, http.StatusNotFound, "not found")
+	case <-ch:
+		latest, err := s.fetchSharedMountLatest(c.Request().Context(), ownerID, mountName)
+		if err != nil {
+			if errors.Is(err, errSharedMountNotFound) {
+				return writeError(c, http.StatusNotFound, "not found")
+			}
+			return writeError(c, http.StatusInternalServerError, err.Error())
+		}
+		if expected != "" && latest.Revision == expected {
+			return c.NoContent(http.StatusNotModified)
+		}
+		return writeJSON(c, http.StatusOK, latest)
+	}
 }
 
 func (s *server) getSharedMountRevision(c echo.Context) error {
@@ -133,6 +185,9 @@ func (s *server) putSharedMountLatest(c echo.Context) error {
 	objectPath := s.sharedMountsStore.latestPath(ownerID, mountName)
 	if err := s.sharedMountsStore.writeObject(c.Request().Context(), objectPath, bytes.NewReader(payload)); err != nil {
 		return writeError(c, http.StatusInternalServerError, err.Error())
+	}
+	if s.sharedMountsLive != nil {
+		s.sharedMountsLive.notify(sharedMountLatestKey(ownerID, mountName))
 	}
 	return writeJSON(c, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -240,4 +295,24 @@ func writeSharedMountError(c echo.Context, err error) error {
 		return writeError(c, mountErr.status, mountErr.message)
 	}
 	return writeError(c, http.StatusInternalServerError, err.Error())
+}
+
+func sharedMountLatestKey(ownerID, mountName string) string {
+	return ownerID + "\x00" + mountName
+}
+
+func parseSharedMountWaitSeconds(c echo.Context) int {
+	raw := strings.TrimSpace(c.QueryParam("waitSeconds"))
+	if raw == "" {
+		return 0
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return 0
+	}
+	// Avoid pinning connections forever.
+	if value > 120 {
+		return 120
+	}
+	return value
 }

@@ -11,6 +11,9 @@ This document specifies a provider-agnostic way to share multiple directories ac
 Spritz pods without RWX storage. Object storage (GCS, S3, MinIO) is the source of truth,
 and each pod syncs one or more shared mounts into local paths.
 
+This is snapshot replication, not a POSIX shared filesystem. Writes are published as
+bundles and applied by replacing the mount contents.
+
 ## Context
 
 - RWX volumes are not guaranteed in many clusters.
@@ -24,8 +27,10 @@ and each pod syncs one or more shared mounts into local paths.
 - Writer: Spritz API (single writer).
 - Readers: per-pod syncer (init + optional sidecar).
 - Local target: `emptyDir` mounted per mount path (configurable per mount).
-- Each mount is materialized under `<mountPath>/live`.
-- Workloads read/write from `<mountPath>/live` (a stable symlink).
+- Each mount is materialized directly under `<mountPath>`.
+- Workloads read/write from `<mountPath>`.
+- Snapshot mounts publish bundles on filesystem changes (watcher + debounce).
+- Sync mode `poll` uses long-polling so updates apply quickly without aggressive polling.
 
 ## Shared Mount Model
 
@@ -65,7 +70,11 @@ Field expectations:
 - `scope`: one of `owner`, `org`, `project`, `spritz`.
 - `mode`: `read-only` or `snapshot` (no RWX semantics).
 - `syncMode`: `poll` or `manual`.
-  - `snapshot` mounts must use `manual` (poll is for read-only).
+  - `poll` keeps the mount current by applying the latest revision.
+  - `manual` only applies the latest revision at startup.
+  - Snapshot mounts may still publish local changes when `mode: snapshot`.
+- `pollSeconds`: max wait time for long-poll requests when `syncMode: poll`.
+- `publishSeconds`: safety interval for checking/publishing changes when `mode: snapshot`.
 
 ## Storage Layout
 
@@ -90,15 +99,25 @@ Init (startup):
 
 1. Fetch `latest.json` via the API.
 2. Download the tarball from object storage.
-3. Extract into a temp dir (for example `/shared/<mount>/.incoming`).
-4. Atomically swap:
-   - `mv <mountPath>/.incoming <mountPath>/current`
-   - `ln -sfn <mountPath>/current <mountPath>/live`
+3. Extract into a temp dir (for example `<mountPath>/.incoming-<id>`).
+4. Atomically replace the mount contents by swapping extracted entries into `<mountPath>`.
 
-Sidecar (optional polling):
+Sidecar (sync mode `poll`):
 
-- Poll `latest.json` every N seconds.
-- If `revision` changes, repeat the init flow and swap.
+- The syncer long-polls `latest.json` (blocking up to `pollSeconds`).
+- If `revision` changes, repeat the init flow and replace the mount contents.
+- If nothing changes before the long-poll timeout, the syncer immediately reconnects.
+
+This yields near-instant updates without RWX storage.
+
+Sidecar (publish for snapshot mounts):
+
+- A filesystem watcher watches the mount root.
+- Changes are debounced (coalesced) to avoid publishing on every write.
+- When a bundle checksum differs from the current checksum, the syncer uploads a new
+  revision and advances `latest.json`.
+- A periodic publish tick (`publishSeconds`) is retained as a safety net in case the
+  watcher misses events.
 
 ## Write Path (Conflict Control)
 
@@ -147,6 +166,10 @@ Internal endpoints for the syncer and writer:
 Expected behavior:
 
 - `latest` returns the JSON metadata plus checksum.
+- `latest` supports long-poll via query params:
+  - `waitSeconds=<int>`: block up to N seconds if not modified.
+  - `ifNoneMatchRevision=<revision>` (or `If-None-Match` header): current revision.
+  - Response is `304 Not Modified` if unchanged before timeout.
 - `revisions` returns the tarball stream (or a signed URL).
 - `latest` write must include `ifMatchRevision` and returns 409 on mismatch.
 
@@ -210,8 +233,8 @@ Alternative (Kubernetes-native):
 2. API writes the revision tarball.
 3. API updates `latest.json` if the expected revision matches.
 
-For Spritz pods, the shared mount is writable. The syncer sidecar periodically
-packages the mount and publishes a new revision when content changes.
+For Spritz pods, the shared mount is writable. The syncer sidecar uses a filesystem
+watcher to publish quickly when content changes, with a periodic safety tick.
 
 ## Deprecated: Shared Config PVC
 
@@ -245,7 +268,7 @@ advance, even though the syncer loop is running.
 
 ## Validation
 
-- Start two pods for the same owner and confirm `/shared/live` matches.
+- Start two pods for the same owner and confirm `mountPath` matches.
 - Update config via API and confirm both pods switch revisions.
 - Kill and restart a pod; it should restore the latest revision on boot.
 

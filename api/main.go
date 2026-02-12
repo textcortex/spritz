@@ -43,6 +43,7 @@ type server struct {
 	defaultMetadata   map[string]string
 	sharedMounts      sharedMountsConfig
 	sharedMountsStore *sharedMountsStore
+	sharedMountsLive  *sharedMountsLatestNotifier
 	userConfigPolicy  userConfigPolicy
 }
 
@@ -98,6 +99,10 @@ func main() {
 	if sharedMounts.enabled {
 		sharedStore = newSharedMountsStore(sharedMounts)
 	}
+	var sharedMountsLive *sharedMountsLatestNotifier
+	if sharedMounts.enabled {
+		sharedMountsLive = newSharedMountsLatestNotifier()
+	}
 	sshMintLimiter := newSSHMintLimiter()
 	defaultAnnotations, err := parseKeyValueCSV(os.Getenv("SPRITZ_DEFAULT_ANNOTATIONS"))
 	if err != nil {
@@ -121,6 +126,7 @@ func main() {
 		defaultMetadata:   defaultAnnotations,
 		sharedMounts:      sharedMounts,
 		sharedMountsStore: sharedStore,
+		sharedMountsLive:  sharedMountsLive,
 		userConfigPolicy:  userConfigPolicy,
 	}
 

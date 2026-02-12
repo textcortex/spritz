@@ -17,9 +17,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 
 	"spritz.sh/operator/sharedmounts"
 )
@@ -62,7 +65,9 @@ func main() {
 	client := &sharedMountClient{
 		baseURL: strings.TrimRight(apiURL, "/"),
 		token:   token,
-		client:  &http.Client{Timeout: 30 * time.Second},
+		// Long-polling calls can legitimately hold the connection open.
+		// Prefer per-request timeouts (via context) over a tight global client timeout.
+		client: &http.Client{Timeout: 5 * time.Minute},
 	}
 
 	state := make([]*sharedMountState, 0, len(mounts))
@@ -161,36 +166,40 @@ func pollLoop(ctx context.Context, logger *log.Logger, client *sharedMountClient
 	if interval <= 0 {
 		interval = defaultPollSeconds
 	}
-	ticker := time.NewTicker(time.Duration(interval) * time.Second)
-	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			manifest, found, err := client.latest(ctx, ownerID, state.spec.Name)
-			if err != nil {
-				logger.Printf("poll error for %s: %v", state.spec.Name, err)
-				continue
-			}
-			if !found {
-				continue
-			}
-			if manifest.Revision == state.currentRevision {
-				continue
-			}
-			state.mu.Lock()
-			err = applyRevision(ctx, client, ownerID, state.spec, manifest.Revision)
-			if err == nil {
-				state.currentRevision = manifest.Revision
-				state.currentChecksum = manifest.Checksum
-			}
-			state.mu.Unlock()
-			if err != nil {
-				logger.Printf("apply error for %s: %v", state.spec.Name, err)
-				continue
-			}
+		default:
+		}
+
+		state.mu.Lock()
+		current := state.currentRevision
+		state.mu.Unlock()
+
+		manifest, found, err := client.latestWait(ctx, ownerID, state.spec.Name, current, interval)
+		if err != nil {
+			logger.Printf("poll error for %s: %v", state.spec.Name, err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		if !found {
+			continue
+		}
+		if manifest.Revision == current {
+			continue
+		}
+		state.mu.Lock()
+		err = applyRevision(ctx, client, ownerID, state.spec, manifest.Revision)
+		if err == nil {
+			state.currentRevision = manifest.Revision
+			state.currentChecksum = manifest.Checksum
+		}
+		state.mu.Unlock()
+		if err != nil {
+			logger.Printf("apply error for %s: %v", state.spec.Name, err)
+			continue
 		}
 	}
 }
@@ -203,61 +212,180 @@ func publishLoop(ctx context.Context, logger *log.Logger, client *sharedMountCli
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	defer ticker.Stop()
 
+	trigger := make(chan struct{}, 1)
+	go watchMount(ctx, logger, state.spec.MountPath, trigger)
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			state.mu.Lock()
-			checksum, bundle, err := bundleMountRoot(state.spec.MountPath)
-			state.mu.Unlock()
-			if err != nil {
-				logger.Printf("bundle error for %s: %v", state.spec.Name, err)
-				continue
-			}
-			checksumValue := "sha256:" + checksum
-			state.mu.Lock()
-			currentChecksum := state.currentChecksum
-			expectedRevision := state.currentRevision
-			state.mu.Unlock()
-			if checksumValue == currentChecksum {
-				_ = os.Remove(bundle)
-				continue
-			}
-			revision := time.Now().UTC().Format("2006-01-02T15-04-05Z")
-			if err := client.uploadRevision(ctx, ownerID, state.spec.Name, revision, bundle); err != nil {
-				_ = os.Remove(bundle)
-				logger.Printf("upload error for %s: %v", state.spec.Name, err)
-				continue
-			}
-			manifest := sharedmounts.LatestManifest{
-				Revision:  revision,
-				Checksum:  checksumValue,
-				UpdatedAt: time.Now().UTC().Format(time.RFC3339),
-			}
-			if err := client.updateLatest(ctx, ownerID, state.spec.Name, manifest, expectedRevision); err != nil {
-				if errors.Is(err, errConflict) {
-					latest, found, latestErr := client.latest(ctx, ownerID, state.spec.Name)
-					if latestErr == nil && found {
-						state.mu.Lock()
-						state.currentRevision = latest.Revision
-						state.currentChecksum = latest.Checksum
-						state.mu.Unlock()
-					}
-					_ = os.Remove(bundle)
-					continue
+		case <-trigger:
+		}
+
+		state.mu.Lock()
+		checksum, bundle, err := bundleMountRoot(state.spec.MountPath)
+		state.mu.Unlock()
+		if err != nil {
+			logger.Printf("bundle error for %s: %v", state.spec.Name, err)
+			continue
+		}
+		checksumValue := "sha256:" + checksum
+		state.mu.Lock()
+		currentChecksum := state.currentChecksum
+		expectedRevision := state.currentRevision
+		state.mu.Unlock()
+		if checksumValue == currentChecksum {
+			_ = os.Remove(bundle)
+			continue
+		}
+		revision := time.Now().UTC().Format("2006-01-02T15-04-05Z")
+		if err := client.uploadRevision(ctx, ownerID, state.spec.Name, revision, bundle); err != nil {
+			_ = os.Remove(bundle)
+			logger.Printf("upload error for %s: %v", state.spec.Name, err)
+			continue
+		}
+		manifest := sharedmounts.LatestManifest{
+			Revision:  revision,
+			Checksum:  checksumValue,
+			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+		if err := client.updateLatest(ctx, ownerID, state.spec.Name, manifest, expectedRevision); err != nil {
+			if errors.Is(err, errConflict) {
+				latest, found, latestErr := client.latest(ctx, ownerID, state.spec.Name)
+				if latestErr == nil && found {
+					state.mu.Lock()
+					state.currentRevision = latest.Revision
+					state.currentChecksum = latest.Checksum
+					state.mu.Unlock()
 				}
 				_ = os.Remove(bundle)
-				logger.Printf("latest update error for %s: %v", state.spec.Name, err)
 				continue
 			}
 			_ = os.Remove(bundle)
-			state.mu.Lock()
-			state.currentRevision = manifest.Revision
-			state.currentChecksum = manifest.Checksum
-			state.mu.Unlock()
+			logger.Printf("latest update error for %s: %v", state.spec.Name, err)
+			continue
+		}
+		_ = os.Remove(bundle)
+		state.mu.Lock()
+		state.currentRevision = manifest.Revision
+		state.currentChecksum = manifest.Checksum
+		state.mu.Unlock()
+	}
+}
+
+func watchMount(ctx context.Context, logger *log.Logger, mountPath string, trigger chan<- struct{}) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		logger.Printf("watch error for %s: %v", mountPath, err)
+		return
+	}
+	defer watcher.Close()
+
+	if err := addWatchRecursive(watcher, mountPath, mountPath); err != nil {
+		logger.Printf("watch error for %s: %v", mountPath, err)
+		return
+	}
+
+	debounceDelay := 1 * time.Second
+	var debounceTimer *time.Timer
+	var debounceCh <-chan time.Time
+
+	resetDebounce := func() {
+		if debounceTimer == nil {
+			debounceTimer = time.NewTimer(debounceDelay)
+			debounceCh = debounceTimer.C
+			return
+		}
+		if !debounceTimer.Stop() {
+			select {
+			case <-debounceTimer.C:
+			default:
+			}
+		}
+		debounceTimer.Reset(debounceDelay)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-debounceCh:
+			debounceCh = nil
+			debounceTimer = nil
+			select {
+			case trigger <- struct{}{}:
+			default:
+			}
+		case ev, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			if !shouldTriggerPublish(ev.Op) {
+				continue
+			}
+			if shouldIgnoreWatchEvent(mountPath, ev.Name) {
+				continue
+			}
+			// Ensure new directories are watched.
+			if ev.Op&fsnotify.Create != 0 {
+				info, statErr := os.Stat(ev.Name)
+				if statErr == nil && info.IsDir() {
+					_ = addWatchRecursive(watcher, mountPath, ev.Name)
+				}
+			}
+			resetDebounce()
+		case watchErr, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			if watchErr != nil {
+				logger.Printf("watch error for %s: %v", mountPath, watchErr)
+			}
 		}
 	}
+}
+
+func shouldIgnoreWatchEvent(mountRoot, path string) bool {
+	rel, err := filepath.Rel(mountRoot, path)
+	if err != nil || rel == "." || rel == "" {
+		return false
+	}
+	firstComponent := strings.Split(rel, string(os.PathSeparator))[0]
+	return strings.HasPrefix(firstComponent, ".incoming-") || firstComponent == "current" || firstComponent == "live"
+}
+
+func shouldTriggerPublish(op fsnotify.Op) bool {
+	// Chmod is noisy (e.g. permission fixups) and doesn't imply content changes.
+	mask := fsnotify.Create | fsnotify.Write | fsnotify.Remove | fsnotify.Rename
+	return op&mask != 0
+}
+
+func addWatchRecursive(watcher *fsnotify.Watcher, mountRoot, walkRoot string) error {
+	mountRootClean := filepath.Clean(mountRoot)
+	walkRootClean := filepath.Clean(walkRoot)
+	if shouldIgnoreWatchEvent(mountRootClean, walkRootClean) {
+		return nil
+	}
+	return filepath.WalkDir(walkRootClean, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !entry.IsDir() {
+			return nil
+		}
+		if shouldIgnoreWatchEvent(mountRootClean, path) {
+			return filepath.SkipDir
+		}
+		if addErr := watcher.Add(path); addErr != nil {
+			// If we can't watch a subtree, we still want the rest of the tree to work.
+			if path == walkRootClean {
+				return addErr
+			}
+			return filepath.SkipDir
+		}
+		return nil
+	})
 }
 
 func ensureMountPath(mountPath string) error {
@@ -639,6 +767,70 @@ func (c *sharedMountClient) latest(ctx context.Context, ownerID, mount string) (
 		return sharedmounts.LatestManifest{}, false, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return sharedmounts.LatestManifest{}, false, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return sharedmounts.LatestManifest{}, false, fmt.Errorf("latest fetch failed: %s", strings.TrimSpace(string(body)))
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return sharedmounts.LatestManifest{}, false, err
+	}
+	manifest, err := parseLatestManifest(body)
+	if err != nil {
+		return sharedmounts.LatestManifest{}, false, err
+	}
+	return manifest, true, nil
+}
+
+func (c *sharedMountClient) latestWait(ctx context.Context, ownerID, mount, ifNoneMatch string, waitSeconds int) (sharedmounts.LatestManifest, bool, error) {
+	endpoint := c.endpoint(ownerID, mount, "latest")
+	if waitSeconds > 0 || strings.TrimSpace(ifNoneMatch) != "" {
+		parsed, err := url.Parse(endpoint)
+		if err != nil {
+			return sharedmounts.LatestManifest{}, false, err
+		}
+		query := parsed.Query()
+		if waitSeconds > 0 {
+			query.Set("waitSeconds", strconv.Itoa(waitSeconds))
+		}
+		if strings.TrimSpace(ifNoneMatch) != "" {
+			query.Set("ifNoneMatchRevision", strings.Trim(ifNoneMatch, "\""))
+		}
+		parsed.RawQuery = query.Encode()
+		endpoint = parsed.String()
+	}
+
+	// The API enforces the wait timeout, but still ensure the request can't hang
+	// indefinitely in case of networking issues.
+	reqCtx := ctx
+	if waitSeconds > 0 {
+		timeout := time.Duration(waitSeconds+15) * time.Second
+		var cancel context.CancelFunc
+		reqCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return sharedmounts.LatestManifest{}, false, err
+	}
+	c.applyAuth(req)
+	if strings.TrimSpace(ifNoneMatch) != "" {
+		req.Header.Set("If-None-Match", ifNoneMatch)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return sharedmounts.LatestManifest{}, false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotModified {
+		return sharedmounts.LatestManifest{}, false, nil
+	}
 	if resp.StatusCode == http.StatusNotFound {
 		return sharedmounts.LatestManifest{}, false, nil
 	}
