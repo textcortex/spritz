@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"spritz.sh/operator/sharedmounts"
@@ -39,6 +40,7 @@ type sharedMountState struct {
 	spec            sharedmounts.MountSpec
 	currentRevision string
 	currentChecksum string
+	mu              sync.Mutex
 }
 
 func main() {
@@ -127,9 +129,6 @@ func runInit(ctx context.Context, logger *log.Logger, client *sharedMountClient,
 			return err
 		}
 		if !found {
-			if err := ensureEmptyLive(state.spec.MountPath); err != nil {
-				return err
-			}
 			continue
 		}
 		if err := applyRevision(ctx, client, ownerID, state.spec, manifest.Revision); err != nil {
@@ -180,12 +179,17 @@ func pollLoop(ctx context.Context, logger *log.Logger, client *sharedMountClient
 			if manifest.Revision == state.currentRevision {
 				continue
 			}
-			if err := applyRevision(ctx, client, ownerID, state.spec, manifest.Revision); err != nil {
+			state.mu.Lock()
+			err = applyRevision(ctx, client, ownerID, state.spec, manifest.Revision)
+			if err == nil {
+				state.currentRevision = manifest.Revision
+				state.currentChecksum = manifest.Checksum
+			}
+			state.mu.Unlock()
+			if err != nil {
 				logger.Printf("apply error for %s: %v", state.spec.Name, err)
 				continue
 			}
-			state.currentRevision = manifest.Revision
-			state.currentChecksum = manifest.Checksum
 		}
 	}
 }
@@ -203,13 +207,19 @@ func publishLoop(ctx context.Context, logger *log.Logger, client *sharedMountCli
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			checksum, bundle, err := bundleLive(state.spec.MountPath)
+			state.mu.Lock()
+			checksum, bundle, err := bundleMountRoot(state.spec.MountPath)
+			state.mu.Unlock()
 			if err != nil {
 				logger.Printf("bundle error for %s: %v", state.spec.Name, err)
 				continue
 			}
 			checksumValue := "sha256:" + checksum
-			if checksumValue == state.currentChecksum {
+			state.mu.Lock()
+			currentChecksum := state.currentChecksum
+			expectedRevision := state.currentRevision
+			state.mu.Unlock()
+			if checksumValue == currentChecksum {
 				_ = os.Remove(bundle)
 				continue
 			}
@@ -224,12 +234,14 @@ func publishLoop(ctx context.Context, logger *log.Logger, client *sharedMountCli
 				Checksum:  checksumValue,
 				UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 			}
-			if err := client.updateLatest(ctx, ownerID, state.spec.Name, manifest, state.currentRevision); err != nil {
+			if err := client.updateLatest(ctx, ownerID, state.spec.Name, manifest, expectedRevision); err != nil {
 				if errors.Is(err, errConflict) {
 					latest, found, latestErr := client.latest(ctx, ownerID, state.spec.Name)
 					if latestErr == nil && found {
+						state.mu.Lock()
 						state.currentRevision = latest.Revision
 						state.currentChecksum = latest.Checksum
+						state.mu.Unlock()
 					}
 					_ = os.Remove(bundle)
 					continue
@@ -239,25 +251,76 @@ func publishLoop(ctx context.Context, logger *log.Logger, client *sharedMountCli
 				continue
 			}
 			_ = os.Remove(bundle)
+			state.mu.Lock()
 			state.currentRevision = manifest.Revision
 			state.currentChecksum = manifest.Checksum
+			state.mu.Unlock()
 		}
 	}
 }
 
 func ensureMountPath(mountPath string) error {
-	return os.MkdirAll(mountPath, sharedDirPerm)
+	if err := os.MkdirAll(mountPath, sharedDirPerm); err != nil {
+		return err
+	}
+	// Legacy layout used mountPath/current for data and mountPath/live as a symlink.
+	// We now treat mountPath itself as the data root, so migrate once if detected.
+	if _, err := migrateLegacyLayout(mountPath); err != nil {
+		return err
+	}
+	return enforceGroupWritableTree(mountPath)
 }
 
-func ensureEmptyLive(mountPath string) error {
+func migrateLegacyLayout(mountPath string) (bool, error) {
 	currentPath := filepath.Join(mountPath, "current")
-	if err := os.MkdirAll(currentPath, sharedDirPerm); err != nil {
-		return err
+	currentInfo, err := os.Stat(currentPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
 	}
-	if err := enforceGroupWritableTree(currentPath); err != nil {
-		return err
+	if !currentInfo.IsDir() {
+		return false, nil
 	}
-	return updateLiveSymlink(mountPath, currentPath)
+
+	livePath := filepath.Join(mountPath, "live")
+	liveInfo, err := os.Lstat(livePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if liveInfo.Mode()&os.ModeSymlink == 0 {
+		return false, nil
+	}
+
+	entries, err := os.ReadDir(currentPath)
+	if err != nil {
+		return true, err
+	}
+	for _, entry := range entries {
+		src := filepath.Join(currentPath, entry.Name())
+		dst := filepath.Join(mountPath, entry.Name())
+		if _, err := os.Lstat(dst); err == nil {
+			return true, fmt.Errorf("legacy shared mount migration conflict: %s already exists", dst)
+		} else if !os.IsNotExist(err) {
+			return true, err
+		}
+		if err := os.Rename(src, dst); err != nil {
+			return true, err
+		}
+	}
+	// Best-effort cleanup. If cleanup fails, leave a clear error rather than continuing
+	// with a half-migrated tree that could corrupt sync.
+	if err := os.Remove(livePath); err != nil && !os.IsNotExist(err) {
+		return true, err
+	}
+	if err := os.RemoveAll(currentPath); err != nil {
+		return true, err
+	}
+	return true, nil
 }
 
 func applyRevision(ctx context.Context, client *sharedMountClient, ownerID string, spec sharedmounts.MountSpec, revision string) error {
@@ -290,41 +353,57 @@ func applyRevision(ctx context.Context, client *sharedMountClient, ownerID strin
 	if err := enforceGroupWritableTree(incoming); err != nil {
 		return err
 	}
-	currentPath := filepath.Join(spec.MountPath, "current")
-	_ = os.RemoveAll(currentPath)
-	if err := os.Rename(incoming, currentPath); err != nil {
+	if err := replaceMountContents(spec.MountPath, incoming); err != nil {
 		return err
 	}
-	return updateLiveSymlink(spec.MountPath, currentPath)
+	return enforceGroupWritableTree(spec.MountPath)
 }
 
-func updateLiveSymlink(mountPath, target string) error {
-	livePath := filepath.Join(mountPath, "live")
-	tmpName := fmt.Sprintf(".live-tmp-%d", time.Now().UnixNano())
-	tmpPath := filepath.Join(mountPath, tmpName)
-	_ = os.RemoveAll(tmpPath)
-	if err := os.Symlink(target, tmpPath); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, livePath); err != nil {
-		_ = os.RemoveAll(tmpPath)
-		return err
-	}
-	return nil
-}
-
-func bundleLive(mountPath string) (string, string, error) {
-	livePath := filepath.Join(mountPath, "live")
-	realPath, err := filepath.EvalSymlinks(livePath)
+func replaceMountContents(mountPath, incoming string) error {
+	incomingBase := filepath.Base(incoming)
+	entries, err := os.ReadDir(mountPath)
 	if err != nil {
-		realPath = livePath
+		return err
 	}
-	stat, err := os.Stat(realPath)
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == incomingBase {
+			continue
+		}
+		if strings.HasPrefix(name, ".incoming-") {
+			_ = os.RemoveAll(filepath.Join(mountPath, name))
+			continue
+		}
+		// Legacy layout control entries. If they still exist, they are not data.
+		if name == "current" || name == "live" {
+			_ = os.RemoveAll(filepath.Join(mountPath, name))
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(mountPath, name)); err != nil {
+			return err
+		}
+	}
+	incomingEntries, err := os.ReadDir(incoming)
+	if err != nil {
+		return err
+	}
+	for _, entry := range incomingEntries {
+		src := filepath.Join(incoming, entry.Name())
+		dst := filepath.Join(mountPath, entry.Name())
+		if err := os.Rename(src, dst); err != nil {
+			return err
+		}
+	}
+	return os.RemoveAll(incoming)
+}
+
+func bundleMountRoot(mountPath string) (string, string, error) {
+	stat, err := os.Stat(mountPath)
 	if err != nil {
 		return "", "", err
 	}
 	if !stat.IsDir() {
-		return "", "", fmt.Errorf("live path is not a directory: %s", realPath)
+		return "", "", fmt.Errorf("mount path is not a directory: %s", mountPath)
 	}
 	file, err := os.CreateTemp("", "spritz-shared-*.tar.gz")
 	if err != nil {
@@ -339,7 +418,7 @@ func bundleLive(mountPath string) (string, string, error) {
 	hasher := sha256.New()
 	gzipWriter := gzip.NewWriter(file)
 	tarWriter := tar.NewWriter(io.MultiWriter(gzipWriter, hasher))
-	if err := writeTarContents(tarWriter, realPath); err != nil {
+	if err := writeTarContents(tarWriter, mountPath); err != nil {
 		_ = tarWriter.Close()
 		_ = gzipWriter.Close()
 		_ = file.Close()
@@ -373,6 +452,13 @@ func writeTarContents(tw *tar.Writer, root string) error {
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
+		}
+		firstComponent := strings.Split(rel, string(os.PathSeparator))[0]
+		if strings.HasPrefix(firstComponent, ".incoming-") || firstComponent == "current" || firstComponent == "live" {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		info, err := entry.Info()
 		if err != nil {
