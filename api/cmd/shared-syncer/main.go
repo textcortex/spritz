@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -516,10 +517,15 @@ func extractTarGz(archivePath, dest string) error {
 	defer gzr.Close()
 
 	tr := tar.NewReader(gzr)
+	type dirTime struct {
+		path string
+		time time.Time
+	}
+	var dirTimes []dirTime
 	for {
 		header, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			return nil
+			break
 		}
 		if err != nil {
 			return err
@@ -536,6 +542,7 @@ func extractTarGz(archivePath, dest string) error {
 			if err := os.MkdirAll(target, sharedDirPerm); err != nil {
 				return err
 			}
+			dirTimes = append(dirTimes, dirTime{path: target, time: header.ModTime})
 		case tar.TypeReg:
 			if err := os.MkdirAll(filepath.Dir(target), sharedDirPerm); err != nil {
 				return err
@@ -552,6 +559,7 @@ func extractTarGz(archivePath, dest string) error {
 			if err := os.Chmod(target, os.FileMode(header.Mode)|sharedFilePermMask); err != nil {
 				return err
 			}
+			_ = os.Chtimes(target, header.ModTime, header.ModTime)
 		case tar.TypeSymlink:
 			if err := os.MkdirAll(filepath.Dir(target), sharedDirPerm); err != nil {
 				return err
@@ -572,6 +580,17 @@ func extractTarGz(archivePath, dest string) error {
 			continue
 		}
 	}
+
+	// Directories get their mtime updated when we extract files within them. Restore
+	// directory mtimes after extraction so repeated bundle->extract cycles don't
+	// cause a different checksum when the content is unchanged.
+	sort.Slice(dirTimes, func(i, j int) bool {
+		return len(dirTimes[i].path) > len(dirTimes[j].path)
+	})
+	for _, dt := range dirTimes {
+		_ = os.Chtimes(dt.path, dt.time, dt.time)
+	}
+	return nil
 }
 
 func enforceGroupWritableTree(root string) error {
