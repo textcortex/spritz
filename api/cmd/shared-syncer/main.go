@@ -755,7 +755,8 @@ func extractTarGz(archivePath, dest string) error {
 }
 
 func enforceGroupWritableTree(root string) error {
-	return filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+	rootClean := filepath.Clean(root)
+	return filepath.WalkDir(rootClean, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -773,13 +774,27 @@ func enforceGroupWritableTree(root string) error {
 			if mode.Perm() == desired&0o777 && mode&os.ModeSetgid != 0 {
 				return nil
 			}
-			return os.Chmod(path, desired)
+			if err := os.Chmod(path, desired); err != nil {
+				// User processes in the devbox may create files/dirs owned by a different uid.
+				// We still want sync to succeed even if we can't chmod those entries.
+				if os.IsPermission(err) && filepath.Clean(path) != rootClean {
+					return nil
+				}
+				return err
+			}
+			return nil
 		case mode.IsRegular():
 			desired := mode.Perm() | sharedFilePermMask
 			if mode.Perm() == desired {
 				return nil
 			}
-			return os.Chmod(path, desired)
+			if err := os.Chmod(path, desired); err != nil {
+				if os.IsPermission(err) && filepath.Clean(path) != rootClean {
+					return nil
+				}
+				return err
+			}
+			return nil
 		default:
 			return nil
 		}
