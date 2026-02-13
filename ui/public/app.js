@@ -53,6 +53,14 @@ const defaultPresets = [
     branch: '',
     ttl: '',
   },
+  {
+    name: 'OpenClaw Devbox',
+    image: 'spritz-openclaw:latest',
+    description: 'Starter devbox with OpenClaw preinstalled.',
+    repoUrl: '',
+    branch: '',
+    ttl: '',
+  },
 ];
 
 const NAME_ADJECTIVES = [
