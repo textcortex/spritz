@@ -11,10 +11,6 @@ FROM node:22-bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive
 
 ARG OPENCLAW_VERSION=latest
-ARG ZMX_VERSION=0.1.1
-ARG ZMX_SHA256=""
-ARG ZMX_BASE_URL="https://zmx.sh/a"
-ARG TARGETARCH
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
@@ -45,11 +41,6 @@ RUN apt-get update \
     vim \
     xdg-utils \
   && rm -rf /var/lib/apt/lists/*
-
-COPY scripts/install-zmx.sh /tmp/install-zmx.sh
-RUN ZMX_VERSION=$ZMX_VERSION ZMX_SHA256=$ZMX_SHA256 ZMX_BASE_URL=$ZMX_BASE_URL TARGETARCH=$TARGETARCH \
-  bash /tmp/install-zmx.sh \
-  && rm /tmp/install-zmx.sh
 
 RUN npm install -g "openclaw@${OPENCLAW_VERSION}"
 

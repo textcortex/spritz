@@ -20,7 +20,6 @@ docker build -f examples/openclaw/Dockerfile -t spritz-openclaw:latest .
 Optional build args:
 
 - `OPENCLAW_VERSION` (default: `latest`)
-- `ZMX_VERSION` (default: `0.1.1`)
 
 Example:
 
