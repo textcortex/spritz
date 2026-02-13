@@ -50,6 +50,16 @@ OpenClaw config can be supplied at runtime without rebuilding the image:
 
 If none are provided and no config exists, a minimal browser config is written.
 
+## Spritz Open Integration
+
+Use this image as a per-devbox application surface in Spritz:
+
+- point the Spritz `Open` action to the OpenClaw UI running inside that specific devbox
+- keep access checks tied to that devbox owner/session
+
+Do not expose a single global/shared OpenClaw dashboard for all devboxes.
+The intended model is one UI endpoint per running devbox instance.
+
 ## Quick Check
 
 ```bash
