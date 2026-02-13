@@ -33,11 +33,24 @@ docker build \
 
 ## Runtime
 
-The image reuses `examples/base/entrypoint.sh`.
+The image uses a small OpenClaw wrapper entrypoint and then calls
+`examples/base/entrypoint.sh`.
 
 Default command is `sleep infinity` so Spritz terminal/SSH sessions can attach cleanly.
 
-To run OpenClaw manually inside a devbox:
+## Generic Config Support
+
+OpenClaw config can be supplied at runtime without rebuilding the image:
+
+- `OPENCLAW_CONFIG_JSON`: raw JSON content for `openclaw.json`
+- `OPENCLAW_CONFIG_B64`: base64-encoded JSON content
+- `OPENCLAW_CONFIG_FILE`: path to an existing config file in the container
+- `OPENCLAW_CONFIG_DIR` (optional): config directory (default: `${HOME}/.openclaw`)
+- `OPENCLAW_CONFIG_PATH` (optional): config file path (default: `${OPENCLAW_CONFIG_DIR}/openclaw.json`)
+
+If none are provided and no config exists, a minimal browser config is written.
+
+## Quick Check
 
 ```bash
 openclaw --help

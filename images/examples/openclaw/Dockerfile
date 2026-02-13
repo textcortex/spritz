@@ -55,6 +55,7 @@ USER dev
 WORKDIR /workspace
 
 COPY --chown=dev:dev examples/base/entrypoint.sh /usr/local/bin/spritz-entrypoint
+COPY --chown=dev:dev examples/openclaw/entrypoint.sh /usr/local/bin/spritz-openclaw-entrypoint
 
-ENTRYPOINT ["/usr/local/bin/spritz-entrypoint"]
+ENTRYPOINT ["/usr/local/bin/spritz-openclaw-entrypoint"]
 CMD ["sleep", "infinity"]
