@@ -4,8 +4,8 @@ This image provides a generic Spritz devbox with `openclaw` preinstalled.
 
 It intentionally stays environment-agnostic:
 
-- no TextCortex domains
-- no project-specific IDs
+- no organization-specific domains
+- no environment-specific IDs
 - no bundled secrets
 
 ## Build
