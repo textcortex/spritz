@@ -37,7 +37,7 @@ The image uses a small OpenClaw wrapper entrypoint and then calls
 `examples/base/entrypoint.sh`.
 
 By default, when the container command is the image default (`sleep infinity`),
-it auto-starts the OpenClaw gateway on port `8080` so Spritz `Open` can render
+it auto-starts the OpenClaw gateway on port `8080` with a LAN bind so Spritz `Open` can render
 OpenClaw UI immediately.
 
 To disable auto-start and keep shell-only behavior, set:
@@ -48,6 +48,7 @@ Auto-start related runtime overrides:
 
 - `OPENCLAW_GATEWAY_PORT` (default: `8080`)
 - `OPENCLAW_GATEWAY_MODE` (default: `local`)
+- `OPENCLAW_GATEWAY_BIND` (default: `lan`; set `loopback` for local-only)
 - `OPENCLAW_GATEWAY_TOKEN` (optional; auto-generated if omitted)
 
 ## Generic Config Support
