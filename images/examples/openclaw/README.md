@@ -36,7 +36,19 @@ docker build \
 The image uses a small OpenClaw wrapper entrypoint and then calls
 `examples/base/entrypoint.sh`.
 
-Default command is `sleep infinity` so Spritz terminal/SSH sessions can attach cleanly.
+By default, when the container command is the image default (`sleep infinity`),
+it auto-starts the OpenClaw gateway on port `8080` so Spritz `Open` can render
+OpenClaw UI immediately.
+
+To disable auto-start and keep shell-only behavior, set:
+
+- `OPENCLAW_AUTO_START=false`
+
+Auto-start related runtime overrides:
+
+- `OPENCLAW_GATEWAY_PORT` (default: `8080`)
+- `OPENCLAW_GATEWAY_MODE` (default: `local`)
+- `OPENCLAW_GATEWAY_TOKEN` (optional; auto-generated if omitted)
 
 ## Generic Config Support
 
