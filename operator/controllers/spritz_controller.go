@@ -720,6 +720,9 @@ func spritzURL(spritz *spritzv1.Spritz) string {
 		if path == "" {
 			path = "/"
 		}
+		if path != "/" && !strings.HasSuffix(path, "/") {
+			path += "/"
+		}
 		return fmt.Sprintf("https://%s%s", spritz.Spec.Ingress.Host, path)
 	}
 
