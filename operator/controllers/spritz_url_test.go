@@ -9,12 +9,12 @@ import (
 func TestSpritzURLIngressAddsTrailingSlash(t *testing.T) {
 	spritz := &spritzv1.Spritz{}
 	spritz.Spec.Ingress = &spritzv1.SpritzIngress{
-		Host: "staging.console.textcortex.com",
+		Host: "console.example.com",
 		Path: "/spritz/w/tidy-fjord",
 	}
 
 	got := spritzURL(spritz)
-	want := "https://staging.console.textcortex.com/spritz/w/tidy-fjord/"
+	want := "https://console.example.com/spritz/w/tidy-fjord/"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -23,12 +23,12 @@ func TestSpritzURLIngressAddsTrailingSlash(t *testing.T) {
 func TestSpritzURLIngressRootStaysRoot(t *testing.T) {
 	spritz := &spritzv1.Spritz{}
 	spritz.Spec.Ingress = &spritzv1.SpritzIngress{
-		Host: "staging.console.textcortex.com",
+		Host: "console.example.com",
 		Path: "/",
 	}
 
 	got := spritzURL(spritz)
-	want := "https://staging.console.textcortex.com/"
+	want := "https://console.example.com/"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -37,12 +37,12 @@ func TestSpritzURLIngressRootStaysRoot(t *testing.T) {
 func TestSpritzURLIngressKeepsExistingTrailingSlash(t *testing.T) {
 	spritz := &spritzv1.Spritz{}
 	spritz.Spec.Ingress = &spritzv1.SpritzIngress{
-		Host: "staging.console.textcortex.com",
+		Host: "console.example.com",
 		Path: "/spritz/w/tidy-fjord/",
 	}
 
 	got := spritzURL(spritz)
-	want := "https://staging.console.textcortex.com/spritz/w/tidy-fjord/"
+	want := "https://console.example.com/spritz/w/tidy-fjord/"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
