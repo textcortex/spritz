@@ -56,7 +56,7 @@ if [[ "${auto_start}" == "true" ]]; then
 fi
 
 if [[ "${should_auto_start}" == "true" ]]; then
-  set -- openclaw gateway --bind custom --port "${gateway_port}"
+  set -- openclaw gateway run --bind custom --port "${gateway_port}"
 fi
 
 exec /usr/local/bin/spritz-entrypoint "$@"
