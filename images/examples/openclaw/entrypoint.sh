@@ -5,6 +5,7 @@ config_dir="${OPENCLAW_CONFIG_DIR:-${HOME}/.openclaw}"
 config_path="${OPENCLAW_CONFIG_PATH:-${config_dir}/openclaw.json}"
 gateway_port="${OPENCLAW_GATEWAY_PORT:-8080}"
 gateway_mode="${OPENCLAW_GATEWAY_MODE:-local}"
+gateway_bind="${OPENCLAW_GATEWAY_BIND:-lan}"
 auto_start="${OPENCLAW_AUTO_START:-true}"
 
 mkdir -p "${config_dir}"
@@ -35,6 +36,7 @@ export OPENCLAW_CONFIG_PATH="${config_path}"
 # Keep gateway defaults deterministic for Spritz web routing.
 openclaw config set gateway.mode "${gateway_mode}" >/dev/null
 openclaw config set gateway.port "${gateway_port}" >/dev/null
+openclaw config set gateway.bind "${gateway_bind}" >/dev/null
 
 token="${OPENCLAW_GATEWAY_TOKEN:-}"
 if [[ -z "${token}" ]]; then
@@ -56,7 +58,7 @@ if [[ "${auto_start}" == "true" ]]; then
 fi
 
 if [[ "${should_auto_start}" == "true" ]]; then
-  set -- openclaw gateway run --bind custom --port "${gateway_port}"
+  set -- openclaw gateway run --bind "${gateway_bind}" --port "${gateway_port}"
 fi
 
 exec /usr/local/bin/spritz-entrypoint "$@"
