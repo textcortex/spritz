@@ -389,7 +389,7 @@ func shouldIgnoreWatchEvent(mountRoot, path string) bool {
 		return false
 	}
 	firstComponent := strings.Split(rel, string(os.PathSeparator))[0]
-	return strings.HasPrefix(firstComponent, ".incoming-") || firstComponent == "current" || firstComponent == "live"
+	return strings.HasPrefix(firstComponent, ".incoming-") || strings.HasPrefix(firstComponent, ".trash-") || firstComponent == "current" || firstComponent == "live"
 }
 
 func shouldTriggerPublish(op fsnotify.Op) bool {
@@ -527,6 +527,7 @@ func applyRevision(ctx context.Context, client *sharedMountClient, ownerID strin
 
 func replaceMountContents(mountPath, incoming string) error {
 	incomingBase := filepath.Base(incoming)
+	cleanupPaths := []string{}
 	entries, err := os.ReadDir(mountPath)
 	if err != nil {
 		return err
@@ -540,12 +541,25 @@ func replaceMountContents(mountPath, incoming string) error {
 			_ = os.RemoveAll(filepath.Join(mountPath, name))
 			continue
 		}
+		if strings.HasPrefix(name, ".trash-") {
+			cleanupPaths = append(cleanupPaths, filepath.Join(mountPath, name))
+			continue
+		}
 		// Legacy layout control entries. If they still exist, they are not data.
 		if name == "current" || name == "live" {
 			_ = os.RemoveAll(filepath.Join(mountPath, name))
 			continue
 		}
-		if err := os.RemoveAll(filepath.Join(mountPath, name)); err != nil {
+		targetPath := filepath.Join(mountPath, name)
+		if err := os.RemoveAll(targetPath); err != nil {
+			if os.IsPermission(err) {
+				trashPath := filepath.Join(mountPath, fmt.Sprintf(".trash-%d-%s", time.Now().UnixNano(), name))
+				if renameErr := os.Rename(targetPath, trashPath); renameErr != nil {
+					return err
+				}
+				cleanupPaths = append(cleanupPaths, trashPath)
+				continue
+			}
 			return err
 		}
 	}
@@ -559,6 +573,9 @@ func replaceMountContents(mountPath, incoming string) error {
 		if err := os.Rename(src, dst); err != nil {
 			return err
 		}
+	}
+	for _, cleanupPath := range cleanupPaths {
+		_ = os.RemoveAll(cleanupPath)
 	}
 	return os.RemoveAll(incoming)
 }
