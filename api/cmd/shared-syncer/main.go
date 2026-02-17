@@ -568,6 +568,9 @@ func replaceMountContents(mountPath, incoming string) error {
 		return err
 	}
 	for _, entry := range incomingEntries {
+		if strings.HasPrefix(entry.Name(), ".trash-") {
+			continue
+		}
 		src := filepath.Join(incoming, entry.Name())
 		dst := filepath.Join(mountPath, entry.Name())
 		if err := os.Rename(src, dst); err != nil {

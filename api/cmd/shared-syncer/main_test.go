@@ -391,3 +391,43 @@ func TestReplaceMountContentsPermissionFallback(t *testing.T) {
 		t.Fatalf("chmod trash dir for cleanup failed: %v", err)
 	}
 }
+
+func TestReplaceMountContentsSkipsIncomingTrashEntries(t *testing.T) {
+	mountPath := t.TempDir()
+
+	existingTrash := filepath.Join(mountPath, ".trash-old")
+	if err := os.MkdirAll(existingTrash, 0o755); err != nil {
+		t.Fatalf("mkdir existing trash failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(existingTrash, "stale.txt"), []byte("stale"), 0o644); err != nil {
+		t.Fatalf("write existing trash file failed: %v", err)
+	}
+	if err := os.Chmod(existingTrash, 0o555); err != nil {
+		t.Fatalf("chmod existing trash failed: %v", err)
+	}
+
+	incoming := filepath.Join(mountPath, ".incoming-test")
+	if err := os.MkdirAll(filepath.Join(incoming, ".trash-old"), 0o755); err != nil {
+		t.Fatalf("mkdir incoming trash failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(incoming, ".trash-old", "new-stale.txt"), []byte("stale"), 0o644); err != nil {
+		t.Fatalf("write incoming trash file failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(incoming, "data"), 0o755); err != nil {
+		t.Fatalf("mkdir incoming data failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(incoming, "data", "ok.txt"), []byte("ok"), 0o644); err != nil {
+		t.Fatalf("write incoming data file failed: %v", err)
+	}
+
+	if err := replaceMountContents(mountPath, incoming); err != nil {
+		t.Fatalf("replaceMountContents failed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(mountPath, "data", "ok.txt")); err != nil {
+		t.Fatalf("expected incoming data to be applied, got error: %v", err)
+	}
+	if err := os.Chmod(existingTrash, 0o755); err != nil {
+		t.Fatalf("chmod existing trash for cleanup failed: %v", err)
+	}
+}
