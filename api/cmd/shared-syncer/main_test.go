@@ -10,6 +10,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -279,5 +281,65 @@ func TestBundleMountRootChecksumIgnoresGroupWriteBit(t *testing.T) {
 
 	if checksumA != checksumB {
 		t.Fatalf("expected checksum to be stable across group-write normalization, got %s vs %s", checksumA, checksumB)
+	}
+}
+
+func TestShouldIgnoreWatchEventSkipsTrashPaths(t *testing.T) {
+	root := t.TempDir()
+	if !shouldIgnoreWatchEvent(root, filepath.Join(root, ".trash-123", "x")) {
+		t.Fatal("expected .trash path to be ignored")
+	}
+}
+
+func TestReplaceMountContentsPermissionFallback(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("darwin requires write permission on directory itself for rename; fallback is validated on linux")
+	}
+
+	mountPath := t.TempDir()
+
+	lockedDir := filepath.Join(mountPath, "locked")
+	if err := os.MkdirAll(lockedDir, 0o755); err != nil {
+		t.Fatalf("mkdir locked dir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(lockedDir, "old.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatalf("write old file failed: %v", err)
+	}
+	if err := os.Chmod(lockedDir, 0o555); err != nil {
+		t.Fatalf("chmod locked dir failed: %v", err)
+	}
+
+	incoming := filepath.Join(mountPath, ".incoming-test")
+	if err := os.MkdirAll(filepath.Join(incoming, "locked"), 0o755); err != nil {
+		t.Fatalf("mkdir incoming dir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(incoming, "locked", "new.txt"), []byte("new"), 0o644); err != nil {
+		t.Fatalf("write incoming file failed: %v", err)
+	}
+
+	if err := replaceMountContents(mountPath, incoming); err != nil {
+		t.Fatalf("replaceMountContents failed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(mountPath, "locked", "new.txt")); err != nil {
+		t.Fatalf("expected incoming content to be placed, got error: %v", err)
+	}
+
+	entries, err := os.ReadDir(mountPath)
+	if err != nil {
+		t.Fatalf("read mount dir failed: %v", err)
+	}
+	trashPath := ""
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".trash-") {
+			trashPath = filepath.Join(mountPath, entry.Name())
+			break
+		}
+	}
+	if trashPath == "" {
+		t.Fatal("expected a .trash- quarantine directory for permission-denied cleanup")
+	}
+	if err := os.Chmod(trashPath, 0o755); err != nil {
+		t.Fatalf("chmod trash dir for cleanup failed: %v", err)
 	}
 }
