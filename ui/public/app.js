@@ -443,7 +443,8 @@ const defaultUserConfigYaml = `sharedMounts:
     mountPath: /home/dev/.config
     scope: owner
     mode: snapshot
-    syncMode: manual`;
+    syncMode: poll
+    pollSeconds: 30`;
 
 function normalizePresetEnv(env) {
   if (!env) return null;

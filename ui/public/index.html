@@ -55,7 +55,8 @@
     mountPath: /home/dev/.config
     scope: owner
     mode: snapshot
-    syncMode: manual
+    syncMode: poll
+    pollSeconds: 30
 ttl: 8h"
             ></textarea>
             <small class="hint">
