@@ -32,6 +32,9 @@ const (
 	defaultPublishSeconds = 60
 	sharedDirPerm         = 0o2775
 	sharedFilePermMask    = 0o020
+	// Applying a remote revision causes local filesystem events. Suppress publishing
+	// briefly after apply so those events are not echoed back as new revisions.
+	publishSuppressAfterApply = 2 * time.Second
 )
 
 type sharedMountClient struct {
@@ -44,6 +47,7 @@ type sharedMountState struct {
 	spec            sharedmounts.MountSpec
 	currentRevision string
 	currentChecksum string
+	suppressUntil   time.Time
 	mu              sync.Mutex
 }
 
@@ -197,6 +201,7 @@ func pollLoop(ctx context.Context, logger *log.Logger, client *sharedMountClient
 		if err == nil {
 			state.currentRevision = manifest.Revision
 			state.currentChecksum = manifest.Checksum
+			state.suppressUntil = time.Now().Add(publishSuppressAfterApply)
 		}
 		state.mu.Unlock()
 		if err != nil {
@@ -230,6 +235,10 @@ func publishLoop(ctx context.Context, logger *log.Logger, client *sharedMountCli
 		}
 
 		state.mu.Lock()
+		if time.Now().Before(state.suppressUntil) {
+			state.mu.Unlock()
+			continue
+		}
 		bundleStartedAt := time.Now()
 		checksum, bundle, err := bundleMountRoot(state.spec.MountPath)
 		state.mu.Unlock()
@@ -646,6 +655,7 @@ func writeTarContents(tw *tar.Writer, root string) error {
 			header.Typeflag = tar.TypeSymlink
 			header.Linkname = link
 		}
+		normalizeTarHeader(header, info)
 		if err := tw.WriteHeader(header); err != nil {
 			return err
 		}
@@ -662,6 +672,32 @@ func writeTarContents(tw *tar.Writer, root string) error {
 		}
 		return nil
 	})
+}
+
+func normalizeTarHeader(header *tar.Header, info os.FileInfo) {
+	// Normalize ownership and non-semantic timestamps so identical content does not
+	// produce different checksums across pods with different uid/gid mappings.
+	header.Uid = 0
+	header.Gid = 0
+	header.Uname = ""
+	header.Gname = ""
+	header.AccessTime = time.Unix(0, 0).UTC()
+	header.ChangeTime = time.Unix(0, 0).UTC()
+	header.ModTime = info.ModTime().UTC().Truncate(time.Second)
+	header.PAXRecords = nil
+	header.Xattrs = nil
+
+	perm := info.Mode().Perm()
+	switch {
+	case info.IsDir():
+		perm = perm | sharedFilePermMask | 0o2000
+	case info.Mode().IsRegular():
+		// Keep executable bits but normalize group-writable policy.
+		perm = perm | sharedFilePermMask
+	case info.Mode()&os.ModeSymlink != 0:
+		perm = 0o777
+	}
+	header.Mode = int64(perm)
 }
 
 func extractTarGz(archivePath, dest string) error {
