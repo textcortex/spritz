@@ -253,3 +253,31 @@ func TestExtractTarGzPreservesModTime(t *testing.T) {
 		t.Fatalf("expected dir modtime %s, got %s", mod, dirInfo.ModTime())
 	}
 }
+
+func TestBundleMountRootChecksumIgnoresGroupWriteBit(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "settings.json")
+	if err := os.WriteFile(filePath, []byte(`{"ok":true}`), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	checksumA, bundleA, err := bundleMountRoot(root)
+	if err != nil {
+		t.Fatalf("bundleMountRoot first call failed: %v", err)
+	}
+	_ = os.Remove(bundleA)
+
+	if err := os.Chmod(filePath, 0o664); err != nil {
+		t.Fatalf("chmod file: %v", err)
+	}
+
+	checksumB, bundleB, err := bundleMountRoot(root)
+	if err != nil {
+		t.Fatalf("bundleMountRoot second call failed: %v", err)
+	}
+	_ = os.Remove(bundleB)
+
+	if checksumA != checksumB {
+		t.Fatalf("expected checksum to be stable across group-write normalization, got %s vs %s", checksumA, checksumB)
+	}
+}
