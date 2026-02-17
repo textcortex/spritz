@@ -642,7 +642,7 @@ func writeTarContents(tw *tar.Writer, root string) error {
 			return err
 		}
 		firstComponent := strings.Split(rel, string(os.PathSeparator))[0]
-		if strings.HasPrefix(firstComponent, ".incoming-") || firstComponent == "current" || firstComponent == "live" {
+		if strings.HasPrefix(firstComponent, ".incoming-") || strings.HasPrefix(firstComponent, ".trash-") || firstComponent == "current" || firstComponent == "live" {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}

@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -63,6 +64,53 @@ func TestWriteTarContentsRejectsEscapingSymlink(t *testing.T) {
 	_ = tw.Close()
 	if err == nil {
 		t.Fatal("expected error for escaping symlink")
+	}
+}
+
+func TestWriteTarContentsSkipsTrashPaths(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "keep.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatalf("write keep file: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".trash-old"), 0o755); err != nil {
+		t.Fatalf("mkdir trash dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".trash-old", "stale.txt"), []byte("stale"), 0o644); err != nil {
+		t.Fatalf("write trash file: %v", err)
+	}
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := writeTarContents(tw, root); err != nil {
+		t.Fatalf("writeTarContents failed: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar writer: %v", err)
+	}
+
+	tr := tar.NewReader(bytes.NewReader(buf.Bytes()))
+	foundKeep := false
+	foundTrash := false
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read tar header: %v", err)
+		}
+		if hdr.Name == "keep.txt" {
+			foundKeep = true
+		}
+		if strings.HasPrefix(hdr.Name, ".trash-") {
+			foundTrash = true
+		}
+	}
+	if !foundKeep {
+		t.Fatal("expected keep.txt in bundle")
+	}
+	if foundTrash {
+		t.Fatal("expected .trash-* paths to be skipped from bundle")
 	}
 }
 
