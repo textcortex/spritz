@@ -10,21 +10,34 @@ tags: [spritz, deployment, architecture]
 This document defines the default Spritz deployment model for the easiest
 possible install by a new operator.
 
-The default must avoid path-routing tricks, custom edge workers, and multi-origin
-front-end hosting.
+The default must avoid path-routing tricks, custom edge workers, multi-origin
+front-end hosting, and backward-compatibility branches.
+
+## Target End State
+
+- One hostname, one ingress, one Helm install.
+- One routing model:
+  - `/` -> `spritz-ui`
+  - `/api` -> `spritz-api`
+- API served only under `/api/*` (no root API routes).
+- UI uses `/api` as its API base in default deployment mode.
+- One canonical ingress config surface under `global.ingress`.
+- No legacy fallback keys in the default chart path.
 
 ## Goals
 
 - Make first deployment possible with one hostname and one Helm install.
 - Keep UI and API in the same Kubernetes deployment surface.
 - Minimize required configuration values.
-- Keep advanced networking patterns optional.
+- Keep advanced networking patterns outside the default path.
+- Keep defaults stable and production-oriented for standalone installs.
 
 ## Non-goals
 
-- Optimizing for existing multi-app domain/path routing.
+- Optimizing for existing multi-app domain/path routing in default mode.
 - Requiring provider-specific edge features for default setup.
 - Dropbox-grade conflict resolution in default storage mode.
+- Preserving old/alternate ingress key paths.
 
 ## Default Deployment Model
 
@@ -47,10 +60,11 @@ front-end hosting.
 
 The default installation should require only:
 
-- `host`: public Spritz host (example: `spritz.example.com`)
-- `ingressClassName`: ingress class (or gateway class)
-- `tls.issuerRef` (or pre-provisioned secret)
-- `storageClass`: default PVC storage class
+- `global.host`: public Spritz host (example: `spritz.example.com`)
+- `global.ingress.className`: ingress class
+- `global.ingress.tls.enabled`: whether TLS is enabled
+- `global.ingress.tls.secretName` (optional): pre-provisioned TLS secret name
+- `operator.homePVC.storageClass` (optional): home PVC storage class override
 
 Everything else should have working defaults.
 
@@ -59,36 +73,33 @@ Everything else should have working defaults.
 ```yaml
 global:
   host: spritz.example.com
-
-ingress:
-  enabled: true
-  className: nginx
-  tls:
-    enabled: true
-    issuerRef:
-      name: letsencrypt-prod
-      kind: ClusterIssuer
+  ingress:
+    className: nginx
+    tls:
+      enabled: true
+      secretName: ""
 
 ui:
-  enabled: true
-  basePath: /
+  ingress:
+    enabled: true
   apiBaseUrl: /api
 
-api:
-  enabled: true
-  basePath: /api
-
-storage:
-  homePvc:
+operator:
+  homePVC:
     enabled: true
     storageClassName: standard
+
+  sharedMounts:
+    enabled: false
+
+api:
   sharedMounts:
     enabled: false
 ```
 
 ## Implementation Scope (Exact Changes)
 
-### Helm Values and Compatibility
+### Helm Values (Strict v1)
 
 File: `helm/spritz/values.yaml`
 
@@ -96,25 +107,21 @@ File: `helm/spritz/values.yaml`
 - Add `global.ingress.className` with default `nginx`.
 - Add `global.ingress.tls.enabled` (default `true`).
 - Add `global.ingress.tls.secretName` (default empty; operator-provided).
-- Keep `ui.apiBaseUrl` default `/api`.
-- Keep `ui.basePath` default `/`.
 - Keep `ui.ingress.enabled` default `true` for single-host installs.
+- Keep `ui.apiBaseUrl` default `/api`.
 - Keep `operator.homePVC.enabled` default `true`.
 - Keep `operator.sharedMounts.enabled` and `api.sharedMounts.enabled` default `false`.
-
-Legacy keys that remain supported during transition:
-
-- `ui.ingress.host`
-- `ui.ingress.className`
-- `ui.ingress.path`
-- explicit `ui.apiBaseUrl`
+- Remove compatibility-only keys from the default path:
+  - `ui.ingress.host`
+  - `ui.ingress.className`
+  - `ui.ingress.path`
+  - `ui.basePath`
 
 ### Helm Templates
 
 Files:
 
 - `helm/spritz/templates/ui-deployment.yaml`
-- `helm/spritz/templates/api-deployment.yaml`
 - `helm/spritz/templates/ui-api-ingress.yaml` (new)
 
 Required behavior:
@@ -123,8 +130,8 @@ Required behavior:
 - Render one public ingress object with two ordered paths:
   - `/api` -> service `spritz-api` on `.Values.api.service.port`
   - `/` -> service `spritz-ui` on `.Values.ui.service.port`
-- Source ingress class from `global.ingress.className`, fallback to `ui.ingress.className`.
-- Source host from `global.host`, fallback to `ui.ingress.host`.
+- Source ingress class only from `global.ingress.className`.
+- Source host only from `global.host`.
 - Add TLS block when `global.ingress.tls.enabled` is true.
 - Keep service names unchanged (`spritz-api`, `spritz-ui`) to avoid rollout risk.
 
@@ -132,9 +139,21 @@ Required behavior:
 
 File: `api/main.go`
 
-- Register endpoints on both root and `/api` prefixes.
-- Keep existing root routes for backward compatibility.
-- Add `/api/healthz` alongside `/healthz` for path-based ingress health checks.
+- Register API and internal endpoints only under `/api`.
+- Expose health check at `/api/healthz`.
+- Remove root-prefixed API routes from the public server surface.
+
+### UI Runtime Behavior
+
+Files:
+
+- `helm/spritz/templates/ui-deployment.yaml`
+- `ui/entrypoint.sh`
+
+Required behavior:
+
+- Default runtime API base is `/api`.
+- Do not require base-path routing logic for default standalone mode.
 
 ## Storage and Sync Defaults
 
@@ -160,29 +179,18 @@ Advanced mode can support:
 These are explicitly optional and should be documented separately from the
 default install flow.
 
-## Upgrade Behavior (Existing Installs)
+## Backward Compatibility Policy
 
-- This is still prelaunch v1; defaults can be optimized for new installs.
-- Existing installs can preserve legacy behavior by pinning old ingress keys.
-- No CRD schema change is required for this deployment change.
-- Existing Spritz custom resources are not mutated by chart upgrade.
-- Home PVC default change applies to newly created Spritz resources after upgrade.
-
-Compatibility precedence:
-
-- API URL resolution:
-  - explicit `ui.apiBaseUrl` wins
-  - else use `<ui.basePath>/api` when `ui.basePath` is set
-  - else use `/api`
-- Host/class resolution:
-  - use `global.host` and `global.ingress.className` when set
-  - else fallback to `ui.ingress.host` and `ui.ingress.className`
+- No backward compatibility contract is required for this prelaunch baseline.
+- Remove compatibility paths instead of carrying long-term dual behavior.
+- If values are renamed/removed, operators must adopt the new canonical keys.
+- No CRD schema change is required for this deployment-focused work.
 
 ## Operational Guardrails
 
 Even in default mode, add these checks:
 
-- Health endpoint checks for UI and API.
+- Health endpoint checks for UI and `/api/healthz`.
 - TLS handshake check on the configured public host.
 - Alert on repeated `5xx` from ingress.
 
@@ -199,8 +207,9 @@ After install:
 1. Open `https://spritz.example.com`.
 2. Confirm UI loads from `/`.
 3. Confirm API health at `/api/healthz`.
-4. Create a devbox and open terminal.
-5. Recreate the pod and verify home state persists.
+4. Confirm root API endpoint path is not served (for example `/healthz` is not used as the API health path).
+5. Create a devbox via `/api/spritzes` and open terminal.
+6. Recreate the pod and verify home state persists.
 
 Advanced mode validation should be a separate checklist.
 
@@ -211,7 +220,6 @@ Advanced mode validation should be a separate checklist.
 Run:
 
 - `helm template spritz ./helm/spritz`
-- `helm template spritz ./helm/spritz --set global.host= --set ui.ingress.host=legacy.example.com`
 
 Pass criteria:
 
@@ -219,7 +227,7 @@ Pass criteria:
 - Path `/api` routes to `spritz-api`.
 - Path `/` routes to `spritz-ui`.
 - Default host comes from `global.host`.
-- Legacy host fallback works when `global.host` is empty.
+- Ingress class comes from `global.ingress.className`.
 
 ### API Route Checks
 
@@ -229,9 +237,10 @@ Add tests in:
 
 Assertions:
 
-- `GET /healthz` returns 200.
 - `GET /api/healthz` returns 200.
-- Root and `/api` route variants hit identical auth and handler logic.
+- `GET /healthz` is not the canonical health path for API routing.
+- Secured API handlers are served under `/api`.
+- Root-prefixed API paths are not part of default route surface.
 
 Run:
 
@@ -254,5 +263,6 @@ Pass criteria:
 ## Decision Summary
 
 - Keep core Spritz architecture.
-- Change deployment defaults toward single-host Kubernetes serving.
-- Move edge/path-routing complexity behind an optional advanced setup.
+- Use a strict single-host Kubernetes deployment default.
+- Keep API under `/api` and UI under `/`.
+- Keep edge/path-routing complexity outside the default deployment model.
