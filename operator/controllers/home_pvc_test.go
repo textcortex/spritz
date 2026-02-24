@@ -223,7 +223,7 @@ func TestValidateRepoDir(t *testing.T) {
 	}{
 		{"empty ok", "", false},
 		{"relative ok", "spritz", false},
-		{"relative nested ok", "spritz/app", false},
+		{"relative nested ok", "project/app", false},
 		{"relative up invalid", "../etc", true},
 		{"relative up nested invalid", "foo/../../etc", true},
 		{"absolute workspace ok", "/workspace/spritz", false},

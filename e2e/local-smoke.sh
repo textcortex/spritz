@@ -139,6 +139,18 @@ if [[ "${status}" != "200" ]]; then
   exit 1
 fi
 
+root_health_status="$(curl -sS -o /dev/null -w '%{http_code}' "http://localhost:${API_PORT}/healthz" || true)"
+if [[ "${root_health_status}" != "404" ]]; then
+  echo "expected root health endpoint to return 404, got ${root_health_status}"
+  exit 1
+fi
+
+root_list_status="$(curl -sS -o /dev/null -w '%{http_code}' "http://localhost:${API_PORT}/spritzes" || true)"
+if [[ "${root_list_status}" != "404" ]]; then
+  echo "expected root spritzes endpoint to return 404, got ${root_list_status}"
+  exit 1
+fi
+
 cat <<EOF > "${LOG_DIR}/create.json"
 {
   "name": "${SPRITZ_NAME}",
