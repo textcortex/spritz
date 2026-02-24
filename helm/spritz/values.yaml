@@ -15,6 +15,7 @@ authGateway:
     port: 4180
   ingress:
     pathPrefix: /oauth2
+    annotations: {}
     authURL: ""
     authSigninURL: ""
     authResponseHeaders:

@@ -30,6 +30,7 @@ authGateway:
     port: 4180
   ingress:
     pathPrefix: /oauth2
+    annotations: {}
   oauth2Proxy:
     # Create this secret with OAUTH2_PROXY_CLIENT_ID, OAUTH2_PROXY_CLIENT_SECRET, and OAUTH2_PROXY_COOKIE_SECRET.
     existingSecret: spritz-auth-gateway-secrets

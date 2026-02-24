@@ -1,17 +1,5 @@
 {{- if .Values.authGateway.enabled }}
-{{- $provider := lower (default "" .Values.authGateway.provider) }}
-{{- if ne $provider "oauth2-proxy" }}
-{{- fail "authGateway.provider must be oauth2-proxy when authGateway.enabled=true" }}
-{{- end }}
-{{- if not .Values.authGateway.oauth2Proxy.existingSecret }}
-{{- fail "authGateway.oauth2Proxy.existingSecret is required when authGateway.enabled=true" }}
-{{- end }}
-{{- if not .Values.authGateway.oauth2Proxy.oidcIssuerURL }}
-{{- fail "authGateway.oauth2Proxy.oidcIssuerURL is required when authGateway.enabled=true" }}
-{{- end }}
-{{- if not .Values.global.host }}
-{{- fail "global.host is required when authGateway.enabled=true" }}
-{{- end }}
+{{- include "spritz.validate.authGatewayCore" . }}
 {{- $serviceName := default "spritz-auth-gateway" .Values.authGateway.service.name }}
 {{- $servicePort := default 4180 .Values.authGateway.service.port }}
 {{- $pathPrefix := default "/oauth2" .Values.authGateway.ingress.pathPrefix }}

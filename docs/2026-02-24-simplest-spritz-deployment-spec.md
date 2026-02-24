@@ -364,14 +364,13 @@ Rollback sequence:
 
 ## Remaining Work (Now)
 
-To keep the implementation elegant long-term, finish these small refactors:
+Auth-gateway implementation cleanup is complete:
 
-1. Move duplicated auth validation template logic into shared helper(s) in
-   `helm/spritz/templates/_helpers.tpl`.
-2. Add dedicated auth ingress annotations surface
-   (`authGateway.ingress.annotations`) to avoid coupling with global annotations.
-3. Extend `./scripts/verify-helm.sh` with positive assertions for rendered
-   auth resources/annotations (not only lint and failure cases).
+1. Shared Helm validation helpers now live in `helm/spritz/templates/_helpers.tpl`.
+2. Dedicated auth ingress annotations are available under
+   `authGateway.ingress.annotations`.
+3. `./scripts/verify-helm.sh` now includes positive assertions for rendered
+   auth resources and annotations.
 
 ## Decision Summary
 
