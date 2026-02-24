@@ -122,14 +122,14 @@ API_PID=$!
 
 echo "waiting for API on port ${API_PORT}..."
 for _ in $(seq 1 "${API_WAIT_SECONDS}"); do
-  status="$(curl -sS -o /dev/null -w '%{http_code}' "http://localhost:${API_PORT}/healthz" || true)"
+  status="$(curl -sS -o /dev/null -w '%{http_code}' "http://localhost:${API_PORT}/api/healthz" || true)"
   if [[ "${status}" == "200" ]]; then
     break
   fi
   sleep 1
 done
 
-status="$(curl -sS -o /dev/null -w '%{http_code}' "http://localhost:${API_PORT}/healthz" || true)"
+status="$(curl -sS -o /dev/null -w '%{http_code}' "http://localhost:${API_PORT}/api/healthz" || true)"
 if [[ "${status}" != "200" ]]; then
   echo "API did not become ready in ${API_WAIT_SECONDS}s"
   echo "operator log:"
@@ -167,13 +167,13 @@ EOF
   mv "${LOG_DIR}/create.merged.json" "${LOG_DIR}/create.json"
 fi
 
-curl -sS --fail -X POST "http://localhost:${API_PORT}/spritzes" \
+curl -sS --fail -X POST "http://localhost:${API_PORT}/api/spritzes" \
   -H 'Content-Type: application/json' \
   --data "@${LOG_DIR}/create.json" >/dev/null
 
 echo "waiting for spritz to become Ready..."
 for _ in {1..30}; do
-  if curl -sS --fail "http://localhost:${API_PORT}/spritzes/${SPRITZ_NAME}" | grep -q '"phase":"Ready"'; then
+  if curl -sS --fail "http://localhost:${API_PORT}/api/spritzes/${SPRITZ_NAME}" | grep -q '"phase":"Ready"'; then
     echo "spritz is Ready"
     break
   fi
@@ -184,9 +184,9 @@ kubectl get deployment,service -n spritz -l spritz.sh/name="${SPRITZ_NAME}"
 
 if [[ -n "${SSH_MODE}" ]]; then
   echo "ssh info:"
-  curl -sS --fail "http://localhost:${API_PORT}/spritzes/${SPRITZ_NAME}" | jq '.status.ssh'
+  curl -sS --fail "http://localhost:${API_PORT}/api/spritzes/${SPRITZ_NAME}" | jq '.status.ssh'
 fi
 
-curl -sS -X DELETE "http://localhost:${API_PORT}/spritzes/${SPRITZ_NAME}" -o /dev/null -w "deleted (%{http_code})\n"
+curl -sS -X DELETE "http://localhost:${API_PORT}/api/spritzes/${SPRITZ_NAME}" -o /dev/null -w "deleted (%{http_code})\n"
 
 echo "done (logs in ${LOG_DIR})"
