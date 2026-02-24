@@ -1,18 +1,76 @@
 {{- if .Values.ui.ingress.enabled }}
-{{- if ne .Values.ui.namespace .Values.api.namespace }}
-{{- fail "ui.namespace and api.namespace must match when ui.ingress.enabled=true" }}
+{{- include "spritz.validate.uiApiIngress" . }}
+{{- include "spritz.validate.authGatewayCore" . }}
+{{- include "spritz.validate.authGatewayIngress" . }}
+{{- $serviceName := default "spritz-auth-gateway" .Values.authGateway.service.name }}
+{{- $servicePort := default 4180 .Values.authGateway.service.port }}
+{{- $pathPrefix := default "/oauth2" .Values.authGateway.ingress.pathPrefix }}
+{{- $authURL := default (printf "http://%s.%s.svc.cluster.local:%v%s/auth" $serviceName .Values.ui.namespace $servicePort $pathPrefix) .Values.authGateway.ingress.authURL }}
+{{- $authSigninURL := default (printf "https://$host%s/start?rd=$escaped_request_uri" $pathPrefix) .Values.authGateway.ingress.authSigninURL }}
+{{- $authIngressAnnotations := dict }}
+{{- if .Values.global.ingress.annotations }}
+{{- $authIngressAnnotations = merge $authIngressAnnotations .Values.global.ingress.annotations }}
 {{- end }}
-{{- if not .Values.global.host }}
-{{- fail "global.host is required when ui.ingress.enabled=true" }}
+{{- if .Values.authGateway.ingress.annotations }}
+{{- $authIngressAnnotations = merge $authIngressAnnotations .Values.authGateway.ingress.annotations }}
 {{- end }}
-{{- if not .Values.global.ingress.className }}
-{{- fail "global.ingress.className is required when ui.ingress.enabled=true" }}
+{{- if .Values.authGateway.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: spritz-auth
+  namespace: {{ .Values.ui.namespace }}
+  {{- if $authIngressAnnotations }}
+  annotations:
+    {{- toYaml $authIngressAnnotations | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.global.ingress.className }}
+  rules:
+    - host: {{ .Values.global.host }}
+      http:
+        paths:
+          - path: {{ $pathPrefix }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $serviceName }}
+                port:
+                  number: {{ $servicePort }}
+  {{- if .Values.global.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.global.host }}
+      {{- if .Values.global.ingress.tls.secretName }}
+      secretName: {{ .Values.global.ingress.tls.secretName }}
+      {{- end }}
+  {{- end }}
+---
 {{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: spritz-web
   namespace: {{ .Values.ui.namespace }}
+  {{- if or .Values.global.ingress.annotations .Values.authGateway.enabled }}
+  annotations:
+    {{- if .Values.global.ingress.annotations }}
+    {{- toYaml .Values.global.ingress.annotations | nindent 4 }}
+    {{- end }}
+    {{- if .Values.authGateway.enabled }}
+    nginx.ingress.kubernetes.io/auth-url: {{ $authURL | quote }}
+    nginx.ingress.kubernetes.io/auth-signin: {{ $authSigninURL | quote }}
+    {{- if .Values.authGateway.ingress.authResponseHeaders }}
+    nginx.ingress.kubernetes.io/auth-response-headers: {{ join "," .Values.authGateway.ingress.authResponseHeaders | quote }}
+    {{- end }}
+    {{- if .Values.authGateway.ingress.injectIdentityHeaders }}
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header {{ .Values.api.auth.headerId }} $upstream_http_{{ .Values.authGateway.ingress.headerIdSource | lower | replace "-" "_" }};
+      proxy_set_header {{ .Values.api.auth.headerEmail }} $upstream_http_{{ .Values.authGateway.ingress.headerEmailSource | lower | replace "-" "_" }};
+      proxy_set_header {{ .Values.api.auth.headerTeams }} $upstream_http_{{ .Values.authGateway.ingress.headerTeamsSource | lower | replace "-" "_" }};
+    {{- end }}
+    {{- end }}
+  {{- end }}
 spec:
   ingressClassName: {{ .Values.global.ingress.className }}
   rules:

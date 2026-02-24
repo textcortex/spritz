@@ -1,0 +1,28 @@
+name: helm-tests
+
+on:
+  pull_request:
+    paths:
+      - "helm/**"
+      - "scripts/verify-helm.sh"
+      - ".github/workflows/helm-tests.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "helm/**"
+      - "scripts/verify-helm.sh"
+      - ".github/workflows/helm-tests.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Run Helm checks
+        run: ./scripts/verify-helm.sh
