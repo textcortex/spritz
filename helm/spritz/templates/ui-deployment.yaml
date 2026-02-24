@@ -31,15 +31,7 @@ spec:
           {{- end }}
           env:
             - name: SPRITZ_API_BASE_URL
-              {{- if .Values.ui.apiBaseUrl }}
-              value: {{ .Values.ui.apiBaseUrl | quote }}
-              {{- else if .Values.ui.basePath }}
-              value: {{ printf "%s/api" (.Values.ui.basePath | trimSuffix "/") | quote }}
-              {{- else }}
-              value: "/api"
-              {{- end }}
-            - name: SPRITZ_UI_BASE_PATH
-              value: {{ .Values.ui.basePath | quote }}
+              value: {{ .Values.ui.apiBaseUrl | default "/api" | quote }}
             - name: SPRITZ_UI_OWNER_ID
               value: {{ .Values.ui.ownerId | quote }}
             - name: SPRITZ_UI_AUTH_MODE

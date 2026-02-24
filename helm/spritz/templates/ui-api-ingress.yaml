@@ -2,47 +2,11 @@
 {{- if ne .Values.ui.namespace .Values.api.namespace }}
 {{- fail "ui.namespace and api.namespace must match when ui.ingress.enabled=true" }}
 {{- end }}
-{{- $host := default "" .Values.ui.ingress.host -}}
-{{- with .Values.global }}
-  {{- if .host }}
-    {{- $host = .host -}}
-  {{- end }}
+{{- if not .Values.global.host }}
+{{- fail "global.host is required when ui.ingress.enabled=true" }}
 {{- end }}
-{{- $className := default "" .Values.ui.ingress.className -}}
-{{- with .Values.global }}
-  {{- with .ingress }}
-    {{- if .className }}
-      {{- $className = .className -}}
-    {{- end }}
-  {{- end }}
-{{- end }}
-{{- $uiPath := default "/" .Values.ui.ingress.path -}}
-{{- if eq (trim $uiPath) "" }}
-  {{- $uiPath = "/" -}}
-{{- end }}
-{{- if not (hasPrefix "/" $uiPath) }}
-  {{- $uiPath = printf "/%s" $uiPath -}}
-{{- end }}
-{{- if and (ne $uiPath "/") (hasSuffix "/" $uiPath) }}
-  {{- $uiPath = trimSuffix "/" $uiPath -}}
-{{- end }}
-{{- $apiPath := "/api" -}}
-{{- if ne $uiPath "/" }}
-  {{- $apiPath = printf "%s/api" $uiPath -}}
-{{- end }}
-{{- $tlsEnabled := false -}}
-{{- $tlsSecretName := "" -}}
-{{- with .Values.global }}
-  {{- with .ingress }}
-    {{- with .tls }}
-      {{- if hasKey . "enabled" }}
-        {{- $tlsEnabled = .enabled -}}
-      {{- end }}
-      {{- if .secretName }}
-        {{- $tlsSecretName = .secretName -}}
-      {{- end }}
-    {{- end }}
-  {{- end }}
+{{- if not .Values.global.ingress.className }}
+{{- fail "global.ingress.className is required when ui.ingress.enabled=true" }}
 {{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -50,35 +14,31 @@ metadata:
   name: spritz-web
   namespace: {{ .Values.ui.namespace }}
 spec:
-  {{- if $className }}
-  ingressClassName: {{ $className }}
-  {{- end }}
+  ingressClassName: {{ .Values.global.ingress.className }}
   rules:
-    - {{- if $host }}
-      host: {{ $host }}
-      {{- end }}
+    - host: {{ .Values.global.host }}
       http:
         paths:
-          - path: {{ $apiPath }}
+          - path: /api
             pathType: Prefix
             backend:
               service:
                 name: spritz-api
                 port:
                   number: {{ .Values.api.service.port }}
-          - path: {{ $uiPath }}
+          - path: /
             pathType: Prefix
             backend:
               service:
                 name: spritz-ui
                 port:
                   number: {{ .Values.ui.service.port }}
-  {{- if and $tlsEnabled $host }}
+  {{- if .Values.global.ingress.tls.enabled }}
   tls:
     - hosts:
-        - {{ $host }}
-      {{- if $tlsSecretName }}
-      secretName: {{ $tlsSecretName }}
+        - {{ .Values.global.host }}
+      {{- if .Values.global.ingress.tls.secretName }}
+      secretName: {{ .Values.global.ingress.tls.secretName }}
       {{- end }}
   {{- end }}
 {{- end }}

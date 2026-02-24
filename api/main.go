@@ -178,12 +178,7 @@ func main() {
 }
 
 func (s *server) registerRoutes(e *echo.Echo) {
-	s.registerRoutesAtPrefix(e, "")
-	s.registerRoutesAtPrefix(e, "/api")
-}
-
-func (s *server) registerRoutesAtPrefix(e *echo.Echo, prefix string) {
-	group := e.Group(prefix)
+	group := e.Group("/api")
 	group.GET("/healthz", s.handleHealthz)
 	internal := group.Group("/internal/v1", s.internalAuthMiddleware())
 	internal.GET("/shared-mounts/owner/:owner/:mount/latest", s.getSharedMountLatest)

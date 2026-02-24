@@ -34,7 +34,7 @@ type TtyContext = {
   ttyState: string | null;
 };
 
-const defaultApiBase = 'http://localhost:8080';
+const defaultApiBase = 'http://localhost:8080/api';
 const requestTimeoutMs = Number.parseInt(process.env.SPRITZ_REQUEST_TIMEOUT_MS || '10000', 10);
 const headerId = process.env.SPRITZ_API_HEADER_ID || 'X-Spritz-User-Id';
 const headerEmail = process.env.SPRITZ_API_HEADER_EMAIL || 'X-Spritz-User-Email';
