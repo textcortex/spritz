@@ -19,6 +19,7 @@ front-end hosting, and backward-compatibility branches.
 - One routing model:
   - `/` -> `spritz-ui`
   - `/api` -> `spritz-api`
+  - `/oauth2` -> auth gateway service (when `authGateway.enabled=true`)
 - API served only under `/api/*` (no root API routes).
 - UI uses `/api` as its API base in default deployment mode.
 - One canonical ingress config surface under `global.ingress`.
@@ -48,6 +49,7 @@ front-end hosting, and backward-compatibility branches.
 - Ingress/Gateway routes:
   - `/` -> `spritz-ui`
   - `/api` -> `spritz-api`
+  - `/oauth2` -> `spritz-auth-gateway` (only when auth gateway is enabled)
 
 ### Why this is the default
 
@@ -67,6 +69,17 @@ The default installation should require only:
 - `operator.homePVC.storageClass` (optional): home PVC storage class override
 
 Everything else should have working defaults.
+
+When portable OIDC authentication is enabled, also require:
+
+- `authGateway.enabled: true`
+- `authGateway.provider: oauth2-proxy`
+- `authGateway.oauth2Proxy.oidcIssuerURL`
+- `authGateway.oauth2Proxy.existingSecret`
+- secret keys in that secret:
+  - `OAUTH2_PROXY_CLIENT_ID`
+  - `OAUTH2_PROXY_CLIENT_SECRET`
+  - `OAUTH2_PROXY_COOKIE_SECRET`
 
 ## Default Helm Values (Target)
 
@@ -97,6 +110,34 @@ api:
     enabled: false
 ```
 
+## Recommended Production Auth Profile
+
+For production-like standalone installs, use in-cluster OIDC forward-auth:
+
+```yaml
+ui:
+  auth:
+    mode: none
+    redirectOnUnauthorized: false
+
+api:
+  auth:
+    mode: header
+    headerId: X-Spritz-User-Id
+    headerEmail: X-Spritz-User-Email
+    headerTeams: X-Spritz-User-Teams
+
+authGateway:
+  enabled: true
+  provider: oauth2-proxy
+  ingress:
+    pathPrefix: /oauth2
+  oauth2Proxy:
+    existingSecret: spritz-auth-gateway-secrets
+    oidcIssuerURL: https://id.example.com
+    redirectURL: ""
+```
+
 ## Implementation Scope (Exact Changes)
 
 ### Helm Values (Strict v1)
@@ -123,6 +164,7 @@ Files:
 
 - `helm/spritz/templates/ui-deployment.yaml`
 - `helm/spritz/templates/ui-api-ingress.yaml` (new)
+- `helm/spritz/templates/auth-gateway-oauth2-proxy.yaml` (new)
 
 Required behavior:
 
@@ -134,6 +176,31 @@ Required behavior:
 - Source host only from `global.host`.
 - Add TLS block when `global.ingress.tls.enabled` is true.
 - Keep service names unchanged (`spritz-api`, `spritz-ui`) to avoid rollout risk.
+
+### Portable OIDC Auth Gateway
+
+Files:
+
+- `helm/spritz/values.yaml`
+- `helm/spritz/templates/ui-api-ingress.yaml`
+- `helm/spritz/templates/auth-gateway-oauth2-proxy.yaml`
+- `helm/spritz/examples/portable-oidc-auth.values.yaml`
+
+Required behavior:
+
+- Keep auth optional by default (`authGateway.enabled=false`).
+- When enabled:
+  - Deploy `oauth2-proxy` inside cluster with secret-provided credentials.
+  - Render a dedicated ingress for `/oauth2` to avoid auth recursion.
+  - Add nginx forward-auth annotations on `spritz-web` ingress:
+    - `nginx.ingress.kubernetes.io/auth-url`
+    - `nginx.ingress.kubernetes.io/auth-signin`
+    - `nginx.ingress.kubernetes.io/auth-response-headers`
+  - Forward resolved user identity into API header auth contract.
+- Fail fast on invalid combinations:
+  - non-nginx ingress class with auth gateway enabled
+  - missing `existingSecret` or `oidcIssuerURL`
+  - `api.auth.mode` not in `{header, auto}` when auth gateway is enabled
 
 ### API Route Prefix Handling
 
@@ -193,6 +260,8 @@ Even in default mode, add these checks:
 - Health endpoint checks for UI and `/api/healthz`.
 - TLS handshake check on the configured public host.
 - Alert on repeated `5xx` from ingress.
+- Alert on repeated auth redirect loops (`302` ping-pong between `/` and `/oauth2/start`).
+- Alert on sustained auth failures (`401`/`403`) from ingress auth subrequests.
 
 If advanced mode is enabled, add:
 
@@ -209,7 +278,17 @@ After install:
 3. Confirm API health at `/api/healthz`.
 4. Confirm root API endpoint path is not served (for example `/healthz` is not used as the API health path).
 5. Create a devbox via `/api/spritzes` and open terminal.
-6. Recreate the pod and verify home state persists.
+6. Confirm terminal shell starts in `/home/dev`.
+7. Recreate the pod and verify home state persists.
+
+When auth gateway is enabled:
+
+1. Open `/` as unauthenticated user and confirm redirect to login flow.
+2. Complete OIDC login and confirm callback returns to Spritz.
+3. Confirm authenticated API calls succeed under `/api/*`.
+4. Confirm expected identity headers are present (`X-Spritz-User-Id`, `X-Spritz-User-Email`, `X-Spritz-User-Teams`).
+5. Confirm `/oauth2/*` endpoints are reachable and not protected by auth recursion.
+6. Confirm no persistent `302` redirect loops.
 
 Advanced mode validation should be a separate checklist.
 
@@ -220,6 +299,7 @@ Advanced mode validation should be a separate checklist.
 Run:
 
 - `helm template spritz ./helm/spritz`
+- `./scripts/verify-helm.sh`
 
 Pass criteria:
 
@@ -228,6 +308,10 @@ Pass criteria:
 - Path `/` routes to `spritz-ui`.
 - Default host comes from `global.host`.
 - Ingress class comes from `global.ingress.className`.
+- Auth-enabled render includes:
+  - `spritz-auth` ingress on `/oauth2`
+  - nginx auth annotations on `spritz-web`
+- Invalid auth combinations fail with explicit Helm errors.
 
 ### API Route Checks
 
@@ -260,22 +344,34 @@ Pass criteria:
 - No provider-specific values are introduced.
 - Documentation conventions pass.
 
+## Rollout and Rollback
+
+Rollout sequence:
+
+1. Merge Helm auth gateway changes.
+2. Configure environment values (`authGateway.*`, `api.auth.mode=header`, `ui.auth.mode=none`).
+3. Provision OIDC secret with required keys.
+4. Deploy to staging.
+5. Run staging auth + terminal + sync validation checklist.
+6. Promote to production only after staging remains healthy.
+
+Rollback sequence:
+
+1. Disable `authGateway.enabled`.
+2. Redeploy chart.
+3. Confirm UI/API routing still works on `/` and `/api`.
+4. Confirm ingress/auth error rates return to baseline.
+
 ## Remaining Work (Now)
 
-No additional functional cleanup is required for the strict standalone target.
+To keep the implementation elegant long-term, finish these small refactors:
 
-Current code paths are aligned to:
-
-- UI at `/`
-- API at `/api/*`
-- Canonical ingress config under `global.ingress`
-- No runtime `basePath` compatibility plumbing in UI assets/entrypoint/chart
-
-Known pre-existing non-blocker:
-
-- `./scripts/verify-agnostic.sh` currently fails on
-  `operator/controllers/home_pvc_test.go` due an existing fixture value
-  (`"spritz/app"`), unrelated to this deployment model implementation.
+1. Move duplicated auth validation template logic into shared helper(s) in
+   `helm/spritz/templates/_helpers.tpl`.
+2. Add dedicated auth ingress annotations surface
+   (`authGateway.ingress.annotations`) to avoid coupling with global annotations.
+3. Extend `./scripts/verify-helm.sh` with positive assertions for rendered
+   auth resources/annotations (not only lint and failure cases).
 
 ## Decision Summary
 
