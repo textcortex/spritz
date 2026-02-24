@@ -1,13 +1,13 @@
 ---
 date: 2026-02-24
 author: Spritz Maintainers <user@example.com>
-title: Platform-Agnostic Authentication and Account Architecture
+title: Portable Authentication and Account Architecture
 tags: [spritz, auth, oidc, deployment, architecture]
 ---
 
 ## Overview
 
-This document defines the default, platform-agnostic authentication and account model for Spritz.
+This document defines the default, portable authentication and account model for Spritz.
 
 The objective is a deployment model that works across arbitrary environments without requiring a
 specific edge provider, SaaS login product, or organization-specific identity stack.
