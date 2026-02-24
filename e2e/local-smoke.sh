@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLUSTER_NAME="${SPRITZ_E2E_CLUSTER:-spritz-e2e}"
 KUBECONFIG_PATH="${SPRITZ_E2E_KUBECONFIG:-${TMPDIR:-/tmp}/spritz-e2e.kubeconfig}"
 API_PORT="${SPRITZ_E2E_API_PORT:-8090}"

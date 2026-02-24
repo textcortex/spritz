@@ -178,13 +178,19 @@ func main() {
 }
 
 func (s *server) registerRoutes(e *echo.Echo) {
-	e.GET("/healthz", s.handleHealthz)
-	internal := e.Group("/internal/v1", s.internalAuthMiddleware())
+	s.registerRoutesAtPrefix(e, "")
+	s.registerRoutesAtPrefix(e, "/api")
+}
+
+func (s *server) registerRoutesAtPrefix(e *echo.Echo, prefix string) {
+	group := e.Group(prefix)
+	group.GET("/healthz", s.handleHealthz)
+	internal := group.Group("/internal/v1", s.internalAuthMiddleware())
 	internal.GET("/shared-mounts/owner/:owner/:mount/latest", s.getSharedMountLatest)
 	internal.GET("/shared-mounts/owner/:owner/:mount/revisions/:revision", s.getSharedMountRevision)
 	internal.PUT("/shared-mounts/owner/:owner/:mount/revisions/:revision", s.putSharedMountRevision)
 	internal.PUT("/shared-mounts/owner/:owner/:mount/latest", s.putSharedMountLatest)
-	secured := e.Group("", s.authMiddleware())
+	secured := group.Group("", s.authMiddleware())
 	secured.GET("/spritzes", s.listSpritzes)
 	secured.POST("/spritzes", s.createSpritz)
 	secured.GET("/spritzes/:name", s.getSpritz)

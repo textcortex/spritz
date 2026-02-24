@@ -1,3 +1,11 @@
+global:
+  host: spritz.example.com
+  ingress:
+    className: nginx
+    tls:
+      enabled: true
+      secretName: ""
+
 operator:
   image: spritz-operator:latest
   imagePullPolicy: IfNotPresent
@@ -11,7 +19,7 @@ operator:
   homeSizeLimit: 5Gi
   podNodeSelector: ""
   homePVC:
-    enabled: false
+    enabled: true
     prefix: spritz-home
     size: 5Gi
     accessModes:
@@ -181,12 +189,12 @@ ui:
     port: 80
   containerPort: 8080
   ingress:
-    enabled: false
-    host: spritz.sh
+    enabled: true
+    host: spritz.example.com
     className: nginx
     path: /
-  apiBaseUrl: ""
-  basePath: ""
+  apiBaseUrl: "/api"
+  basePath: "/"
   ownerId: ""
   assetVersion: ""
   presets: []
