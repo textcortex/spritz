@@ -260,6 +260,23 @@ Pass criteria:
 - No provider-specific values are introduced.
 - Documentation conventions pass.
 
+## Remaining Work (Now)
+
+No additional functional cleanup is required for the strict standalone target.
+
+Current code paths are aligned to:
+
+- UI at `/`
+- API at `/api/*`
+- Canonical ingress config under `global.ingress`
+- No runtime `basePath` compatibility plumbing in UI assets/entrypoint/chart
+
+Known pre-existing non-blocker:
+
+- `./scripts/verify-agnostic.sh` currently fails on
+  `operator/controllers/home_pvc_test.go` due an existing fixture value
+  (`"spritz/app"`), unrelated to this deployment model implementation.
+
 ## Decision Summary
 
 - Keep core Spritz architecture.

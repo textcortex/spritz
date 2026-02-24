@@ -1,6 +1,5 @@
 const config = window.SPRITZ_CONFIG || { apiBaseUrl: '' };
 const apiBaseUrl = config.apiBaseUrl || '';
-const basePath = (config.basePath || '').replace(/\/$/, '');
 const authConfig = config.auth || {};
 const authMode = (authConfig.mode || '').toLowerCase();
 const authTokenStorage = (authConfig.tokenStorage || 'localStorage').toLowerCase();
@@ -609,7 +608,7 @@ function shouldRedirectOnUnauthorized() {
 }
 
 function buildReturnToUrl() {
-  const path = window.location.pathname || basePath || '/';
+  const path = window.location.pathname || '/';
   const search = window.location.search || '';
   const hash = window.location.hash || '';
   const returnPath = `${path}${search}${hash}`;
@@ -971,8 +970,7 @@ function renderList(items) {
 }
 
 function terminalPagePath(name) {
-  const prefix = basePath || '';
-  return `${prefix}#terminal/${encodeURIComponent(name)}`;
+  return `#terminal/${encodeURIComponent(name)}`;
 }
 
 function terminalNameFromPath() {
@@ -1006,7 +1004,7 @@ function renderTerminalPage(name) {
 
   const back = document.createElement('a');
   back.className = 'terminal-back';
-  back.href = basePath || '/';
+  back.href = '/';
   back.textContent = 'Back to spritzes';
 
   const status = document.createElement('span');
@@ -1082,7 +1080,7 @@ function loadTerminalAssets() {
 
 function assetUrl(path) {
   const normalized = path.startsWith('/') ? path : `/${path}`;
-  return `${basePath}${normalized}`;
+  return normalized;
 }
 
 function loadStylesheet(href) {

@@ -1,7 +1,6 @@
 window.SPRITZ_CONFIG = {
   apiBaseUrl: '__SPRITZ_API_BASE_URL__',
   ownerId: '__SPRITZ_OWNER_ID__',
-  basePath: '__SPRITZ_BASE_PATH__',
   presets: '__SPRITZ_UI_PRESETS__',
   repoDefaults: {
     url: '__SPRITZ_UI_DEFAULT_REPO_URL__',

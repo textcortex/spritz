@@ -77,7 +77,7 @@ The server remains the only writer of sensitive spec fields.
 
 Recommended endpoints:
 
-- `POST /spritzes` accepts `userConfig` on create.
+- `POST /api/spritzes` accepts `userConfig` on create.
 
 ## UI Behavior
 
