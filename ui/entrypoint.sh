@@ -2,7 +2,6 @@
 set -eu
 
 API_BASE_URL="${SPRITZ_API_BASE_URL:-}"
-BASE_PATH=""
 OWNER_ID="${SPRITZ_UI_OWNER_ID:-}"
 AUTH_MODE="${SPRITZ_UI_AUTH_MODE:-}"
 AUTH_TOKEN_STORAGE="${SPRITZ_UI_AUTH_TOKEN_STORAGE:-}"
@@ -40,7 +39,6 @@ escape_sed() {
 
 API_BASE_URL_ESCAPED="$(escape_sed "$API_BASE_URL")"
 OWNER_ID_ESCAPED="$(escape_sed "$OWNER_ID")"
-BASE_PATH_ESCAPED="$(escape_sed "$BASE_PATH")"
 AUTH_MODE_ESCAPED="$(escape_sed "$AUTH_MODE")"
 AUTH_TOKEN_STORAGE_ESCAPED="$(escape_sed "$AUTH_TOKEN_STORAGE")"
 AUTH_TOKEN_STORAGE_KEYS_ESCAPED="$(escape_sed "$AUTH_TOKEN_STORAGE_KEYS")"
@@ -66,7 +64,6 @@ ASSET_VERSION_ESCAPED="$(escape_sed "$ASSET_VERSION")"
 
 sed "s|__SPRITZ_API_BASE_URL__|${API_BASE_URL_ESCAPED}|g" /usr/share/nginx/html/config.js \
   | sed "s|__SPRITZ_OWNER_ID__|${OWNER_ID_ESCAPED}|g" \
-  | sed "s|__SPRITZ_BASE_PATH__|${BASE_PATH_ESCAPED}|g" \
   | sed "s|__SPRITZ_UI_AUTH_MODE__|${AUTH_MODE_ESCAPED}|g" \
   | sed "s|__SPRITZ_UI_AUTH_TOKEN_STORAGE__|${AUTH_TOKEN_STORAGE_ESCAPED}|g" \
   | sed "s|__SPRITZ_UI_AUTH_TOKEN_STORAGE_KEYS__|${AUTH_TOKEN_STORAGE_KEYS_ESCAPED}|g" \
@@ -91,8 +88,7 @@ sed "s|__SPRITZ_API_BASE_URL__|${API_BASE_URL_ESCAPED}|g" /usr/share/nginx/html/
   > /usr/share/nginx/html/config.runtime.js
 mv /usr/share/nginx/html/config.runtime.js /usr/share/nginx/html/config.js
 
-sed "s|__SPRITZ_BASE_PATH__|${BASE_PATH_ESCAPED}|g" /usr/share/nginx/html/index.html \
-  | sed "s|__SPRITZ_UI_ASSET_VERSION__|${ASSET_VERSION_ESCAPED}|g" \
+sed "s|__SPRITZ_UI_ASSET_VERSION__|${ASSET_VERSION_ESCAPED}|g" /usr/share/nginx/html/index.html \
   > /usr/share/nginx/html/index.runtime.html
 mv /usr/share/nginx/html/index.runtime.html /usr/share/nginx/html/index.html
 

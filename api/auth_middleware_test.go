@@ -19,12 +19,12 @@ func TestAuthMiddlewareRequiresHeader(t *testing.T) {
 
 	handled := false
 	secured := e.Group("", s.authMiddleware())
-	secured.GET("/spritzes", func(c echo.Context) error {
+	secured.GET("/api/spritzes", func(c echo.Context) error {
 		handled = true
 		return c.JSON(http.StatusOK, map[string]string{"ok": "true"})
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/spritzes", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/spritzes", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -48,7 +48,7 @@ func TestAuthMiddlewareSetsPrincipal(t *testing.T) {
 	e := echo.New()
 
 	secured := e.Group("", s.authMiddleware())
-	secured.GET("/spritzes", func(c echo.Context) error {
+	secured.GET("/api/spritzes", func(c echo.Context) error {
 		p, ok := principalFromContext(c)
 		if !ok {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "missing principal"})
@@ -59,7 +59,7 @@ func TestAuthMiddlewareSetsPrincipal(t *testing.T) {
 		})
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/spritzes", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/spritzes", nil)
 	req.Header.Set("X-Spritz-User-Id", "user-123")
 	req.Header.Set("X-Spritz-User-Email", "user@example.com")
 	rec := httptest.NewRecorder()
