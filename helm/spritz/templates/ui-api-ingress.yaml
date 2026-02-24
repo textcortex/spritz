@@ -1,0 +1,84 @@
+{{- if .Values.ui.ingress.enabled }}
+{{- if ne .Values.ui.namespace .Values.api.namespace }}
+{{- fail "ui.namespace and api.namespace must match when ui.ingress.enabled=true" }}
+{{- end }}
+{{- $host := default "" .Values.ui.ingress.host -}}
+{{- with .Values.global }}
+  {{- if .host }}
+    {{- $host = .host -}}
+  {{- end }}
+{{- end }}
+{{- $className := default "" .Values.ui.ingress.className -}}
+{{- with .Values.global }}
+  {{- with .ingress }}
+    {{- if .className }}
+      {{- $className = .className -}}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- $uiPath := default "/" .Values.ui.ingress.path -}}
+{{- if eq (trim $uiPath) "" }}
+  {{- $uiPath = "/" -}}
+{{- end }}
+{{- if not (hasPrefix "/" $uiPath) }}
+  {{- $uiPath = printf "/%s" $uiPath -}}
+{{- end }}
+{{- if and (ne $uiPath "/") (hasSuffix "/" $uiPath) }}
+  {{- $uiPath = trimSuffix "/" $uiPath -}}
+{{- end }}
+{{- $apiPath := "/api" -}}
+{{- if ne $uiPath "/" }}
+  {{- $apiPath = printf "%s/api" $uiPath -}}
+{{- end }}
+{{- $tlsEnabled := false -}}
+{{- $tlsSecretName := "" -}}
+{{- with .Values.global }}
+  {{- with .ingress }}
+    {{- with .tls }}
+      {{- if hasKey . "enabled" }}
+        {{- $tlsEnabled = .enabled -}}
+      {{- end }}
+      {{- if .secretName }}
+        {{- $tlsSecretName = .secretName -}}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: spritz-web
+  namespace: {{ .Values.ui.namespace }}
+spec:
+  {{- if $className }}
+  ingressClassName: {{ $className }}
+  {{- end }}
+  rules:
+    - {{- if $host }}
+      host: {{ $host }}
+      {{- end }}
+      http:
+        paths:
+          - path: {{ $apiPath }}
+            pathType: Prefix
+            backend:
+              service:
+                name: spritz-api
+                port:
+                  number: {{ .Values.api.service.port }}
+          - path: {{ $uiPath }}
+            pathType: Prefix
+            backend:
+              service:
+                name: spritz-ui
+                port:
+                  number: {{ .Values.ui.service.port }}
+  {{- if and $tlsEnabled $host }}
+  tls:
+    - hosts:
+        - {{ $host }}
+      {{- if $tlsSecretName }}
+      secretName: {{ $tlsSecretName }}
+      {{- end }}
+  {{- end }}
+{{- end }}

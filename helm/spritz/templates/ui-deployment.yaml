@@ -36,7 +36,7 @@ spec:
               {{- else if .Values.ui.basePath }}
               value: {{ printf "%s/api" (.Values.ui.basePath | trimSuffix "/") | quote }}
               {{- else }}
-              value: {{ printf "http://spritz-api.%s.svc.cluster.local:%d" .Values.api.namespace .Values.api.service.port | quote }}
+              value: "/api"
               {{- end }}
             - name: SPRITZ_UI_BASE_PATH
               value: {{ .Values.ui.basePath | quote }}
@@ -113,24 +113,3 @@ spec:
     - name: http
       port: {{ .Values.ui.service.port }}
       targetPort: {{ .Values.ui.containerPort }}
----
-{{- if .Values.ui.ingress.enabled }}
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: spritz-ui
-  namespace: {{ .Values.ui.namespace }}
-spec:
-  ingressClassName: {{ .Values.ui.ingress.className }}
-  rules:
-    - host: {{ .Values.ui.ingress.host }}
-      http:
-        paths:
-          - path: {{ .Values.ui.ingress.path }}
-            pathType: Prefix
-            backend:
-              service:
-                name: spritz-ui
-                port:
-                  number: {{ .Values.ui.service.port }}
-{{- end }}
