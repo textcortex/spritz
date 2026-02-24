@@ -1,0 +1,41 @@
+global:
+  host: spritz.example.com
+  ingress:
+    className: nginx
+    tls:
+      enabled: true
+      secretName: spritz-tls
+
+api:
+  auth:
+    mode: header
+    headerId: X-Spritz-User-Id
+    headerEmail: X-Spritz-User-Email
+    headerTeams: X-Spritz-User-Teams
+
+ui:
+  auth:
+    mode: none
+    loginUrl: ""
+    redirectOnUnauthorized: false
+    refresh:
+      enabled: false
+      url: ""
+
+authGateway:
+  enabled: true
+  provider: oauth2-proxy
+  service:
+    name: spritz-auth-gateway
+    port: 4180
+  ingress:
+    pathPrefix: /oauth2
+  oauth2Proxy:
+    # Create this secret with OAUTH2_PROXY_CLIENT_ID, OAUTH2_PROXY_CLIENT_SECRET, and OAUTH2_PROXY_COOKIE_SECRET.
+    existingSecret: spritz-auth-gateway-secrets
+    oidcIssuerURL: https://id.example.com
+    # Optional: defaults to https://<global.host>/oauth2/callback when empty.
+    redirectURL: ""
+    scope: "openid email profile"
+    emailDomains:
+      - "*"

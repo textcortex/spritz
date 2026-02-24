@@ -2,9 +2,67 @@ global:
   host: spritz.example.com
   ingress:
     className: nginx
+    annotations: {}
     tls:
       enabled: true
       secretName: ""
+
+authGateway:
+  enabled: false
+  provider: oauth2-proxy
+  service:
+    name: spritz-auth-gateway
+    port: 4180
+  ingress:
+    pathPrefix: /oauth2
+    authURL: ""
+    authSigninURL: ""
+    authResponseHeaders:
+      - X-Auth-Request-User
+      - X-Auth-Request-Email
+      - X-Auth-Request-Groups
+      - Authorization
+    injectIdentityHeaders: true
+    headerIdSource: X-Auth-Request-User
+    headerEmailSource: X-Auth-Request-Email
+    headerTeamsSource: X-Auth-Request-Groups
+  oauth2Proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+    imagePullPolicy: IfNotPresent
+    existingSecret: ""
+    clientIdKey: OAUTH2_PROXY_CLIENT_ID
+    clientSecretKey: OAUTH2_PROXY_CLIENT_SECRET
+    cookieSecretKey: OAUTH2_PROXY_COOKIE_SECRET
+    oidcIssuerURL: ""
+    redirectURL: ""
+    scope: "openid email profile"
+    emailDomains:
+      - "*"
+    whitelistDomains: []
+    cookieSecure: true
+    cookieSameSite: lax
+    cookieRefresh: 1h
+    cookieExpire: 8h
+    setXAuthRequest: true
+    passAuthorizationHeader: true
+    passAccessToken: true
+    skipProviderButton: true
+    extraArgs: []
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 65532
+      runAsGroup: 65532
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
 
 operator:
   image: spritz-operator:latest
@@ -200,14 +258,14 @@ ui:
     branch: ""
     hideInputs: false
   auth:
-    mode: ""
+    mode: none
     tokenStorage: localStorage
     tokenStorageKeys: []
     bearerTokenParam: token
     loginUrl: ""
     returnToMode: auto
     returnToParam: ""
-    redirectOnUnauthorized: true
+    redirectOnUnauthorized: false
     refresh:
       enabled: false
       url: ""

@@ -1,0 +1,122 @@
+{{- if .Values.authGateway.enabled }}
+{{- $provider := lower (default "" .Values.authGateway.provider) }}
+{{- if ne $provider "oauth2-proxy" }}
+{{- fail "authGateway.provider must be oauth2-proxy when authGateway.enabled=true" }}
+{{- end }}
+{{- if not .Values.authGateway.oauth2Proxy.existingSecret }}
+{{- fail "authGateway.oauth2Proxy.existingSecret is required when authGateway.enabled=true" }}
+{{- end }}
+{{- if not .Values.authGateway.oauth2Proxy.oidcIssuerURL }}
+{{- fail "authGateway.oauth2Proxy.oidcIssuerURL is required when authGateway.enabled=true" }}
+{{- end }}
+{{- if not .Values.global.host }}
+{{- fail "global.host is required when authGateway.enabled=true" }}
+{{- end }}
+{{- $serviceName := default "spritz-auth-gateway" .Values.authGateway.service.name }}
+{{- $servicePort := default 4180 .Values.authGateway.service.port }}
+{{- $pathPrefix := default "/oauth2" .Values.authGateway.ingress.pathPrefix }}
+{{- $redirectURL := default (printf "https://%s%s/callback" .Values.global.host $pathPrefix) .Values.authGateway.oauth2Proxy.redirectURL }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $serviceName }}
+  namespace: {{ .Values.ui.namespace }}
+  labels:
+    app.kubernetes.io/name: {{ $serviceName }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $serviceName }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $serviceName }}
+    spec:
+      containers:
+        - name: oauth2-proxy
+          image: {{ .Values.authGateway.oauth2Proxy.image }}
+          imagePullPolicy: {{ .Values.authGateway.oauth2Proxy.imagePullPolicy | default "IfNotPresent" }}
+          {{- if .Values.authGateway.oauth2Proxy.securityContext }}
+          securityContext:
+            {{- toYaml .Values.authGateway.oauth2Proxy.securityContext | nindent 12 }}
+          {{- end }}
+          args:
+            - --provider=oidc
+            - {{ printf "--http-address=0.0.0.0:%v" $servicePort | quote }}
+            - --upstream=static://202
+            - --ping-path=/ping
+            - --reverse-proxy=true
+            - {{ printf "--oidc-issuer-url=%s" .Values.authGateway.oauth2Proxy.oidcIssuerURL | quote }}
+            - {{ printf "--redirect-url=%s" $redirectURL | quote }}
+            - {{ printf "--scope=%s" .Values.authGateway.oauth2Proxy.scope | quote }}
+            - {{ printf "--cookie-secure=%v" .Values.authGateway.oauth2Proxy.cookieSecure | quote }}
+            - {{ printf "--cookie-samesite=%s" .Values.authGateway.oauth2Proxy.cookieSameSite | quote }}
+            - {{ printf "--cookie-refresh=%s" .Values.authGateway.oauth2Proxy.cookieRefresh | quote }}
+            - {{ printf "--cookie-expire=%s" .Values.authGateway.oauth2Proxy.cookieExpire | quote }}
+            - {{ printf "--set-xauthrequest=%v" .Values.authGateway.oauth2Proxy.setXAuthRequest | quote }}
+            - {{ printf "--pass-authorization-header=%v" .Values.authGateway.oauth2Proxy.passAuthorizationHeader | quote }}
+            - {{ printf "--pass-access-token=%v" .Values.authGateway.oauth2Proxy.passAccessToken | quote }}
+            - {{ printf "--skip-provider-button=%v" .Values.authGateway.oauth2Proxy.skipProviderButton | quote }}
+            {{- range .Values.authGateway.oauth2Proxy.emailDomains }}
+            - {{ printf "--email-domain=%s" . | quote }}
+            {{- end }}
+            {{- range .Values.authGateway.oauth2Proxy.whitelistDomains }}
+            - {{ printf "--whitelist-domain=%s" . | quote }}
+            {{- end }}
+            {{- range .Values.authGateway.oauth2Proxy.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          env:
+            - name: OAUTH2_PROXY_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.authGateway.oauth2Proxy.existingSecret }}
+                  key: {{ .Values.authGateway.oauth2Proxy.clientIdKey }}
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.authGateway.oauth2Proxy.existingSecret }}
+                  key: {{ .Values.authGateway.oauth2Proxy.clientSecretKey }}
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.authGateway.oauth2Proxy.existingSecret }}
+                  key: {{ .Values.authGateway.oauth2Proxy.cookieSecretKey }}
+          {{- if .Values.authGateway.oauth2Proxy.resources }}
+          resources:
+            {{- toYaml .Values.authGateway.oauth2Proxy.resources | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ $servicePort }}
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $serviceName }}
+  namespace: {{ .Values.ui.namespace }}
+  labels:
+    app.kubernetes.io/name: {{ $serviceName }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $serviceName }}
+  ports:
+    - name: http
+      port: {{ $servicePort }}
+      targetPort: http
+{{- end }}
