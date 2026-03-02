@@ -61,9 +61,7 @@ type SpritzRepoAuth struct {
 type SpritzOwner struct {
 	// +kubebuilder:validation:MinLength=1
 	ID string `json:"id"`
-	// +kubebuilder:validation:Format=email
-	Email string `json:"email,omitempty"`
-	Team  string `json:"team,omitempty"`
+	Team string `json:"team,omitempty"`
 }
 
 // SpritzFeatures toggles optional capabilities.

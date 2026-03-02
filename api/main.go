@@ -293,9 +293,6 @@ func (s *server) createSpritz(c echo.Context) error {
 			return writeError(c, http.StatusBadRequest, "spec.owner.id is required")
 		}
 	}
-	if owner.Email == "" {
-		owner.Email = principal.Email
-	}
 	if s.auth.enabled() && !principal.IsAdmin && owner.ID != principal.ID {
 		return writeError(c, http.StatusForbidden, "owner mismatch")
 	}

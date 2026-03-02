@@ -56,9 +56,6 @@ spec:
             type: object
           spec:
             description: SpritzSpec defines the desired state of Spritz.
-            x-kubernetes-validations:
-            - message: spec.repo and spec.repos are mutually exclusive
-              rule: '!(has(self.repo) && has(self.repos) && size(self.repos) > 0)'
             properties:
               annotations:
                 additionalProperties:
@@ -271,9 +268,6 @@ spec:
               owner:
                 description: SpritzOwner identifies the creator of a spritz.
                 properties:
-                  email:
-                    format: email
-                    type: string
                   id:
                     minLength: 1
                     type: string
@@ -356,19 +350,17 @@ spec:
                 - url
                 type: object
               repos:
-                description: Repos holds multiple repositories to clone. When set,
-                  repo is ignored.
                 items:
-                  description: SpritzRepo describes the repository to clone inside the
-                    workload.
+                  description: SpritzRepo describes the repository to clone inside
+                    the workload.
                   properties:
                     auth:
                       description: SpritzRepoAuth describes how to authenticate git
                         clone operations.
                       properties:
                         netrcKey:
-                          description: NetrcKey points to a Secret key containing a
-                            full .netrc file.
+                          description: NetrcKey points to a Secret key containing
+                            a full .netrc file.
                           type: string
                         passwordKey:
                           description: PasswordKey points to a Secret key containing
@@ -461,6 +453,29 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              sharedMounts:
+                description: SharedMounts configures per-spritz shared directories.
+                items:
+                  properties:
+                    mode:
+                      type: string
+                    mountPath:
+                      type: string
+                    name:
+                      type: string
+                    pollSeconds:
+                      type: integer
+                    publishSeconds:
+                      type: integer
+                    scope:
+                      type: string
+                    syncMode:
+                      type: string
+                  required:
+                  - mountPath
+                  - name
+                  type: object
+                type: array
               ssh:
                 description: SpritzSSH configures SSH access behavior.
                 properties:
@@ -500,6 +515,9 @@ spec:
             - image
             - owner
             type: object
+            x-kubernetes-validations:
+            - message: spec.repo and spec.repos are mutually exclusive
+              rule: '!(has(self.repo) && has(self.repos) && size(self.repos) > 0)'
           status:
             description: SpritzStatus defines the observed state of Spritz.
             properties:
