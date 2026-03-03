@@ -87,4 +87,12 @@ expect_failure \
   "global.ingress.className must be nginx when authGateway.enabled=true" \
   helm template spritz "${chart_dir}" -f "${example_values}" --set global.ingress.className=traefik
 
+expect_failure \
+  "operator.homePVC has been removed; use operator.homeSizeLimit and sharedMounts instead" \
+  helm template spritz "${chart_dir}" --set operator.homePVC.enabled=true
+
+expect_failure \
+  "operator.sharedConfigPVC has been removed; use operator.sharedMounts/api.sharedMounts instead" \
+  helm template spritz "${chart_dir}" --set operator.sharedConfigPVC.enabled=true
+
 echo "helm checks passed"

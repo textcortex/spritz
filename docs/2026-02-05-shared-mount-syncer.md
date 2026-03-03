@@ -237,12 +237,6 @@ Alternative (Kubernetes-native):
 For Spritz pods, the shared mount is writable. The syncer sidecar uses a filesystem
 watcher to publish quickly when content changes, with a periodic safety tick.
 
-## Deprecated: Shared Config PVC
-
-The shared config PVC approach is sunsetted and is **not** planned for implementation
-in the near future. Any existing PVC code should be treated as legacy and not enabled
-for new deployments. Use the object-storage syncer above.
-
 ## GCS Uniform Bucket-Level Access (Important)
 
 When using GCS buckets with Uniform Bucket-Level Access (UBLA) enabled, rclone must

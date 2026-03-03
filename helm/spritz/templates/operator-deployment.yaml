@@ -1,3 +1,9 @@
+{{- if hasKey .Values.operator "homePVC" -}}
+{{ fail "operator.homePVC has been removed; use operator.homeSizeLimit and sharedMounts instead" }}
+{{- end -}}
+{{- if hasKey .Values.operator "sharedConfigPVC" -}}
+{{ fail "operator.sharedConfigPVC has been removed; use operator.sharedMounts/api.sharedMounts instead" }}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
