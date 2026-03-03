@@ -66,7 +66,6 @@ The default installation should require only:
 - `global.ingress.className`: ingress class
 - `global.ingress.tls.enabled`: whether TLS is enabled
 - `global.ingress.tls.secretName` (optional): pre-provisioned TLS secret name
-- `operator.homePVC.storageClass` (optional): home PVC storage class override
 
 Everything else should have working defaults.
 
@@ -98,10 +97,6 @@ ui:
   apiBaseUrl: /api
 
 operator:
-  homePVC:
-    enabled: true
-    storageClassName: standard
-
   sharedMounts:
     enabled: false
 
@@ -150,7 +145,6 @@ File: `helm/spritz/values.yaml`
 - Add `global.ingress.tls.secretName` (default empty; operator-provided).
 - Keep `ui.ingress.enabled` default `true` for single-host installs.
 - Keep `ui.apiBaseUrl` default `/api`.
-- Keep `operator.homePVC.enabled` default `true`.
 - Keep `operator.sharedMounts.enabled` and `api.sharedMounts.enabled` default `false`.
 - Remove compatibility-only keys from the default path:
   - `ui.ingress.host`
@@ -224,15 +218,15 @@ Required behavior:
 
 ## Storage and Sync Defaults
 
-- Default mode is per-devbox persistent home PVC.
+- Default mode is ephemeral home storage (`EmptyDir` at `/home/dev`).
 - Shared cross-devbox live sync is disabled by default.
 - Shared mounts remain available as an opt-in advanced feature.
 
 Rationale:
 
-- PVC-only mode has fewer failure modes.
-- This is enough for most single-devbox usage.
-- Operators can enable shared sync only when they need it.
+- Ephemeral defaults keep install and cleanup behavior predictable.
+- This is enough for stateless single-devbox usage.
+- Operators can enable shared sync only for specific paths they need to persist.
 
 ## Optional Advanced Mode
 

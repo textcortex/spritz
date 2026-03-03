@@ -29,44 +29,24 @@ import (
 )
 
 const (
-	defaultRepoDir                 = "/workspace/repo"
-	defaultWebPort                 = int32(8080)
-	defaultSSHPort                 = int32(22)
-	defaultSSHUser                 = "spritz"
-	defaultSSHMode                 = "service"
-	spritzContainerName            = "spritz"
-	spritzFinalizer                = "spritz.sh/finalizer"
-	defaultTTLGrace                = 5 * time.Minute
-	defaultRepoInitImage           = "alpine/git:2.45.2"
-	repoAuthMountPath              = "/var/run/spritz/repo-auth"
-	repoInitHomeDir                = "/home/dev"
-	repoInitGroupID          int64 = 65532
-	defaultSharedConfigMount       = "/shared"
+	defaultRepoDir             = "/workspace/repo"
+	defaultWebPort             = int32(8080)
+	defaultSSHPort             = int32(22)
+	defaultSSHUser             = "spritz"
+	defaultSSHMode             = "service"
+	spritzContainerName        = "spritz"
+	spritzFinalizer            = "spritz.sh/finalizer"
+	defaultTTLGrace            = 5 * time.Minute
+	defaultRepoInitImage       = "alpine/git:2.45.2"
+	repoAuthMountPath          = "/var/run/spritz/repo-auth"
+	repoInitHomeDir            = "/home/dev"
+	repoInitGroupID      int64 = 65532
 )
 
 var (
 	defaultWorkspaceSizeLimit = resource.MustParse("10Gi")
 	defaultHomeSizeLimit      = resource.MustParse("5Gi")
-	defaultSharedConfigSize   = resource.MustParse("1Gi")
 )
-
-type homePVCSettings struct {
-	enabled      bool
-	prefix       string
-	size         resource.Quantity
-	accessModes  []corev1.PersistentVolumeAccessMode
-	storageClass string
-	mountPaths   []string
-}
-
-type sharedConfigPVCSettings struct {
-	enabled      bool
-	prefix       string
-	size         resource.Quantity
-	accessModes  []corev1.PersistentVolumeAccessMode
-	storageClass string
-	mountPath    string
-}
 
 type SpritzReconciler struct {
 	client.Client
@@ -310,61 +290,20 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 		env = append(env, spritz.Spec.Env...)
 
 		ports := containerPorts(spritz)
-		homeSettings := loadHomePVCSettings()
-		if err := validateMountPaths(homeSettings.mountPaths); err != nil {
-			return err
-		}
-		sharedSettings := loadSharedConfigPVCSettings()
-		if sharedSettings.enabled {
-			if err := validateSharedConfigMountPath(sharedSettings.mountPath); err != nil {
-				return err
-			}
-		}
 		sharedMountsSettings, err := loadSharedMountsSettings()
 		if err != nil {
 			return err
-		}
-		homeVolumeSource := corev1.VolumeSource{
-			EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: homeSizeLimit},
-		}
-		homePVCEnabled := homeSettings.enabled && spritz.Spec.Owner.ID != ""
-		if homePVCEnabled {
-			homePVCName := ownerPVCName(homeSettings.prefix, spritz.Spec.Owner.ID)
-			if err := r.ensureHomePVC(ctx, spritz, homePVCName, homeSettings); err != nil {
-				return fmt.Errorf("failed to ensure home PVC %s: %w", homePVCName, err)
-			}
-			homeVolumeSource = corev1.VolumeSource{
-				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: homePVCName,
-				},
-			}
-		}
-		sharedPVCEnabled := sharedSettings.enabled && spritz.Spec.Owner.ID != ""
-		sharedVolumeSource := corev1.VolumeSource{}
-		if sharedPVCEnabled {
-			sharedPVCName := ownerPVCName(sharedSettings.prefix, spritz.Spec.Owner.ID)
-			if err := r.ensureSharedConfigPVC(ctx, spritz, sharedPVCName, sharedSettings); err != nil {
-				return fmt.Errorf("failed to ensure shared config PVC %s: %w", sharedPVCName, err)
-			}
-			sharedVolumeSource = corev1.VolumeSource{
-				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: sharedPVCName,
-				},
-			}
 		}
 		nodeSelector, err := loadPodNodeSelector()
 		if err != nil {
 			return err
 		}
-		homeMounts := buildHomeMounts(homeSettings)
+		homeMounts := buildHomeMounts()
 		sharedMountRuntime, err := buildSharedMountRuntime(spritz, sharedMountsSettings)
 		if err != nil {
 			return err
 		}
 		repoMountRoots := append([]corev1.VolumeMount{}, homeMounts...)
-		if sharedPVCEnabled {
-			repoMountRoots = append(repoMountRoots, corev1.VolumeMount{Name: "shared-config", MountPath: sharedSettings.mountPath})
-		}
 		if len(sharedMountRuntime.volumeMounts) > 0 {
 			repoMountRoots = append(repoMountRoots, sharedMountRuntime.volumeMounts...)
 		}
@@ -375,19 +314,13 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 
 		volumes := []corev1.Volume{
 			{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: workspaceSizeLimit}}},
-			{Name: "home", VolumeSource: homeVolumeSource},
-		}
-		if sharedPVCEnabled {
-			volumes = append(volumes, corev1.Volume{Name: "shared-config", VolumeSource: sharedVolumeSource})
+			{Name: "home", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: homeSizeLimit}}},
 		}
 		if len(repoAuthVolumes) > 0 {
 			volumes = append(volumes, repoAuthVolumes...)
 		}
 
 		volumeMounts := append([]corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}}, homeMounts...)
-		if sharedPVCEnabled {
-			volumeMounts = append(volumeMounts, corev1.VolumeMount{Name: "shared-config", MountPath: sharedSettings.mountPath})
-		}
 		if len(sharedMountRuntime.volumes) > 0 {
 			volumes = append(volumes, sharedMountRuntime.volumes...)
 		}
@@ -415,7 +348,7 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 			},
 			Volumes: volumes,
 		}
-		podSpec.SecurityContext = buildPodSecurityContext(homePVCEnabled, sharedPVCEnabled, sharedMountsSettings.enabled, len(repoInitContainers) > 0)
+		podSpec.SecurityContext = buildPodSecurityContext(sharedMountsSettings.enabled, len(repoInitContainers) > 0)
 		initContainers := []corev1.Container{}
 		if sharedMountRuntime.initContainer != nil {
 			initContainers = append(initContainers, *sharedMountRuntime.initContainer)
@@ -792,91 +725,12 @@ func ttlGracePeriod() time.Duration {
 	return grace
 }
 
-func loadHomePVCSettings() homePVCSettings {
-	prefix := strings.TrimSpace(os.Getenv("SPRITZ_HOME_PVC_PREFIX"))
-	if prefix == "" {
-		return homePVCSettings{enabled: false, mountPaths: nil}
-	}
-
-	size := defaultHomeSizeLimit
-	sizeRaw := strings.TrimSpace(os.Getenv("SPRITZ_HOME_PVC_SIZE"))
-	if sizeRaw != "" {
-		if parsed, err := resource.ParseQuantity(sizeRaw); err == nil {
-			size = parsed
-		}
-	}
-
-	accessModes := parseAccessModes(os.Getenv("SPRITZ_HOME_PVC_ACCESS_MODES"))
-	if len(accessModes) == 0 {
-		accessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
-	}
-
-	mountPaths := parseCSV(os.Getenv("SPRITZ_HOME_MOUNT_PATHS"))
-	return homePVCSettings{
-		enabled:      true,
-		prefix:       prefix,
-		size:         size,
-		accessModes:  accessModes,
-		storageClass: strings.TrimSpace(os.Getenv("SPRITZ_HOME_PVC_STORAGE_CLASS")),
-		mountPaths:   mountPaths,
-	}
-}
-
-func loadSharedConfigPVCSettings() sharedConfigPVCSettings {
-	prefix := strings.TrimSpace(os.Getenv("SPRITZ_SHARED_CONFIG_PVC_PREFIX"))
-	if prefix == "" {
-		return sharedConfigPVCSettings{enabled: false}
-	}
-
-	size := defaultSharedConfigSize
-	sizeRaw := strings.TrimSpace(os.Getenv("SPRITZ_SHARED_CONFIG_PVC_SIZE"))
-	if sizeRaw != "" {
-		if parsed, err := resource.ParseQuantity(sizeRaw); err == nil {
-			size = parsed
-		}
-	}
-
-	accessModes := parseAccessModes(os.Getenv("SPRITZ_SHARED_CONFIG_PVC_ACCESS_MODES"))
-	if len(accessModes) == 0 {
-		accessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}
-	}
-
-	mountPath := strings.TrimSpace(os.Getenv("SPRITZ_SHARED_CONFIG_MOUNT_PATH"))
-	if mountPath == "" {
-		mountPath = defaultSharedConfigMount
-	}
-
-	return sharedConfigPVCSettings{
-		enabled:      true,
-		prefix:       prefix,
-		size:         size,
-		accessModes:  accessModes,
-		storageClass: strings.TrimSpace(os.Getenv("SPRITZ_SHARED_CONFIG_PVC_STORAGE_CLASS")),
-		mountPath:    mountPath,
-	}
-}
-
 func loadPodNodeSelector() (map[string]string, error) {
 	raw := strings.TrimSpace(os.Getenv("SPRITZ_POD_NODE_SELECTOR"))
 	if raw == "" {
 		return nil, nil
 	}
 	return parseNodeSelector(raw)
-}
-
-func parseAccessModes(raw string) []corev1.PersistentVolumeAccessMode {
-	modes := []corev1.PersistentVolumeAccessMode{}
-	for _, item := range parseCSV(raw) {
-		switch strings.ToLower(item) {
-		case "readwriteonce", "rwo":
-			modes = append(modes, corev1.ReadWriteOnce)
-		case "readwritemany", "rwx":
-			modes = append(modes, corev1.ReadWriteMany)
-		case "readonlymany", "rox":
-			modes = append(modes, corev1.ReadOnlyMany)
-		}
-	}
-	return modes
 }
 
 func parseCSV(raw string) []string {
@@ -914,8 +768,8 @@ func parseNodeSelector(raw string) (map[string]string, error) {
 	return selector, nil
 }
 
-func buildPodSecurityContext(homePVCEnabled bool, sharedConfigPVCEnabled bool, sharedMountsEnabled bool, repoInitEnabled bool) *corev1.PodSecurityContext {
-	if !homePVCEnabled && !sharedConfigPVCEnabled && !sharedMountsEnabled && !repoInitEnabled {
+func buildPodSecurityContext(sharedMountsEnabled bool, repoInitEnabled bool) *corev1.PodSecurityContext {
+	if !sharedMountsEnabled && !repoInitEnabled {
 		return nil
 	}
 	fsGroup := repoInitGroupID
@@ -993,21 +847,8 @@ func appendRepoDirMounts(mounts []corev1.VolumeMount, repoDirs []string, mountRo
 	return mounts
 }
 
-func buildHomeMounts(settings homePVCSettings) []corev1.VolumeMount {
-	paths := settings.mountPaths
-	if len(paths) == 0 {
-		paths = []string{"/home/dev"}
-	}
-	seen := map[string]bool{}
-	mounts := []corev1.VolumeMount{}
-	for _, path := range paths {
-		if seen[path] {
-			continue
-		}
-		seen[path] = true
-		mounts = append(mounts, corev1.VolumeMount{Name: "home", MountPath: path})
-	}
-	return mounts
+func buildHomeMounts() []corev1.VolumeMount {
+	return []corev1.VolumeMount{{Name: "home", MountPath: repoInitHomeDir}}
 }
 
 type repoAuthConfig struct {
@@ -1277,157 +1118,6 @@ func repoInitImage() string {
 		return value
 	}
 	return defaultRepoInitImage
-}
-
-func (r *SpritzReconciler) ensureHomePVC(
-	ctx context.Context,
-	spritz *spritzv1.Spritz,
-	name string,
-	settings homePVCSettings,
-) error {
-	labels := map[string]string{
-		"spritz.sh/purpose": "home",
-	}
-	if spritz.Spec.Owner.ID != "" {
-		labels["spritz.sh/owner"] = ownerLabelValue(spritz.Spec.Owner.ID)
-	}
-
-	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: spritz.Namespace}}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, pvc, func() error {
-		// Intentionally no owner reference: per-owner PVCs should outlive individual Spritz instances.
-		pvc.Labels = mergeMaps(pvc.Labels, labels)
-		if pvc.CreationTimestamp.IsZero() {
-			pvc.Spec = corev1.PersistentVolumeClaimSpec{
-				AccessModes: settings.accessModes,
-				Resources: corev1.VolumeResourceRequirements{
-					Requests: corev1.ResourceList{
-						corev1.ResourceStorage: settings.size,
-					},
-				},
-			}
-			if settings.storageClass != "" {
-				pvc.Spec.StorageClassName = &settings.storageClass
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	switch pvc.Status.Phase {
-	case "", corev1.ClaimBound, corev1.ClaimPending:
-		return nil
-	case corev1.ClaimLost:
-		return fmt.Errorf("home PVC %s lost", name)
-	default:
-		return fmt.Errorf("home PVC %s not bound (status=%s)", name, pvc.Status.Phase)
-	}
-	return nil
-}
-
-func (r *SpritzReconciler) ensureSharedConfigPVC(
-	ctx context.Context,
-	spritz *spritzv1.Spritz,
-	name string,
-	settings sharedConfigPVCSettings,
-) error {
-	labels := map[string]string{
-		"spritz.sh/purpose": "shared-config",
-	}
-	if spritz.Spec.Owner.ID != "" {
-		labels["spritz.sh/owner"] = ownerLabelValue(spritz.Spec.Owner.ID)
-	}
-
-	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: spritz.Namespace}}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, pvc, func() error {
-		// Intentionally no owner reference: shared config PVCs should outlive individual Spritz instances.
-		pvc.Labels = mergeMaps(pvc.Labels, labels)
-		if pvc.CreationTimestamp.IsZero() {
-			pvc.Spec = corev1.PersistentVolumeClaimSpec{
-				AccessModes: settings.accessModes,
-				Resources: corev1.VolumeResourceRequirements{
-					Requests: corev1.ResourceList{
-						corev1.ResourceStorage: settings.size,
-					},
-				},
-			}
-			if settings.storageClass != "" {
-				pvc.Spec.StorageClassName = &settings.storageClass
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	switch pvc.Status.Phase {
-	case "", corev1.ClaimBound, corev1.ClaimPending:
-		return nil
-	case corev1.ClaimLost:
-		return fmt.Errorf("shared config PVC %s lost", name)
-	default:
-		return fmt.Errorf("shared config PVC %s not bound (status=%s)", name, pvc.Status.Phase)
-	}
-}
-
-func validateMountPaths(paths []string) error {
-	if len(paths) == 0 {
-		return nil
-	}
-	cleaned := []string{}
-	seen := map[string]bool{}
-	for _, raw := range paths {
-		trimmed := strings.TrimSpace(raw)
-		if trimmed == "" {
-			continue
-		}
-		if !strings.HasPrefix(trimmed, "/") {
-			return fmt.Errorf("home mount path must be absolute: %s", trimmed)
-		}
-		path := strings.TrimRight(trimmed, "/")
-		if path == "" {
-			return fmt.Errorf("home mount path must not be root: %s", trimmed)
-		}
-		if seen[path] {
-			continue
-		}
-		seen[path] = true
-		cleaned = append(cleaned, path)
-	}
-	for i, base := range cleaned {
-		for j, other := range cleaned {
-			if i == j {
-				continue
-			}
-			if strings.HasPrefix(other, base+"/") {
-				return fmt.Errorf("home mount paths overlap: %s and %s", base, other)
-			}
-		}
-	}
-	return nil
-}
-
-func validateSharedConfigMountPath(raw string) error {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return fmt.Errorf("shared config mount path must be set")
-	}
-	if !strings.HasPrefix(trimmed, "/") {
-		return fmt.Errorf("shared config mount path must be absolute: %s", trimmed)
-	}
-	path := strings.TrimRight(trimmed, "/")
-	if path == "" {
-		return fmt.Errorf("shared config mount path must not be root: %s", trimmed)
-	}
-	return nil
-}
-
-func ownerPVCName(prefix, id string) string {
-	if id == "" {
-		return prefix
-	}
-	sum := sha256.Sum256([]byte(id))
-	return fmt.Sprintf("%s-owner-%x", prefix, sum[:])
 }
 
 func emptyDirSizeLimit(key string, fallback resource.Quantity) *resource.Quantity {

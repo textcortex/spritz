@@ -77,23 +77,6 @@ operator:
   workspaceSizeLimit: 10Gi
   homeSizeLimit: 5Gi
   podNodeSelector: ""
-  homePVC:
-    enabled: true
-    prefix: spritz-home
-    size: 5Gi
-    accessModes:
-      - ReadWriteOnce
-    storageClass: ""
-    mountPaths:
-      - /home/dev
-  sharedConfigPVC:
-    enabled: false
-    prefix: spritz-shared-config
-    size: 100Mi
-    accessModes:
-      - ReadWriteMany
-    storageClass: ""
-    mountPath: /shared
   sharedMounts:
     enabled: false
     mounts: []

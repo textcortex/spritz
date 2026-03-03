@@ -43,38 +43,6 @@ spec:
             - name: SPRITZ_HOME_SIZE_LIMIT
               value: {{ .Values.operator.homeSizeLimit | quote }}
             {{- end }}
-            {{- if and .Values.operator.homePVC .Values.operator.homePVC.enabled }}
-            - name: SPRITZ_HOME_PVC_PREFIX
-              value: {{ .Values.operator.homePVC.prefix | quote }}
-            - name: SPRITZ_HOME_PVC_SIZE
-              value: {{ .Values.operator.homePVC.size | quote }}
-            - name: SPRITZ_HOME_PVC_ACCESS_MODES
-              value: {{ join "," .Values.operator.homePVC.accessModes | quote }}
-            {{- if .Values.operator.homePVC.storageClass }}
-            - name: SPRITZ_HOME_PVC_STORAGE_CLASS
-              value: {{ .Values.operator.homePVC.storageClass | quote }}
-            {{- end }}
-            {{- if .Values.operator.homePVC.mountPaths }}
-            - name: SPRITZ_HOME_MOUNT_PATHS
-              value: {{ join "," .Values.operator.homePVC.mountPaths | quote }}
-            {{- end }}
-            {{- end }}
-            {{- if and .Values.operator.sharedConfigPVC .Values.operator.sharedConfigPVC.enabled }}
-            - name: SPRITZ_SHARED_CONFIG_PVC_PREFIX
-              value: {{ .Values.operator.sharedConfigPVC.prefix | quote }}
-            - name: SPRITZ_SHARED_CONFIG_PVC_SIZE
-              value: {{ .Values.operator.sharedConfigPVC.size | quote }}
-            - name: SPRITZ_SHARED_CONFIG_PVC_ACCESS_MODES
-              value: {{ join "," .Values.operator.sharedConfigPVC.accessModes | quote }}
-            {{- if .Values.operator.sharedConfigPVC.storageClass }}
-            - name: SPRITZ_SHARED_CONFIG_PVC_STORAGE_CLASS
-              value: {{ .Values.operator.sharedConfigPVC.storageClass | quote }}
-            {{- end }}
-            {{- if .Values.operator.sharedConfigPVC.mountPath }}
-            - name: SPRITZ_SHARED_CONFIG_MOUNT_PATH
-              value: {{ .Values.operator.sharedConfigPVC.mountPath | quote }}
-            {{- end }}
-            {{- end }}
             {{- if and .Values.operator.sharedMounts .Values.operator.sharedMounts.enabled }}
             - name: SPRITZ_SHARED_MOUNTS
               value: {{ toJson .Values.operator.sharedMounts.mounts | quote }}
