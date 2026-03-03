@@ -23,6 +23,9 @@ const defaultRepoUrl = String(repoDefaults.url || '').trim();
 const defaultRepoDir = String(repoDefaults.dir || '').trim();
 const defaultRepoBranch = String(repoDefaults.branch || '').trim();
 const hideRepoInputs = parseBoolean(repoDefaults.hideInputs, false);
+const launchQueryParamsPlaceholder = '__SPRITZ_UI_LAUNCH_QUERY_PARAMS__';
+const launchConfig = config.launch || {};
+const launchQueryParams = parseTemplateMap(launchConfig.queryParams);
 const authReturnToPlaceholder = '__SPRITZ_RETURN_TO__';
 const noticeEl = document.getElementById('notice');
 const listEl = document.getElementById('list');
@@ -419,6 +422,33 @@ function parseStorageKeys(value) {
     .split(/[;,]/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function normalizeTemplateMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const normalized = {};
+  for (const [key, raw] of Object.entries(value)) {
+    const name = String(key || '').trim();
+    if (!name) continue;
+    if (raw === undefined || raw === null) continue;
+    normalized[name] = String(raw);
+  }
+  return normalized;
+}
+
+function parseTemplateMap(value) {
+  if (!value) return {};
+  if (typeof value === 'object') {
+    return normalizeTemplateMap(value);
+  }
+  const trimmed = String(value).trim();
+  if (!trimmed || trimmed === launchQueryParamsPlaceholder) return {};
+  try {
+    const parsed = JSON.parse(trimmed);
+    return normalizeTemplateMap(parsed);
+  } catch {
+    return {};
+  }
 }
 
 function parsePresets(raw) {
@@ -863,6 +893,51 @@ async function fetchSpritzes() {
   }
 }
 
+function applyTemplatePlaceholders(template, context) {
+  if (!template) return '';
+  return String(template).replace(/\{([a-zA-Z0-9_]+)\}/g, (_, key) => {
+    const value = context[key];
+    if (value === undefined || value === null) return '';
+    return String(value);
+  });
+}
+
+function buildOpenUrl(rawUrl, spritz) {
+  const input = String(rawUrl || '').trim();
+  if (!input) return '';
+  let url;
+  try {
+    url = new URL(input, window.location.href);
+  } catch {
+    return input;
+  }
+  const queryEntries = Object.entries(launchQueryParams);
+  if (!queryEntries.length) {
+    return url.href;
+  }
+  const name = String(spritz?.metadata?.name || '').trim();
+  const namespace = String(spritz?.metadata?.namespace || '').trim();
+  const context = {
+    origin: url.origin,
+    host: url.host,
+    hostname: url.hostname,
+    path: url.pathname,
+    query: url.search,
+    name,
+    namespace,
+    name_encoded: encodeURIComponent(name),
+    namespace_encoded: encodeURIComponent(namespace),
+    path_encoded: encodeURIComponent(url.pathname),
+    ui_origin: window.location.origin,
+    ws_origin: url.origin.replace(/^http/i, 'ws'),
+  };
+  for (const [param, template] of queryEntries) {
+    const value = applyTemplatePlaceholders(template, context);
+    url.searchParams.set(param, value);
+  }
+  return url.href;
+}
+
 function renderList(items) {
   updateKnownSpritzNames(items);
   if (!items.length) {
@@ -891,7 +966,7 @@ function renderList(items) {
     const openBtn = document.createElement('button');
     openBtn.textContent = 'Open';
     openBtn.onclick = () => {
-      const url = spritz.status?.url;
+      const url = buildOpenUrl(spritz.status?.url, spritz);
       if (url) window.open(url, '_blank');
     };
 

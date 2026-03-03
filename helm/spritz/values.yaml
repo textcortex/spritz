@@ -241,6 +241,8 @@ ui:
     dir: ""
     branch: ""
     hideInputs: false
+  launch:
+    queryParams: {}
   auth:
     mode: none
     tokenStorage: localStorage

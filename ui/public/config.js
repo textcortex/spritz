@@ -8,6 +8,9 @@ window.SPRITZ_CONFIG = {
     branch: '__SPRITZ_UI_DEFAULT_REPO_BRANCH__',
     hideInputs: '__SPRITZ_UI_HIDE_REPO_INPUTS__',
   },
+  launch: {
+    queryParams: '__SPRITZ_UI_LAUNCH_QUERY_PARAMS__',
+  },
   auth: {
     mode: '__SPRITZ_UI_AUTH_MODE__',
     tokenStorage: '__SPRITZ_UI_AUTH_TOKEN_STORAGE__',
