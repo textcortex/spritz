@@ -68,6 +68,7 @@ Auto-start related runtime overrides:
 - `OPENCLAW_ACP_PATH` (default: `/`)
 - `SPRITZ_OPENCLAW_ACP_GATEWAY_HOST` (optional; defaults to the pod/container IPv4 so trusted-proxy gateway auth accepts the ACP bridge)
 - `SPRITZ_OPENCLAW_ACP_GATEWAY_URL` (optional; overrides the computed bridge target)
+- `SPRITZ_OPENCLAW_ACP_ALLOW_INSECURE_PRIVATE_WS` (default: `1`; only affects the internal `openclaw acp` bridge child so private pod-network `ws://` works)
 
 ## Generic Config Support
 

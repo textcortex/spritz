@@ -103,11 +103,17 @@ func configFromEnv() (bridgeConfig, error) {
 		args = append(args, "--verbose")
 	}
 
+	extraEnv := []string{}
+	if parseBoolEnv("SPRITZ_OPENCLAW_ACP_ALLOW_INSECURE_PRIVATE_WS", false) {
+		extraEnv = append(extraEnv, "OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1")
+	}
+
 	return bridgeConfig{
 		ListenAddr: listenAddr,
 		Path:       path,
 		Command:    command,
 		Args:       args,
+		Env:        extraEnv,
 	}, nil
 }
 

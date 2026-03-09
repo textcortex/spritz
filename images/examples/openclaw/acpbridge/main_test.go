@@ -37,6 +37,22 @@ func TestConfigFromEnvBuildsOpenClawArgs(t *testing.T) {
 			t.Fatalf("expected %q in args: %s", part, joined)
 		}
 	}
+	if len(cfg.Env) != 0 {
+		t.Fatalf("Env = %#v, want empty", cfg.Env)
+	}
+}
+
+func TestConfigFromEnvEnablesPrivateWSOverride(t *testing.T) {
+	t.Setenv("SPRITZ_OPENCLAW_ACP_GATEWAY_URL", "ws://10.244.0.25:8080")
+	t.Setenv("SPRITZ_OPENCLAW_ACP_ALLOW_INSECURE_PRIVATE_WS", "true")
+
+	cfg, err := configFromEnv()
+	if err != nil {
+		t.Fatalf("configFromEnv() error = %v", err)
+	}
+	if len(cfg.Env) != 1 || cfg.Env[0] != "OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1" {
+		t.Fatalf("Env = %#v, want OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1", cfg.Env)
+	}
 }
 
 func TestBridgeProxiesWebSocketFramesToChildProcess(t *testing.T) {
