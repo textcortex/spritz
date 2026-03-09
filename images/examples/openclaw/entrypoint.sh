@@ -20,21 +20,97 @@ detect_bridge_gateway_host() {
     return
   fi
 
-  local host_ips="" candidate=""
-  if host_ips="$(hostname -i 2>/dev/null)"; then
-    candidate="$(printf '%s\n' "${host_ips}" | tr ' ' '\n' | awk '/^[0-9]+\./ { print; exit }')"
-    if [[ -n "${candidate}" ]]; then
-      printf '%s\n' "${candidate}"
-      return
-    fi
-    candidate="$(printf '%s\n' "${host_ips}" | tr ' ' '\n' | sed -n '/./{p;q;}')"
-    if [[ -n "${candidate}" ]]; then
-      printf '%s\n' "${candidate}"
-      return
-    fi
-  fi
-
   printf '127.0.0.1\n'
+}
+
+prepare_acp_trusted_proxy_bridge() {
+  node - "${config_path}" <<'NODE'
+const fs = require("node:fs");
+
+const configPath = process.argv[2];
+const raw = fs.readFileSync(configPath, "utf8");
+const cfg = JSON.parse(raw);
+const gateway = cfg.gateway ?? {};
+const auth = gateway.auth ?? {};
+const trustedProxy = auth.trustedProxy ?? {};
+const trustedProxies = Array.isArray(gateway.trustedProxies) ? gateway.trustedProxies : [];
+const authMode = typeof auth.mode === "string" ? auth.mode.trim() : "";
+
+if (authMode !== "trusted-proxy") {
+  process.stdout.write("{}");
+  process.exit(0);
+}
+
+const mergedTrustedProxies = [];
+for (const value of [...trustedProxies, "127.0.0.1", "::1"]) {
+  if (typeof value !== "string") {
+    continue;
+  }
+  const trimmed = value.trim();
+  if (!trimmed || mergedTrustedProxies.includes(trimmed)) {
+    continue;
+  }
+  mergedTrustedProxies.push(trimmed);
+}
+
+gateway.trustedProxies = mergedTrustedProxies;
+cfg.gateway = gateway;
+fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + "\n");
+
+const bridgeUser = process.env.SPRITZ_OPENCLAW_ACP_TRUSTED_PROXY_USER?.trim() || "spritz-acp-bridge";
+const bridgeEmail =
+  process.env.SPRITZ_OPENCLAW_ACP_TRUSTED_PROXY_EMAIL?.trim() ||
+  "spritz-acp-bridge@example.invalid";
+const userHeader =
+  typeof trustedProxy.userHeader === "string" && trustedProxy.userHeader.trim()
+    ? trustedProxy.userHeader.trim()
+    : "x-forwarded-user";
+const requiredHeaders = Array.isArray(trustedProxy.requiredHeaders)
+  ? trustedProxy.requiredHeaders
+  : [];
+
+const headers = {
+  "x-forwarded-user": bridgeUser,
+  "x-forwarded-email": bridgeEmail,
+  "x-forwarded-proto": "https",
+  "x-forwarded-host": "localhost",
+  "x-forwarded-for": "127.0.0.1",
+  "x-real-ip": "127.0.0.1",
+};
+
+headers[userHeader.toLowerCase()] = userHeader.toLowerCase().includes("email")
+  ? bridgeEmail
+  : bridgeUser;
+
+for (const value of requiredHeaders) {
+  if (typeof value !== "string") {
+    continue;
+  }
+  const header = value.trim().toLowerCase();
+  if (!header || headers[header]) {
+    continue;
+  }
+  if (header.includes("email")) {
+    headers[header] = bridgeEmail;
+    continue;
+  }
+  if (header === "x-forwarded-proto") {
+    headers[header] = "https";
+    continue;
+  }
+  if (header === "x-forwarded-host") {
+    headers[header] = "localhost";
+    continue;
+  }
+  if (header === "x-forwarded-for" || header === "x-real-ip") {
+    headers[header] = "127.0.0.1";
+    continue;
+  }
+  headers[header] = "1";
+}
+
+process.stdout.write(JSON.stringify(headers));
+NODE
 }
 
 mkdir -p "${config_dir}"
@@ -61,6 +137,10 @@ chmod 600 "${config_path}" || true
 
 # Force OpenClaw to use the same file path we prepared above.
 export OPENCLAW_CONFIG_PATH="${config_path}"
+
+if [[ -z "${SPRITZ_OPENCLAW_ACP_GATEWAY_HEADERS_JSON:-}" ]]; then
+  export SPRITZ_OPENCLAW_ACP_GATEWAY_HEADERS_JSON="$(prepare_acp_trusted_proxy_bridge)"
+fi
 
 # Keep gateway defaults deterministic for Spritz web routing.
 openclaw config set gateway.mode "${gateway_mode}" >/dev/null
@@ -101,7 +181,7 @@ fi
 
 bridge_gateway_host="$(detect_bridge_gateway_host)"
 export SPRITZ_OPENCLAW_ACP_GATEWAY_URL="${SPRITZ_OPENCLAW_ACP_GATEWAY_URL:-ws://${bridge_gateway_host}:${gateway_port}}"
-export SPRITZ_OPENCLAW_ACP_ALLOW_INSECURE_PRIVATE_WS="${SPRITZ_OPENCLAW_ACP_ALLOW_INSECURE_PRIVATE_WS:-1}"
+export SPRITZ_OPENCLAW_ACP_ALLOW_INSECURE_PRIVATE_WS="${SPRITZ_OPENCLAW_ACP_ALLOW_INSECURE_PRIVATE_WS:-0}"
 export SPRITZ_OPENCLAW_ACP_GATEWAY_TOKEN_FILE="${SPRITZ_OPENCLAW_ACP_GATEWAY_TOKEN_FILE:-${gateway_token_file}}"
 export SPRITZ_OPENCLAW_ACP_LISTEN_ADDR="${SPRITZ_OPENCLAW_ACP_LISTEN_ADDR:-${acp_bind}:${acp_port}}"
 export SPRITZ_OPENCLAW_ACP_PATH="${SPRITZ_OPENCLAW_ACP_PATH:-${acp_path}}"

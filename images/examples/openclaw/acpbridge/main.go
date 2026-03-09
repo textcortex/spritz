@@ -3,11 +3,13 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -25,11 +27,13 @@ const (
 )
 
 type bridgeConfig struct {
-	ListenAddr string
-	Path       string
-	Command    string
-	Args       []string
-	Env        []string
+	ListenAddr     string
+	Path           string
+	Command        string
+	Args           []string
+	Env            []string
+	GatewayURL     string
+	GatewayHeaders http.Header
 }
 
 type pumpResult struct {
@@ -108,13 +112,43 @@ func configFromEnv() (bridgeConfig, error) {
 		extraEnv = append(extraEnv, "OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1")
 	}
 
+	gatewayHeaders, err := parseGatewayHeaders(strings.TrimSpace(os.Getenv("SPRITZ_OPENCLAW_ACP_GATEWAY_HEADERS_JSON")))
+	if err != nil {
+		return bridgeConfig{}, err
+	}
+
 	return bridgeConfig{
-		ListenAddr: listenAddr,
-		Path:       path,
-		Command:    command,
-		Args:       args,
-		Env:        extraEnv,
+		ListenAddr:     listenAddr,
+		Path:           path,
+		Command:        command,
+		Args:           args,
+		Env:            extraEnv,
+		GatewayURL:     gatewayURL,
+		GatewayHeaders: gatewayHeaders,
 	}, nil
+}
+
+func parseGatewayHeaders(raw string) (http.Header, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	decoded := map[string]string{}
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return nil, errors.New("SPRITZ_OPENCLAW_ACP_GATEWAY_HEADERS_JSON must be a JSON object of string header values")
+	}
+	headers := http.Header{}
+	for key, value := range decoded {
+		trimmedKey := strings.TrimSpace(key)
+		trimmedValue := strings.TrimSpace(value)
+		if trimmedKey == "" || trimmedValue == "" {
+			continue
+		}
+		headers.Set(trimmedKey, trimmedValue)
+	}
+	if len(headers) == 0 {
+		return nil, nil
+	}
+	return headers, nil
 }
 
 func parseBoolEnv(key string, fallback bool) bool {
@@ -133,6 +167,12 @@ func parseBoolEnv(key string, fallback bool) bool {
 }
 
 func runServer(ctx context.Context, cfg bridgeConfig, logger *log.Logger) error {
+	effectiveCfg, cleanup, err := prepareBridgeRuntime(ctx, cfg, logger)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
 		return err
@@ -141,7 +181,7 @@ func runServer(ctx context.Context, cfg bridgeConfig, logger *log.Logger) error 
 		_ = listener.Close()
 	}()
 
-	server := &http.Server{Handler: newHandler(cfg, logger)}
+	server := &http.Server{Handler: newHandler(effectiveCfg, logger)}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
@@ -151,6 +191,132 @@ func runServer(ctx context.Context, cfg bridgeConfig, logger *log.Logger) error 
 
 	logger.Printf("listening on %s%s", cfg.ListenAddr, cfg.Path)
 	return server.Serve(listener)
+}
+
+func prepareBridgeRuntime(ctx context.Context, cfg bridgeConfig, logger *log.Logger) (bridgeConfig, func(), error) {
+	if len(cfg.GatewayHeaders) == 0 {
+		return cfg, func() {}, nil
+	}
+	proxyURL, shutdown, err := startGatewayProxy(ctx, cfg.GatewayURL, cfg.GatewayHeaders, logger)
+	if err != nil {
+		return bridgeConfig{}, nil, err
+	}
+	effectiveCfg := cfg
+	effectiveCfg.Args = replaceGatewayURLArg(cfg.Args, proxyURL)
+	return effectiveCfg, shutdown, nil
+}
+
+func replaceGatewayURLArg(args []string, newURL string) []string {
+	replaced := append([]string(nil), args...)
+	for index := 0; index < len(replaced)-1; index++ {
+		if replaced[index] == "--url" {
+			replaced[index+1] = newURL
+			break
+		}
+	}
+	return replaced
+}
+
+func startGatewayProxy(ctx context.Context, upstreamURL string, headers http.Header, logger *log.Logger) (string, func(), error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", nil, err
+	}
+
+	upstream, err := url.Parse(upstreamURL)
+	if err != nil {
+		_ = listener.Close()
+		return "", nil, err
+	}
+	proxyPath := upstream.EscapedPath()
+	if proxyPath == "" {
+		proxyPath = "/"
+	}
+	localURL := (&url.URL{
+		Scheme:   "ws",
+		Host:     listener.Addr().String(),
+		Path:     proxyPath,
+		RawQuery: upstream.RawQuery,
+	}).String()
+
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			clientConn, err := websocket.Upgrade(w, r, nil, 64*1024, 64*1024)
+			if err != nil {
+				logger.Printf("gateway proxy upgrade failed: %v", err)
+				return
+			}
+			defer func() {
+				_ = clientConn.Close()
+			}()
+
+			dialer := websocket.Dialer{}
+			upstreamConn, _, err := dialer.DialContext(r.Context(), upstreamURL, headers)
+			if err != nil {
+				logger.Printf("gateway proxy upstream dial failed: %v", err)
+				_ = clientConn.WriteControl(
+					websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseTryAgainLater, "gateway proxy connect failed"),
+					timeNowPlusSecond(),
+				)
+				return
+			}
+			defer func() {
+				_ = upstreamConn.Close()
+			}()
+
+			proxyErrCh := make(chan error, 2)
+			go func() {
+				proxyErrCh <- proxyWebSocketMessages(upstreamConn, clientConn)
+			}()
+			go func() {
+				proxyErrCh <- proxyWebSocketMessages(clientConn, upstreamConn)
+			}()
+			err = <-proxyErrCh
+			if err != nil && !isNormalWebSocketClosure(err) {
+				logger.Printf("gateway proxy connection failed: %v", err)
+			}
+		}),
+	}
+
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+	}()
+
+	go func() {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Printf("gateway proxy server failed: %v", err)
+		}
+	}()
+
+	return localURL, func() {
+		_ = server.Close()
+		_ = listener.Close()
+	}, nil
+}
+
+func proxyWebSocketMessages(dst *websocket.Conn, src *websocket.Conn) error {
+	for {
+		messageType, payload, err := src.ReadMessage()
+		if err != nil {
+			return err
+		}
+		if err := dst.WriteMessage(messageType, payload); err != nil {
+			return err
+		}
+	}
+}
+
+func isNormalWebSocketClosure(err error) bool {
+	return websocket.IsCloseError(
+		err,
+		websocket.CloseNormalClosure,
+		websocket.CloseGoingAway,
+		websocket.CloseNoStatusReceived,
+	) || errors.Is(err, io.EOF)
 }
 
 func newHandler(cfg bridgeConfig, logger *log.Logger) http.Handler {

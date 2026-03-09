@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"io"
 	"log"
@@ -52,6 +53,91 @@ func TestConfigFromEnvEnablesPrivateWSOverride(t *testing.T) {
 	}
 	if len(cfg.Env) != 1 || cfg.Env[0] != "OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1" {
 		t.Fatalf("Env = %#v, want OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1", cfg.Env)
+	}
+}
+
+func TestConfigFromEnvParsesGatewayHeadersJSON(t *testing.T) {
+	t.Setenv("SPRITZ_OPENCLAW_ACP_GATEWAY_URL", "ws://127.0.0.1:8080")
+	t.Setenv(
+		"SPRITZ_OPENCLAW_ACP_GATEWAY_HEADERS_JSON",
+		`{"x-forwarded-user":"spritz-acp-bridge","x-forwarded-email":"spritz-acp-bridge@example.invalid"}`,
+	)
+
+	cfg, err := configFromEnv()
+	if err != nil {
+		t.Fatalf("configFromEnv() error = %v", err)
+	}
+	if got := cfg.GatewayHeaders.Get("x-forwarded-user"); got != "spritz-acp-bridge" {
+		t.Fatalf("x-forwarded-user = %q, want %q", got, "spritz-acp-bridge")
+	}
+	if got := cfg.GatewayHeaders.Get("x-forwarded-email"); got != "spritz-acp-bridge@example.invalid" {
+		t.Fatalf("x-forwarded-email = %q, want %q", got, "spritz-acp-bridge@example.invalid")
+	}
+}
+
+func TestGatewayProxyInjectsHeadersAndProxiesFrames(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	upstreamSeen := make(chan http.Header, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamSeen <- r.Header.Clone()
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("upgrade upstream: %v", err)
+		}
+		defer func() {
+			_ = conn.Close()
+		}()
+		messageType, payload, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("read upstream: %v", err)
+		}
+		if err := conn.WriteMessage(messageType, payload); err != nil {
+			t.Fatalf("write upstream: %v", err)
+		}
+	}))
+	defer upstream.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	proxyURL, shutdown, err := startGatewayProxy(
+		ctx,
+		"ws"+strings.TrimPrefix(upstream.URL, "http"),
+		http.Header{
+			"X-Forwarded-User":  []string{"spritz-acp-bridge"},
+			"X-Forwarded-Email": []string{"spritz-acp-bridge@example.invalid"},
+		},
+		log.New(io.Discard, "", 0),
+	)
+	if err != nil {
+		t.Fatalf("startGatewayProxy() error = %v", err)
+	}
+	defer shutdown()
+
+	conn, _, err := websocket.DefaultDialer.Dial(proxyURL, nil)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"jsonrpc":"2.0"}`)); err != nil {
+		t.Fatalf("write proxy: %v", err)
+	}
+	_, payload, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read proxy: %v", err)
+	}
+	if string(payload) != `{"jsonrpc":"2.0"}` {
+		t.Fatalf("payload = %q, want echo", string(payload))
+	}
+
+	headers := <-upstreamSeen
+	if got := headers.Get("X-Forwarded-User"); got != "spritz-acp-bridge" {
+		t.Fatalf("X-Forwarded-User = %q, want %q", got, "spritz-acp-bridge")
+	}
+	if got := headers.Get("X-Forwarded-Email"); got != "spritz-acp-bridge@example.invalid" {
+		t.Fatalf("X-Forwarded-Email = %q, want %q", got, "spritz-acp-bridge@example.invalid")
 	}
 }
 
