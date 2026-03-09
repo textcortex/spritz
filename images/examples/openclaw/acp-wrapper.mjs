@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -18,6 +19,10 @@ const GATEWAY_CLIENT_MODES = {
 
 const TRUTHY_VALUES = new Set(["1", "true", "yes", "on"]);
 const DEFAULT_OPENCLAW_PACKAGE_ROOT = "/usr/local/lib/node_modules/openclaw";
+const DEFAULT_FALLBACK_AGENT_ID = "main";
+const DEFAULT_FALLBACK_SESSION_PREFIX = "spritz-acp";
+const UUIDISH_SESSION_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
  * Returns whether the image-owned ACP bridge should impersonate a trusted-proxy
@@ -29,6 +34,144 @@ export function useTrustedProxyControlUiBridge(env = process.env) {
     return false;
   }
   return TRUTHY_VALUES.has(raw.trim().toLowerCase());
+}
+
+function normalizeBridgeToken(value, fallback) {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || fallback;
+}
+
+function readMetaString(record, keys) {
+  for (const key of keys) {
+    const value = record?.[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function readMetaBool(record, keys) {
+  for (const key of keys) {
+    const value = record?.[key];
+    if (typeof value === "boolean") {
+      return value;
+    }
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === "true") return true;
+      if (normalized === "false") return false;
+    }
+  }
+  return undefined;
+}
+
+function parseSessionMeta(meta) {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+    return {};
+  }
+  return {
+    sessionKey: readMetaString(meta, ["sessionKey", "session", "key"]),
+    sessionLabel: readMetaString(meta, ["sessionLabel", "label"]),
+    resetSession: readMetaBool(meta, ["resetSession", "reset"]),
+    requireExisting: readMetaBool(meta, ["requireExistingSession", "requireExisting"]),
+    prefixCwd: readMetaBool(meta, ["prefixCwd"]),
+  };
+}
+
+/**
+ * Returns the deterministic gateway session key used for ACP session IDs that
+ * do not already carry an explicit gateway session key.
+ */
+export function buildBridgeFallbackSessionKey(sessionId, env = process.env) {
+  const normalizedSessionID =
+    typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : randomUUID();
+  const agentId = normalizeBridgeToken(
+    env.SPRITZ_OPENCLAW_ACP_FALLBACK_AGENT_ID,
+    DEFAULT_FALLBACK_AGENT_ID,
+  );
+  const prefix = normalizeBridgeToken(
+    env.SPRITZ_OPENCLAW_ACP_FALLBACK_SESSION_PREFIX,
+    DEFAULT_FALLBACK_SESSION_PREFIX,
+  );
+  return `agent:${agentId}:${prefix}:${normalizedSessionID}`;
+}
+
+/**
+ * Preserves explicit/listed gateway session keys and only maps ACP-generated
+ * UUID session IDs onto deterministic OpenClaw gateway session keys.
+ */
+export function resolveBridgeFallbackSessionKey(sessionId, env = process.env) {
+  const normalized = typeof sessionId === "string" ? sessionId.trim() : "";
+  if (!normalized) {
+    return buildBridgeFallbackSessionKey("", env);
+  }
+  if (!UUIDISH_SESSION_ID_PATTERN.test(normalized)) {
+    return normalized;
+  }
+  return buildBridgeFallbackSessionKey(normalized, env);
+}
+
+/**
+ * Extends OpenClaw's ACP gateway agent so the default ACP session flow maps to
+ * normal agent-scoped gateway sessions instead of ACP runtime session keys.
+ */
+export function createSpritzAcpGatewayAgentClass(AcpGatewayAgent, env = process.env) {
+  return class SpritzOpenclawAcpGatewayAgent extends AcpGatewayAgent {
+    async newSession(params) {
+      if (params.mcpServers.length > 0) {
+        this.log(`ignoring ${params.mcpServers.length} MCP servers`);
+      }
+      this.enforceSessionCreateRateLimit("newSession");
+
+      const sessionId = randomUUID();
+      const meta = parseSessionMeta(params?._meta);
+      const sessionKey = await this.resolveSessionKeyFromMeta({
+        meta,
+        fallbackKey: resolveBridgeFallbackSessionKey(sessionId, env),
+      });
+
+      const session = this.sessionStore.createSession({
+        sessionId,
+        sessionKey,
+        cwd: params.cwd,
+      });
+      this.log(`newSession: ${session.sessionId} -> ${session.sessionKey}`);
+      await this.sendAvailableCommands(session.sessionId);
+      return { sessionId: session.sessionId };
+    }
+
+    async loadSession(params) {
+      if (params.mcpServers.length > 0) {
+        this.log(`ignoring ${params.mcpServers.length} MCP servers`);
+      }
+      if (!this.sessionStore.hasSession(params.sessionId)) {
+        this.enforceSessionCreateRateLimit("loadSession");
+      }
+
+      const meta = parseSessionMeta(params?._meta);
+      const sessionKey = await this.resolveSessionKeyFromMeta({
+        meta,
+        fallbackKey: resolveBridgeFallbackSessionKey(params.sessionId, env),
+      });
+
+      const session = this.sessionStore.createSession({
+        sessionId: params.sessionId,
+        sessionKey,
+        cwd: params.cwd,
+      });
+      this.log(`loadSession: ${session.sessionId} -> ${session.sessionKey}`);
+      await this.sendAvailableCommands(session.sessionId);
+      return {};
+    }
+  };
 }
 
 /**
@@ -330,9 +473,10 @@ async function serveSpritzOpenclawAcp(opts = {}, env = process.env) {
   const input = Writable.toWeb(process.stdout);
   const output = Readable.toWeb(process.stdin);
   const stream = ndJsonStream(input, output);
+  const SpritzAcpGatewayAgent = createSpritzAcpGatewayAgentClass(AcpGatewayAgent, env);
 
   new AgentSideConnection((connectionInstance) => {
-    agent = new AcpGatewayAgent(connectionInstance, gateway, opts);
+    agent = new SpritzAcpGatewayAgent(connectionInstance, gateway, opts);
     agent.start();
     return agent;
   }, stream);

@@ -6,8 +6,11 @@ import path from 'node:path';
 
 import {
   buildGatewayClientOptions,
+  buildBridgeFallbackSessionKey,
+  createSpritzAcpGatewayAgentClass,
   loadOpenclawCompat,
   parseArgs,
+  resolveBridgeFallbackSessionKey,
   useTrustedProxyControlUiBridge,
 } from './acp-wrapper.mjs';
 
@@ -69,6 +72,85 @@ test('useTrustedProxyControlUiBridge reads truthy env values', () => {
   assert.equal(useTrustedProxyControlUiBridge({ SPRITZ_OPENCLAW_ACP_USE_CONTROL_UI_BRIDGE: 'true' }), true);
   assert.equal(useTrustedProxyControlUiBridge({ SPRITZ_OPENCLAW_ACP_USE_CONTROL_UI_BRIDGE: '0' }), false);
   assert.equal(useTrustedProxyControlUiBridge({}), false);
+});
+
+test('buildBridgeFallbackSessionKey maps ACP session ids onto normal agent-scoped gateway keys', () => {
+  const sessionKey = buildBridgeFallbackSessionKey('123e4567-e89b-42d3-a456-426614174000');
+
+  assert.equal(sessionKey, 'agent:main:spritz-acp:123e4567-e89b-42d3-a456-426614174000');
+});
+
+test('resolveBridgeFallbackSessionKey preserves existing gateway session keys', () => {
+  assert.equal(resolveBridgeFallbackSessionKey('agent:main:main'), 'agent:main:main');
+  assert.equal(resolveBridgeFallbackSessionKey('main'), 'main');
+  assert.equal(
+    resolveBridgeFallbackSessionKey('123e4567-e89b-42d3-a456-426614174000'),
+    'agent:main:spritz-acp:123e4567-e89b-42d3-a456-426614174000',
+  );
+});
+
+test('createSpritzAcpGatewayAgentClass uses mapped fallback keys for new and loaded sessions', async () => {
+  class FakeBaseAgent {
+    constructor() {
+      this.logged = [];
+      this.rateLimits = [];
+      this.sessionStore = {
+        entries: new Map(),
+        createSession: ({ sessionId, sessionKey, cwd }) => {
+          const session = { sessionId, sessionKey, cwd };
+          this.sessionStore.entries.set(sessionId, session);
+          return session;
+        },
+        hasSession: (sessionId) => this.sessionStore.entries.has(sessionId),
+      };
+      this.sentAvailableCommands = [];
+    }
+
+    log(message) {
+      this.logged.push(message);
+    }
+
+    enforceSessionCreateRateLimit(method) {
+      this.rateLimits.push(method);
+    }
+
+    async resolveSessionKeyFromMeta({ fallbackKey }) {
+      return fallbackKey;
+    }
+
+    async sendAvailableCommands(sessionId) {
+      this.sentAvailableCommands.push(sessionId);
+    }
+  }
+
+  const SpritzAgent = createSpritzAcpGatewayAgentClass(FakeBaseAgent, {});
+  const agent = new SpritzAgent();
+
+  const created = await agent.newSession({
+    cwd: '/home/dev',
+    mcpServers: [],
+  });
+
+  const createdSession = agent.sessionStore.entries.get(created.sessionId);
+  assert.match(created.sessionId, /^[0-9a-f-]{36}$/i);
+  assert.equal(
+    createdSession.sessionKey,
+    `agent:main:spritz-acp:${created.sessionId}`,
+  );
+
+  await agent.loadSession({
+    sessionId: created.sessionId,
+    cwd: '/home/dev',
+    mcpServers: [],
+  });
+
+  const loadedSession = agent.sessionStore.entries.get(created.sessionId);
+  assert.equal(
+    loadedSession.sessionKey,
+    `agent:main:spritz-acp:${created.sessionId}`,
+  );
+  assert.deepEqual(agent.rateLimits, ['newSession']);
+  assert.deepEqual(agent.sentAvailableCommands, [created.sessionId, created.sessionId]);
 });
 
 test('loadOpenclawCompat loads the generated stable compat module from the package root', async () => {
