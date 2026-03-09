@@ -272,7 +272,7 @@ func startGatewayProxy(
 			upstreamConn, _, err := dialer.DialContext(
 				r.Context(),
 				upstreamURL,
-				normalizeGatewayProxyHeaders(headers, trustedProxyControlUI),
+				normalizeGatewayProxyHeaders(headers, upstreamURL, trustedProxyControlUI),
 			)
 			if err != nil {
 				logger.Printf("gateway proxy upstream dial failed: %v", err)
@@ -326,13 +326,30 @@ func startGatewayProxy(
 
 type websocketFrameTransformer func(messageType int, payload []byte) (int, []byte, error)
 
-func normalizeGatewayProxyHeaders(headers http.Header, trustedProxyControlUI bool) http.Header {
+func normalizeGatewayProxyHeaders(
+	headers http.Header,
+	upstreamURL string,
+	trustedProxyControlUI bool,
+) http.Header {
 	if len(headers) == 0 {
 		return nil
 	}
 	normalized := headers.Clone()
 	if !trustedProxyControlUI || normalized.Get("Origin") != "" {
 		return normalized
+	}
+	if parsed, err := url.Parse(strings.TrimSpace(upstreamURL)); err == nil {
+		switch parsed.Scheme {
+		case "wss":
+			normalized.Set("Origin", "https://"+parsed.Host)
+			return normalized
+		case "ws":
+			normalized.Set("Origin", "http://"+parsed.Host)
+			return normalized
+		case "https", "http":
+			normalized.Set("Origin", parsed.Scheme+"://"+parsed.Host)
+			return normalized
+		}
 	}
 	scheme := strings.TrimSpace(normalized.Get("X-Forwarded-Proto"))
 	if scheme == "" {
