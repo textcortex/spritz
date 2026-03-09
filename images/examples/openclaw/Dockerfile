@@ -72,6 +72,7 @@ WORKDIR /workspace
 
 COPY --chown=dev:dev examples/base/entrypoint.sh /usr/local/bin/spritz-entrypoint
 COPY --chown=dev:dev examples/openclaw/entrypoint.sh /usr/local/bin/spritz-openclaw-entrypoint
+COPY --chown=dev:dev --chmod=755 examples/openclaw/acp-wrapper.mjs /usr/local/bin/spritz-openclaw-acp-wrapper
 COPY --from=acp-bridge-builder /out/spritz-openclaw-acp-bridge /usr/local/bin/spritz-openclaw-acp-bridge
 
 ENTRYPOINT ["/usr/local/bin/spritz-openclaw-entrypoint"]
