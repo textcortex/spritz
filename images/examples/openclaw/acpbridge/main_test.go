@@ -174,9 +174,10 @@ func TestGatewayProxyTrustedProxyRewritesConnectHandshake(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	upstreamWSURL := "ws" + strings.TrimPrefix(upstream.URL, "http")
 	proxyURL, shutdown, err := startGatewayProxy(
 		ctx,
-		"ws"+strings.TrimPrefix(upstream.URL, "http"),
+		upstreamWSURL,
 		http.Header{
 			"X-Forwarded-User":  []string{"spritz-acp-bridge"},
 			"X-Forwarded-Email": []string{"spritz-acp-bridge@example.invalid"},
@@ -230,8 +231,8 @@ func TestGatewayProxyTrustedProxyRewritesConnectHandshake(t *testing.T) {
 	}
 
 	headers := <-upstreamSeenHeaders
-	if got := headers.Get("Origin"); got != "https://localhost" {
-		t.Fatalf("Origin = %q, want %q", got, "https://localhost")
+	if got := headers.Get("Origin"); got != upstream.URL {
+		t.Fatalf("Origin = %q, want %q", got, upstream.URL)
 	}
 
 	payload := <-upstreamSeenPayload
@@ -254,6 +255,19 @@ func TestGatewayProxyTrustedProxyRewritesConnectHandshake(t *testing.T) {
 	}
 	if _, exists := params["device"]; exists {
 		t.Fatalf("device = %#v, want omitted", params["device"])
+	}
+}
+
+func TestNormalizeGatewayProxyHeadersKeepsExplicitOrigin(t *testing.T) {
+	headers := normalizeGatewayProxyHeaders(
+		http.Header{
+			"Origin": []string{"https://staging.example.com"},
+		},
+		"ws://127.0.0.1:8080",
+		true,
+	)
+	if got := headers.Get("Origin"); got != "https://staging.example.com" {
+		t.Fatalf("Origin = %q, want %q", got, "https://staging.example.com")
 	}
 }
 
