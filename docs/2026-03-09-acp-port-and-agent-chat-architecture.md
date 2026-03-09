@@ -118,9 +118,9 @@ Any workspace backend may be used as long as it:
 OpenClaw is one example backend, not the protocol owner.
 
 For the current OpenClaw preset, Spritz ships an image-owned compatibility bridge that exposes
-WebSocket ACP on `2529` and forwards each connection into `openclaw acp` over stdio. This bridge
-is intentionally confined to the image so the Spritz ACP control plane does not become
-OpenClaw-specific.
+WebSocket ACP on `2529` and forwards each connection into the image-owned
+`spritz-openclaw-acp-wrapper` over stdio. This bridge is intentionally confined to the image so
+the Spritz ACP control plane does not become OpenClaw-specific.
 
 ## UI behavior
 
