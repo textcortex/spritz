@@ -58,7 +58,10 @@ RUN apt-get update \
     xdg-utils \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g "openclaw@${OPENCLAW_VERSION}"
+RUN npm install -g "openclaw@${OPENCLAW_VERSION}" \
+  && cd /usr/local/lib/node_modules/openclaw/extensions/acpx \
+  && npm install --omit=dev --no-save \
+  && test -x /usr/local/lib/node_modules/openclaw/extensions/acpx/node_modules/.bin/acpx
 
 RUN useradd -m -s /bin/bash dev \
   && mkdir -p /home/dev/.openclaw \
