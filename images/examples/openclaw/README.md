@@ -47,7 +47,7 @@ The image also starts an internal ACP compatibility bridge by default:
 
 - listen address: `0.0.0.0:2529`
 - WebSocket path: `/`
-- backend: per-connection `openclaw acp` stdio bridge to the local gateway over loopback
+- backend: per-connection `spritz-openclaw-acp-wrapper` stdio bridge to the local gateway over loopback
 
 This keeps the Spritz ACP contract stable even though OpenClaw's native ACP support is currently
 stdio-only.

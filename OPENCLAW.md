@@ -64,12 +64,12 @@ This ACP path is separate from OpenClaw's dashboard and gateway UI.
 Today the example image satisfies that contract with a compatibility bridge:
 
 - WebSocket server inside the image listens on `2529`
-- each ACP connection spawns `openclaw acp`
-- `openclaw acp` talks to the local OpenClaw gateway over loopback WebSocket
+- each ACP connection spawns `spritz-openclaw-acp-wrapper`
+- the wrapper talks to the local OpenClaw gateway over loopback WebSocket
 - if gateway auth mode is `trusted-proxy`, the bridge uses a loopback-only header injector so the
   internal ACP hop satisfies the same trusted-proxy contract as the browser route
-- in trusted-proxy mode, the bridge rewrites the gateway `connect` frame to a Control UI-style
-  operator profile without device identity so OpenClaw does not force pairing for the internal ACP bridge
+- in trusted-proxy mode, the wrapper impersonates a Control UI-style operator profile without
+  device identity so OpenClaw does not force pairing for the internal ACP bridge
 
 This keeps the Spritz side backend-agnostic while OpenClaw remains free to add native socket ACP
 later.
