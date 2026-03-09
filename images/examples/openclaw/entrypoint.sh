@@ -11,6 +11,31 @@ acp_enabled="${OPENCLAW_ACP_ENABLED:-true}"
 acp_bind="${OPENCLAW_ACP_BIND:-0.0.0.0}"
 acp_port="${OPENCLAW_ACP_PORT:-2529}"
 acp_path="${OPENCLAW_ACP_PATH:-/}"
+bridge_bin="${SPRITZ_OPENCLAW_BRIDGE_BIN:-/usr/local/bin/spritz-openclaw-acp-bridge}"
+spritz_entrypoint_bin="${SPRITZ_OPENCLAW_MAIN_ENTRYPOINT:-/usr/local/bin/spritz-entrypoint}"
+
+detect_bridge_gateway_host() {
+  if [[ -n "${SPRITZ_OPENCLAW_ACP_GATEWAY_HOST:-}" ]]; then
+    printf '%s\n' "${SPRITZ_OPENCLAW_ACP_GATEWAY_HOST}"
+    return
+  fi
+
+  local host_ips="" candidate=""
+  if host_ips="$(hostname -i 2>/dev/null)"; then
+    candidate="$(printf '%s\n' "${host_ips}" | tr ' ' '\n' | awk '/^[0-9]+\./ { print; exit }')"
+    if [[ -n "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return
+    fi
+    candidate="$(printf '%s\n' "${host_ips}" | tr ' ' '\n' | sed -n '/./{p;q;}')"
+    if [[ -n "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return
+    fi
+  fi
+
+  printf '127.0.0.1\n'
+}
 
 mkdir -p "${config_dir}"
 
@@ -71,18 +96,19 @@ fi
 
 lower_acp_enabled="$(printf '%s' "${acp_enabled}" | tr '[:upper:]' '[:lower:]')"
 if [[ "${lower_acp_enabled}" == "false" || "${lower_acp_enabled}" == "0" || "${lower_acp_enabled}" == "no" || "${lower_acp_enabled}" == "off" ]]; then
-  exec /usr/local/bin/spritz-entrypoint "$@"
+  exec "${spritz_entrypoint_bin}" "$@"
 fi
 
-export SPRITZ_OPENCLAW_ACP_GATEWAY_URL="${SPRITZ_OPENCLAW_ACP_GATEWAY_URL:-ws://127.0.0.1:${gateway_port}}"
+bridge_gateway_host="$(detect_bridge_gateway_host)"
+export SPRITZ_OPENCLAW_ACP_GATEWAY_URL="${SPRITZ_OPENCLAW_ACP_GATEWAY_URL:-ws://${bridge_gateway_host}:${gateway_port}}"
 export SPRITZ_OPENCLAW_ACP_GATEWAY_TOKEN_FILE="${SPRITZ_OPENCLAW_ACP_GATEWAY_TOKEN_FILE:-${gateway_token_file}}"
 export SPRITZ_OPENCLAW_ACP_LISTEN_ADDR="${SPRITZ_OPENCLAW_ACP_LISTEN_ADDR:-${acp_bind}:${acp_port}}"
 export SPRITZ_OPENCLAW_ACP_PATH="${SPRITZ_OPENCLAW_ACP_PATH:-${acp_path}}"
 
-/usr/local/bin/spritz-openclaw-acp-bridge &
+"${bridge_bin}" &
 bridge_pid=$!
 
-/usr/local/bin/spritz-entrypoint "$@" &
+"${spritz_entrypoint_bin}" "$@" &
 main_pid=$!
 
 cleanup() {
