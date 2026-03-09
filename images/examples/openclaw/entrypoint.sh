@@ -141,6 +141,9 @@ export OPENCLAW_CONFIG_PATH="${config_path}"
 if [[ -z "${SPRITZ_OPENCLAW_ACP_GATEWAY_HEADERS_JSON:-}" ]]; then
   export SPRITZ_OPENCLAW_ACP_GATEWAY_HEADERS_JSON="$(prepare_acp_trusted_proxy_bridge)"
 fi
+if [[ "${SPRITZ_OPENCLAW_ACP_GATEWAY_HEADERS_JSON:-}" != "" && "${SPRITZ_OPENCLAW_ACP_GATEWAY_HEADERS_JSON:-}" != "{}" ]]; then
+  export SPRITZ_OPENCLAW_ACP_USE_CONTROL_UI_BRIDGE="${SPRITZ_OPENCLAW_ACP_USE_CONTROL_UI_BRIDGE:-1}"
+fi
 
 # Keep gateway defaults deterministic for Spritz web routing.
 openclaw config set gateway.mode "${gateway_mode}" >/dev/null
@@ -185,6 +188,7 @@ export SPRITZ_OPENCLAW_ACP_ALLOW_INSECURE_PRIVATE_WS="${SPRITZ_OPENCLAW_ACP_ALLO
 export SPRITZ_OPENCLAW_ACP_GATEWAY_TOKEN_FILE="${SPRITZ_OPENCLAW_ACP_GATEWAY_TOKEN_FILE:-${gateway_token_file}}"
 export SPRITZ_OPENCLAW_ACP_LISTEN_ADDR="${SPRITZ_OPENCLAW_ACP_LISTEN_ADDR:-${acp_bind}:${acp_port}}"
 export SPRITZ_OPENCLAW_ACP_PATH="${SPRITZ_OPENCLAW_ACP_PATH:-${acp_path}}"
+export SPRITZ_OPENCLAW_ACP_COMMAND="${SPRITZ_OPENCLAW_ACP_COMMAND:-/usr/local/bin/spritz-openclaw-acp-wrapper}"
 
 "${bridge_bin}" &
 bridge_pid=$!

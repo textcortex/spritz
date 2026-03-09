@@ -67,6 +67,8 @@ Today the example image satisfies that contract with a compatibility bridge:
 - `openclaw acp` talks to the local OpenClaw gateway over loopback WebSocket
 - if gateway auth mode is `trusted-proxy`, the bridge uses a loopback-only header injector so the
   internal ACP hop satisfies the same trusted-proxy contract as the browser route
+- in trusted-proxy mode, the image switches the ACP subprocess to a Control UI-style operator
+  profile without device identity so OpenClaw does not force pairing for the internal ACP bridge
 
 This keeps the Spritz side backend-agnostic while OpenClaw remains free to add native socket ACP
 later.
