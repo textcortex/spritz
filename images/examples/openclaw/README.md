@@ -43,6 +43,15 @@ By default, when the container command is the image default (`sleep infinity`),
 it auto-starts the OpenClaw gateway on port `8080` with a LAN bind so Spritz `Open` can render
 OpenClaw UI immediately.
 
+The image also starts an internal ACP compatibility bridge by default:
+
+- listen address: `0.0.0.0:2529`
+- WebSocket path: `/`
+- backend: per-connection `openclaw acp` stdio bridge to the local gateway
+
+This keeps the Spritz ACP contract stable even though OpenClaw's native ACP support is currently
+stdio-only.
+
 To disable auto-start and keep shell-only behavior, set:
 
 - `OPENCLAW_AUTO_START=false`
@@ -53,6 +62,10 @@ Auto-start related runtime overrides:
 - `OPENCLAW_GATEWAY_MODE` (default: `local`)
 - `OPENCLAW_GATEWAY_BIND` (default: `lan`; set `loopback` for local-only)
 - `OPENCLAW_GATEWAY_TOKEN` (optional; auto-generated if omitted)
+- `OPENCLAW_ACP_ENABLED` (default: `true`)
+- `OPENCLAW_ACP_BIND` (default: `0.0.0.0`)
+- `OPENCLAW_ACP_PORT` (default: `2529`)
+- `OPENCLAW_ACP_PATH` (default: `/`)
 
 ## Generic Config Support
 
@@ -75,6 +88,18 @@ Use this image as a per-devbox application surface in Spritz:
 
 Do not expose a single global/shared OpenClaw dashboard for all devboxes.
 The intended model is one UI endpoint per running devbox instance.
+
+## ACP Integration
+
+When used as a Spritz ACP backend, this image exposes ACP on the reserved internal port `2529`
+automatically. Spritz can then:
+
+- probe the workspace with ACP `initialize`
+- mark the workspace ACP-ready in `status.acp`
+- proxy browser ACP traffic through `spritz-api`
+
+The ACP bridge is image-owned compatibility glue. Once OpenClaw grows a native socket transport,
+this bridge should be removed and the image should hand traffic to OpenClaw directly.
 
 ## Quick Check
 

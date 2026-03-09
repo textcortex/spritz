@@ -7,6 +7,10 @@ gateway_port="${OPENCLAW_GATEWAY_PORT:-8080}"
 gateway_mode="${OPENCLAW_GATEWAY_MODE:-local}"
 gateway_bind="${OPENCLAW_GATEWAY_BIND:-lan}"
 auto_start="${OPENCLAW_AUTO_START:-true}"
+acp_enabled="${OPENCLAW_ACP_ENABLED:-true}"
+acp_bind="${OPENCLAW_ACP_BIND:-0.0.0.0}"
+acp_port="${OPENCLAW_ACP_PORT:-2529}"
+acp_path="${OPENCLAW_ACP_PATH:-/}"
 
 mkdir -p "${config_dir}"
 
@@ -48,6 +52,10 @@ fi
 export OPENCLAW_GATEWAY_TOKEN="${token}"
 openclaw config set gateway.auth.token "${OPENCLAW_GATEWAY_TOKEN}" >/dev/null
 
+gateway_token_file="${OPENCLAW_GATEWAY_TOKEN_FILE:-${config_dir}/gateway.token}"
+printf '%s\n' "${OPENCLAW_GATEWAY_TOKEN}" > "${gateway_token_file}"
+chmod 600 "${gateway_token_file}" || true
+
 should_auto_start=false
 if [[ "${auto_start}" == "true" ]]; then
   if [[ "$#" -eq 0 ]]; then
@@ -61,4 +69,33 @@ if [[ "${should_auto_start}" == "true" ]]; then
   set -- openclaw gateway run --bind "${gateway_bind}" --port "${gateway_port}"
 fi
 
-exec /usr/local/bin/spritz-entrypoint "$@"
+lower_acp_enabled="$(printf '%s' "${acp_enabled}" | tr '[:upper:]' '[:lower:]')"
+if [[ "${lower_acp_enabled}" == "false" || "${lower_acp_enabled}" == "0" || "${lower_acp_enabled}" == "no" || "${lower_acp_enabled}" == "off" ]]; then
+  exec /usr/local/bin/spritz-entrypoint "$@"
+fi
+
+export SPRITZ_OPENCLAW_ACP_GATEWAY_URL="${SPRITZ_OPENCLAW_ACP_GATEWAY_URL:-ws://127.0.0.1:${gateway_port}}"
+export SPRITZ_OPENCLAW_ACP_GATEWAY_TOKEN_FILE="${SPRITZ_OPENCLAW_ACP_GATEWAY_TOKEN_FILE:-${gateway_token_file}}"
+export SPRITZ_OPENCLAW_ACP_LISTEN_ADDR="${SPRITZ_OPENCLAW_ACP_LISTEN_ADDR:-${acp_bind}:${acp_port}}"
+export SPRITZ_OPENCLAW_ACP_PATH="${SPRITZ_OPENCLAW_ACP_PATH:-${acp_path}}"
+
+/usr/local/bin/spritz-openclaw-acp-bridge &
+bridge_pid=$!
+
+/usr/local/bin/spritz-entrypoint "$@" &
+main_pid=$!
+
+cleanup() {
+  kill "${main_pid}" "${bridge_pid}" 2>/dev/null || true
+}
+
+trap cleanup INT TERM
+
+wait -n "${main_pid}" "${bridge_pid}"
+status=$?
+
+cleanup
+wait "${main_pid}" 2>/dev/null || true
+wait "${bridge_pid}" 2>/dev/null || true
+
+exit "${status}"

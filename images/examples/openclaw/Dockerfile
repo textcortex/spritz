@@ -1,3 +1,19 @@
+FROM golang:1.24-bookworm AS acp-bridge-builder
+
+WORKDIR /src
+
+COPY examples/openclaw/acpbridge/go.mod examples/openclaw/acpbridge/
+RUN cd examples/openclaw/acpbridge && go mod download
+
+COPY examples/openclaw/acpbridge examples/openclaw/acpbridge
+
+ARG TARGETOS
+ARG TARGETARCH
+
+RUN cd examples/openclaw/acpbridge \
+  && CGO_ENABLED=0 GOOS="${TARGETOS:-linux}" GOARCH="${TARGETARCH:-amd64}" \
+    go build -trimpath -ldflags="-s -w" -o /out/spritz-openclaw-acp-bridge .
+
 FROM node:22-bookworm-slim
 
 # Example Spritz image with OpenClaw preinstalled (agnostic).
@@ -56,6 +72,7 @@ WORKDIR /workspace
 
 COPY --chown=dev:dev examples/base/entrypoint.sh /usr/local/bin/spritz-entrypoint
 COPY --chown=dev:dev examples/openclaw/entrypoint.sh /usr/local/bin/spritz-openclaw-entrypoint
+COPY --from=acp-bridge-builder /out/spritz-openclaw-acp-bridge /usr/local/bin/spritz-openclaw-acp-bridge
 
 ENTRYPOINT ["/usr/local/bin/spritz-openclaw-entrypoint"]
 CMD ["sleep", "infinity"]

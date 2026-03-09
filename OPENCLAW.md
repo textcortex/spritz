@@ -35,7 +35,9 @@ The OpenClaw example entrypoint does the following:
    - `gateway.port` from `OPENCLAW_GATEWAY_PORT` (default `8080`)
    - `gateway.bind` from `OPENCLAW_GATEWAY_BIND` (default `lan`)
 4. Ensures `OPENCLAW_GATEWAY_TOKEN` exists (uses provided token or generates one).
-5. Auto-starts OpenClaw when command is default (`sleep infinity`), unless `OPENCLAW_AUTO_START=false`.
+5. Writes the gateway token to a local token file for bridge use.
+6. Starts an image-owned ACP compatibility bridge on `0.0.0.0:2529` unless `OPENCLAW_ACP_ENABLED=false`.
+7. Auto-starts OpenClaw when command is default (`sleep infinity`), unless `OPENCLAW_AUTO_START=false`.
 
 Key implication: direct `/w/{name}` access with `bind=lan` expects real gateway auth.
 
@@ -55,6 +57,15 @@ Spritz will then:
 - proxy browser ACP traffic through `spritz-api`
 
 This ACP path is separate from OpenClaw's dashboard and gateway UI.
+
+Today the example image satisfies that contract with a compatibility bridge:
+
+- WebSocket server inside the image listens on `2529`
+- each ACP connection spawns `openclaw acp`
+- `openclaw acp` talks to the local OpenClaw gateway over loopback WebSocket
+
+This keeps the Spritz side backend-agnostic while OpenClaw remains free to add native socket ACP
+later.
 
 ## Auth Modes and What to Use
 
