@@ -47,7 +47,7 @@ The image also starts an internal ACP compatibility bridge by default:
 
 - listen address: `0.0.0.0:2529`
 - WebSocket path: `/`
-- backend: per-connection `openclaw acp` stdio bridge to the local gateway
+- backend: per-connection `openclaw acp` stdio bridge to the local gateway over loopback
 
 This keeps the Spritz ACP contract stable even though OpenClaw's native ACP support is currently
 stdio-only.
@@ -66,9 +66,22 @@ Auto-start related runtime overrides:
 - `OPENCLAW_ACP_BIND` (default: `0.0.0.0`)
 - `OPENCLAW_ACP_PORT` (default: `2529`)
 - `OPENCLAW_ACP_PATH` (default: `/`)
-- `SPRITZ_OPENCLAW_ACP_GATEWAY_HOST` (optional; defaults to the pod/container IPv4 so trusted-proxy gateway auth accepts the ACP bridge)
+- `SPRITZ_OPENCLAW_ACP_GATEWAY_HOST` (optional; defaults to `127.0.0.1`)
 - `SPRITZ_OPENCLAW_ACP_GATEWAY_URL` (optional; overrides the computed bridge target)
-- `SPRITZ_OPENCLAW_ACP_ALLOW_INSECURE_PRIVATE_WS` (default: `1`; only affects the internal `openclaw acp` bridge child so private pod-network `ws://` works)
+- `SPRITZ_OPENCLAW_ACP_GATEWAY_HEADERS_JSON` (optional; JSON object of headers injected into the bridge's upstream gateway connection)
+- `SPRITZ_OPENCLAW_ACP_TRUSTED_PROXY_USER` (optional; default internal trusted-proxy user identity)
+- `SPRITZ_OPENCLAW_ACP_TRUSTED_PROXY_EMAIL` (optional; default internal trusted-proxy email identity)
+- `SPRITZ_OPENCLAW_ACP_ALLOW_INSECURE_PRIVATE_WS` (default: `0`; only needed when overriding the bridge target away from loopback onto a trusted private-network `ws://` endpoint)
+
+When the OpenClaw gateway itself is configured with `gateway.auth.mode="trusted-proxy"`, the
+entrypoint automatically:
+
+- appends `127.0.0.1` and `::1` to `gateway.trustedProxies`
+- derives a header set for the internal ACP bridge
+- routes the bridge child through a loopback-only header-injecting WebSocket proxy
+
+This keeps `/w/{name}` tokenless for browser users while allowing the internal ACP bridge to
+authenticate cleanly without using pod-IP workarounds.
 
 ## Generic Config Support
 
