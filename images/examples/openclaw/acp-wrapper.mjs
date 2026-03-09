@@ -203,25 +203,21 @@ async function importOpenclawDependency(specifier, env = process.env) {
   return await import(pathToFileURL(resolvedPath).href);
 }
 
-async function importOpenclawModule(relativePath, env = process.env) {
+export async function loadOpenclawCompat(env = process.env) {
   const packageRoot = resolveOpenclawPackageRoot(env);
-  const resolvedPath = path.join(packageRoot, relativePath);
+  const resolvedPath = path.join(packageRoot, "dist", "spritz-acp-compat.js");
   return await import(pathToFileURL(resolvedPath).href);
 }
 
 async function serveSpritzOpenclawAcp(opts = {}, env = process.env) {
   const sdk = await importOpenclawDependency("@agentclientprotocol/sdk", env);
-  const { loadConfig } = await importOpenclawModule("dist/config/config.js", env);
-  const { buildGatewayConnectionDetails } = await importOpenclawModule(
-    "dist/gateway/call.js",
-    env,
-  );
-  const { GatewayClient } = await importOpenclawModule("dist/gateway/client.js", env);
-  const { resolveGatewayConnectionAuth } = await importOpenclawModule(
-    "dist/gateway/connection-auth.js",
-    env,
-  );
-  const { AcpGatewayAgent } = await importOpenclawModule("dist/acp/translator.js", env);
+  const {
+    AcpGatewayAgent,
+    GatewayClient,
+    buildGatewayConnectionDetails,
+    loadConfig,
+    resolveGatewayConnectionAuth,
+  } = await loadOpenclawCompat(env);
 
   const AgentSideConnection =
     sdk.AgentSideConnection ?? sdk.default?.AgentSideConnection;

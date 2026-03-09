@@ -28,6 +28,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 ARG OPENCLAW_VERSION=latest
 
+COPY examples/openclaw/generate-openclaw-acp-compat.mjs /usr/local/bin/spritz-generate-openclaw-acp-compat
+
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     bash \
@@ -59,6 +61,8 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g "openclaw@${OPENCLAW_VERSION}" \
+  && node /usr/local/bin/spritz-generate-openclaw-acp-compat /usr/local/lib/node_modules/openclaw \
+  && test -f /usr/local/lib/node_modules/openclaw/dist/spritz-acp-compat.js \
   && cd /usr/local/lib/node_modules/openclaw/extensions/acpx \
   && npm install --omit=dev --no-save \
   && test -x /usr/local/lib/node_modules/openclaw/extensions/acpx/node_modules/.bin/acpx
