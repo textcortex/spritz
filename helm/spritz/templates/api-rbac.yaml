@@ -5,8 +5,11 @@ metadata:
   namespace: {{ .Values.spritz.namespace }}
 rules:
   - apiGroups: ["spritz.sh"]
-    resources: ["spritzes", "spritzes/status"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+    resources: ["spritzes", "spritzconversations"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["spritz.sh"]
+    resources: ["spritzes/status"]
+    verbs: ["get", "update", "patch"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]

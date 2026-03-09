@@ -8,6 +8,13 @@ import (
 	"spritz.sh/operator/sharedmounts"
 )
 
+const (
+	// DefaultACPPort is the reserved internal ACP service/container port for Spritz workspaces.
+	DefaultACPPort = int32(2529)
+	// DefaultACPPath is the default WebSocket path for the Spritz ACP transport.
+	DefaultACPPath = "/"
+)
+
 //go:generate ../../hack/generate-crd.sh
 
 // SpritzSpec defines the desired state of Spritz.
@@ -60,7 +67,7 @@ type SpritzRepoAuth struct {
 // SpritzOwner identifies the creator of a spritz.
 type SpritzOwner struct {
 	// +kubebuilder:validation:MinLength=1
-	ID string `json:"id"`
+	ID   string `json:"id"`
 	Team string `json:"team,omitempty"`
 }
 
@@ -128,12 +135,62 @@ type SpritzStatus struct {
 	Phase string `json:"phase,omitempty"`
 	// +kubebuilder:validation:Format=uri
 	URL            string             `json:"url,omitempty"`
+	ACP            *SpritzACPStatus   `json:"acp,omitempty"`
 	SSH            *SpritzSSHInfo     `json:"ssh,omitempty"`
 	Message        string             `json:"message,omitempty"`
 	LastActivityAt *metav1.Time       `json:"lastActivityAt,omitempty"`
 	ExpiresAt      *metav1.Time       `json:"expiresAt,omitempty"`
 	ReadyAt        *metav1.Time       `json:"readyAt,omitempty"`
 	Conditions     []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// SpritzACPStatus describes ACP discovery state for the workload.
+type SpritzACPStatus struct {
+	// +kubebuilder:validation:Enum=unknown;probing;ready;unavailable;error
+	State string `json:"state,omitempty"`
+	// +kubebuilder:validation:Minimum=1
+	ProtocolVersion int32                  `json:"protocolVersion,omitempty"`
+	Endpoint        *SpritzACPEndpoint     `json:"endpoint,omitempty"`
+	AgentInfo       *SpritzACPAgentInfo    `json:"agentInfo,omitempty"`
+	Capabilities    *SpritzACPCapabilities `json:"capabilities,omitempty"`
+	AuthMethods     []string               `json:"authMethods,omitempty"`
+	LastProbeAt     *metav1.Time           `json:"lastProbeAt,omitempty"`
+	LastError       string                 `json:"lastError,omitempty"`
+}
+
+// SpritzACPEndpoint identifies the reserved ACP endpoint for a spritz.
+type SpritzACPEndpoint struct {
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32  `json:"port,omitempty"`
+	Path string `json:"path,omitempty"`
+}
+
+// SpritzACPAgentInfo is the normalized ACP agent identity.
+type SpritzACPAgentInfo struct {
+	Name    string `json:"name,omitempty"`
+	Title   string `json:"title,omitempty"`
+	Version string `json:"version,omitempty"`
+}
+
+// SpritzACPCapabilities stores the ACP capability subset Spritz uses.
+type SpritzACPCapabilities struct {
+	LoadSession bool                               `json:"loadSession,omitempty"`
+	Prompt      *SpritzACPPromptCapabilities       `json:"prompt,omitempty"`
+	MCP         *SpritzACPMCPTransportCapabilities `json:"mcp,omitempty"`
+}
+
+// SpritzACPPromptCapabilities stores ACP prompt content support.
+type SpritzACPPromptCapabilities struct {
+	Image           bool `json:"image,omitempty"`
+	Audio           bool `json:"audio,omitempty"`
+	EmbeddedContext bool `json:"embeddedContext,omitempty"`
+}
+
+// SpritzACPMCPTransportCapabilities stores ACP MCP transport support.
+type SpritzACPMCPTransportCapabilities struct {
+	HTTP bool `json:"http,omitempty"`
+	SSE  bool `json:"sse,omitempty"`
 }
 
 // SpritzSSHInfo describes SSH access to the workload.
@@ -143,6 +200,17 @@ type SpritzSSHInfo struct {
 	// +kubebuilder:validation:Maximum=65535
 	Port int32  `json:"port,omitempty"`
 	User string `json:"user,omitempty"`
+}
+
+// SpritzConversationSpec stores ACP conversation metadata for a spritz.
+type SpritzConversationSpec struct {
+	SpritzName   string                 `json:"spritzName"`
+	Owner        SpritzOwner            `json:"owner"`
+	Title        string                 `json:"title,omitempty"`
+	SessionID    string                 `json:"sessionId,omitempty"`
+	CWD          string                 `json:"cwd,omitempty"`
+	AgentInfo    *SpritzACPAgentInfo    `json:"agentInfo,omitempty"`
+	Capabilities *SpritzACPCapabilities `json:"capabilities,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -170,8 +238,30 @@ type SpritzList struct {
 	Items           []Spritz `json:"items"`
 }
 
+// +kubebuilder:object:root=true
+// +kubebuilder:resource:scope=Namespaced,shortName=spritzchat
+// +kubebuilder:printcolumn:name="Spritz",type=string,JSONPath=".spec.spritzName"
+// +kubebuilder:printcolumn:name="Owner",type=string,JSONPath=".spec.owner.id"
+// +kubebuilder:printcolumn:name="Session",type=string,JSONPath=".spec.sessionId"
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
+// SpritzConversation stores ACP conversation metadata for a spritz workspace.
+type SpritzConversation struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec SpritzConversationSpec `json:"spec"`
+}
+
+// +kubebuilder:object:root=true
+// SpritzConversationList contains a list of SpritzConversation objects.
+type SpritzConversationList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []SpritzConversation `json:"items"`
+}
+
 func init() {
-	SchemeBuilder.Register(&Spritz{}, &SpritzList{})
+	SchemeBuilder.Register(&Spritz{}, &SpritzList{}, &SpritzConversation{}, &SpritzConversationList{})
 }
 
 func (in *Spritz) DeepCopyInto(out *Spritz) {
@@ -183,6 +273,15 @@ func (in *Spritz) DeepCopyInto(out *Spritz) {
 }
 
 func (in *Spritz) DeepCopyObject() runtime.Object {
+	if in == nil {
+		return nil
+	}
+	out := new(Spritz)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *Spritz) DeepCopy() *Spritz {
 	if in == nil {
 		return nil
 	}
@@ -208,6 +307,70 @@ func (in *SpritzList) DeepCopyObject() runtime.Object {
 		return nil
 	}
 	out := new(SpritzList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *SpritzList) DeepCopy() *SpritzList {
+	if in == nil {
+		return nil
+	}
+	out := new(SpritzList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *SpritzConversation) DeepCopyInto(out *SpritzConversation) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	in.Spec.DeepCopyInto(&out.Spec)
+}
+
+func (in *SpritzConversation) DeepCopyObject() runtime.Object {
+	if in == nil {
+		return nil
+	}
+	out := new(SpritzConversation)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *SpritzConversation) DeepCopy() *SpritzConversation {
+	if in == nil {
+		return nil
+	}
+	out := new(SpritzConversation)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *SpritzConversationList) DeepCopyInto(out *SpritzConversationList) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		out.Items = make([]SpritzConversation, len(in.Items))
+		for i := range in.Items {
+			in.Items[i].DeepCopyInto(&out.Items[i])
+		}
+	}
+}
+
+func (in *SpritzConversationList) DeepCopyObject() runtime.Object {
+	if in == nil {
+		return nil
+	}
+	out := new(SpritzConversationList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *SpritzConversationList) DeepCopy() *SpritzConversationList {
+	if in == nil {
+		return nil
+	}
+	out := new(SpritzConversationList)
 	in.DeepCopyInto(out)
 	return out
 }
@@ -302,6 +465,10 @@ func (in *SpritzSpec) DeepCopyInto(out *SpritzSpec) {
 
 func (in *SpritzStatus) DeepCopyInto(out *SpritzStatus) {
 	*out = *in
+	if in.ACP != nil {
+		out.ACP = &SpritzACPStatus{}
+		in.ACP.DeepCopyInto(out.ACP)
+	}
 	if in.SSH != nil {
 		out.SSH = &SpritzSSHInfo{}
 		*out.SSH = *in.SSH
@@ -320,5 +487,52 @@ func (in *SpritzStatus) DeepCopyInto(out *SpritzStatus) {
 		for i := range in.Conditions {
 			in.Conditions[i].DeepCopyInto(&out.Conditions[i])
 		}
+	}
+}
+
+func (in *SpritzConversationSpec) DeepCopyInto(out *SpritzConversationSpec) {
+	*out = *in
+	if in.AgentInfo != nil {
+		out.AgentInfo = &SpritzACPAgentInfo{}
+		*out.AgentInfo = *in.AgentInfo
+	}
+	if in.Capabilities != nil {
+		out.Capabilities = &SpritzACPCapabilities{}
+		in.Capabilities.DeepCopyInto(out.Capabilities)
+	}
+}
+
+func (in *SpritzACPStatus) DeepCopyInto(out *SpritzACPStatus) {
+	*out = *in
+	if in.Endpoint != nil {
+		out.Endpoint = &SpritzACPEndpoint{}
+		*out.Endpoint = *in.Endpoint
+	}
+	if in.AgentInfo != nil {
+		out.AgentInfo = &SpritzACPAgentInfo{}
+		*out.AgentInfo = *in.AgentInfo
+	}
+	if in.Capabilities != nil {
+		out.Capabilities = &SpritzACPCapabilities{}
+		in.Capabilities.DeepCopyInto(out.Capabilities)
+	}
+	if in.AuthMethods != nil {
+		out.AuthMethods = make([]string, len(in.AuthMethods))
+		copy(out.AuthMethods, in.AuthMethods)
+	}
+	if in.LastProbeAt != nil {
+		out.LastProbeAt = in.LastProbeAt.DeepCopy()
+	}
+}
+
+func (in *SpritzACPCapabilities) DeepCopyInto(out *SpritzACPCapabilities) {
+	*out = *in
+	if in.Prompt != nil {
+		out.Prompt = &SpritzACPPromptCapabilities{}
+		*out.Prompt = *in.Prompt
+	}
+	if in.MCP != nil {
+		out.MCP = &SpritzACPMCPTransportCapabilities{}
+		*out.MCP = *in.MCP
 	}
 }

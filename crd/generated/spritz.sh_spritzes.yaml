@@ -521,6 +521,81 @@ spec:
           status:
             description: SpritzStatus defines the observed state of Spritz.
             properties:
+              acp:
+                description: SpritzACPStatus describes ACP discovery state for the
+                  workload.
+                properties:
+                  agentInfo:
+                    description: SpritzACPAgentInfo is the normalized ACP agent identity.
+                    properties:
+                      name:
+                        type: string
+                      title:
+                        type: string
+                      version:
+                        type: string
+                    type: object
+                  authMethods:
+                    items:
+                      type: string
+                    type: array
+                  capabilities:
+                    description: SpritzACPCapabilities stores the ACP capability subset
+                      Spritz uses.
+                    properties:
+                      loadSession:
+                        type: boolean
+                      mcp:
+                        description: SpritzACPMCPTransportCapabilities stores ACP
+                          MCP transport support.
+                        properties:
+                          http:
+                            type: boolean
+                          sse:
+                            type: boolean
+                        type: object
+                      prompt:
+                        description: SpritzACPPromptCapabilities stores ACP prompt
+                          content support.
+                        properties:
+                          audio:
+                            type: boolean
+                          embeddedContext:
+                            type: boolean
+                          image:
+                            type: boolean
+                        type: object
+                    type: object
+                  endpoint:
+                    description: SpritzACPEndpoint identifies the reserved ACP endpoint
+                      for a spritz.
+                    properties:
+                      path:
+                        type: string
+                      port:
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                    type: object
+                  lastError:
+                    type: string
+                  lastProbeAt:
+                    format: date-time
+                    type: string
+                  protocolVersion:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  state:
+                    enum:
+                    - unknown
+                    - probing
+                    - ready
+                    - unavailable
+                    - error
+                    type: string
+                type: object
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current

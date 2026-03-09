@@ -145,7 +145,7 @@ api:
   cors:
     origins: []
     allowHeaders: Content-Type,Authorization,X-Spritz-User-Id,X-Spritz-User-Email,X-Spritz-User-Teams
-    allowMethods: GET,POST,DELETE,OPTIONS
+    allowMethods: GET,POST,PUT,PATCH,DELETE,OPTIONS
     allowCredentials: true
   defaultIngress:
     mode: ""
@@ -160,6 +160,17 @@ api:
     container: spritz
     command: "bash -l"
     origins: []
+  acp:
+    enabled: true
+    port: 2529
+    path: /
+    probeTimeout: 3s
+    probeCacheTTL: 30s
+    origins: []
+    clientInfo:
+      name: spritz-ui
+      title: Spritz ACP UI
+      version: 1.0.0
   sshGateway:
     enabled: false
     port: 2222

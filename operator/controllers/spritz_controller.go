@@ -373,7 +373,7 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 }
 
 func (r *SpritzReconciler) reconcileService(ctx context.Context, spritz *spritzv1.Spritz) error {
-	if len(spritz.Spec.Ports) == 0 && !isWebEnabled(spritz) && !shouldExposeSSHService(spritz) {
+	if len(spritz.Spec.Ports) == 0 && !isWebEnabled(spritz) && !shouldExposeSSHService(spritz) && !shouldExposeACP(spritz) {
 		svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: spritz.Name, Namespace: spritz.Namespace}}
 		if err := r.Delete(ctx, svc); err != nil && !errors.IsNotFound(err) {
 			return err
@@ -1192,9 +1192,13 @@ func shouldExposeSSHService(spritz *spritzv1.Spritz) bool {
 	return sshMode(spritz) != "gateway"
 }
 
+func shouldExposeACP(_ *spritzv1.Spritz) bool {
+	return true
+}
+
 func containerPorts(spritz *spritzv1.Spritz) []corev1.ContainerPort {
 	if len(spritz.Spec.Ports) == 0 && !isWebEnabled(spritz) {
-		if !isSSHEnabled(spritz) {
+		if !isSSHEnabled(spritz) && !shouldExposeACP(spritz) {
 			return nil
 		}
 	}
@@ -1203,6 +1207,13 @@ func containerPorts(spritz *spritzv1.Spritz) []corev1.ContainerPort {
 		ports := []corev1.ContainerPort{}
 		if isWebEnabled(spritz) {
 			ports = append(ports, corev1.ContainerPort{Name: "http", ContainerPort: defaultWebPort, Protocol: corev1.ProtocolTCP})
+		}
+		if shouldExposeACP(spritz) {
+			ports = append(ports, corev1.ContainerPort{
+				Name:          "acp",
+				ContainerPort: spritzv1.DefaultACPPort,
+				Protocol:      corev1.ProtocolTCP,
+			})
 		}
 		if isSSHEnabled(spritz) {
 			cfg := sshConfig(spritz)
@@ -1223,6 +1234,13 @@ func containerPorts(spritz *spritzv1.Spritz) []corev1.ContainerPort {
 			Protocol:      protocol,
 		})
 	}
+	if shouldExposeACP(spritz) && !hasSpecPortWithServicePort(spritz, spritzv1.DefaultACPPort, spritzv1.DefaultACPPort, "acp") {
+		ports = append(ports, corev1.ContainerPort{
+			Name:          "acp",
+			ContainerPort: spritzv1.DefaultACPPort,
+			Protocol:      corev1.ProtocolTCP,
+		})
+	}
 	if isSSHEnabled(spritz) {
 		cfg := sshConfig(spritz)
 		if !hasSpecPort(spritz, cfg.ContainerPort, "ssh") {
@@ -1240,6 +1258,14 @@ func servicePorts(spritz *spritzv1.Spritz) []corev1.ServicePort {
 				Name:       "http",
 				Port:       defaultWebPort,
 				TargetPort: intstrFromInt(defaultWebPort),
+				Protocol:   corev1.ProtocolTCP,
+			})
+		}
+		if shouldExposeACP(spritz) {
+			ports = append(ports, corev1.ServicePort{
+				Name:       "acp",
+				Port:       spritzv1.DefaultACPPort,
+				TargetPort: intstrFromInt(spritzv1.DefaultACPPort),
 				Protocol:   corev1.ProtocolTCP,
 			})
 		}
@@ -1270,6 +1296,14 @@ func servicePorts(spritz *spritzv1.Spritz) []corev1.ServicePort {
 			Port:       servicePort,
 			TargetPort: intstrFromInt(port.ContainerPort),
 			Protocol:   protocol,
+		})
+	}
+	if shouldExposeACP(spritz) && !hasSpecPortWithServicePort(spritz, spritzv1.DefaultACPPort, spritzv1.DefaultACPPort, "acp") {
+		ports = append(ports, corev1.ServicePort{
+			Name:       "acp",
+			Port:       spritzv1.DefaultACPPort,
+			TargetPort: intstrFromInt(spritzv1.DefaultACPPort),
+			Protocol:   corev1.ProtocolTCP,
 		})
 	}
 	if shouldExposeSSHService(spritz) {
@@ -1372,8 +1406,15 @@ func pathTypePtr(pathType netv1.PathType) *netv1.PathType {
 }
 
 func hasSpecPort(spritz *spritzv1.Spritz, port int32, name string) bool {
+	return hasSpecPortWithServicePort(spritz, port, 0, name)
+}
+
+func hasSpecPortWithServicePort(spritz *spritzv1.Spritz, containerPort, servicePort int32, name string) bool {
 	for _, specPort := range spritz.Spec.Ports {
-		if specPort.ContainerPort == port || specPort.Name == name {
+		if specPort.ContainerPort == containerPort || specPort.Name == name {
+			return true
+		}
+		if servicePort != 0 && specPort.ServicePort == servicePort {
 			return true
 		}
 	}

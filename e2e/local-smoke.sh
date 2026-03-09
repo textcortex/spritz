@@ -93,7 +93,7 @@ kubectl wait --for=condition=Ready node --all --timeout=120s
 kubectl get namespace spritz-system >/dev/null 2>&1 || kubectl create namespace spritz-system
 kubectl get namespace spritz >/dev/null 2>&1 || kubectl create namespace spritz
 
-kubectl apply -f "${ROOT_DIR}/helm/spritz/crds/spritz.sh_spritzes.yaml"
+kubectl apply -f "${ROOT_DIR}/helm/spritz/crds"
 
 echo "warming go module cache..."
 (

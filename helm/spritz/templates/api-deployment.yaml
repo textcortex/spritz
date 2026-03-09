@@ -194,6 +194,28 @@ spec:
               value: {{ join "," .Values.api.terminal.origins | quote }}
             {{- end }}
             {{- end }}
+            {{- if hasKey .Values.api "acp" }}
+            - name: SPRITZ_ACP_ENABLED
+              value: {{ .Values.api.acp.enabled | quote }}
+            - name: SPRITZ_ACP_PORT
+              value: {{ .Values.api.acp.port | quote }}
+            - name: SPRITZ_ACP_PATH
+              value: {{ .Values.api.acp.path | quote }}
+            - name: SPRITZ_ACP_PROBE_TIMEOUT
+              value: {{ .Values.api.acp.probeTimeout | quote }}
+            - name: SPRITZ_ACP_PROBE_CACHE_TTL
+              value: {{ .Values.api.acp.probeCacheTTL | quote }}
+            - name: SPRITZ_ACP_CLIENT_NAME
+              value: {{ .Values.api.acp.clientInfo.name | quote }}
+            - name: SPRITZ_ACP_CLIENT_TITLE
+              value: {{ .Values.api.acp.clientInfo.title | quote }}
+            - name: SPRITZ_ACP_CLIENT_VERSION
+              value: {{ .Values.api.acp.clientInfo.version | quote }}
+            {{- if .Values.api.acp.origins }}
+            - name: SPRITZ_ACP_ORIGINS
+              value: {{ join "," .Values.api.acp.origins | quote }}
+            {{- end }}
+            {{- end }}
             {{- if hasKey .Values.api "sshGateway" }}
             - name: SPRITZ_SSH_GATEWAY_ENABLED
               value: {{ .Values.api.sshGateway.enabled | quote }}

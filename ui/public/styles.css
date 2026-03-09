@@ -31,6 +31,26 @@ header p {
   opacity: 0.7;
 }
 
+.header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.header-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: rgba(46, 58, 70, 0.08);
+  border: 1px solid rgba(46, 58, 70, 0.14);
+  color: #2e3a46;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
 .notice {
   padding: 12px 16px;
   border-radius: 12px;
@@ -174,6 +194,237 @@ button.ghost {
   min-height: 60vh;
 }
 
+.acp-card {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 20px;
+  min-height: 70vh;
+  padding: 0;
+  overflow: hidden;
+}
+
+.acp-sidebar {
+  border-right: 1px solid #e5e8ec;
+  display: flex;
+  flex-direction: column;
+  min-height: 70vh;
+}
+
+.acp-sidebar-header {
+  padding: 24px 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-bottom: 1px solid #e5e8ec;
+}
+
+.acp-sidebar-header h2,
+.acp-thread-header h2 {
+  margin: 0;
+}
+
+.acp-sidebar-header p,
+.acp-thread-header p {
+  margin: 0;
+  opacity: 0.65;
+}
+
+.acp-sidebar-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.acp-agent-list {
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  gap: 8px;
+  overflow: auto;
+}
+
+.acp-agent-item {
+  border: 1px solid #e5e8ec;
+  border-radius: 16px;
+  background: white;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+
+.acp-agent-item[data-active="true"] {
+  border-color: #2e3a46;
+  background: #f3f5f7;
+}
+
+.acp-agent-item strong {
+  font-size: 15px;
+}
+
+.acp-agent-item small {
+  opacity: 0.65;
+}
+
+.acp-thread {
+  display: flex;
+  flex-direction: column;
+  min-height: 70vh;
+}
+
+.acp-thread-header {
+  padding: 24px 24px 16px;
+  border-bottom: 1px solid #e5e8ec;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.acp-thread-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.acp-thread-body {
+  flex: 1;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
+  background:
+    radial-gradient(circle at top right, rgba(120, 177, 255, 0.08), transparent 30%),
+    linear-gradient(180deg, rgba(248, 249, 251, 0.95), rgba(244, 246, 248, 0.95));
+}
+
+.acp-empty {
+  margin: auto;
+  max-width: 420px;
+  text-align: center;
+  opacity: 0.7;
+}
+
+.acp-message {
+  max-width: min(720px, 88%);
+  border-radius: 20px;
+  padding: 14px 16px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.acp-message[data-kind="user"] {
+  align-self: flex-end;
+  background: #2e3a46;
+  color: white;
+  border-bottom-right-radius: 8px;
+}
+
+.acp-message[data-kind="assistant"] {
+  align-self: flex-start;
+  background: white;
+  border: 1px solid #e5e8ec;
+  border-bottom-left-radius: 8px;
+}
+
+.acp-message[data-kind="tool"],
+.acp-message[data-kind="plan"],
+.acp-message[data-kind="system"] {
+  align-self: center;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(46, 58, 70, 0.12);
+  max-width: min(760px, 94%);
+}
+
+.acp-message-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.acp-message-plan {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.acp-message-plan li + li {
+  margin-top: 6px;
+}
+
+.acp-tool-content {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(46, 58, 70, 0.1);
+}
+
+.acp-thread-footer {
+  border-top: 1px solid #e5e8ec;
+  padding: 16px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: white;
+}
+
+.acp-permission {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(251, 191, 36, 0.14);
+  border: 1px solid rgba(180, 120, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.acp-permission[hidden] {
+  display: none;
+}
+
+.acp-permission-options {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.acp-status-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.acp-status {
+  opacity: 0.7;
+}
+
+.acp-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.acp-composer textarea {
+  min-height: 120px;
+}
+
+.acp-composer-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.acp-hint {
+  font-size: 12px;
+  opacity: 0.65;
+}
+
 .terminal-bar {
   display: flex;
   justify-content: space-between;
@@ -202,5 +453,31 @@ button.ghost {
 @media (max-width: 640px) {
   header h1 {
     font-size: 36px;
+  }
+
+  .header-top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .acp-card {
+    grid-template-columns: 1fr;
+  }
+
+  .acp-sidebar {
+    min-height: auto;
+    border-right: 0;
+    border-bottom: 1px solid #e5e8ec;
+  }
+
+  .acp-thread-header,
+  .acp-status-row,
+  .acp-composer-actions {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .acp-message {
+    max-width: 100%;
   }
 }

@@ -33,10 +33,13 @@ const refreshBtn = document.getElementById('refresh');
 const form = document.getElementById('create-form');
 const randomNameBtn = document.getElementById('name-random');
 const shellEl = document.querySelector('.shell');
+const headerEl = shellEl?.querySelector('header');
 const createSection = form?.closest('section');
 const listSection = listEl?.closest('section');
 let activeTerminalSession = null;
 let activeTerminalName = '';
+let activeACPPage = null;
+let activeACPName = '';
 let presetsInitialized = false;
 let activePresetEnv = null;
 const authRedirectStorageKey = 'spritz-auth-redirected';
@@ -46,6 +49,11 @@ let lastAuthRefreshAt = 0;
 let activeTerminalPoll = null;
 let knownSpritzNames = new Set();
 const presetPlaceholder = '__SPRITZ_UI_PRESETS__';
+const ACP_CLIENT_INFO = {
+  name: 'spritz-ui',
+  title: 'Spritz ACP UI',
+  version: '1.0.0',
+};
 const defaultPresets = [
   {
     name: 'Starter Devbox',
@@ -984,6 +992,16 @@ function renderList(items) {
       window.location.assign(terminalPagePath(name));
     };
 
+    const acpReady = spritz.status?.acp?.state === 'ready';
+    if (acpReady && spritzName) {
+      const chatBtn = document.createElement('button');
+      chatBtn.textContent = 'Chat';
+      chatBtn.onclick = () => {
+        window.location.assign(chatPagePath(spritzName));
+      };
+      actions.append(chatBtn);
+    }
+
     const sshMode = spritz.spec?.ssh?.mode;
     const sshInfo = spritz.status?.ssh;
     if (sshMode === 'gateway' && spritzName) {
@@ -1048,6 +1066,10 @@ function terminalPagePath(name) {
   return `#terminal/${encodeURIComponent(name)}`;
 }
 
+function chatPagePath(name = '') {
+  return name ? `#chat/${encodeURIComponent(name)}` : '#chat';
+}
+
 function terminalNameFromPath() {
   const hash = window.location.hash || '';
   const prefix = '#terminal/';
@@ -1056,20 +1078,30 @@ function terminalNameFromPath() {
   return decodeURIComponent(remainder.split('/')[0] || '');
 }
 
+function chatNameFromPath() {
+  const hash = window.location.hash || '';
+  const prefix = '#chat/';
+  if (hash === '#chat') return '';
+  if (!hash.startsWith(prefix)) return '';
+  const remainder = hash.slice(prefix.length);
+  return decodeURIComponent(remainder.split('/')[0] || '');
+}
+
+function setHeaderCopy(titleText, subtitleText) {
+  if (!headerEl) return;
+  const title = headerEl.querySelector('h1');
+  if (title) title.textContent = titleText;
+  const subtitle = headerEl.querySelector('p');
+  if (subtitle) subtitle.textContent = subtitleText;
+}
+
 function renderTerminalPage(name) {
   if (!shellEl) return;
   cleanupTerminal();
   activeTerminalName = name;
   if (createSection) createSection.hidden = true;
   if (listSection) listSection.hidden = true;
-
-  const header = shellEl.querySelector('header');
-  if (header) {
-    const title = header.querySelector('h1');
-    if (title) title.textContent = `Spritz · ${name}`;
-    const subtitle = header.querySelector('p');
-    if (subtitle) subtitle.textContent = 'Terminal session via gateway.';
-  }
+  setHeaderCopy(`Spritz · ${name}`, 'Terminal session via gateway.');
 
   const card = document.createElement('section');
   card.className = 'card terminal-card';
@@ -1299,6 +1331,846 @@ function sendResize(ws, term) {
   ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
 }
 
+function acpWsUrl(name) {
+  const base = apiBaseUrl || '';
+  const resolved = base.startsWith('http')
+    ? base
+    : `${window.location.origin}${base}`;
+  const wsBase = resolved.replace(/^http/, 'ws');
+  const token = getAuthToken();
+  const query = token ? `?${encodeURIComponent(authBearerTokenParam)}=${encodeURIComponent(token)}` : '';
+  return `${wsBase}/acp/connect/${encodeURIComponent(name)}${query}`;
+}
+
+async function fetchACPAgentsData() {
+  const data = await request('/acp/agents');
+  return data.items || [];
+}
+
+async function ensureACPConversationData(name, payload = {}) {
+  return request(`/acp/conversations/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+async function patchACPConversationData(name, payload) {
+  return request(`/acp/conversations/${encodeURIComponent(name)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+function extractACPText(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => extractACPText(item)).filter(Boolean).join('\n');
+  }
+  if (typeof value !== 'object') return String(value);
+  if (typeof value.text === 'string') return value.text;
+  if (value.type === 'content' && value.content) return extractACPText(value.content);
+  if (value.content) return extractACPText(value.content);
+  if (value.resource) {
+    if (typeof value.resource.text === 'string') return value.resource.text;
+    if (typeof value.resource.uri === 'string') return value.resource.uri;
+  }
+  return '';
+}
+
+function defaultACPThreadTitle(agent, conversation) {
+  return (
+    conversation?.spec?.title ||
+    agent?.spritz?.status?.acp?.agentInfo?.title ||
+    agent?.spritz?.status?.acp?.agentInfo?.name ||
+    agent?.spritz?.metadata?.name ||
+    'Agent'
+  );
+}
+
+function buildACPThreadMeta(agent, conversation) {
+  const version = agent?.spritz?.status?.acp?.agentInfo?.version;
+  const sessionId = conversation?.spec?.sessionId;
+  const parts = [
+    agent?.spritz?.metadata?.name || '',
+    version ? `v${version}` : '',
+    sessionId ? `session ${sessionId}` : 'new conversation',
+  ].filter(Boolean);
+  return parts.join(' · ');
+}
+
+function createACPPageState(name) {
+  return {
+    selectedName: name || '',
+    agents: [],
+    selectedAgent: null,
+    conversation: null,
+    messages: [],
+    permissionQueue: [],
+    toolCallIndex: new Map(),
+    promptInFlight: false,
+    client: null,
+    reconnectTimer: null,
+    destroyed: false,
+  };
+}
+
+function renderACPAgentList(page) {
+  if (!page.agentListEl) return;
+  page.agentListEl.innerHTML = '';
+  if (!page.agents.length) {
+    const empty = document.createElement('p');
+    empty.className = 'acp-empty';
+    empty.textContent = 'No ACP-ready spritzes yet.';
+    page.agentListEl.appendChild(empty);
+    return;
+  }
+  page.agents.forEach((agent) => {
+    const name = agent?.spritz?.metadata?.name;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'acp-agent-item';
+    button.dataset.active = String(name === page.selectedName);
+    button.onclick = () => {
+      if (!name) return;
+      window.location.assign(chatPagePath(name));
+    };
+    const title = document.createElement('strong');
+    title.textContent = defaultACPThreadTitle(agent, agent.conversation);
+    const meta = document.createElement('small');
+    meta.textContent = buildACPThreadMeta(agent, agent.conversation);
+    button.append(title, meta);
+    page.agentListEl.appendChild(button);
+  });
+}
+
+function renderACPMessageElement(message) {
+  const item = document.createElement('div');
+  item.className = 'acp-message';
+  item.dataset.kind = message.kind;
+
+  if (message.kind === 'tool' || message.kind === 'plan' || message.kind === 'system') {
+    const header = document.createElement('div');
+    header.className = 'acp-message-header';
+    const label = document.createElement('strong');
+    label.textContent = message.label || 'Update';
+    const meta = document.createElement('span');
+    meta.textContent = message.meta || '';
+    header.append(label, meta);
+    item.appendChild(header);
+  }
+
+  if (message.kind === 'plan' && Array.isArray(message.entries)) {
+    const list = document.createElement('ol');
+    list.className = 'acp-message-plan';
+    message.entries.forEach((entry) => {
+      const li = document.createElement('li');
+      const parts = [entry.content || '', entry.status || '', entry.priority || ''].filter(Boolean);
+      li.textContent = parts.join(' · ');
+      list.appendChild(li);
+    });
+    item.appendChild(list);
+    return item;
+  }
+
+  const text = document.createElement('div');
+  text.textContent = message.text || '';
+  item.appendChild(text);
+
+  if (message.kind === 'tool' && message.extra) {
+    const extra = document.createElement('div');
+    extra.className = 'acp-tool-content';
+    extra.textContent = message.extra;
+    item.appendChild(extra);
+  }
+
+  return item;
+}
+
+function renderACPPermissionPrompt(page) {
+  if (!page.permissionEl || !page.permissionTextEl || !page.permissionOptionsEl) return;
+  const current = page.permissionQueue[0];
+  if (!current) {
+    page.permissionEl.hidden = true;
+    page.permissionTextEl.textContent = '';
+    page.permissionOptionsEl.innerHTML = '';
+    return;
+  }
+
+  page.permissionEl.hidden = false;
+  const toolTitle = current.params?.toolCall?.title || current.params?.toolCall?.toolCallId || 'Tool call';
+  page.permissionTextEl.textContent = `${toolTitle} is requesting permission.`;
+  page.permissionOptionsEl.innerHTML = '';
+
+  (current.params?.options || []).forEach((option) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = option.name || option.optionId || 'Select';
+    button.onclick = async () => {
+      try {
+        await current.respond({
+          outcome: {
+            outcome: 'selected',
+            optionId: option.optionId,
+          },
+        });
+      } catch (err) {
+        showNotice(err.message || 'Failed to send permission response.');
+      } finally {
+        page.permissionQueue.shift();
+        renderACPPermissionPrompt(page);
+      }
+    };
+    page.permissionOptionsEl.appendChild(button);
+  });
+}
+
+function renderACPThread(page) {
+  if (!page.threadTitleEl || !page.threadMetaEl || !page.threadBodyEl) return;
+  if (page.openBtn) {
+    const openUrl = buildOpenUrl(page.selectedAgent?.spritz?.status?.url, page.selectedAgent?.spritz);
+    page.openBtn.disabled = !openUrl;
+  }
+  page.threadTitleEl.textContent = defaultACPThreadTitle(page.selectedAgent, page.conversation);
+  page.threadMetaEl.textContent = buildACPThreadMeta(page.selectedAgent, page.conversation);
+  page.threadBodyEl.innerHTML = '';
+
+  if (!page.selectedAgent) {
+    const empty = document.createElement('div');
+    empty.className = 'acp-empty';
+    empty.textContent = 'Choose an ACP-ready spritz to start chatting.';
+    page.threadBodyEl.appendChild(empty);
+    renderACPPermissionPrompt(page);
+    return;
+  }
+
+  if (!page.messages.length) {
+    const empty = document.createElement('div');
+    empty.className = 'acp-empty';
+    empty.textContent = 'Conversation is ready. Send a prompt to start.';
+    page.threadBodyEl.appendChild(empty);
+  } else {
+    page.messages.forEach((message) => {
+      page.threadBodyEl.appendChild(renderACPMessageElement(message));
+    });
+  }
+  page.threadBodyEl.scrollTop = page.threadBodyEl.scrollHeight;
+  renderACPPermissionPrompt(page);
+}
+
+function setACPStatus(page, text) {
+  if (!page.statusEl) return;
+  page.statusEl.textContent = text || '';
+}
+
+function syncACPComposer(page) {
+  const disabled = !page.client || !page.client.isReady();
+  if (page.composerEl) page.composerEl.disabled = disabled || page.promptInFlight;
+  if (page.sendBtn) page.sendBtn.disabled = disabled || page.promptInFlight;
+  if (page.cancelBtn) page.cancelBtn.disabled = !page.promptInFlight;
+}
+
+function pushACPMessage(page, message) {
+  page.messages.push({
+    id: message.id || `${message.kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    kind: message.kind,
+    label: message.label || '',
+    meta: message.meta || '',
+    text: message.text || '',
+    extra: message.extra || '',
+    entries: message.entries || null,
+    toolCallId: message.toolCallId || '',
+    streaming: Boolean(message.streaming),
+  });
+  renderACPThread(page);
+}
+
+function appendACPChunk(page, kind, text) {
+  const chunk = String(text || '');
+  if (!chunk) return;
+  const last = page.messages[page.messages.length - 1];
+  if (last && last.kind === kind && last.streaming) {
+    last.text += chunk;
+  } else {
+    pushACPMessage(page, { kind, text: chunk, streaming: true });
+  }
+  renderACPThread(page);
+}
+
+function finalizeACPStreams(page) {
+  page.messages.forEach((message) => {
+    if (message.kind === 'assistant' || message.kind === 'user') {
+      message.streaming = false;
+    }
+  });
+}
+
+function upsertACPToolCall(page, update) {
+  const toolCallId = update.toolCallId || `tool-${Date.now()}`;
+  const text = extractACPText(update.content);
+  const existingIndex = page.toolCallIndex.get(toolCallId);
+  const label = update.title || 'Tool call';
+  const meta = update.status || update.kind || '';
+  if (existingIndex !== undefined) {
+    const existing = page.messages[existingIndex];
+    existing.label = label;
+    existing.meta = meta;
+    if (text) existing.extra = text;
+  } else {
+    page.toolCallIndex.set(toolCallId, page.messages.length);
+    pushACPMessage(page, {
+      kind: 'tool',
+      label,
+      meta,
+      extra: text,
+      toolCallId,
+    });
+  }
+  renderACPThread(page);
+}
+
+function applyACPUpdate(page, update) {
+  const kind = update?.sessionUpdate || 'unknown';
+  if (kind === 'user_message_chunk') {
+    appendACPChunk(page, 'user', extractACPText(update.content));
+    return;
+  }
+  if (kind === 'agent_message_chunk') {
+    appendACPChunk(page, 'assistant', extractACPText(update.content));
+    return;
+  }
+  if (kind === 'tool_call' || kind === 'tool_call_update') {
+    upsertACPToolCall(page, update);
+    return;
+  }
+  if (kind === 'plan') {
+    pushACPMessage(page, {
+      kind: 'plan',
+      label: 'Plan',
+      entries: Array.isArray(update.entries) ? update.entries : [],
+    });
+    return;
+  }
+  if (kind === 'session_info_update') {
+    const title = update?.title || update?.sessionInfo?.title;
+    if (title) {
+      page.conversation = {
+        ...(page.conversation || {}),
+        spec: {
+          ...(page.conversation?.spec || {}),
+          title,
+        },
+      };
+      if (page.selectedAgent) {
+        page.selectedAgent = { ...page.selectedAgent, conversation: page.conversation };
+      }
+      patchACPConversationData(page.selectedName, { title }).catch(() => {});
+      renderACPThread(page);
+      renderACPAgentList(page);
+      return;
+    }
+  }
+  pushACPMessage(page, {
+    kind: 'system',
+    label: kind,
+    text: JSON.stringify(update, null, 2),
+  });
+}
+
+function createACPClient(page, agent, conversation) {
+  let ws = null;
+  let nextId = 1;
+  let ready = false;
+  let reconnectTimer = null;
+  let disposed = false;
+  const pending = new Map();
+  let sessionId = conversation?.spec?.sessionId || '';
+  let loadSessionSupported = false;
+
+  function cleanupPending(errorMessage) {
+    pending.forEach(({ reject }) => {
+      reject(new Error(errorMessage));
+    });
+    pending.clear();
+  }
+
+  function sendRaw(payload) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      throw new Error('ACP socket is not connected.');
+    }
+    ws.send(JSON.stringify(payload));
+  }
+
+  function requestRPC(method, params) {
+    return new Promise((resolve, reject) => {
+      const id = nextId++;
+      pending.set(String(id), { resolve, reject, method });
+      try {
+        sendRaw({ jsonrpc: '2.0', id, method, params });
+      } catch (err) {
+        pending.delete(String(id));
+        reject(err);
+      }
+    });
+  }
+
+  function respond(id, result) {
+    sendRaw({ jsonrpc: '2.0', id, result });
+  }
+
+  function respondError(id, code, message) {
+    sendRaw({ jsonrpc: '2.0', id, error: { code, message } });
+  }
+
+  function notify(method, params) {
+    sendRaw({ jsonrpc: '2.0', method, params });
+  }
+
+  async function bootstrapSession() {
+    setACPStatus(page, 'Negotiating ACP…');
+    const init = await requestRPC('initialize', {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: ACP_CLIENT_INFO,
+    });
+    loadSessionSupported = Boolean(init?.agentCapabilities?.loadSession);
+    page.selectedAgent = {
+      ...agent,
+      spritz: {
+        ...agent.spritz,
+        status: {
+          ...(agent.spritz.status || {}),
+          acp: {
+            ...(agent.spritz.status?.acp || {}),
+            agentInfo: init?.agentInfo || agent.spritz.status?.acp?.agentInfo,
+          },
+        },
+      },
+    };
+    renderACPThread(page);
+    if (sessionId && loadSessionSupported) {
+      setACPStatus(page, 'Loading conversation…');
+      await requestRPC('session/load', {
+        sessionId,
+        cwd: conversation?.spec?.cwd || '/home/dev',
+        mcpServers: [],
+      });
+      finalizeACPStreams(page);
+      setACPStatus(page, 'Connected');
+      return;
+    }
+
+    setACPStatus(page, 'Creating session…');
+    const created = await requestRPC('session/new', {
+      cwd: conversation?.spec?.cwd || '/home/dev',
+      mcpServers: [],
+    });
+    sessionId = created?.sessionId || '';
+    if (sessionId) {
+      page.conversation = {
+        ...(page.conversation || {}),
+        spec: {
+          ...(page.conversation?.spec || {}),
+          sessionId,
+        },
+      };
+      if (page.selectedAgent) {
+        page.selectedAgent = { ...page.selectedAgent, conversation: page.conversation };
+      }
+      await patchACPConversationData(page.selectedName, { sessionId });
+      renderACPAgentList(page);
+      renderACPThread(page);
+    }
+    setACPStatus(page, 'Connected');
+  }
+
+  function handleIncoming(message) {
+    if (message.id !== undefined && (message.result !== undefined || message.error)) {
+      const key = String(message.id);
+      const pendingRequest = pending.get(key);
+      if (!pendingRequest) return;
+      pending.delete(key);
+      if (message.error) {
+        pendingRequest.reject(new Error(message.error.message || 'ACP request failed.'));
+        return;
+      }
+      pendingRequest.resolve(message.result);
+      if (pendingRequest.method === 'session/prompt') {
+        page.promptInFlight = false;
+        finalizeACPStreams(page);
+        syncACPComposer(page);
+      }
+      return;
+    }
+
+    if (message.method === 'session/update') {
+      applyACPUpdate(page, message.params?.update);
+      return;
+    }
+
+    if (message.method === 'session/request_permission' && message.id !== undefined) {
+      page.permissionQueue.push({
+        params: message.params,
+        respond(result) {
+          respond(message.id, result);
+        },
+      });
+      renderACPPermissionPrompt(page);
+      return;
+    }
+
+    if (message.id !== undefined) {
+      respondError(message.id, -32601, 'Method not supported by Spritz ACP UI.');
+    }
+  }
+
+  function scheduleReconnect() {
+    if (page.destroyed || disposed || activeACPName !== page.selectedName) return;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+    }
+    reconnectTimer = setTimeout(() => {
+      start().catch((err) => {
+        setACPStatus(page, err.message || 'Disconnected');
+      });
+    }, 2000);
+    setACPStatus(page, 'Disconnected. Reconnecting…');
+  }
+
+  async function start() {
+    disposed = false;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    ready = false;
+    syncACPComposer(page);
+    return new Promise((resolve, reject) => {
+      ws = new WebSocket(acpWsUrl(page.selectedName));
+      ws.onopen = async () => {
+        try {
+          ready = true;
+          syncACPComposer(page);
+          await bootstrapSession();
+          resolve();
+        } catch (err) {
+          reject(err);
+          try {
+            ws.close();
+          } catch {
+            // ignore
+          }
+        }
+      };
+      ws.onmessage = (event) => {
+        try {
+          const data = typeof event.data === 'string' ? event.data : new TextDecoder().decode(event.data);
+          handleIncoming(JSON.parse(data));
+        } catch (err) {
+          pushACPMessage(page, { kind: 'system', label: 'protocol', text: err.message || 'Invalid ACP message.' });
+        }
+      };
+      ws.onerror = () => {
+        if (!ready) {
+          reject(new Error('Failed to connect to ACP gateway.'));
+        }
+      };
+      ws.onclose = () => {
+        ready = false;
+        cleanupPending('ACP connection closed.');
+        syncACPComposer(page);
+        if (!page.destroyed && !disposed) {
+          scheduleReconnect();
+        }
+      };
+    });
+  }
+
+  return {
+    async start() {
+      return start();
+    },
+    isReady() {
+      return Boolean(ws && ws.readyState === WebSocket.OPEN && ready);
+    },
+    async sendPrompt(text) {
+      if (!sessionId) {
+        throw new Error('ACP session is not ready yet.');
+      }
+      page.promptInFlight = true;
+      syncACPComposer(page);
+      pushACPMessage(page, { kind: 'user', text });
+      const maybeTitle = page.conversation?.spec?.title;
+      if (!maybeTitle || maybeTitle === page.selectedName) {
+        const nextTitle = text.slice(0, 80);
+        page.conversation = {
+          ...(page.conversation || {}),
+          spec: {
+            ...(page.conversation?.spec || {}),
+            title: nextTitle,
+          },
+        };
+        if (page.selectedAgent) {
+          page.selectedAgent = { ...page.selectedAgent, conversation: page.conversation };
+        }
+        patchACPConversationData(page.selectedName, { title: nextTitle }).catch(() => {});
+        renderACPAgentList(page);
+      }
+      setACPStatus(page, 'Waiting for agent…');
+      return requestRPC('session/prompt', {
+        sessionId,
+        prompt: [{ type: 'text', text }],
+      }).then((result) => {
+        setACPStatus(page, result?.stopReason ? `Completed · ${result.stopReason}` : 'Completed');
+        return result;
+      }).catch((err) => {
+        page.promptInFlight = false;
+        syncACPComposer(page);
+        throw err;
+      });
+    },
+    cancelPrompt() {
+      if (!sessionId || !this.isReady()) return;
+      notify('session/cancel', { sessionId });
+      page.permissionQueue.forEach((entry) => {
+        entry.respond({ outcome: { outcome: 'cancelled' } });
+      });
+      page.permissionQueue = [];
+      renderACPPermissionPrompt(page);
+      setACPStatus(page, 'Cancelling…');
+    },
+    dispose() {
+      disposed = true;
+      ready = false;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      cleanupPending('ACP client disposed.');
+      try {
+        if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+          ws.close();
+        }
+      } catch {
+        // ignore
+      }
+    },
+  };
+}
+
+async function loadACPPage(page, selectedName) {
+  try {
+    if (page.client) {
+      page.client.dispose();
+      page.client = null;
+    }
+    page.promptInFlight = false;
+    syncACPComposer(page);
+    setACPStatus(page, 'Loading agents…');
+    page.agents = await fetchACPAgentsData();
+    renderACPAgentList(page);
+    if (!page.agents.length) {
+      page.selectedAgent = null;
+      page.conversation = null;
+      page.messages = [];
+      renderACPThread(page);
+      setACPStatus(page, 'No ACP-ready spritzes.');
+      return;
+    }
+
+    const resolvedName = page.agents.some((item) => item?.spritz?.metadata?.name === selectedName)
+      ? selectedName
+      : page.agents[0]?.spritz?.metadata?.name;
+    if (!selectedName || resolvedName !== selectedName) {
+      window.location.replace(chatPagePath(resolvedName));
+      return;
+    }
+
+    page.selectedName = resolvedName;
+    activeACPName = resolvedName;
+    page.selectedAgent = page.agents.find((item) => item?.spritz?.metadata?.name === resolvedName) || null;
+    page.conversation = page.selectedAgent?.conversation || null;
+    renderACPThread(page);
+
+    const conversation = await ensureACPConversationData(resolvedName);
+    page.conversation = conversation;
+    if (page.selectedAgent) {
+      page.selectedAgent = { ...page.selectedAgent, conversation };
+    }
+    page.messages = [];
+    page.permissionQueue = [];
+    page.toolCallIndex = new Map();
+    renderACPThread(page);
+
+    page.client = createACPClient(page, page.selectedAgent, conversation);
+    syncACPComposer(page);
+    await page.client.start();
+  } catch (err) {
+    setACPStatus(page, err.message || 'Failed to load ACP page.');
+    showNotice(err.message || 'Failed to load ACP page.');
+  }
+}
+
+function renderACPPage(name) {
+  if (!shellEl) return;
+  cleanupTerminal();
+  cleanupACP();
+  activeACPName = name || '';
+  if (createSection) createSection.hidden = true;
+  if (listSection) listSection.hidden = true;
+  setHeaderCopy('Spritz · Agent chat', 'ACP-ready workspaces via the Spritz gateway.');
+
+  const page = createACPPageState(name);
+  activeACPPage = page;
+
+  const card = document.createElement('section');
+  card.className = 'card acp-card';
+
+  const sidebar = document.createElement('aside');
+  sidebar.className = 'acp-sidebar';
+
+  const sidebarHeader = document.createElement('div');
+  sidebarHeader.className = 'acp-sidebar-header';
+  const sidebarTitle = document.createElement('h2');
+  sidebarTitle.textContent = 'Agents';
+  const sidebarMeta = document.createElement('p');
+  sidebarMeta.textContent = 'ACP-ready spritzes appear here automatically.';
+  const sidebarActions = document.createElement('div');
+  sidebarActions.className = 'acp-sidebar-actions';
+  const backLink = document.createElement('a');
+  backLink.href = '/';
+  backLink.className = 'header-link';
+  backLink.textContent = 'Back';
+  const refreshButton = document.createElement('button');
+  refreshButton.type = 'button';
+  refreshButton.textContent = 'Refresh';
+  sidebarActions.append(backLink, refreshButton);
+  sidebarHeader.append(sidebarTitle, sidebarMeta, sidebarActions);
+
+  const agentList = document.createElement('div');
+  agentList.className = 'acp-agent-list';
+  sidebar.append(sidebarHeader, agentList);
+
+  const thread = document.createElement('div');
+  thread.className = 'acp-thread';
+  const threadHeader = document.createElement('div');
+  threadHeader.className = 'acp-thread-header';
+  const threadHeaderCopy = document.createElement('div');
+  const threadTitle = document.createElement('h2');
+  threadTitle.textContent = 'Agent';
+  const threadMeta = document.createElement('p');
+  threadMeta.textContent = '';
+  threadHeaderCopy.append(threadTitle, threadMeta);
+  const threadActions = document.createElement('div');
+  threadActions.className = 'acp-thread-actions';
+  const openButton = document.createElement('button');
+  openButton.type = 'button';
+  openButton.textContent = 'Open workspace';
+  threadActions.append(openButton);
+  threadHeader.append(threadHeaderCopy, threadActions);
+
+  const threadBody = document.createElement('div');
+  threadBody.className = 'acp-thread-body';
+
+  const footer = document.createElement('div');
+  footer.className = 'acp-thread-footer';
+  const permissionBox = document.createElement('div');
+  permissionBox.className = 'acp-permission';
+  permissionBox.hidden = true;
+  const permissionText = document.createElement('div');
+  const permissionOptions = document.createElement('div');
+  permissionOptions.className = 'acp-permission-options';
+  permissionBox.append(permissionText, permissionOptions);
+
+  const statusRow = document.createElement('div');
+  statusRow.className = 'acp-status-row';
+  const statusEl = document.createElement('span');
+  statusEl.className = 'acp-status';
+  const hint = document.createElement('span');
+  hint.className = 'acp-hint';
+  hint.textContent = 'Enter sends. Shift+Enter adds a new line.';
+  statusRow.append(statusEl, hint);
+
+  const composer = document.createElement('div');
+  composer.className = 'acp-composer';
+  const composerInput = document.createElement('textarea');
+  composerInput.placeholder = 'Message the agent…';
+  const composerActions = document.createElement('div');
+  composerActions.className = 'acp-composer-actions';
+  const sendButton = document.createElement('button');
+  sendButton.type = 'button';
+  sendButton.textContent = 'Send';
+  const cancelButton = document.createElement('button');
+  cancelButton.type = 'button';
+  cancelButton.className = 'ghost';
+  cancelButton.textContent = 'Cancel turn';
+  composerActions.append(sendButton, cancelButton);
+  composer.append(composerInput, composerActions);
+  footer.append(permissionBox, statusRow, composer);
+
+  thread.append(threadHeader, threadBody, footer);
+  card.append(sidebar, thread);
+  shellEl.append(card);
+
+  page.card = card;
+  page.agentListEl = agentList;
+  page.threadTitleEl = threadTitle;
+  page.threadMetaEl = threadMeta;
+  page.threadBodyEl = threadBody;
+  page.permissionEl = permissionBox;
+  page.permissionTextEl = permissionText;
+  page.permissionOptionsEl = permissionOptions;
+  page.statusEl = statusEl;
+  page.composerEl = composerInput;
+  page.sendBtn = sendButton;
+  page.cancelBtn = cancelButton;
+  page.refreshBtn = refreshButton;
+  page.openBtn = openButton;
+
+  refreshButton.addEventListener('click', () => {
+    if (!activeACPPage) return;
+    loadACPPage(activeACPPage, activeACPPage.selectedName);
+  });
+
+  openButton.addEventListener('click', () => {
+    const url = buildOpenUrl(page.selectedAgent?.spritz?.status?.url, page.selectedAgent?.spritz);
+    if (url) {
+      window.open(url, '_blank');
+    }
+  });
+
+  sendButton.addEventListener('click', async () => {
+    const text = composerInput.value.trim();
+    if (!text || !page.client) return;
+    composerInput.value = '';
+    try {
+      await page.client.sendPrompt(text);
+    } catch (err) {
+      showNotice(err.message || 'Failed to send ACP prompt.');
+    } finally {
+      syncACPComposer(page);
+      renderACPThread(page);
+    }
+  });
+
+  cancelButton.addEventListener('click', () => {
+    page.client?.cancelPrompt();
+  });
+
+  composerInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      sendButton.click();
+    }
+  });
+
+  syncACPComposer(page);
+  renderACPThread(page);
+  loadACPPage(page, name);
+}
+
 function setupPresets() {
   if (presetsInitialized) return;
   if (!presets.length) return;
@@ -1383,22 +2255,48 @@ function cleanupTerminal() {
   activeTerminalName = '';
 }
 
+function cleanupACP() {
+  if (activeACPPage) {
+    activeACPPage.destroyed = true;
+    if (activeACPPage.client) {
+      activeACPPage.client.dispose();
+    }
+    if (activeACPPage.reconnectTimer) {
+      clearTimeout(activeACPPage.reconnectTimer);
+    }
+    if (activeACPPage.card) {
+      activeACPPage.card.remove();
+    }
+    activeACPPage = null;
+  }
+  if (createSection) createSection.hidden = false;
+  if (listSection) listSection.hidden = false;
+  activeACPName = '';
+}
+
 function handleRoute() {
+  const chatName = chatNameFromPath();
+  if (window.location.hash === '#chat' || chatName) {
+    renderACPPage(chatName);
+    return;
+  }
   const terminalName = terminalNameFromPath();
-    if (terminalName) {
-      renderTerminalPage(terminalName);
-    } else {
-      if (activeTerminalName) cleanupTerminal();
-      if (form && refreshBtn) {
-        applyNameDefaults();
-        applyRepoDefaults();
-        applyUserConfigDefaults();
-        setupPresets();
-        fetchSpritzes();
-      }
+  if (terminalName) {
+    cleanupACP();
+    renderTerminalPage(terminalName);
+  } else {
+    if (activeTerminalName) cleanupTerminal();
+    if (activeACPPage) cleanupACP();
+    setHeaderCopy('Spritz', 'Ephemeral dev environments, managed by API.');
+    if (form && refreshBtn) {
+      applyNameDefaults();
+      applyRepoDefaults();
+      applyUserConfigDefaults();
+      setupPresets();
+      fetchSpritzes();
     }
   }
-
+}
 window.addEventListener('hashchange', handleRoute);
 
 if (form && refreshBtn) {
