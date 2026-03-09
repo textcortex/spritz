@@ -48,6 +48,8 @@ The image also starts an internal ACP compatibility bridge by default:
 - listen address: `0.0.0.0:2529`
 - WebSocket path: `/`
 - backend: per-connection `spritz-openclaw-acp-wrapper` stdio bridge to the local gateway over loopback
+- session mapping: ACP session IDs are deterministically mapped onto normal OpenClaw
+  agent-scoped gateway session keys so reconnects work without ACP clients knowing OpenClaw internals
 
 This keeps the Spritz ACP contract stable even though OpenClaw's native ACP support is currently
 stdio-only.
@@ -71,6 +73,8 @@ Auto-start related runtime overrides:
 - `SPRITZ_OPENCLAW_ACP_GATEWAY_HEADERS_JSON` (optional; JSON object of headers injected into the bridge's upstream gateway connection)
 - `SPRITZ_OPENCLAW_ACP_TRUSTED_PROXY_USER` (optional; default internal trusted-proxy user identity)
 - `SPRITZ_OPENCLAW_ACP_TRUSTED_PROXY_EMAIL` (optional; default internal trusted-proxy email identity)
+- `SPRITZ_OPENCLAW_ACP_FALLBACK_AGENT_ID` (default: `main`; agent id used when the bridge maps ACP UUID session IDs onto OpenClaw gateway session keys)
+- `SPRITZ_OPENCLAW_ACP_FALLBACK_SESSION_PREFIX` (default: `spritz-acp`; session-key namespace used for ACP-managed gateway transcripts)
 - `SPRITZ_OPENCLAW_ACP_ALLOW_INSECURE_PRIVATE_WS` (default: `0`; only needed when overriding the bridge target away from loopback onto a trusted private-network `ws://` endpoint)
 
 When the OpenClaw gateway itself is configured with `gateway.auth.mode="trusted-proxy"`, the
