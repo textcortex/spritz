@@ -73,6 +73,9 @@ func TestConfigFromEnvParsesGatewayHeadersJSON(t *testing.T) {
 	if got := cfg.GatewayHeaders.Get("x-forwarded-email"); got != "spritz-acp-bridge@example.invalid" {
 		t.Fatalf("x-forwarded-email = %q, want %q", got, "spritz-acp-bridge@example.invalid")
 	}
+	if !cfg.TrustedProxyControlUI {
+		t.Fatalf("TrustedProxyControlUI = %v, want true", cfg.TrustedProxyControlUI)
+	}
 }
 
 func TestGatewayProxyInjectsHeadersAndProxiesFrames(t *testing.T) {
@@ -106,6 +109,7 @@ func TestGatewayProxyInjectsHeadersAndProxiesFrames(t *testing.T) {
 			"X-Forwarded-User":  []string{"spritz-acp-bridge"},
 			"X-Forwarded-Email": []string{"spritz-acp-bridge@example.invalid"},
 		},
+		false,
 		log.New(io.Discard, "", 0),
 	)
 	if err != nil {
@@ -138,6 +142,118 @@ func TestGatewayProxyInjectsHeadersAndProxiesFrames(t *testing.T) {
 	}
 	if got := headers.Get("X-Forwarded-Email"); got != "spritz-acp-bridge@example.invalid" {
 		t.Fatalf("X-Forwarded-Email = %q, want %q", got, "spritz-acp-bridge@example.invalid")
+	}
+}
+
+func TestGatewayProxyTrustedProxyRewritesConnectHandshake(t *testing.T) {
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(_ *http.Request) bool { return true },
+	}
+	upstreamSeenHeaders := make(chan http.Header, 1)
+	upstreamSeenPayload := make(chan map[string]any, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamSeenHeaders <- r.Header.Clone()
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("upgrade upstream: %v", err)
+		}
+		defer func() {
+			_ = conn.Close()
+		}()
+		_, payload, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("read upstream: %v", err)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(payload, &decoded); err != nil {
+			t.Fatalf("decode upstream payload: %v", err)
+		}
+		upstreamSeenPayload <- decoded
+	}))
+	defer upstream.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	proxyURL, shutdown, err := startGatewayProxy(
+		ctx,
+		"ws"+strings.TrimPrefix(upstream.URL, "http"),
+		http.Header{
+			"X-Forwarded-User":  []string{"spritz-acp-bridge"},
+			"X-Forwarded-Email": []string{"spritz-acp-bridge@example.invalid"},
+			"X-Forwarded-Proto": []string{"https"},
+			"X-Forwarded-Host":  []string{"localhost"},
+		},
+		true,
+		log.New(io.Discard, "", 0),
+	)
+	if err != nil {
+		t.Fatalf("startGatewayProxy() error = %v", err)
+	}
+	defer shutdown()
+
+	conn, _, err := websocket.DefaultDialer.Dial(proxyURL, nil)
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	request := map[string]any{
+		"type":   "req",
+		"id":     "connect-1",
+		"method": "connect",
+		"params": map[string]any{
+			"role": "operator",
+			"client": map[string]any{
+				"id":          "cli",
+				"displayName": "ACP",
+				"version":     "2026.3.8",
+				"platform":    "linux",
+				"mode":        "cli",
+			},
+			"auth": map[string]any{
+				"token":    "secret-token",
+				"password": "secret-password",
+			},
+			"device": map[string]any{
+				"id":        "device-1",
+				"publicKey": "pub",
+				"signature": "sig",
+				"signedAt":  1,
+				"nonce":     "nonce-1",
+			},
+		},
+	}
+	if err := conn.WriteJSON(request); err != nil {
+		t.Fatalf("write proxy: %v", err)
+	}
+
+	headers := <-upstreamSeenHeaders
+	if got := headers.Get("Origin"); got != "https://localhost" {
+		t.Fatalf("Origin = %q, want %q", got, "https://localhost")
+	}
+
+	payload := <-upstreamSeenPayload
+	params, ok := payload["params"].(map[string]any)
+	if !ok {
+		t.Fatalf("params = %#v, want object", payload["params"])
+	}
+	client, ok := params["client"].(map[string]any)
+	if !ok {
+		t.Fatalf("client = %#v, want object", params["client"])
+	}
+	if client["id"] != "openclaw-control-ui" {
+		t.Fatalf("client.id = %#v, want %q", client["id"], "openclaw-control-ui")
+	}
+	if client["mode"] != "webchat" {
+		t.Fatalf("client.mode = %#v, want %q", client["mode"], "webchat")
+	}
+	if _, exists := params["auth"]; exists {
+		t.Fatalf("auth = %#v, want omitted", params["auth"])
+	}
+	if _, exists := params["device"]; exists {
+		t.Fatalf("device = %#v, want omitted", params["device"])
 	}
 }
 

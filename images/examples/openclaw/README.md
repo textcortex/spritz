@@ -79,6 +79,8 @@ entrypoint automatically:
 - appends `127.0.0.1` and `::1` to `gateway.trustedProxies`
 - derives a header set for the internal ACP bridge
 - routes the bridge child through a loopback-only header-injecting WebSocket proxy
+- rewrites the upstream gateway `connect` handshake to the Control UI operator profile without a
+  device identity, so the bridge does not trigger device pairing
 
 This keeps `/w/{name}` tokenless for browser users while allowing the internal ACP bridge to
 authenticate cleanly without using pod-IP workarounds.
