@@ -66,6 +66,8 @@ Auto-start related runtime overrides:
 - `OPENCLAW_ACP_BIND` (default: `0.0.0.0`)
 - `OPENCLAW_ACP_PORT` (default: `2529`)
 - `OPENCLAW_ACP_PATH` (default: `/`)
+- `SPRITZ_OPENCLAW_ACP_GATEWAY_HOST` (optional; defaults to the pod/container IPv4 so trusted-proxy gateway auth accepts the ACP bridge)
+- `SPRITZ_OPENCLAW_ACP_GATEWAY_URL` (optional; overrides the computed bridge target)
 
 ## Generic Config Support
 
