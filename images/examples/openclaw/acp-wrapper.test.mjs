@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   buildGatewayClientOptions,
+  loadOpenclawCompat,
   parseArgs,
   useTrustedProxyControlUiBridge,
 } from './acp-wrapper.mjs';
@@ -65,4 +69,31 @@ test('useTrustedProxyControlUiBridge reads truthy env values', () => {
   assert.equal(useTrustedProxyControlUiBridge({ SPRITZ_OPENCLAW_ACP_USE_CONTROL_UI_BRIDGE: 'true' }), true);
   assert.equal(useTrustedProxyControlUiBridge({ SPRITZ_OPENCLAW_ACP_USE_CONTROL_UI_BRIDGE: '0' }), false);
   assert.equal(useTrustedProxyControlUiBridge({}), false);
+});
+
+test('loadOpenclawCompat loads the generated stable compat module from the package root', async () => {
+  const packageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'spritz-openclaw-package-'));
+  const distDir = path.join(packageRoot, 'dist');
+  fs.mkdirSync(distDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(distDir, 'spritz-acp-compat.js'),
+    [
+      'export class GatewayClient {}',
+      'export class AcpGatewayAgent {}',
+      'export function loadConfig() { return { ok: true }; }',
+      'export function buildGatewayConnectionDetails() { return { url: "ws://127.0.0.1:8080" }; }',
+      'export async function resolveGatewayConnectionAuth() { return { token: "secret" }; }',
+      '',
+    ].join('\n'),
+  );
+
+  const compat = await loadOpenclawCompat({
+    SPRITZ_OPENCLAW_PACKAGE_ROOT: packageRoot,
+  });
+
+  assert.equal(compat.GatewayClient.name, 'GatewayClient');
+  assert.equal(compat.AcpGatewayAgent.name, 'AcpGatewayAgent');
+  assert.deepEqual(compat.loadConfig(), { ok: true });
+  assert.equal(compat.buildGatewayConnectionDetails().url, 'ws://127.0.0.1:8080');
+  assert.deepEqual(await compat.resolveGatewayConnectionAuth(), { token: 'secret' });
 });
