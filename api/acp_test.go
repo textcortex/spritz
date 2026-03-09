@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -45,33 +44,25 @@ func newACPTestServer(t *testing.T, objects ...client.Object) *server {
 		},
 		internalAuth: internalAuthConfig{enabled: false},
 		acp: acpConfig{
-			enabled:       true,
-			port:          spritzv1.DefaultACPPort,
-			path:          spritzv1.DefaultACPPath,
-			probeTimeout:  2 * time.Second,
-			probeCacheTTL: time.Hour,
-			clientInfo: acpImplementationInfo{
-				Name:    "spritz-ui",
-				Title:   "Spritz ACP UI",
-				Version: "1.0.0",
-			},
+			enabled: true,
+			port:    spritzv1.DefaultACPPort,
+			path:    spritzv1.DefaultACPPath,
 		},
 	}
 }
 
-func TestListACPAgentsReturnsReadyAgentsWithConversation(t *testing.T) {
-	now := metav1.Now()
-	ready := &spritzv1.Spritz{
+func readyACPSpritz(name, owner string) *spritzv1.Spritz {
+	return &spritzv1.Spritz{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "tidy-otter",
+			Name:      name,
 			Namespace: "spritz-test",
 			Labels: map[string]string{
-				ownerLabelKey: ownerLabelValue("user-1"),
+				ownerLabelKey: ownerLabelValue(owner),
 			},
 		},
 		Spec: spritzv1.SpritzSpec{
 			Image: "example.com/openclaw:latest",
-			Owner: spritzv1.SpritzOwner{ID: "user-1"},
+			Owner: spritzv1.SpritzOwner{ID: owner},
 		},
 		Status: spritzv1.SpritzStatus{
 			Phase: "Ready",
@@ -82,13 +73,39 @@ func TestListACPAgentsReturnsReadyAgentsWithConversation(t *testing.T) {
 					Path: spritzv1.DefaultACPPath,
 				},
 				AgentInfo: &spritzv1.SpritzACPAgentInfo{
-					Name:  "agent-otter",
-					Title: "Agent Otter",
+					Name:  "agent-" + name,
+					Title: "Agent " + name,
 				},
-				LastProbeAt: &now,
 			},
 		},
 	}
+}
+
+func conversationFor(name, spritzName, owner, title string, createdAt metav1.Time) *spritzv1.SpritzConversation {
+	return &spritzv1.SpritzConversation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              name,
+			Namespace:         "spritz-test",
+			CreationTimestamp: createdAt,
+			Labels: map[string]string{
+				acpConversationLabelKey:       acpConversationLabelValue,
+				acpConversationOwnerLabelKey:  ownerLabelValue(owner),
+				acpConversationSpritzLabelKey: spritzName,
+			},
+		},
+		Spec: spritzv1.SpritzConversationSpec{
+			SpritzName: spritzName,
+			Owner:      spritzv1.SpritzOwner{ID: owner},
+			Title:      title,
+			SessionID:  "sess-" + name,
+			CWD:        "/home/dev",
+		},
+	}
+}
+
+func TestListACPAgentsUsesStoredStatusOnly(t *testing.T) {
+	ready := readyACPSpritz("tidy-otter", "user-1")
+	ready.Status.ACP.LastProbeAt = nil
 	ignored := &spritzv1.Spritz{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "slow-reef",
@@ -97,32 +114,11 @@ func TestListACPAgentsReturnsReadyAgentsWithConversation(t *testing.T) {
 				ownerLabelKey: ownerLabelValue("user-1"),
 			},
 		},
-		Spec: spritzv1.SpritzSpec{
-			Image: "example.com/openclaw:latest",
-			Owner: spritzv1.SpritzOwner{ID: "user-1"},
-		},
-		Status: spritzv1.SpritzStatus{
-			Phase: "Provisioning",
-		},
-	}
-	conversation := &spritzv1.SpritzConversation{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "tidy-otter",
-			Namespace: "spritz-test",
-			Labels: map[string]string{
-				ownerLabelKey: ownerLabelValue("user-1"),
-			},
-		},
-		Spec: spritzv1.SpritzConversationSpec{
-			SpritzName: "tidy-otter",
-			Owner:      spritzv1.SpritzOwner{ID: "user-1"},
-			Title:      "Current chat",
-			SessionID:  "sess_123",
-			CWD:        "/home/dev",
-		},
+		Spec:   spritzv1.SpritzSpec{Image: "example.com/openclaw:latest", Owner: spritzv1.SpritzOwner{ID: "user-1"}},
+		Status: spritzv1.SpritzStatus{Phase: "Provisioning"},
 	}
 
-	s := newACPTestServer(t, ready, ignored, conversation)
+	s := newACPTestServer(t, ready, ignored)
 	e := echo.New()
 	secured := e.Group("", s.authMiddleware())
 	secured.GET("/api/acp/agents", s.listACPAgents)
@@ -130,7 +126,6 @@ func TestListACPAgentsReturnsReadyAgentsWithConversation(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/acp/agents", nil)
 	req.Header.Set("X-Spritz-User-Id", "user-1")
 	rec := httptest.NewRecorder()
-
 	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -152,88 +147,24 @@ func TestListACPAgentsReturnsReadyAgentsWithConversation(t *testing.T) {
 	if payload.Data.Items[0].Spritz.Name != "tidy-otter" {
 		t.Fatalf("expected tidy-otter in ACP list, got %q", payload.Data.Items[0].Spritz.Name)
 	}
-	if payload.Data.Items[0].Conversation == nil {
-		t.Fatalf("expected conversation metadata to be included")
-	}
-	if payload.Data.Items[0].Conversation.Spec.SessionID != "sess_123" {
-		t.Fatalf("expected persisted session id, got %q", payload.Data.Items[0].Conversation.Spec.SessionID)
-	}
 }
 
-func TestEnsureACPConversationCreatesConversationAfterProbe(t *testing.T) {
-	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
-	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			t.Fatalf("failed to upgrade test websocket: %v", err)
-		}
-		defer conn.Close()
-
-		var message map[string]any
-		if err := conn.ReadJSON(&message); err != nil {
-			t.Fatalf("failed to read initialize request: %v", err)
-		}
-		if message["method"] != "initialize" {
-			t.Fatalf("expected initialize request, got %#v", message["method"])
-		}
-		if err := conn.WriteJSON(map[string]any{
-			"jsonrpc": "2.0",
-			"id":      message["id"],
-			"result": map[string]any{
-				"protocolVersion": 1,
-				"agentCapabilities": map[string]any{
-					"loadSession": true,
-					"promptCapabilities": map[string]any{
-						"embeddedContext": true,
-					},
-				},
-				"agentInfo": map[string]any{
-					"name":    "agent-reef",
-					"title":   "Agent Reef",
-					"version": "1.2.3",
-				},
-				"authMethods": []string{},
-			},
-		}); err != nil {
-			t.Fatalf("failed to write initialize response: %v", err)
-		}
-	}))
-	defer wsServer.Close()
-
-	spritz := &spritzv1.Spritz{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "tidy-otter",
-			Namespace: "spritz-test",
-			Labels: map[string]string{
-				ownerLabelKey: ownerLabelValue("user-1"),
-			},
-		},
-		Spec: spritzv1.SpritzSpec{
-			Image: "example.com/openclaw:latest",
-			Owner: spritzv1.SpritzOwner{ID: "user-1"},
-		},
-		Status: spritzv1.SpritzStatus{
-			Phase: "Ready",
-		},
-	}
-
+func TestCreateACPConversationGeneratesIndependentConversationID(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
 	s := newACPTestServer(t, spritz)
-	s.acp.workspaceURL = func(namespace, name string) string {
-		return strings.Replace(wsServer.URL, "http://", "ws://", 1)
-	}
-
 	e := echo.New()
 	secured := e.Group("", s.authMiddleware())
-	secured.PUT("/api/acp/conversations/:name", s.ensureACPConversation)
+	secured.POST("/api/acp/conversations", s.createACPConversation)
 
-	req := httptest.NewRequest(http.MethodPut, "/api/acp/conversations/tidy-otter", nil)
+	body := strings.NewReader(`{"spritzName":"tidy-otter","cwd":"/workspace/repo"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/acp/conversations", body)
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Spritz-User-Id", "user-1")
 	rec := httptest.NewRecorder()
-
 	e.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	var payload struct {
@@ -241,28 +172,95 @@ func TestEnsureACPConversationCreatesConversationAfterProbe(t *testing.T) {
 		Data   spritzv1.SpritzConversation `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("failed to decode ensure conversation response: %v", err)
+		t.Fatalf("failed to decode conversation response: %v", err)
 	}
-	if payload.Data.Spec.CWD != "/home/dev" {
-		t.Fatalf("expected default ACP cwd /home/dev, got %q", payload.Data.Spec.CWD)
+	if payload.Data.Name == "tidy-otter" || !strings.HasPrefix(payload.Data.Name, "tidy-otter-") {
+		t.Fatalf("expected generated conversation id with tidy-otter prefix, got %q", payload.Data.Name)
 	}
-	if payload.Data.Spec.AgentInfo == nil || payload.Data.Spec.AgentInfo.Title != "Agent Reef" {
-		t.Fatalf("expected agent info from ACP initialize, got %#v", payload.Data.Spec.AgentInfo)
+	if payload.Data.Spec.SpritzName != "tidy-otter" {
+		t.Fatalf("expected conversation to target tidy-otter, got %q", payload.Data.Spec.SpritzName)
 	}
-	if payload.Data.Spec.Capabilities == nil || !payload.Data.Spec.Capabilities.LoadSession {
-		t.Fatalf("expected ACP capabilities to be stored, got %#v", payload.Data.Spec.Capabilities)
+	if payload.Data.Spec.CWD != "/workspace/repo" {
+		t.Fatalf("expected cwd /workspace/repo, got %q", payload.Data.Spec.CWD)
+	}
+	if payload.Data.Spec.Title != defaultACPConversationTitle {
+		t.Fatalf("expected default title %q, got %q", defaultACPConversationTitle, payload.Data.Spec.Title)
+	}
+	if payload.Data.Labels[acpConversationSpritzLabelKey] != "tidy-otter" {
+		t.Fatalf("expected spritz label tidy-otter, got %#v", payload.Data.Labels)
 	}
 
-	storedConversation := &spritzv1.SpritzConversation{}
-	if err := s.client.Get(context.Background(), clientKey("spritz-test", "tidy-otter"), storedConversation); err != nil {
+	stored := &spritzv1.SpritzConversation{}
+	if err := s.client.Get(context.Background(), clientKey("spritz-test", payload.Data.Name), stored); err != nil {
 		t.Fatalf("expected conversation resource to be persisted: %v", err)
 	}
+}
 
-	storedSpritz := &spritzv1.Spritz{}
-	if err := s.client.Get(context.Background(), clientKey("spritz-test", "tidy-otter"), storedSpritz); err != nil {
-		t.Fatalf("expected spritz resource to remain available: %v", err)
+func TestListAndPatchACPConversationsByID(t *testing.T) {
+	now := metav1.Now()
+	older := metav1.NewTime(now.Add(-time.Hour))
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	newerConv := conversationFor("tidy-otter-new", "tidy-otter", "user-1", "Latest", now)
+	olderConv := conversationFor("tidy-otter-old", "tidy-otter", "user-1", "Earlier", older)
+	otherOwner := conversationFor("other-owner", "tidy-otter", "user-2", "Hidden", now)
+	otherSpritz := conversationFor("other-spritz", "brisk-fox", "user-1", "Wrong spritz", now)
+
+	s := newACPTestServer(t, spritz, newerConv, olderConv, otherOwner, otherSpritz)
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.GET("/api/acp/conversations", s.listACPConversations)
+	secured.PATCH("/api/acp/conversations/:id", s.updateACPConversation)
+	secured.GET("/api/acp/conversations/:id", s.getACPConversation)
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/acp/conversations?spritz=tidy-otter", nil)
+	listReq.Header.Set("X-Spritz-User-Id", "user-1")
+	listRec := httptest.NewRecorder()
+	e.ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected status 200 from list, got %d: %s", listRec.Code, listRec.Body.String())
 	}
-	if storedSpritz.Status.ACP == nil || storedSpritz.Status.ACP.State != "ready" {
-		t.Fatalf("expected ACP status to be stored on spritz, got %#v", storedSpritz.Status.ACP)
+
+	var listPayload struct {
+		Status string `json:"status"`
+		Data   struct {
+			Items []spritzv1.SpritzConversation `json:"items"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listPayload); err != nil {
+		t.Fatalf("failed to decode list response: %v", err)
+	}
+	if len(listPayload.Data.Items) != 2 {
+		t.Fatalf("expected 2 visible conversations, got %d", len(listPayload.Data.Items))
+	}
+	if listPayload.Data.Items[0].Name != newerConv.Name || listPayload.Data.Items[1].Name != olderConv.Name {
+		t.Fatalf("expected newest conversation first, got %q then %q", listPayload.Data.Items[0].Name, listPayload.Data.Items[1].Name)
+	}
+
+	patchReq := httptest.NewRequest(http.MethodPatch, "/api/acp/conversations/"+newerConv.Name, strings.NewReader(`{"title":"Renamed","sessionId":"sess-new","cwd":"/workspace/app"}`))
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchReq.Header.Set("X-Spritz-User-Id", "user-1")
+	patchRec := httptest.NewRecorder()
+	e.ServeHTTP(patchRec, patchReq)
+	if patchRec.Code != http.StatusOK {
+		t.Fatalf("expected status 200 from patch, got %d: %s", patchRec.Code, patchRec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/acp/conversations/"+newerConv.Name, nil)
+	getReq.Header.Set("X-Spritz-User-Id", "user-1")
+	getRec := httptest.NewRecorder()
+	e.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("expected status 200 from get, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+
+	var getPayload struct {
+		Status string                      `json:"status"`
+		Data   spritzv1.SpritzConversation `json:"data"`
+	}
+	if err := json.Unmarshal(getRec.Body.Bytes(), &getPayload); err != nil {
+		t.Fatalf("failed to decode get response: %v", err)
+	}
+	if getPayload.Data.Spec.Title != "Renamed" || getPayload.Data.Spec.SessionID != "sess-new" || getPayload.Data.Spec.CWD != "/workspace/app" {
+		t.Fatalf("expected patched conversation fields, got %#v", getPayload.Data.Spec)
 	}
 }

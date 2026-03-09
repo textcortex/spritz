@@ -7,6 +7,15 @@ global:
       enabled: true
       secretName: ""
 
+acp:
+  enabled: true
+  port: 2529
+  path: /
+  probeTimeout: 3s
+  refreshInterval: 30s
+  networkPolicy:
+    enabled: false
+
 authGateway:
   enabled: false
   provider: oauth2-proxy
@@ -161,16 +170,7 @@ api:
     command: "bash -l"
     origins: []
   acp:
-    enabled: true
-    port: 2529
-    path: /
-    probeTimeout: 3s
-    probeCacheTTL: 30s
     origins: []
-    clientInfo:
-      name: spritz-ui
-      title: Spritz ACP UI
-      version: 1.0.0
   sshGateway:
     enabled: false
     port: 2222

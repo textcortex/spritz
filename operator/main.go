@@ -50,7 +50,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controllers.SpritzReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}).SetupWithManager(mgr); err != nil {
+	if err := (&controllers.SpritzReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		ACP:    controllers.NewACPProbeConfigFromEnv(),
+	}).SetupWithManager(mgr); err != nil {
 		logger.Error(err, "unable to create controller")
 		os.Exit(1)
 	}

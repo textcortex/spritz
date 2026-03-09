@@ -103,6 +103,15 @@ operator:
 api:
   sharedMounts:
     enabled: false
+
+acp:
+  enabled: true
+  port: 2529
+  path: /
+  probeTimeout: 3s
+  refreshInterval: 30s
+  networkPolicy:
+    enabled: false
 ```
 
 ## Recommended Production Auth Profile
@@ -221,6 +230,14 @@ Required behavior:
 - Default mode is ephemeral home storage (`EmptyDir` at `/home/dev`).
 - Shared cross-devbox live sync is disabled by default.
 - Shared mounts remain available as an opt-in advanced feature.
+
+## ACP Defaults
+
+- ACP is enabled by default.
+- Every workspace reserves internal port `2529` for ACP over WebSocket.
+- The operator probes ACP and writes canonical readiness to `status.acp`.
+- The browser connects to ACP only through `spritz-api`.
+- ACP network restriction is available through `acp.networkPolicy.enabled`.
 
 Rationale:
 

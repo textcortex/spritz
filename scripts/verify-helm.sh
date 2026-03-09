@@ -63,11 +63,13 @@ expect_not_contains() {
 default_render="${tmp_dir}/default.yaml"
 auth_render="${tmp_dir}/auth.yaml"
 auth_annotations_render="${tmp_dir}/auth-annotations.yaml"
+acp_network_policy_render="${tmp_dir}/acp-network-policy.yaml"
 
 helm lint "${chart_dir}"
 helm template spritz "${chart_dir}" >"${default_render}"
 helm template spritz "${chart_dir}" -f "${example_values}" >"${auth_render}"
 helm template spritz "${chart_dir}" -f "${example_values}" --set authGateway.ingress.annotations.authonly=enabled >"${auth_annotations_render}"
+helm template spritz "${chart_dir}" --set acp.networkPolicy.enabled=true >"${acp_network_policy_render}"
 
 expect_contains "${default_render}" "name: spritz-web" "spritz-web ingress in default render"
 expect_not_contains "${default_render}" "name: spritz-auth" "spritz-auth ingress when auth gateway is disabled"
@@ -78,6 +80,8 @@ expect_contains "${auth_render}" "nginx.ingress.kubernetes.io/auth-url:" "nginx 
 expect_contains "${auth_render}" "nginx.ingress.kubernetes.io/auth-signin:" "nginx auth-signin annotation in auth render"
 expect_contains "${auth_render}" "nginx.ingress.kubernetes.io/configuration-snippet:" "identity header injection snippet in auth render"
 expect_contains "${auth_annotations_render}" "authonly: enabled" "auth ingress custom annotations in auth render"
+expect_contains "${acp_network_policy_render}" "kind: NetworkPolicy" "ACP network policy when enabled"
+expect_contains "${acp_network_policy_render}" "name: spritz-acp" "ACP network policy name when enabled"
 
 expect_failure \
   "api.auth.mode must be header or auto when authGateway.enabled=true" \

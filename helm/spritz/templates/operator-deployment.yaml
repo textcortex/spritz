@@ -49,6 +49,16 @@ spec:
             - name: SPRITZ_HOME_SIZE_LIMIT
               value: {{ .Values.operator.homeSizeLimit | quote }}
             {{- end }}
+            - name: SPRITZ_ACP_ENABLED
+              value: {{ .Values.acp.enabled | quote }}
+            - name: SPRITZ_ACP_PORT
+              value: {{ .Values.acp.port | quote }}
+            - name: SPRITZ_ACP_PATH
+              value: {{ .Values.acp.path | quote }}
+            - name: SPRITZ_ACP_PROBE_TIMEOUT
+              value: {{ .Values.acp.probeTimeout | quote }}
+            - name: SPRITZ_ACP_REFRESH_INTERVAL
+              value: {{ .Values.acp.refreshInterval | quote }}
             {{- if and .Values.operator.sharedMounts .Values.operator.sharedMounts.enabled }}
             - name: SPRITZ_SHARED_MOUNTS
               value: {{ toJson .Values.operator.sharedMounts.mounts | quote }}

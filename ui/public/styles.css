@@ -196,7 +196,7 @@ button.ghost {
 
 .acp-card {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 280px 280px 1fr;
   gap: 20px;
   min-height: 70vh;
   padding: 0;
@@ -204,6 +204,13 @@ button.ghost {
 }
 
 .acp-sidebar {
+  border-right: 1px solid #e5e8ec;
+  display: flex;
+  flex-direction: column;
+  min-height: 70vh;
+}
+
+.acp-conversation-sidebar {
   border-right: 1px solid #e5e8ec;
   display: flex;
   flex-direction: column;
@@ -243,6 +250,14 @@ button.ghost {
   overflow: auto;
 }
 
+.acp-conversation-list {
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  gap: 8px;
+  overflow: auto;
+}
+
 .acp-agent-item {
   border: 1px solid #e5e8ec;
   border-radius: 16px;
@@ -259,11 +274,28 @@ button.ghost {
   background: #f3f5f7;
 }
 
+.acp-conversation-item {
+  border: 1px solid #e5e8ec;
+  border-radius: 16px;
+  background: white;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+
+.acp-conversation-item[data-active="true"] {
+  border-color: #2e3a46;
+  background: #f3f5f7;
+}
+
 .acp-agent-item strong {
   font-size: 15px;
 }
 
-.acp-agent-item small {
+.acp-agent-item small,
+.acp-conversation-item small {
   opacity: 0.65;
 }
 
@@ -465,6 +497,12 @@ button.ghost {
   }
 
   .acp-sidebar {
+    min-height: auto;
+    border-right: 0;
+    border-bottom: 1px solid #e5e8ec;
+  }
+
+  .acp-conversation-sidebar {
     min-height: auto;
     border-right: 0;
     border-bottom: 1px solid #e5e8ec;

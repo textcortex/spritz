@@ -195,9 +195,10 @@ func (s *server) registerRoutes(e *echo.Echo) {
 	secured.DELETE("/spritzes/:name", s.deleteSpritz)
 	secured.PATCH("/spritzes/:name/user-config", s.updateUserConfig)
 	secured.GET("/acp/agents", s.listACPAgents)
-	secured.GET("/acp/conversations/:name", s.getACPConversation)
-	secured.PUT("/acp/conversations/:name", s.ensureACPConversation)
-	secured.PATCH("/acp/conversations/:name", s.updateACPConversation)
+	secured.GET("/acp/conversations", s.listACPConversations)
+	secured.POST("/acp/conversations", s.createACPConversation)
+	secured.GET("/acp/conversations/:id", s.getACPConversation)
+	secured.PATCH("/acp/conversations/:id", s.updateACPConversation)
 	secured.GET("/acp/connect/:name", s.openACPConnection)
 	secured.POST("/spritzes/:name/ssh", s.mintSSHCert)
 	if s.terminal.enabled {

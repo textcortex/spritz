@@ -1,0 +1,31 @@
+{{- if .Values.acp.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: spritz-acp
+  namespace: {{ .Values.spritz.namespace }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: spritz.sh/name
+        operator: Exists
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.api.namespace | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: spritz-api
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.operator.namespace | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: spritz-operator
+      ports:
+        - protocol: TCP
+          port: {{ .Values.acp.port }}
+{{- end }}

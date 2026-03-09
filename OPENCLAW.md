@@ -6,6 +6,8 @@ This file is the single source of truth for OpenClaw-related behavior in this re
 
 Spritz supports running OpenClaw as a per-devbox application surface.
 Each devbox runs its own OpenClaw process and is opened through its own `/w/{name}` route.
+When OpenClaw is used as an ACP backend inside Spritz, it should also expose ACP on
+the reserved internal port `2529`.
 
 ## Where OpenClaw Lives in This Repo
 
@@ -36,6 +38,23 @@ The OpenClaw example entrypoint does the following:
 5. Auto-starts OpenClaw when command is default (`sleep infinity`), unless `OPENCLAW_AUTO_START=false`.
 
 Key implication: direct `/w/{name}` access with `bind=lan` expects real gateway auth.
+
+## ACP Contract In Spritz
+
+Spritz treats ACP as backend-agnostic.
+
+For OpenClaw to appear in the Spritz ACP chat UI, the workspace must answer ACP on:
+
+- port `2529`
+- WebSocket path `/`
+
+Spritz will then:
+
+- discover the agent from the operator by sending ACP `initialize`
+- surface it in `status.acp`
+- proxy browser ACP traffic through `spritz-api`
+
+This ACP path is separate from OpenClaw's dashboard and gateway UI.
 
 ## Auth Modes and What to Use
 
