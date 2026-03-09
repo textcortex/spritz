@@ -37,8 +37,9 @@ The OpenClaw example entrypoint does the following:
 4. Ensures `OPENCLAW_GATEWAY_TOKEN` exists (uses provided token or generates one).
 5. Writes the gateway token to a local token file for bridge use.
 6. Starts an image-owned ACP compatibility bridge on `0.0.0.0:2529` unless `OPENCLAW_ACP_ENABLED=false`.
-7. When gateway auth mode is `trusted-proxy`, automatically trusts loopback for the internal bridge
-   and injects the required trusted-proxy headers on the bridge's upstream gateway hop.
+7. When gateway auth mode is `trusted-proxy`, automatically trusts loopback for the internal bridge,
+   injects the required trusted-proxy headers on the bridge's upstream gateway hop, and rewrites the
+   upstream gateway `connect` handshake into a Control UI operator session without device identity.
 8. Auto-starts OpenClaw when command is default (`sleep infinity`), unless `OPENCLAW_AUTO_START=false`.
 
 Key implication: direct `/w/{name}` access with `bind=lan` expects real gateway auth.
@@ -67,8 +68,8 @@ Today the example image satisfies that contract with a compatibility bridge:
 - `openclaw acp` talks to the local OpenClaw gateway over loopback WebSocket
 - if gateway auth mode is `trusted-proxy`, the bridge uses a loopback-only header injector so the
   internal ACP hop satisfies the same trusted-proxy contract as the browser route
-- in trusted-proxy mode, the image switches the ACP subprocess to a Control UI-style operator
-  profile without device identity so OpenClaw does not force pairing for the internal ACP bridge
+- in trusted-proxy mode, the bridge rewrites the gateway `connect` frame to a Control UI-style
+  operator profile without device identity so OpenClaw does not force pairing for the internal ACP bridge
 
 This keeps the Spritz side backend-agnostic while OpenClaw remains free to add native socket ACP
 later.

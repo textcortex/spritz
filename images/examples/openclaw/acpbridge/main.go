@@ -27,13 +27,14 @@ const (
 )
 
 type bridgeConfig struct {
-	ListenAddr     string
-	Path           string
-	Command        string
-	Args           []string
-	Env            []string
-	GatewayURL     string
-	GatewayHeaders http.Header
+	ListenAddr            string
+	Path                  string
+	Command               string
+	Args                  []string
+	Env                   []string
+	GatewayURL            string
+	GatewayHeaders        http.Header
+	TrustedProxyControlUI bool
 }
 
 type pumpResult struct {
@@ -116,15 +117,20 @@ func configFromEnv() (bridgeConfig, error) {
 	if err != nil {
 		return bridgeConfig{}, err
 	}
+	trustedProxyControlUI := parseBoolEnv(
+		"SPRITZ_OPENCLAW_ACP_USE_CONTROL_UI_BRIDGE",
+		len(gatewayHeaders) > 0,
+	)
 
 	return bridgeConfig{
-		ListenAddr:     listenAddr,
-		Path:           path,
-		Command:        command,
-		Args:           args,
-		Env:            extraEnv,
-		GatewayURL:     gatewayURL,
-		GatewayHeaders: gatewayHeaders,
+		ListenAddr:            listenAddr,
+		Path:                  path,
+		Command:               command,
+		Args:                  args,
+		Env:                   extraEnv,
+		GatewayURL:            gatewayURL,
+		GatewayHeaders:        gatewayHeaders,
+		TrustedProxyControlUI: trustedProxyControlUI,
 	}, nil
 }
 
@@ -197,7 +203,13 @@ func prepareBridgeRuntime(ctx context.Context, cfg bridgeConfig, logger *log.Log
 	if len(cfg.GatewayHeaders) == 0 {
 		return cfg, func() {}, nil
 	}
-	proxyURL, shutdown, err := startGatewayProxy(ctx, cfg.GatewayURL, cfg.GatewayHeaders, logger)
+	proxyURL, shutdown, err := startGatewayProxy(
+		ctx,
+		cfg.GatewayURL,
+		cfg.GatewayHeaders,
+		cfg.TrustedProxyControlUI,
+		logger,
+	)
 	if err != nil {
 		return bridgeConfig{}, nil, err
 	}
@@ -217,7 +229,13 @@ func replaceGatewayURLArg(args []string, newURL string) []string {
 	return replaced
 }
 
-func startGatewayProxy(ctx context.Context, upstreamURL string, headers http.Header, logger *log.Logger) (string, func(), error) {
+func startGatewayProxy(
+	ctx context.Context,
+	upstreamURL string,
+	headers http.Header,
+	trustedProxyControlUI bool,
+	logger *log.Logger,
+) (string, func(), error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", nil, err
@@ -251,7 +269,11 @@ func startGatewayProxy(ctx context.Context, upstreamURL string, headers http.Hea
 			}()
 
 			dialer := websocket.Dialer{}
-			upstreamConn, _, err := dialer.DialContext(r.Context(), upstreamURL, headers)
+			upstreamConn, _, err := dialer.DialContext(
+				r.Context(),
+				upstreamURL,
+				normalizeGatewayProxyHeaders(headers, trustedProxyControlUI),
+			)
 			if err != nil {
 				logger.Printf("gateway proxy upstream dial failed: %v", err)
 				_ = clientConn.WriteControl(
@@ -267,10 +289,14 @@ func startGatewayProxy(ctx context.Context, upstreamURL string, headers http.Hea
 
 			proxyErrCh := make(chan error, 2)
 			go func() {
-				proxyErrCh <- proxyWebSocketMessages(upstreamConn, clientConn)
+				proxyErrCh <- proxyWebSocketMessages(
+					upstreamConn,
+					clientConn,
+					buildUpstreamFrameTransformer(trustedProxyControlUI),
+				)
 			}()
 			go func() {
-				proxyErrCh <- proxyWebSocketMessages(clientConn, upstreamConn)
+				proxyErrCh <- proxyWebSocketMessages(clientConn, upstreamConn, nil)
 			}()
 			err = <-proxyErrCh
 			if err != nil && !isNormalWebSocketClosure(err) {
@@ -298,11 +324,82 @@ func startGatewayProxy(ctx context.Context, upstreamURL string, headers http.Hea
 	}, nil
 }
 
-func proxyWebSocketMessages(dst *websocket.Conn, src *websocket.Conn) error {
+type websocketFrameTransformer func(messageType int, payload []byte) (int, []byte, error)
+
+func normalizeGatewayProxyHeaders(headers http.Header, trustedProxyControlUI bool) http.Header {
+	if len(headers) == 0 {
+		return nil
+	}
+	normalized := headers.Clone()
+	if !trustedProxyControlUI || normalized.Get("Origin") != "" {
+		return normalized
+	}
+	scheme := strings.TrimSpace(normalized.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		scheme = "https"
+	}
+	host := strings.TrimSpace(normalized.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = "localhost"
+	}
+	normalized.Set("Origin", scheme+"://"+host)
+	return normalized
+}
+
+func buildUpstreamFrameTransformer(trustedProxyControlUI bool) websocketFrameTransformer {
+	if !trustedProxyControlUI {
+		return nil
+	}
+	return rewriteConnectFrameAsTrustedProxyControlUI
+}
+
+func rewriteConnectFrameAsTrustedProxyControlUI(messageType int, payload []byte) (int, []byte, error) {
+	if messageType != websocket.TextMessage && messageType != websocket.BinaryMessage {
+		return messageType, payload, nil
+	}
+
+	frame := map[string]any{}
+	if err := json.Unmarshal(payload, &frame); err != nil {
+		return messageType, payload, nil
+	}
+	if frame["type"] != "req" || frame["method"] != "connect" {
+		return messageType, payload, nil
+	}
+
+	params, ok := frame["params"].(map[string]any)
+	if !ok {
+		return messageType, payload, nil
+	}
+	client, ok := params["client"].(map[string]any)
+	if !ok {
+		return messageType, payload, nil
+	}
+
+	client["id"] = "openclaw-control-ui"
+	client["mode"] = "webchat"
+	params["client"] = client
+	delete(params, "auth")
+	delete(params, "device")
+	frame["params"] = params
+
+	rewritten, err := json.Marshal(frame)
+	if err != nil {
+		return messageType, nil, err
+	}
+	return messageType, rewritten, nil
+}
+
+func proxyWebSocketMessages(dst *websocket.Conn, src *websocket.Conn, transform websocketFrameTransformer) error {
 	for {
 		messageType, payload, err := src.ReadMessage()
 		if err != nil {
 			return err
+		}
+		if transform != nil {
+			messageType, payload, err = transform(messageType, payload)
+			if err != nil {
+				return err
+			}
 		}
 		if err := dst.WriteMessage(messageType, payload); err != nil {
 			return err
