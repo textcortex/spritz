@@ -598,6 +598,58 @@ func TestBootstrapACPConversationRepairsMissingSessionExplicitly(t *testing.T) {
 	}
 }
 
+func TestBootstrapACPConversationRepairsResourceNotFoundSession(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	conversation := conversationFor("tidy-otter-conv", "tidy-otter", "user-1", "Latest", metav1.Now())
+	conversation.Spec.SessionID = "session-stale"
+	fakeACP := newFakeACPBootstrapServer(t, fakeACPBootstrapServerOptions{
+		LoadError: &acpBootstrapJSONRPCError{
+			Code:    -32002,
+			Message: "Resource not found: 68eaf10f-a6b2-495c-8dd5-958707901a31",
+			Data:    json.RawMessage(`{"sessionId":"session-stale"}`),
+		},
+		NewSessionID: "session-fresh",
+	})
+
+	s := newACPTestServer(t, spritz, conversation)
+	s.acp.workspaceURL = func(namespace, name string) string { return fakeACP.url }
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/acp/conversations/:id/bootstrap", s.bootstrapACPConversation)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/acp/conversations/"+conversation.Name+"/bootstrap", nil)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Status string               `json:"status"`
+		Data   acpBootstrapResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode bootstrap response: %v", err)
+	}
+	if payload.Data.EffectiveSessionID != "session-fresh" || payload.Data.Loaded || !payload.Data.Replaced || payload.Data.BindingState != "replaced" {
+		t.Fatalf("unexpected bootstrap response: %#v", payload.Data)
+	}
+
+	stored := &spritzv1.SpritzConversation{}
+	if err := s.client.Get(context.Background(), clientKey("spritz-test", conversation.Name), stored); err != nil {
+		t.Fatalf("failed to reload conversation: %v", err)
+	}
+	if stored.Spec.SessionID != "session-fresh" {
+		t.Fatalf("expected replaced session id, got %q", stored.Spec.SessionID)
+	}
+	if stored.Status.BindingState != "replaced" || stored.Status.BoundSessionID != "session-fresh" || stored.Status.PreviousSessionID != "session-stale" {
+		t.Fatalf("expected replaced binding status, got %#v", stored.Status)
+	}
+}
+
 func TestBootstrapACPConversationUsesDefaultNamespaceWhenRequestOmitsIt(t *testing.T) {
 	spritz := readyACPSpritz("tidy-otter", "user-1")
 	spritz.Namespace = "default"

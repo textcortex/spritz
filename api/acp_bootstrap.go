@@ -92,6 +92,12 @@ func (e *acpBootstrapRPCError) Error() string {
 }
 
 func (e *acpBootstrapRPCError) missingSession() bool {
+	if e == nil {
+		return false
+	}
+	if e.Code == -32002 {
+		return true
+	}
 	message := strings.ToLower(e.Error())
 	return strings.Contains(message, "session") && strings.Contains(message, "not found")
 }
