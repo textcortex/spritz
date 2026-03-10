@@ -48,44 +48,6 @@ function normalizeBridgeToken(value, fallback) {
   return normalized || fallback;
 }
 
-function readMetaString(record, keys) {
-  for (const key of keys) {
-    const value = record?.[key];
-    if (typeof value === "string" && value.trim()) {
-      return value.trim();
-    }
-  }
-  return undefined;
-}
-
-function readMetaBool(record, keys) {
-  for (const key of keys) {
-    const value = record?.[key];
-    if (typeof value === "boolean") {
-      return value;
-    }
-    if (typeof value === "string") {
-      const normalized = value.trim().toLowerCase();
-      if (normalized === "true") return true;
-      if (normalized === "false") return false;
-    }
-  }
-  return undefined;
-}
-
-function parseSessionMeta(meta) {
-  if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
-    return {};
-  }
-  return {
-    sessionKey: readMetaString(meta, ["sessionKey", "session", "key"]),
-    sessionLabel: readMetaString(meta, ["sessionLabel", "label"]),
-    resetSession: readMetaBool(meta, ["resetSession", "reset"]),
-    requireExisting: readMetaBool(meta, ["requireExistingSession", "requireExisting"]),
-    prefixCwd: readMetaBool(meta, ["prefixCwd"]),
-  };
-}
-
 function normalizeHistoryContent(content) {
   if (Array.isArray(content)) {
     return content.filter((item) => item && typeof item === "object");
@@ -288,15 +250,9 @@ export function createSpritzAcpGatewayAgentClass(AcpGatewayAgent, env = process.
       this.enforceSessionCreateRateLimit("newSession");
 
       const sessionId = randomUUID();
-      const meta = parseSessionMeta(params?._meta);
-      const sessionKey = await this.resolveSessionKeyFromMeta({
-        meta,
-        fallbackKey: resolveBridgeFallbackSessionKey(sessionId, env),
-      });
-
       const session = this.sessionStore.createSession({
         sessionId,
-        sessionKey,
+        sessionKey: resolveBridgeFallbackSessionKey(sessionId, env),
         cwd: params.cwd,
       });
       this.log(`newSession: ${session.sessionId} -> ${session.sessionKey}`);
@@ -312,15 +268,9 @@ export function createSpritzAcpGatewayAgentClass(AcpGatewayAgent, env = process.
         this.enforceSessionCreateRateLimit("loadSession");
       }
 
-      const meta = parseSessionMeta(params?._meta);
-      const sessionKey = await this.resolveSessionKeyFromMeta({
-        meta,
-        fallbackKey: resolveBridgeFallbackSessionKey(params.sessionId, env),
-      });
-
       const session = this.sessionStore.createSession({
         sessionId: params.sessionId,
-        sessionKey,
+        sessionKey: resolveBridgeFallbackSessionKey(params.sessionId, env),
         cwd: params.cwd,
       });
       this.log(`loadSession: ${session.sessionId} -> ${session.sessionKey}`);

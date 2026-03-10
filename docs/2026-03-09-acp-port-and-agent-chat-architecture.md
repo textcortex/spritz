@@ -134,8 +134,11 @@ Each thread maps to one `SpritzConversation` and one ACP session lifecycle.
 
 On reconnect:
 
-- if `sessionId` exists and the agent supports `session/load`, the UI reloads the session
-- otherwise it creates a new ACP session and patches the conversation metadata
+- the UI first asks Spritz API to bootstrap the selected conversation
+- Spritz API loads the stored ACP session or explicitly repairs it if the
+  backend confirms that the session is missing
+- the UI then connects through the ACP bridge using the confirmed conversation
+  binding
 
 ## Security model
 

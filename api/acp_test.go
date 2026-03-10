@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -30,7 +32,7 @@ func newACPTestScheme(t *testing.T) *runtime.Scheme {
 func newACPTestServer(t *testing.T, objects ...client.Object) *server {
 	t.Helper()
 	scheme := newACPTestScheme(t)
-	builder := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&spritzv1.Spritz{})
+	builder := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&spritzv1.Spritz{}, &spritzv1.SpritzConversation{})
 	if len(objects) > 0 {
 		builder = builder.WithObjects(objects...)
 	}
@@ -44,11 +46,136 @@ func newACPTestServer(t *testing.T, objects ...client.Object) *server {
 		},
 		internalAuth: internalAuthConfig{enabled: false},
 		acp: acpConfig{
-			enabled: true,
-			port:    spritzv1.DefaultACPPort,
-			path:    spritzv1.DefaultACPPath,
+			enabled:              true,
+			port:                 spritzv1.DefaultACPPort,
+			path:                 spritzv1.DefaultACPPath,
+			bootstrapDialTimeout: 5 * time.Second,
 		},
 	}
+}
+
+type fakeACPBootstrapServerOptions struct {
+	LoadError         *acpBootstrapJSONRPCError
+	NewSessionID      string
+	LoadReplayUpdates []map[string]any
+}
+
+type fakeACPBootstrapServer struct {
+	url      string
+	server   *httptest.Server
+	mu       sync.Mutex
+	loadIDs  []string
+	newCalls int
+}
+
+func newFakeACPBootstrapServer(t *testing.T, options fakeACPBootstrapServerOptions) *fakeACPBootstrapServer {
+	t.Helper()
+	fakeServer := &fakeACPBootstrapServer{}
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("failed to upgrade websocket: %v", err)
+		}
+		defer func() {
+			_ = conn.Close()
+		}()
+		for {
+			_, payload, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var message struct {
+				ID     any             `json:"id,omitempty"`
+				Method string          `json:"method,omitempty"`
+				Params json.RawMessage `json:"params,omitempty"`
+			}
+			if err := json.Unmarshal(payload, &message); err != nil {
+				t.Fatalf("failed to decode ACP message: %v", err)
+			}
+			switch message.Method {
+			case "initialize":
+				if err := conn.WriteJSON(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      message.ID,
+					"result": map[string]any{
+						"protocolVersion": 1,
+						"agentCapabilities": map[string]any{
+							"loadSession": true,
+						},
+						"agentInfo": map[string]any{
+							"name":    "openclaw-gateway",
+							"title":   "OpenClaw ACP Gateway",
+							"version": "2026.3.8",
+						},
+					},
+				}); err != nil {
+					t.Fatalf("failed to write initialize result: %v", err)
+				}
+			case "session/load":
+				var params struct {
+					SessionID string `json:"sessionId"`
+				}
+				if err := json.Unmarshal(message.Params, &params); err != nil {
+					t.Fatalf("failed to decode load params: %v", err)
+				}
+				fakeServer.mu.Lock()
+				fakeServer.loadIDs = append(fakeServer.loadIDs, params.SessionID)
+				fakeServer.mu.Unlock()
+				if options.LoadError != nil {
+					if err := conn.WriteJSON(map[string]any{
+						"jsonrpc": "2.0",
+						"id":      message.ID,
+						"error":   options.LoadError,
+					}); err != nil {
+						t.Fatalf("failed to write load error: %v", err)
+					}
+					continue
+				}
+				for _, update := range options.LoadReplayUpdates {
+					if err := conn.WriteJSON(map[string]any{
+						"jsonrpc": "2.0",
+						"method":  "session/update",
+						"params": map[string]any{
+							"update": update,
+						},
+					}); err != nil {
+						t.Fatalf("failed to write replay update: %v", err)
+					}
+				}
+				if err := conn.WriteJSON(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      message.ID,
+					"result":  map[string]any{},
+				}); err != nil {
+					t.Fatalf("failed to write load result: %v", err)
+				}
+			case "session/new":
+				fakeServer.mu.Lock()
+				fakeServer.newCalls++
+				fakeServer.mu.Unlock()
+				sessionID := options.NewSessionID
+				if sessionID == "" {
+					sessionID = "session-fresh"
+				}
+				if err := conn.WriteJSON(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      message.ID,
+					"result": map[string]any{
+						"sessionId": sessionID,
+					},
+				}); err != nil {
+					t.Fatalf("failed to write new session result: %v", err)
+				}
+			default:
+				t.Fatalf("unexpected ACP method %q", message.Method)
+			}
+		}
+	}))
+	t.Cleanup(httpServer.Close)
+	fakeServer.server = httpServer
+	fakeServer.url = "ws" + strings.TrimPrefix(httpServer.URL, "http")
+	return fakeServer
 }
 
 func readyACPSpritz(name, owner string) *spritzv1.Spritz {
@@ -68,6 +195,9 @@ func readyACPSpritz(name, owner string) *spritzv1.Spritz {
 			Phase: "Ready",
 			ACP: &spritzv1.SpritzACPStatus{
 				State: "ready",
+				Capabilities: &spritzv1.SpritzACPCapabilities{
+					LoadSession: true,
+				},
 				Endpoint: &spritzv1.SpritzACPEndpoint{
 					Port: spritzv1.DefaultACPPort,
 					Path: spritzv1.DefaultACPPath,
@@ -106,6 +236,8 @@ func conversationFor(name, spritzName, owner, title string, createdAt metav1.Tim
 func TestListACPAgentsUsesStoredStatusOnly(t *testing.T) {
 	ready := readyACPSpritz("tidy-otter", "user-1")
 	ready.Status.ACP.LastProbeAt = nil
+	unsupported := readyACPSpritz("echo-harbor", "user-1")
+	unsupported.Status.ACP.Capabilities.LoadSession = false
 	ignored := &spritzv1.Spritz{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "slow-reef",
@@ -118,7 +250,7 @@ func TestListACPAgentsUsesStoredStatusOnly(t *testing.T) {
 		Status: spritzv1.SpritzStatus{Phase: "Provisioning"},
 	}
 
-	s := newACPTestServer(t, ready, ignored)
+	s := newACPTestServer(t, ready, unsupported, ignored)
 	e := echo.New()
 	secured := e.Group("", s.authMiddleware())
 	secured.GET("/api/acp/agents", s.listACPAgents)
@@ -196,6 +328,27 @@ func TestCreateACPConversationGeneratesIndependentConversationID(t *testing.T) {
 	}
 }
 
+func TestCreateACPConversationRejectsAgentsWithoutLoadSessionSupport(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	spritz.Status.ACP.Capabilities.LoadSession = false
+
+	s := newACPTestServer(t, spritz)
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/acp/conversations", s.createACPConversation)
+
+	body := strings.NewReader(`{"spritzName":"tidy-otter"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/acp/conversations", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected status 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestListAndPatchACPConversationsByID(t *testing.T) {
 	now := metav1.Now()
 	older := metav1.NewTime(now.Add(-time.Hour))
@@ -236,7 +389,7 @@ func TestListAndPatchACPConversationsByID(t *testing.T) {
 		t.Fatalf("expected newest conversation first, got %q then %q", listPayload.Data.Items[0].Name, listPayload.Data.Items[1].Name)
 	}
 
-	patchReq := httptest.NewRequest(http.MethodPatch, "/api/acp/conversations/"+newerConv.Name, strings.NewReader(`{"title":"Renamed","sessionId":"sess-new","cwd":"/workspace/app"}`))
+	patchReq := httptest.NewRequest(http.MethodPatch, "/api/acp/conversations/"+newerConv.Name, strings.NewReader(`{"title":"Renamed","cwd":"/workspace/app"}`))
 	patchReq.Header.Set("Content-Type", "application/json")
 	patchReq.Header.Set("X-Spritz-User-Id", "user-1")
 	patchRec := httptest.NewRecorder()
@@ -260,8 +413,28 @@ func TestListAndPatchACPConversationsByID(t *testing.T) {
 	if err := json.Unmarshal(getRec.Body.Bytes(), &getPayload); err != nil {
 		t.Fatalf("failed to decode get response: %v", err)
 	}
-	if getPayload.Data.Spec.Title != "Renamed" || getPayload.Data.Spec.SessionID != "sess-new" || getPayload.Data.Spec.CWD != "/workspace/app" {
+	if getPayload.Data.Spec.Title != "Renamed" || getPayload.Data.Spec.SessionID != "sess-tidy-otter-new" || getPayload.Data.Spec.CWD != "/workspace/app" {
 		t.Fatalf("expected patched conversation fields, got %#v", getPayload.Data.Spec)
+	}
+}
+
+func TestPatchACPConversationRejectsSessionIDMutation(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	conversation := conversationFor("tidy-otter-new", "tidy-otter", "user-1", "Latest", metav1.Now())
+
+	s := newACPTestServer(t, spritz, conversation)
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.PATCH("/api/acp/conversations/:id", s.updateACPConversation)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/acp/conversations/"+conversation.Name, strings.NewReader(`{"sessionId":"sess-new"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -299,5 +472,154 @@ func TestListACPAgentsUsesSpecOwnerWhenOwnerLabelMissing(t *testing.T) {
 	}
 	if payload.Data.Items[0].Spritz.Name != "tidy-otter" {
 		t.Fatalf("expected tidy-otter in ACP list, got %q", payload.Data.Items[0].Spritz.Name)
+	}
+}
+
+func TestBootstrapACPConversationLoadsStoredSessionWithoutMutatingIdentity(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	conversation := conversationFor("tidy-otter-conv", "tidy-otter", "user-1", "Latest", metav1.Now())
+	conversation.Spec.SessionID = "session-existing"
+	fakeACP := newFakeACPBootstrapServer(t, fakeACPBootstrapServerOptions{
+		LoadReplayUpdates: []map[string]any{
+			{"sessionUpdate": "user_message_chunk", "content": map[string]any{"type": "text", "text": "hello"}},
+			{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "world"}},
+		},
+	})
+
+	s := newACPTestServer(t, spritz, conversation)
+	s.acp.workspaceURL = func(namespace, name string) string { return fakeACP.url }
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/acp/conversations/:id/bootstrap", s.bootstrapACPConversation)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/acp/conversations/"+conversation.Name+"/bootstrap", nil)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Status string               `json:"status"`
+		Data   acpBootstrapResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode bootstrap response: %v", err)
+	}
+	if payload.Data.EffectiveSessionID != "session-existing" || !payload.Data.Loaded || payload.Data.Replaced {
+		t.Fatalf("unexpected bootstrap response: %#v", payload.Data)
+	}
+
+	stored := &spritzv1.SpritzConversation{}
+	if err := s.client.Get(context.Background(), clientKey("spritz-test", conversation.Name), stored); err != nil {
+		t.Fatalf("failed to reload conversation: %v", err)
+	}
+	if stored.Spec.SessionID != "session-existing" {
+		t.Fatalf("expected session id to remain unchanged, got %q", stored.Spec.SessionID)
+	}
+	if stored.Status.BindingState != "active" || stored.Status.BoundSessionID != "session-existing" {
+		t.Fatalf("expected active binding state, got %#v", stored.Status)
+	}
+	if stored.Status.LastReplayMessageCount != 2 {
+		t.Fatalf("expected 2 replay messages, got %d", stored.Status.LastReplayMessageCount)
+	}
+
+	fakeACP.mu.Lock()
+	defer fakeACP.mu.Unlock()
+	if len(fakeACP.loadIDs) != 1 || fakeACP.loadIDs[0] != "session-existing" {
+		t.Fatalf("expected session/load for session-existing, got %#v", fakeACP.loadIDs)
+	}
+	if fakeACP.newCalls != 0 {
+		t.Fatalf("expected no session/new calls, got %d", fakeACP.newCalls)
+	}
+}
+
+func TestBootstrapACPConversationRepairsMissingSessionExplicitly(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	conversation := conversationFor("tidy-otter-conv", "tidy-otter", "user-1", "Latest", metav1.Now())
+	conversation.Spec.SessionID = "session-stale"
+	fakeACP := newFakeACPBootstrapServer(t, fakeACPBootstrapServerOptions{
+		LoadError: &acpBootstrapJSONRPCError{
+			Code:    -32603,
+			Message: "Internal error",
+			Data:    json.RawMessage(`{"details":"Session session-stale not found"}`),
+		},
+		NewSessionID: "session-fresh",
+	})
+
+	s := newACPTestServer(t, spritz, conversation)
+	s.acp.workspaceURL = func(namespace, name string) string { return fakeACP.url }
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/acp/conversations/:id/bootstrap", s.bootstrapACPConversation)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/acp/conversations/"+conversation.Name+"/bootstrap", nil)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Status string               `json:"status"`
+		Data   acpBootstrapResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode bootstrap response: %v", err)
+	}
+	if payload.Data.EffectiveSessionID != "session-fresh" || payload.Data.Loaded || !payload.Data.Replaced || payload.Data.BindingState != "replaced" {
+		t.Fatalf("unexpected bootstrap response: %#v", payload.Data)
+	}
+
+	stored := &spritzv1.SpritzConversation{}
+	if err := s.client.Get(context.Background(), clientKey("spritz-test", conversation.Name), stored); err != nil {
+		t.Fatalf("failed to reload conversation: %v", err)
+	}
+	if stored.Spec.SessionID != "session-fresh" {
+		t.Fatalf("expected replaced session id, got %q", stored.Spec.SessionID)
+	}
+	if stored.Status.BindingState != "replaced" || stored.Status.BoundSessionID != "session-fresh" || stored.Status.PreviousSessionID != "session-stale" {
+		t.Fatalf("expected replaced binding status, got %#v", stored.Status)
+	}
+
+	fakeACP.mu.Lock()
+	defer fakeACP.mu.Unlock()
+	if len(fakeACP.loadIDs) != 1 || fakeACP.loadIDs[0] != "session-stale" {
+		t.Fatalf("expected session/load for session-stale, got %#v", fakeACP.loadIDs)
+	}
+	if fakeACP.newCalls != 1 {
+		t.Fatalf("expected one session/new call, got %d", fakeACP.newCalls)
+	}
+}
+
+func TestBootstrapACPConversationUsesDefaultNamespaceWhenRequestOmitsIt(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	spritz.Namespace = "default"
+	conversation := conversationFor("tidy-otter-conv", "tidy-otter", "user-1", "Latest", metav1.Now())
+	conversation.Namespace = "default"
+	conversation.Spec.SessionID = "session-existing"
+	fakeACP := newFakeACPBootstrapServer(t, fakeACPBootstrapServerOptions{})
+
+	s := newACPTestServer(t, spritz, conversation)
+	s.namespace = ""
+	s.acp.workspaceURL = func(namespace, name string) string { return fakeACP.url }
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/acp/conversations/:id/bootstrap", s.bootstrapACPConversation)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/acp/conversations/"+conversation.Name+"/bootstrap", nil)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

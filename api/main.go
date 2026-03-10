@@ -198,8 +198,9 @@ func (s *server) registerRoutes(e *echo.Echo) {
 	secured.GET("/acp/conversations", s.listACPConversations)
 	secured.POST("/acp/conversations", s.createACPConversation)
 	secured.GET("/acp/conversations/:id", s.getACPConversation)
+	secured.POST("/acp/conversations/:id/bootstrap", s.bootstrapACPConversation)
 	secured.PATCH("/acp/conversations/:id", s.updateACPConversation)
-	secured.GET("/acp/connect/:name", s.openACPConnection)
+	secured.GET("/acp/conversations/:id/connect", s.openACPConversationConnection)
 	secured.POST("/spritzes/:name/ssh", s.mintSSHCert)
 	if s.terminal.enabled {
 		secured.GET("/spritzes/:name/terminal", s.openTerminal)

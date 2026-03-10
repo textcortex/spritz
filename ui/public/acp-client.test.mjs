@@ -132,9 +132,8 @@ test('ACP client does not report ready or send prompts before bootstrap complete
   client.dispose();
 });
 
-test('ACP client recreates the session when session/load reports a missing session', async () => {
+test('ACP client surfaces missing sessions instead of recreating them client-side', async () => {
   const { createACPClient, sockets } = loadACPClientModule();
-  const seenSessionIds = [];
 
   const client = createACPClient({
     wsUrl: 'ws://example.test/acp',
@@ -145,9 +144,6 @@ test('ACP client recreates the session when session/load reports a missing sessi
       },
     },
     onStatus() {},
-    async onSessionId(sessionId) {
-      seenSessionIds.push(sessionId);
-    },
   });
 
   const startPromise = client.start();
@@ -178,20 +174,12 @@ test('ACP client recreates the session when session/load reports a missing sessi
       },
     },
   });
-  await new Promise((resolve) => setTimeout(resolve, 0));
 
-  assert.equal(socket.sent[2].method, 'session/new');
-  socket.receive({
-    jsonrpc: '2.0',
-    id: socket.sent[2].id,
-    result: {
-      sessionId: 'session-fresh',
-    },
+  await assert.rejects(startPromise, (error) => {
+    assert.equal(error.code, 'ACP_SESSION_MISSING');
+    assert.equal(error.message, 'Session session-stale not found');
+    return true;
   });
 
-  await startPromise;
-
-  assert.equal(client.isReady(), true);
-  assert.deepEqual(seenSessionIds, ['session-fresh']);
-  client.dispose();
+  assert.equal(socket.sent.length, 2);
 });

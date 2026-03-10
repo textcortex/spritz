@@ -51,10 +51,18 @@ function loadModules() {
     setTimeout,
     clearTimeout,
     SpritzACPClient: {
-      createACPClient() {
+      createACPClient({ conversation }) {
         return {
           start: async () => {},
-          isReady: () => false,
+          isReady: () => true,
+          getConversationId: () => conversation?.metadata?.name || '',
+          getSessionId: () => conversation?.spec?.sessionId || '',
+          matchesConversation(targetConversation) {
+            return (
+              this.getConversationId() === (targetConversation?.metadata?.name || '') &&
+              this.getSessionId() === (targetConversation?.spec?.sessionId || '')
+            );
+          },
           cancelPrompt() {},
           dispose() {},
         };
@@ -110,10 +118,22 @@ test('ACP page renders a two-pane shell with a single sidebar rail', async () =>
           items: [
             {
               metadata: { name: 'conv-1' },
-              spec: { title: 'Test conversation', sessionId: 'sess-1' },
+              spec: { title: 'Test conversation', sessionId: 'sess-1', cwd: '/home/dev' },
               status: { updatedAt: '2026-03-10T05:44:00Z' },
             },
           ],
+        };
+      }
+      if (path === '/acp/conversations/conv-1/bootstrap') {
+        return {
+          conversation: {
+            metadata: { name: 'conv-1' },
+            spec: { title: 'Test conversation', sessionId: 'sess-1', cwd: '/home/dev' },
+            status: { bindingState: 'active', boundSessionId: 'sess-1', updatedAt: '2026-03-10T05:44:00Z' },
+          },
+          effectiveSessionId: 'sess-1',
+          bindingState: 'active',
+          replaced: false,
         };
       }
       throw new Error(`unexpected path ${path}`);

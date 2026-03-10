@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	spritzv1 "spritz.sh/operator/api/v1"
 )
@@ -19,11 +20,13 @@ const (
 )
 
 type acpConfig struct {
-	enabled        bool
-	port           int32
-	path           string
-	allowedOrigins map[string]struct{}
-	workspaceURL   func(namespace, name string) string
+	enabled              bool
+	port                 int32
+	path                 string
+	allowedOrigins       map[string]struct{}
+	workspaceURL         func(namespace, name string) string
+	clientInfo           acpBootstrapClientInfo
+	bootstrapDialTimeout time.Duration
 }
 
 func newACPConfig() acpConfig {
@@ -39,6 +42,12 @@ func newACPConfig() acpConfig {
 		port:           int32(parseIntEnv("SPRITZ_ACP_PORT", int(spritzv1.DefaultACPPort))),
 		path:           path,
 		allowedOrigins: splitSet(os.Getenv("SPRITZ_ACP_ORIGINS")),
+		clientInfo: acpBootstrapClientInfo{
+			Name:    envOrDefault("SPRITZ_ACP_CLIENT_NAME", "spritz-api"),
+			Title:   envOrDefault("SPRITZ_ACP_CLIENT_TITLE", "Spritz ACP API"),
+			Version: envOrDefault("SPRITZ_ACP_CLIENT_VERSION", "1.0.0"),
+		},
+		bootstrapDialTimeout: parseDurationEnv("SPRITZ_ACP_BOOTSTRAP_DIAL_TIMEOUT", 5*time.Second),
 	}
 }
 

@@ -26,6 +26,9 @@ spec:
     - jsonPath: .spec.sessionId
       name: Session
       type: string
+    - jsonPath: .status.bindingState
+      name: Binding
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -116,9 +119,41 @@ spec:
             - owner
             - spritzName
             type: object
+          status:
+            description: SpritzConversationStatus stores observed ACP binding state
+              for a conversation.
+            properties:
+              bindingState:
+                enum:
+                - pending
+                - active
+                - missing
+                - replaced
+                - error
+                type: string
+              boundSessionId:
+                type: string
+              lastBoundAt:
+                format: date-time
+                type: string
+              lastError:
+                type: string
+              lastReplayAt:
+                format: date-time
+                type: string
+              lastReplayMessageCount:
+                format: int32
+                type: integer
+              previousSessionId:
+                type: string
+              updatedAt:
+                format: date-time
+                type: string
+            type: object
         required:
         - spec
         type: object
     served: true
     storage: true
-    subresources: {}
+    subresources:
+      status: {}

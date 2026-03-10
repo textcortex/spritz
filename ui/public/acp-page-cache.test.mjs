@@ -81,10 +81,18 @@ function loadModules(storageSeed = {}, createACPClient = null) {
     setTimeout,
     clearTimeout,
     SpritzACPClient: {
-      createACPClient: createACPClient || function defaultCreateACPClient() {
+      createACPClient: createACPClient || function defaultCreateACPClient({ conversation }) {
         return {
           start: async () => {},
           isReady: () => true,
+          getConversationId: () => conversation?.metadata?.name || '',
+          getSessionId: () => conversation?.spec?.sessionId || '',
+          matchesConversation(targetConversation) {
+            return (
+              this.getConversationId() === (targetConversation?.metadata?.name || '') &&
+              this.getSessionId() === (targetConversation?.spec?.sessionId || '')
+            );
+          },
           cancelPrompt() {},
           dispose() {},
         };
@@ -134,13 +142,21 @@ test('ACP page restores cached transcript when revisiting a conversation', async
         },
       }),
     },
-    () => ({
+    ({ conversation }) => ({
       start: async () => {
         await new Promise((resolve) => {
           releaseStart = resolve;
         });
       },
       isReady: () => true,
+      getConversationId: () => conversation?.metadata?.name || '',
+      getSessionId: () => conversation?.spec?.sessionId || '',
+      matchesConversation(targetConversation) {
+        return (
+          this.getConversationId() === (targetConversation?.metadata?.name || '') &&
+          this.getSessionId() === (targetConversation?.spec?.sessionId || '')
+        );
+      },
       cancelPrompt() {},
       dispose() {},
     }),
@@ -177,10 +193,22 @@ test('ACP page restores cached transcript when revisiting a conversation', async
           items: [
             {
               metadata: { name: 'conv-1' },
-              spec: { title: 'Cached conversation', sessionId: 'sess-1' },
+              spec: { title: 'Cached conversation', sessionId: 'sess-1', cwd: '/home/dev' },
               status: { updatedAt: '2026-03-10T06:00:00Z' },
             },
           ],
+        };
+      }
+      if (path === '/acp/conversations/conv-1/bootstrap') {
+        return {
+          conversation: {
+            metadata: { name: 'conv-1' },
+            spec: { title: 'Cached conversation', sessionId: 'sess-1', cwd: '/home/dev' },
+            status: { bindingState: 'active', boundSessionId: 'sess-1', updatedAt: '2026-03-10T06:00:00Z' },
+          },
+          effectiveSessionId: 'sess-1',
+          bindingState: 'active',
+          replaced: false,
         };
       }
       throw new Error(`unexpected path ${path}`);
@@ -230,12 +258,20 @@ test('ACP page replaces cached transcript with backend replay during bootstrap',
         },
       }),
     },
-    ({ onUpdate }) => ({
+    ({ onUpdate, conversation }) => ({
       start: async () => {
         onUpdate({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'Replay user message.' } });
         onUpdate({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Replay assistant reply.' } });
       },
       isReady: () => true,
+      getConversationId: () => conversation?.metadata?.name || '',
+      getSessionId: () => conversation?.spec?.sessionId || '',
+      matchesConversation(targetConversation) {
+        return (
+          this.getConversationId() === (targetConversation?.metadata?.name || '') &&
+          this.getSessionId() === (targetConversation?.spec?.sessionId || '')
+        );
+      },
       cancelPrompt() {},
       dispose() {},
     }),
@@ -272,10 +308,22 @@ test('ACP page replaces cached transcript with backend replay during bootstrap',
           items: [
             {
               metadata: { name: 'conv-1' },
-              spec: { title: 'Replay conversation', sessionId: 'sess-1' },
+              spec: { title: 'Replay conversation', sessionId: 'sess-1', cwd: '/home/dev' },
               status: { updatedAt: '2026-03-10T06:00:00Z' },
             },
           ],
+        };
+      }
+      if (path === '/acp/conversations/conv-1/bootstrap') {
+        return {
+          conversation: {
+            metadata: { name: 'conv-1' },
+            spec: { title: 'Replay conversation', sessionId: 'sess-1', cwd: '/home/dev' },
+            status: { bindingState: 'active', boundSessionId: 'sess-1', updatedAt: '2026-03-10T06:00:00Z' },
+          },
+          effectiveSessionId: 'sess-1',
+          bindingState: 'active',
+          replaced: false,
         };
       }
       throw new Error(`unexpected path ${path}`);
@@ -327,9 +375,17 @@ test('ACP page clears cached transcript when backend replay returns no transcrip
         },
       }),
     },
-    () => ({
+    ({ conversation }) => ({
       start: async () => {},
       isReady: () => true,
+      getConversationId: () => conversation?.metadata?.name || '',
+      getSessionId: () => conversation?.spec?.sessionId || '',
+      matchesConversation(targetConversation) {
+        return (
+          this.getConversationId() === (targetConversation?.metadata?.name || '') &&
+          this.getSessionId() === (targetConversation?.spec?.sessionId || '')
+        );
+      },
       cancelPrompt() {},
       dispose() {},
     }),
@@ -366,10 +422,22 @@ test('ACP page clears cached transcript when backend replay returns no transcrip
           items: [
             {
               metadata: { name: 'conv-1' },
-              spec: { title: 'Replay conversation', sessionId: 'sess-1' },
+              spec: { title: 'Replay conversation', sessionId: 'sess-1', cwd: '/home/dev' },
               status: { updatedAt: '2026-03-10T06:00:00Z' },
             },
           ],
+        };
+      }
+      if (path === '/acp/conversations/conv-1/bootstrap') {
+        return {
+          conversation: {
+            metadata: { name: 'conv-1' },
+            spec: { title: 'Replay conversation', sessionId: 'sess-1', cwd: '/home/dev' },
+            status: { bindingState: 'active', boundSessionId: 'sess-1', updatedAt: '2026-03-10T06:00:00Z' },
+          },
+          effectiveSessionId: 'sess-1',
+          bindingState: 'active',
+          replaced: false,
         };
       }
       throw new Error(`unexpected path ${path}`);

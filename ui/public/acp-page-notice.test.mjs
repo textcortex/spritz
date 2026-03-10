@@ -70,11 +70,19 @@ test('ACP client dispose errors do not surface as global notices', async () => {
   const noticeMessages = [];
   const toastMessages = [];
   const disposedError = Object.assign(new Error('ACP client disposed.'), { code: 'ACP_CLIENT_DISPOSED' });
-  const window = loadModules(() => ({
+  const window = loadModules(({ conversation }) => ({
     start: async () => {
       throw disposedError;
     },
     isReady: () => false,
+    getConversationId: () => conversation?.metadata?.name || '',
+    getSessionId: () => conversation?.spec?.sessionId || '',
+    matchesConversation(targetConversation) {
+      return (
+        this.getConversationId() === (targetConversation?.metadata?.name || '') &&
+        this.getSessionId() === (targetConversation?.spec?.sessionId || '')
+      );
+    },
     cancelPrompt() {},
     dispose() {},
   }));
@@ -109,10 +117,22 @@ test('ACP client dispose errors do not surface as global notices', async () => {
           items: [
             {
               metadata: { name: 'conv-1' },
-              spec: { title: 'Test conversation', sessionId: 'sess-1' },
+              spec: { title: 'Test conversation', sessionId: 'sess-1', cwd: '/home/dev' },
               status: { updatedAt: '2026-03-10T05:44:00Z' },
             },
           ],
+        };
+      }
+      if (path === '/acp/conversations/conv-1/bootstrap') {
+        return {
+          conversation: {
+            metadata: { name: 'conv-1' },
+            spec: { title: 'Test conversation', sessionId: 'sess-1', cwd: '/home/dev' },
+            status: { bindingState: 'active', boundSessionId: 'sess-1', updatedAt: '2026-03-10T05:44:00Z' },
+          },
+          effectiveSessionId: 'sess-1',
+          bindingState: 'active',
+          replaced: false,
         };
       }
       throw new Error(`unexpected path ${path}`);
@@ -146,11 +166,19 @@ test('ACP client dispose errors do not surface as global notices', async () => {
 test('ACP page surfaces real startup errors as toasts', async () => {
   const noticeMessages = [];
   const toastMessages = [];
-  const window = loadModules(() => ({
+  const window = loadModules(({ conversation }) => ({
     start: async () => {
       throw new Error('Failed to connect to ACP gateway.');
     },
     isReady: () => false,
+    getConversationId: () => conversation?.metadata?.name || '',
+    getSessionId: () => conversation?.spec?.sessionId || '',
+    matchesConversation(targetConversation) {
+      return (
+        this.getConversationId() === (targetConversation?.metadata?.name || '') &&
+        this.getSessionId() === (targetConversation?.spec?.sessionId || '')
+      );
+    },
     cancelPrompt() {},
     dispose() {},
   }));
@@ -185,10 +213,22 @@ test('ACP page surfaces real startup errors as toasts', async () => {
           items: [
             {
               metadata: { name: 'conv-1' },
-              spec: { title: 'Test conversation', sessionId: 'sess-1' },
+              spec: { title: 'Test conversation', sessionId: 'sess-1', cwd: '/home/dev' },
               status: { updatedAt: '2026-03-10T05:44:00Z' },
             },
           ],
+        };
+      }
+      if (path === '/acp/conversations/conv-1/bootstrap') {
+        return {
+          conversation: {
+            metadata: { name: 'conv-1' },
+            spec: { title: 'Test conversation', sessionId: 'sess-1', cwd: '/home/dev' },
+            status: { bindingState: 'active', boundSessionId: 'sess-1', updatedAt: '2026-03-10T05:44:00Z' },
+          },
+          effectiveSessionId: 'sess-1',
+          bindingState: 'active',
+          replaced: false,
         };
       }
       throw new Error(`unexpected path ${path}`);
