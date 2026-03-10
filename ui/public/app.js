@@ -28,6 +28,7 @@ const launchConfig = config.launch || {};
 const launchQueryParams = parseTemplateMap(launchConfig.queryParams);
 const authReturnToPlaceholder = '__SPRITZ_RETURN_TO__';
 const noticeEl = document.getElementById('notice');
+const toastRegionEl = document.getElementById('toast-region');
 const listEl = document.getElementById('list');
 const refreshBtn = document.getElementById('refresh');
 const form = document.getElementById('create-form');
@@ -574,6 +575,44 @@ function showNotice(message, kind = 'error') {
   noticeEl.hidden = false;
   noticeEl.textContent = message;
   noticeEl.dataset.kind = kind;
+}
+
+function clearNotice() {
+  showNotice('');
+}
+
+function showToast(message, kind = 'error', options = {}) {
+  if (!toastRegionEl || !message) return;
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.dataset.kind = kind;
+
+  const copy = document.createElement('div');
+  copy.className = 'toast-copy';
+  copy.textContent = message;
+
+  const dismiss = document.createElement('button');
+  dismiss.type = 'button';
+  dismiss.className = 'toast-dismiss';
+  dismiss.textContent = 'Dismiss';
+
+  let timeoutId = null;
+  const removeToast = () => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+    if (typeof toast.remove === 'function') {
+      toast.remove();
+    }
+  };
+
+  dismiss.addEventListener('click', removeToast);
+  toast.append(copy, dismiss);
+  toastRegionEl.appendChild(toast);
+
+  const durationMs = Number(options.durationMs) > 0 ? Number(options.durationMs) : kind === 'error' ? 5200 : 3600;
+  timeoutId = setTimeout(removeToast, durationMs);
 }
 
 function getStorage() {
@@ -1352,6 +1391,8 @@ function renderACPPage(name) {
       getAuthToken,
       request,
       showNotice,
+      clearNotice,
+      showToast,
       buildOpenUrl,
       cleanupTerminal,
       shellEl,

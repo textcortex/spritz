@@ -1,6 +1,10 @@
 (function (global) {
   const { createACPClient } = global.SpritzACPClient;
   const ACPRender = global.SpritzACPRender;
+  const ACP_TRANSCRIPT_CACHE_VERSION = 1;
+  const ACP_TRANSCRIPT_CACHE_PREFIX = 'spritz:acp:transcript:';
+  const ACP_TRANSCRIPT_CACHE_INDEX_KEY = 'spritz:acp:transcript:index';
+  const ACP_TRANSCRIPT_CACHE_LIMIT = 25;
 
   function chatPagePath(name = '', conversationId = '') {
     if (!name) return '#chat';
@@ -85,7 +89,152 @@
       client: null,
       reconnectTimer: null,
       destroyed: false,
+      bootstrapComplete: false,
+      cacheHydratedTranscript: false,
+      cacheReplacedByReplay: false,
     };
+  }
+
+  function isBenignACPError(err) {
+    const code = String(err?.code || '');
+    const message = String(err?.message || '');
+    return (
+      code === 'ACP_CLIENT_DISPOSED' ||
+      code === 'ACP_CONNECTION_CLOSED' ||
+      message === 'ACP client disposed.' ||
+      message === 'ACP connection closed.'
+    );
+  }
+
+  function clearACPNotice(page) {
+    if (typeof page.deps.clearNotice === 'function') {
+      page.deps.clearNotice();
+      return;
+    }
+    if (typeof page.deps.showNotice === 'function') {
+      page.deps.showNotice('');
+    }
+  }
+
+  function showACPToast(page, message, kind = 'error') {
+    if (!message) return;
+    if (typeof page.deps.showToast === 'function') {
+      page.deps.showToast(message, kind);
+      return;
+    }
+    if (typeof page.deps.showNotice === 'function') {
+      page.deps.showNotice(message, kind);
+    }
+  }
+
+  function safeSessionStorage() {
+    try {
+      return window.sessionStorage || window.localStorage || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function readTranscriptCacheIndex(storage) {
+    if (!storage) return [];
+    try {
+      const raw = storage.getItem(ACP_TRANSCRIPT_CACHE_INDEX_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string' && item) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function writeTranscriptCacheIndex(storage, ids) {
+    if (!storage) return;
+    try {
+      storage.setItem(ACP_TRANSCRIPT_CACHE_INDEX_KEY, JSON.stringify(ids));
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  function conversationTranscriptCacheKey(conversationId) {
+    return `${ACP_TRANSCRIPT_CACHE_PREFIX}${conversationId}`;
+  }
+
+  function readCachedConversationRecord(conversationId) {
+    const normalizedId = String(conversationId || '').trim();
+    if (!normalizedId) return null;
+    const storage = safeSessionStorage();
+    if (!storage) return null;
+    try {
+      const raw = storage.getItem(conversationTranscriptCacheKey(normalizedId));
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed?.version !== ACP_TRANSCRIPT_CACHE_VERSION || typeof parsed !== 'object') {
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeCachedConversationRecord(page) {
+    const conversationId = page.selectedConversation?.metadata?.name || '';
+    if (!conversationId) return;
+    const storage = safeSessionStorage();
+    if (!storage) return;
+
+    const preview = ACPRender.getPreviewText(page.transcript);
+    const payload = {
+      version: ACP_TRANSCRIPT_CACHE_VERSION,
+      conversationId,
+      spritzName: page.selectedName || '',
+      sessionId: page.selectedConversation?.spec?.sessionId || '',
+      updatedAt: new Date().toISOString(),
+      preview,
+      transcript: ACPRender.serializeTranscript(page.transcript),
+    };
+    try {
+      storage.setItem(conversationTranscriptCacheKey(conversationId), JSON.stringify(payload));
+      const nextIndex = [conversationId, ...readTranscriptCacheIndex(storage).filter((item) => item !== conversationId)];
+      const prunedIndex = nextIndex.slice(0, ACP_TRANSCRIPT_CACHE_LIMIT);
+      writeTranscriptCacheIndex(storage, prunedIndex);
+      nextIndex.slice(ACP_TRANSCRIPT_CACHE_LIMIT).forEach((staleId) => {
+        storage.removeItem(conversationTranscriptCacheKey(staleId));
+      });
+    } catch {
+      // ignore storage errors
+    }
+    if (preview) {
+      page.previewByConversationId.set(conversationId, preview);
+    }
+  }
+
+  function hydrateCachedConversationPreviews(page) {
+    page.conversations.forEach((conversation) => {
+      const id = conversation?.metadata?.name || '';
+      if (!id) return;
+      const cached = readCachedConversationRecord(id);
+      if (cached?.preview) {
+        page.previewByConversationId.set(id, cached.preview);
+      }
+    });
+  }
+
+  function restoreCachedConversationTranscript(page) {
+    const conversationId = page.selectedConversation?.metadata?.name || '';
+    if (!conversationId) return false;
+    const cached = readCachedConversationRecord(conversationId);
+    if (!cached?.transcript) return false;
+    page.transcript = ACPRender.hydrateTranscript(cached.transcript);
+    if (cached.preview) {
+      page.previewByConversationId.set(conversationId, cached.preview);
+    }
+    return page.transcript.messages.length > 0;
+  }
+
+  function reportACPError(page, err, fallback, kind = 'error') {
+    if (isBenignACPError(err)) return;
+    showACPToast(page, err?.message || fallback, kind);
   }
 
   function getAgentTitle(agent) {
@@ -271,7 +420,7 @@
             },
           });
         } catch (err) {
-          page.deps.showNotice(err.message || 'Failed to send permission response.');
+          reportACPError(page, err, 'Failed to send permission response.');
         } finally {
           page.permissionQueue.shift();
           renderPermissionPrompt(page);
@@ -393,6 +542,7 @@
       patchSelectedConversation(page, { title: result.conversationTitle }).catch(() => {});
     }
     updateConversationPreview(page);
+    writeCachedConversationRecord(page);
     renderConversationList(page);
     renderThread(page);
   }
@@ -426,11 +576,14 @@
   }
 
   async function connectSelectedConversation(page) {
-    resetConversationRuntime(page);
     if (!page.selectedAgent || !page.selectedConversation) {
+      resetConversationRuntime(page);
       renderThread(page);
       return;
     }
+    page.bootstrapComplete = false;
+    page.cacheHydratedTranscript = page.transcript.messages.length > 0;
+    page.cacheReplacedByReplay = false;
     renderThread(page);
     page.client = createACPClient({
       wsUrl: acpWsUrl(page.selectedName, page.deps),
@@ -461,6 +614,15 @@
         renderThread(page);
       },
       onUpdate(update) {
+        if (
+          !page.bootstrapComplete &&
+          page.cacheHydratedTranscript &&
+          !page.cacheReplacedByReplay &&
+          ACPRender.isTranscriptBearingUpdate(update)
+        ) {
+          page.transcript = ACPRender.createTranscript();
+          page.cacheReplacedByReplay = true;
+        }
         applyACPUpdate(page, update);
       },
       onPermissionRequest(entry) {
@@ -475,6 +637,7 @@
         if (!value) {
           ACPRender.finalizeStreaming(page.transcript);
           updateConversationPreview(page);
+          writeCachedConversationRecord(page);
           renderConversationList(page);
         }
         syncComposer(page);
@@ -484,17 +647,23 @@
         scheduleReconnect(page);
       },
       onProtocolError(err) {
-        page.deps.showNotice(err.message || 'Invalid ACP message.', 'info');
+        reportACPError(page, err, 'Invalid ACP message.', 'info');
       },
     });
     syncComposer(page);
     await page.client.start();
+    page.bootstrapComplete = true;
+    writeCachedConversationRecord(page);
+    clearACPNotice(page);
   }
 
   async function selectConversation(page, conversationId) {
     page.selectedConversationId = conversationId || '';
     page.selectedConversation = page.conversations.find((item) => item.metadata?.name === conversationId) || null;
     resetConversationRuntime(page);
+    if (page.selectedConversation) {
+      restoreCachedConversationTranscript(page);
+    }
     renderConversationList(page);
     renderThread(page);
     if (page.selectedConversation) {
@@ -514,6 +683,7 @@
       return;
     }
     page.conversations = await listACPConversationsData(page.deps, page.selectedName);
+    hydrateCachedConversationPreviews(page);
     const routeConversationId = conversationIdFromHash(window.location.hash || '');
     const resolvedConversationId =
       page.conversations.find((item) => item.metadata?.name === routeConversationId)?.metadata?.name ||
@@ -530,6 +700,7 @@
 
   async function loadACPPage(page) {
     try {
+      clearACPNotice(page);
       setStatus(page, 'Loading workspaces…');
       page.agents = await fetchACPAgentsData(page.deps);
       renderAgentPicker(page);
@@ -562,8 +733,11 @@
         setStatus(page, 'Choose or create a conversation.');
       }
     } catch (err) {
+      if (isBenignACPError(err)) {
+        return;
+      }
       setStatus(page, err.message || 'Failed to load ACP page.');
-      page.deps.showNotice(err.message || 'Failed to load ACP page.');
+      reportACPError(page, err, 'Failed to load ACP page.');
     }
   }
 
@@ -739,7 +913,7 @@
         renderConversationList(page);
         window.location.assign(chatPagePath(page.selectedName, conversation.metadata?.name || ''));
       } catch (err) {
-        page.deps.showNotice(err.message || 'Failed to create conversation.');
+        reportACPError(page, err, 'Failed to create conversation.');
       }
     });
 
@@ -771,7 +945,7 @@
         const result = await page.client.sendPrompt(text);
         setStatus(page, result?.stopReason ? `Completed · ${result.stopReason}` : 'Completed');
       } catch (err) {
-        page.deps.showNotice(err.message || 'Failed to send ACP prompt.');
+        reportACPError(page, err, 'Failed to send ACP prompt.');
       } finally {
         syncComposer(page);
         renderThread(page);

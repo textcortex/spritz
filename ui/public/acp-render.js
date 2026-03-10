@@ -32,6 +32,72 @@
     };
   }
 
+  function rebuildToolCallIndex(transcript) {
+    transcript.toolCallIndex = new Map();
+    transcript.messages.forEach((message, index) => {
+      if (message?.kind === 'tool' && message.toolCallId) {
+        transcript.toolCallIndex.set(message.toolCallId, index);
+      }
+    });
+    return transcript;
+  }
+
+  function serializeTranscript(transcript) {
+    return {
+      messages: Array.isArray(transcript?.messages)
+        ? transcript.messages.map((message) => ({
+            id: message.id || '',
+            kind: message.kind || 'system',
+            title: message.title || '',
+            status: message.status || '',
+            tone: message.tone || '',
+            meta: message.meta || '',
+            blocks: Array.isArray(message.blocks) ? message.blocks : [],
+            streaming: Boolean(message.streaming),
+            toolCallId: message.toolCallId || '',
+          }))
+        : [],
+      availableCommands: Array.isArray(transcript?.availableCommands) ? transcript.availableCommands : [],
+      currentMode: typeof transcript?.currentMode === 'string' ? transcript.currentMode : '',
+      usage:
+        transcript?.usage && typeof transcript.usage === 'object'
+          ? {
+              label: typeof transcript.usage.label === 'string' ? transcript.usage.label : '',
+              used: typeof transcript.usage.used === 'number' ? transcript.usage.used : null,
+              size: typeof transcript.usage.size === 'number' ? transcript.usage.size : null,
+            }
+          : null,
+    };
+  }
+
+  function hydrateTranscript(payload) {
+    const transcript = createTranscript();
+    transcript.messages = Array.isArray(payload?.messages)
+      ? payload.messages.map((message) => ({
+          id: message?.id || createId(message?.kind || 'message'),
+          kind: message?.kind || 'system',
+          title: message?.title || '',
+          status: message?.status || '',
+          tone: message?.tone || '',
+          meta: message?.meta || '',
+          blocks: Array.isArray(message?.blocks) ? message.blocks : [],
+          streaming: Boolean(message?.streaming),
+          toolCallId: message?.toolCallId || '',
+        }))
+      : [];
+    transcript.availableCommands = Array.isArray(payload?.availableCommands) ? payload.availableCommands : [];
+    transcript.currentMode = typeof payload?.currentMode === 'string' ? payload.currentMode : '';
+    transcript.usage =
+      payload?.usage && typeof payload.usage === 'object'
+        ? {
+            label: typeof payload.usage.label === 'string' ? payload.usage.label : '',
+            used: typeof payload.usage.used === 'number' ? payload.usage.used : null,
+            size: typeof payload.usage.size === 'number' ? payload.usage.size : null,
+          }
+        : null;
+    return rebuildToolCallIndex(transcript);
+  }
+
   function stringifyDetails(value) {
     if (value === undefined || value === null || value === '') return '';
     if (typeof value === 'string') return value;
@@ -410,12 +476,26 @@
     }));
   }
 
+  function isTranscriptBearingUpdate(update) {
+    const kind = update?.sessionUpdate || '';
+    return ![
+      '',
+      'available_commands_update',
+      'current_mode_update',
+      'usage_update',
+      'session_info_update',
+    ].includes(kind);
+  }
+
   global.SpritzACPRender = {
     buildCommandItems,
     createTranscript,
     applySessionUpdate,
     finalizeStreaming,
     getPreviewText,
+    hydrateTranscript,
+    isTranscriptBearingUpdate,
     renderMessage,
+    serializeTranscript,
   };
 })(window);

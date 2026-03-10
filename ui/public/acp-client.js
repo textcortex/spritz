@@ -45,8 +45,18 @@
     let sessionId = conversation?.spec?.sessionId || '';
     let loadSessionSupported = false;
 
-    function cleanupPending(errorMessage) {
-      pending.forEach(({ reject }) => reject(new Error(errorMessage)));
+    function createACPError(code, message) {
+      const error = new Error(message);
+      error.code = code;
+      return error;
+    }
+
+    function cleanupPending(error) {
+      const resolvedError =
+        error instanceof Error
+          ? error
+          : createACPError('ACP_REQUEST_CANCELLED', String(error || 'ACP request cancelled.'));
+      pending.forEach(({ reject }) => reject(resolvedError));
       pending.clear();
     }
 
@@ -205,7 +215,7 @@
         };
         ws.onclose = () => {
           ready = false;
-          cleanupPending('ACP connection closed.');
+          cleanupPending(createACPError('ACP_CONNECTION_CLOSED', 'ACP connection closed.'));
           if (typeof onReadyChange === 'function') {
             onReadyChange(false);
           }
@@ -243,7 +253,7 @@
       dispose() {
         disposed = true;
         ready = false;
-        cleanupPending('ACP client disposed.');
+        cleanupPending(createACPError('ACP_CLIENT_DISPOSED', 'ACP client disposed.'));
         try {
           if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
             ws.close();
