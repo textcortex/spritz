@@ -175,6 +175,99 @@ function closeChild(child, timerRef) {
   }, DEFAULTS.shutdownTimeoutMs);
 }
 
+/**
+ * Owns the long-lived claude-agent-acp child process for the workspace.
+ * The runtime survives websocket reconnects so ACP session ids remain valid
+ * between Spritz bootstrap and the browser chat connection.
+ */
+class ACPRuntime {
+  constructor(config, env, logger) {
+    this.config = config;
+    this.env = env;
+    this.logger = logger;
+    this.child = null;
+    this.killTimer = { current: null };
+    this.socket = null;
+  }
+
+  ensureStarted() {
+    if (this.child && this.child.exitCode === null && !this.child.killed) {
+      return;
+    }
+    const child = spawn(this.config.adapterBin, this.config.adapterArgs, {
+      cwd: this.config.workdir,
+      env: this.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    child.stdout.on(
+      "data",
+      createLineForwarder((line) => {
+        if (this.socket?.readyState === WEBSOCKET_OPEN) {
+          this.socket.send(line);
+        }
+      }),
+    );
+    child.stderr.on(
+      "data",
+      createLineForwarder((line) => this.logger.error?.(`[claude-code-acp] ${line}`)),
+    );
+    child.on("error", (error) => {
+      this.logger.error?.(`claude-agent-acp failed to start: ${String(error)}`);
+      this.closeSocket(1011, "claude-agent-acp failed to start");
+      this.child = null;
+    });
+    child.on("exit", (code, signal) => {
+      if (this.killTimer.current) {
+        clearTimeout(this.killTimer.current);
+      }
+      this.child = null;
+      const status = signal ? `signal ${signal}` : `exit code ${code ?? 0}`;
+      this.logger.warn?.(`claude-agent-acp exited with ${status}`);
+      this.closeSocket(1011, `claude-agent-acp exited with ${status}`);
+    });
+    this.child = child;
+  }
+
+  closeSocket(code, reason) {
+    if (this.socket?.readyState === WEBSOCKET_OPEN) {
+      this.socket.close(code, reason);
+    }
+    this.socket = null;
+  }
+
+  attach(socket) {
+    if (this.socket && this.socket.readyState === WEBSOCKET_OPEN) {
+      socket.close(1013, "another ACP client is already attached");
+      return;
+    }
+    this.ensureStarted();
+    this.socket = socket;
+    socket.on("message", (data) => {
+      if (this.child?.stdin && !this.child.stdin.destroyed) {
+        this.child.stdin.write(ensureLine(data));
+      }
+    });
+    socket.on("close", () => {
+      if (this.socket === socket) {
+        this.socket = null;
+      }
+    });
+    socket.on("error", (error) => {
+      this.logger.warn?.(`claude-code ACP websocket error: ${String(error)}`);
+      if (this.socket === socket) {
+        this.socket = null;
+      }
+    });
+  }
+
+  stop() {
+    this.closeSocket(1001, "server shutting down");
+    if (this.child) {
+      closeChild(this.child, this.killTimer);
+    }
+  }
+}
+
 async function main(env = process.env, logger = console) {
   const config = buildConfig(env);
   const wsModule = await import(pathToFileURL(path.join(config.wsRoot, "index.js")).href);
@@ -184,6 +277,7 @@ async function main(env = process.env, logger = console) {
     throw new Error("Failed to load WebSocketServer from ws");
   }
 
+  const runtime = new ACPRuntime(config, env, logger);
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url ?? "/", "http://spritz-acp.local").pathname;
     if (req.method === "GET" && pathname === config.healthPath) {
@@ -219,60 +313,7 @@ async function main(env = process.env, logger = console) {
       socket.close(1011, `missing required env: ${missingEnv.join(", ")}`);
       return;
     }
-    const child = spawn(config.adapterBin, config.adapterArgs, {
-      cwd: config.workdir,
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const killTimer = { current: null };
-    let closed = false;
-
-    const closeSocket = (code, reason) => {
-      if (closed) {
-        return;
-      }
-      closed = true;
-      if (socket.readyState === WEBSOCKET_OPEN) {
-        socket.close(code, reason);
-      }
-      closeChild(child, killTimer);
-    };
-
-    child.stdout.on(
-      "data",
-      createLineForwarder((line) => {
-        if (socket.readyState !== WEBSOCKET_OPEN) {
-          closeChild(child, killTimer);
-          return;
-        }
-        socket.send(line);
-      }),
-    );
-    child.stderr.on("data", createLineForwarder((line) => logger.error?.(`[claude-code-acp] ${line}`)));
-    child.on("error", (error) => {
-      logger.error?.(`claude-agent-acp failed to start: ${String(error)}`);
-      closeSocket(1011, "claude-agent-acp failed to start");
-    });
-    child.on("exit", (code, signal) => {
-      if (killTimer.current) {
-        clearTimeout(killTimer.current);
-      }
-      if (!closed) {
-        const status = signal ? `signal ${signal}` : `exit code ${code ?? 0}`;
-        logger.warn?.(`claude-agent-acp exited with ${status}`);
-        closeSocket(1011, `claude-agent-acp exited with ${status}`);
-      }
-    });
-    socket.on("message", (data) => {
-      if (!child.stdin.destroyed) {
-        child.stdin.write(ensureLine(data));
-      }
-    });
-    socket.on("close", () => closeSocket(1000, "client closed"));
-    socket.on("error", (error) => {
-      logger.warn?.(`claude-code ACP websocket error: ${String(error)}`);
-      closeSocket(1011, "client websocket error");
-    });
+    runtime.attach(socket);
   });
 
   server.on("upgrade", (request, socket, head) => {
@@ -290,11 +331,29 @@ async function main(env = process.env, logger = console) {
   server.listen(port, host, () => {
     logger.log?.(`spritz-claude-code-acp-server listening on ${host}:${port}${config.acpPath}`);
   });
+  let shuttingDown = false;
+  const shutdown = () => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    runtime.stop();
+    server.close(() => {
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(1), DEFAULTS.shutdownTimeoutMs).unref();
+  };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+const entrypoint = process.argv[1];
+
+if (entrypoint && import.meta.url === pathToFileURL(entrypoint).href) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.stack || error.message : String(error));
     process.exit(1);
   });
 }
+
+export { ACPRuntime, buildConfig, main };
