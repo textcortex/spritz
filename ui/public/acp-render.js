@@ -73,17 +73,9 @@
   function hydrateTranscript(payload) {
     const transcript = createTranscript();
     transcript.messages = Array.isArray(payload?.messages)
-      ? payload.messages.map((message) => ({
-          id: message?.id || createId(message?.kind || 'message'),
-          kind: message?.kind || 'system',
-          title: message?.title || '',
-          status: message?.status || '',
-          tone: message?.tone || '',
-          meta: message?.meta || '',
-          blocks: Array.isArray(message?.blocks) ? message.blocks : [],
-          streaming: Boolean(message?.streaming),
-          toolCallId: message?.toolCallId || '',
-        }))
+      ? payload.messages
+          .map((message) => sanitizeHydratedMessage(message))
+          .filter(Boolean)
       : [];
     transcript.availableCommands = Array.isArray(payload?.availableCommands) ? payload.availableCommands : [];
     transcript.currentMode = typeof payload?.currentMode === 'string' ? payload.currentMode : '';
@@ -202,6 +194,62 @@
       text,
       open: true,
       isError: false,
+    };
+  }
+
+  function sanitizeHydratedBlock(kind, block) {
+    if (!block || typeof block !== 'object') return null;
+    if (block.type === 'text') {
+      const htmlError = detectHtmlErrorDocument(block.text);
+      if (htmlError) {
+        return kind === 'tool'
+          ? { ...block, type: 'details', title: 'Result', text: htmlError.text, open: false }
+          : null;
+      }
+      return { ...block, text: String(block.text || '') };
+    }
+    if (block.type === 'details') {
+      const htmlError = detectHtmlErrorDocument(block.text);
+      if (htmlError) {
+        return { ...block, text: htmlError.text, open: false };
+      }
+      return { ...block, text: String(block.text || '') };
+    }
+    return block;
+  }
+
+  function sanitizeHydratedMessage(message) {
+    const kind = message?.kind || 'system';
+    const hadHtmlError = Array.isArray(message?.blocks)
+      ? message.blocks.some((block) => {
+          if (!block || typeof block !== 'object') return false;
+          const value = block.type === 'text' || block.type === 'details' ? block.text : '';
+          return Boolean(detectHtmlErrorDocument(value));
+        })
+      : false;
+    const blocks = Array.isArray(message?.blocks)
+      ? message.blocks.map((block) => sanitizeHydratedBlock(kind, block)).filter(Boolean)
+      : [];
+    if (!blocks.length && (kind === 'assistant' || kind === 'user')) {
+      return null;
+    }
+    return {
+      id: message?.id || createId(kind || 'message'),
+      kind,
+      title: message?.title || '',
+      status:
+        kind === 'tool' && hadHtmlError && (!message?.status || message.status === 'completed')
+          ? 'failed'
+          : message?.status || '',
+      tone:
+        kind === 'tool' && hadHtmlError
+          ? 'danger'
+          : message?.tone || '',
+      meta: message?.meta || '',
+      blocks,
+      streaming: Boolean(message?.streaming),
+      toolCallId: message?.toolCallId || '',
+      historyMessageId: message?.historyMessageId || '',
     };
   }
 
@@ -358,28 +406,48 @@
     const kind = update?.sessionUpdate || 'unknown';
     const historical = Boolean(options.historical);
     if (kind === 'user_message_chunk') {
+      const text = extractACPText(update.content);
+      const htmlError = detectHtmlErrorDocument(text);
+      if (htmlError) {
+        return {
+          toast: {
+            kind: 'error',
+            message: htmlError.text,
+          },
+        };
+      }
       if (historical) {
         appendHistoricalText(
           transcript,
           'user',
-          extractACPText(update.content),
+          text,
           update.historyMessageId || update.messageId,
         );
       } else {
-        appendStreamingText(transcript, 'user', extractACPText(update.content));
+        appendStreamingText(transcript, 'user', text);
       }
       return null;
     }
     if (kind === 'agent_message_chunk') {
+      const text = extractACPText(update.content);
+      const htmlError = detectHtmlErrorDocument(text);
+      if (htmlError) {
+        return {
+          toast: {
+            kind: 'error',
+            message: htmlError.text,
+          },
+        };
+      }
       if (historical) {
         appendHistoricalText(
           transcript,
           'assistant',
-          extractACPText(update.content),
+          text,
           update.historyMessageId || update.messageId,
         );
       } else {
-        appendStreamingText(transcript, 'assistant', extractACPText(update.content));
+        appendStreamingText(transcript, 'assistant', text);
       }
       return null;
     }

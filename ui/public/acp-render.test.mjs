@@ -124,6 +124,27 @@ test('ACP render adapter summarizes HTML error pages in tool results', () => {
   assert.equal(resultBlock.text.includes('<!DOCTYPE html>'), false);
 });
 
+test('ACP render adapter drops HTML error pages from assistant text updates', () => {
+  const ACPRender = loadRenderModule();
+  const transcript = ACPRender.createTranscript();
+
+  const result = ACPRender.applySessionUpdate(transcript, {
+    sessionUpdate: 'agent_message_chunk',
+    content: {
+      type: 'text',
+      text:
+        '<!DOCTYPE html><html><head><title>textcortex.com | 502: Bad gateway</title></head><body>' +
+        '<span class="code-label">Error code 502</span><span>staging.spritz.textcortex.com</span>' +
+        '<span>Cloudflare</span></body></html>',
+    },
+  });
+
+  assert.equal(transcript.messages.length, 0);
+  assert.equal(result?.toast?.kind, 'error');
+  assert.match(result?.toast?.message || '', /502/i);
+  assert.equal((result?.toast?.message || '').includes('<!DOCTYPE html>'), false);
+});
+
 test('ACP render adapter treats bootstrap replay chunks as historical messages', () => {
   const ACPRender = loadRenderModule();
   const transcript = ACPRender.createTranscript();

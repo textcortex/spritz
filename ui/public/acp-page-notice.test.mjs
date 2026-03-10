@@ -34,6 +34,13 @@ function createElement(tagName) {
   };
 }
 
+function collectText(node) {
+  if (!node) return '';
+  const own = typeof node.textContent === 'string' ? node.textContent : '';
+  const childText = Array.isArray(node.children) ? node.children.map((child) => collectText(child)).join(' ') : '';
+  return `${own} ${childText}`.replace(/\s+/g, ' ').trim();
+}
+
 function loadModules(createACPClient) {
   const document = { createElement };
   const window = {
@@ -371,4 +378,105 @@ test('ACP page surfaces HTML tool failures as toasts without dumping raw markup'
   assert.match(toastMessages[0], /502/i);
   assert.match(toastMessages[0], /staging\.spritz\.textcortex\.com/i);
   assert.equal(toastMessages[0].includes('<!DOCTYPE html>'), false);
+});
+
+test('ACP page surfaces HTML assistant failures as toasts without restoring markup into chat', async () => {
+  const toastMessages = [];
+  const window = loadModules(({ onUpdate, conversation }) => ({
+    start: async () => {
+      onUpdate({
+        sessionUpdate: 'agent_message_chunk',
+        content: {
+          type: 'text',
+          text:
+            '<!DOCTYPE html><html><head><title>textcortex.com | 502: Bad gateway</title></head><body>' +
+            '<span class="code-label">Error code 502</span><span>staging.spritz.textcortex.com</span>' +
+            '<span>Cloudflare</span><p>The web server reported a bad gateway error.</p></body></html>',
+        },
+      });
+    },
+    isReady: () => true,
+    getConversationId: () => conversation?.metadata?.name || '',
+    getSessionId: () => conversation?.spec?.sessionId || '',
+    matchesConversation(targetConversation) {
+      return (
+        this.getConversationId() === (targetConversation?.metadata?.name || '') &&
+        this.getSessionId() === (targetConversation?.spec?.sessionId || '')
+      );
+    },
+    cancelPrompt() {},
+    dispose() {},
+  }));
+  const shellEl = createElement('main');
+  const createSection = createElement('section');
+  const listSection = createElement('section');
+
+  window.SpritzACPPage.renderACPPage('young-crest', 'conv-1', {
+    activePage: null,
+    apiBaseUrl: '',
+    authBearerTokenParam: 'token',
+    getAuthToken() {
+      return '';
+    },
+    async request(path) {
+      if (path === '/acp/agents') {
+        return {
+          items: [
+            {
+              spritz: {
+                metadata: { name: 'young-crest' },
+                status: {
+                  acp: { agentInfo: { title: 'OpenClaw ACP Gateway', version: '2026.3.8' } },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (path.startsWith('/acp/conversations?')) {
+        return {
+          items: [
+            {
+              metadata: { name: 'conv-1' },
+              spec: { title: 'Test conversation', sessionId: 'sess-1', cwd: '/home/dev' },
+              status: { updatedAt: '2026-03-10T05:44:00Z' },
+            },
+          ],
+        };
+      }
+      if (path === '/acp/conversations/conv-1/bootstrap') {
+        return {
+          conversation: {
+            metadata: { name: 'conv-1' },
+            spec: { title: 'Test conversation', sessionId: 'sess-1', cwd: '/home/dev' },
+            status: { bindingState: 'active', boundSessionId: 'sess-1', updatedAt: '2026-03-10T05:44:00Z' },
+          },
+          effectiveSessionId: 'sess-1',
+          bindingState: 'active',
+          replaced: false,
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    },
+    showNotice() {},
+    showToast(message) {
+      toastMessages.push(message);
+    },
+    buildOpenUrl(url) {
+      return url;
+    },
+    cleanupTerminal() {},
+    shellEl,
+    createSection,
+    listSection,
+    setHeaderCopy() {},
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(toastMessages.length, 1);
+  assert.match(toastMessages[0], /502/i);
+  assert.equal(toastMessages[0].includes('<!DOCTYPE html>'), false);
+  assert.doesNotMatch(collectText(shellEl), /<!DOCTYPE html>/);
 });
