@@ -115,6 +115,96 @@
     return `${normalized.slice(0, maxLength - 1)}…`;
   }
 
+  function decodeHtmlEntities(text) {
+    return String(text || '')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'");
+  }
+
+  function stripHtmlTags(text) {
+    return decodeHtmlEntities(
+      String(text || '')
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<[^>]+>/g, ' '),
+    )
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function extractHtmlTagText(html, tagName) {
+    const match = String(html || '').match(new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, 'i'));
+    return match ? stripHtmlTags(match[1]) : '';
+  }
+
+  function detectHtmlErrorDocument(text) {
+    const raw = String(text || '').trim();
+    if (!raw) return null;
+    if (!/^\s*<(?:!doctype\s+html|html\b)/i.test(raw)) {
+      return null;
+    }
+
+    const title = extractHtmlTagText(raw, 'title');
+    const flattened = stripHtmlTags(raw);
+    const codeMatch =
+      flattened.match(/\berror code\s+(\d{3})\b/i) ||
+      title.match(/\b(\d{3})\b/);
+    const hostMatches = [...flattened.matchAll(/\b([a-z0-9.-]+\.[a-z]{2,})\b/gi)].map((match) => match[1]);
+    const host =
+      hostMatches
+        .sort((left, right) => right.length - left.length)
+        .find((value) => !/^cloudflare\.com$/i.test(value)) || '';
+    const providerMatch = flattened.match(/\b(Cloudflare|Vercel|Netlify|nginx|Apache)\b/i);
+    const summaryMatch =
+      flattened.match(/\bThe web server reported [^.]+\./i) ||
+      flattened.match(/\bThis page isn[’']t working[^.]*\./i) ||
+      flattened.match(/\bBad gateway\b/i);
+
+    const parts = [];
+    if (codeMatch?.[1]) {
+      parts.push(`HTTP ${codeMatch[1]}`);
+    }
+    if (title) {
+      parts.push(title);
+    } else if (summaryMatch?.[0]) {
+      parts.push(summaryMatch[0]);
+    } else {
+      parts.push('HTML error response');
+    }
+    if (host) {
+      parts.push(host);
+    }
+    if (providerMatch?.[1]) {
+      parts.push(providerMatch[1]);
+    }
+
+    return {
+      text: parts.join(' · '),
+      open: false,
+      isError: true,
+    };
+  }
+
+  function normalizeToolResultText(rawOutput) {
+    const text = stringifyDetails(rawOutput);
+    if (!text) {
+      return { text: '', open: true, isError: false };
+    }
+    const htmlError = detectHtmlErrorDocument(text);
+    if (htmlError) {
+      return htmlError;
+    }
+    return {
+      text,
+      open: true,
+      isError: false,
+    };
+  }
+
   function pushMessage(transcript, message) {
     transcript.messages.push({
       id: message.id || createId(message.kind || 'message'),
@@ -190,7 +280,8 @@
   function buildToolBlocks(update, existing) {
     const blocks = [];
     const inputText = stringifyDetails(update.rawInput);
-    const resultText = stringifyDetails(update.rawOutput);
+    const normalizedResult = normalizeToolResultText(update.rawOutput);
+    const resultText = normalizedResult.text;
     if (inputText) {
       blocks.push({ type: 'details', title: 'Input', text: inputText, open: false });
     } else if (existing) {
@@ -198,27 +289,35 @@
       if (priorInput) blocks.push(priorInput);
     }
     if (resultText) {
-      blocks.push({ type: 'details', title: 'Result', text: resultText, open: true });
+      blocks.push({ type: 'details', title: 'Result', text: resultText, open: normalizedResult.open });
     } else if (existing) {
       const priorResult = existing.blocks.find((block) => block.type === 'details' && block.title === 'Result');
       if (priorResult) blocks.push(priorResult);
     }
-    return blocks;
+    return {
+      blocks,
+      isError: normalizedResult.isError,
+      summary: normalizedResult.isError ? normalizedResult.text : '',
+    };
   }
 
   function upsertToolCall(transcript, update) {
     const toolCallId = update.toolCallId || createId('tool');
     const existingIndex = transcript.toolCallIndex.get(toolCallId);
     const existing = existingIndex !== undefined ? transcript.messages[existingIndex] : null;
+    const normalizedBlocks = buildToolBlocks(update, existing);
     const title = update.title || existing?.title || 'Tool call';
-    const status = update.status || existing?.status || 'pending';
+    const status =
+      normalizedBlocks.isError && (!update.status || update.status === 'completed')
+        ? 'failed'
+        : update.status || existing?.status || 'pending';
     const next = {
       kind: 'tool',
       title,
       status,
       tone: status === 'completed' ? 'success' : status === 'failed' ? 'danger' : 'info',
       meta: update.kind || existing?.meta || '',
-      blocks: buildToolBlocks(update, existing),
+      blocks: normalizedBlocks.blocks,
       toolCallId,
     };
 
@@ -227,11 +326,12 @@
         ...existing,
         ...next,
       };
-      return;
+      return normalizedBlocks;
     }
 
     transcript.toolCallIndex.set(toolCallId, transcript.messages.length);
     pushMessage(transcript, next);
+    return normalizedBlocks;
   }
 
   function createUsageBlocks(update) {
@@ -284,7 +384,15 @@
       return null;
     }
     if (kind === 'tool_call' || kind === 'tool_call_update') {
-      upsertToolCall(transcript, update);
+      const toolResult = upsertToolCall(transcript, update);
+      if (!historical && toolResult?.isError && toolResult.summary) {
+        return {
+          toast: {
+            kind: 'error',
+            message: toolResult.summary,
+          },
+        };
+      }
       return null;
     }
     if (kind === 'available_commands_update') {

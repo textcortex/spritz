@@ -258,3 +258,117 @@ test('ACP page surfaces real startup errors as toasts', async () => {
   assert.deepEqual(noticeMessages.filter(Boolean), []);
   assert.deepEqual(toastMessages, ['Failed to connect to ACP gateway.']);
 });
+
+test('ACP page surfaces HTML tool failures as toasts without dumping raw markup', async () => {
+  const toastMessages = [];
+  const window = loadModules(({ conversation, onUpdate, onReadyChange }) => ({
+    async start() {
+      if (typeof onReadyChange === 'function') {
+        onReadyChange(true);
+      }
+      setTimeout(() => {
+        if (typeof onUpdate !== 'function') return;
+        onUpdate({
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tool-502',
+          title: 'Fetch workspace',
+          status: 'completed',
+          rawInput: { url: 'https://staging.spritz.textcortex.com/' },
+        });
+        onUpdate({
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tool-502',
+          status: 'completed',
+          rawOutput:
+            '<!DOCTYPE html><html><head><title>textcortex.com | 502: Bad gateway</title></head><body>' +
+            '<span class="code-label">Error code 502</span><span>staging.spritz.textcortex.com</span>' +
+            '<span>Cloudflare</span><p>The web server reported a bad gateway error.</p></body></html>',
+        });
+      }, 0);
+    },
+    isReady: () => true,
+    getConversationId: () => conversation?.metadata?.name || '',
+    getSessionId: () => conversation?.spec?.sessionId || '',
+    matchesConversation(targetConversation) {
+      return (
+        this.getConversationId() === (targetConversation?.metadata?.name || '') &&
+        this.getSessionId() === (targetConversation?.spec?.sessionId || '')
+      );
+    },
+    dispose() {},
+    cancelPrompt() {},
+  }));
+  const shellEl = createElement('main');
+  const createSection = createElement('section');
+  const listSection = createElement('section');
+
+  window.SpritzACPPage.renderACPPage('young-crest', 'conv-1', {
+    activePage: null,
+    apiBaseUrl: '',
+    authBearerTokenParam: 'token',
+    getAuthToken() {
+      return '';
+    },
+    async request(path) {
+      if (path === '/acp/agents') {
+        return {
+          items: [
+            {
+              spritz: {
+                metadata: { name: 'young-crest' },
+                status: {
+                  acp: { agentInfo: { title: 'OpenClaw ACP Gateway', version: '2026.3.8' } },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (path.startsWith('/acp/conversations?')) {
+        return {
+          items: [
+            {
+              metadata: { name: 'conv-1' },
+              spec: { title: 'Test conversation', sessionId: 'sess-1', cwd: '/home/dev' },
+              status: { updatedAt: '2026-03-10T05:44:00Z' },
+            },
+          ],
+        };
+      }
+      if (path === '/acp/conversations/conv-1/bootstrap') {
+        return {
+          conversation: {
+            metadata: { name: 'conv-1' },
+            spec: { title: 'Test conversation', sessionId: 'sess-1', cwd: '/home/dev' },
+            status: { bindingState: 'active', boundSessionId: 'sess-1', updatedAt: '2026-03-10T05:44:00Z' },
+          },
+          effectiveSessionId: 'sess-1',
+          bindingState: 'active',
+          replaced: false,
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    },
+    showNotice() {},
+    clearNotice() {},
+    showToast(message) {
+      toastMessages.push(message);
+    },
+    buildOpenUrl(url) {
+      return url;
+    },
+    cleanupTerminal() {},
+    shellEl,
+    createSection,
+    listSection,
+    setHeaderCopy() {},
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(toastMessages.length, 1);
+  assert.match(toastMessages[0], /502/i);
+  assert.match(toastMessages[0], /staging\.spritz\.textcortex\.com/i);
+  assert.equal(toastMessages[0].includes('<!DOCTYPE html>'), false);
+});
