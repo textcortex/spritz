@@ -64,7 +64,7 @@ WORKDIR /workspace
 COPY --chown=dev:dev examples/base/entrypoint.sh /usr/local/bin/spritz-entrypoint
 COPY --chown=dev:dev examples/openclaw/entrypoint.sh /usr/local/bin/spritz-openclaw-entrypoint
 COPY --chown=dev:dev --chmod=0755 examples/openclaw/acp-server.mjs /usr/local/bin/spritz-openclaw-acp-server
-COPY --chown=dev:dev --chmod=0755 examples/openclaw/acp-wrapper.mjs /usr/local/bin/spritz-openclaw-acp-wrapper
+COPY --chown=dev:dev --chmod=0755 examples/openclaw/acp-wrapper.mjs /usr/local/bin/acp-wrapper.mjs
 
 ENTRYPOINT ["/usr/local/bin/spritz-openclaw-entrypoint"]
 CMD ["sleep", "infinity"]

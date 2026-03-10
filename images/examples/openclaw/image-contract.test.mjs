@@ -39,6 +39,15 @@ test("openclaw image copies the ACP server into /usr/local/bin", () => {
   );
 });
 
+test("openclaw image copies the ACP wrapper next to the ACP server runtime path", () => {
+  const dockerfile = fs.readFileSync(dockerfilePath, "utf8");
+
+  assert.match(
+    dockerfile,
+    /COPY --chown=dev:dev --chmod=0755 examples\/openclaw\/acp-wrapper\.mjs \/usr\/local\/bin\/acp-wrapper\.mjs/,
+  );
+});
+
 test("openclaw entrypoint defaults the ACP server binary", () => {
   const entrypoint = fs.readFileSync(entrypointPath, "utf8");
 
