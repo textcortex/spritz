@@ -170,10 +170,12 @@ export function buildHistoryReplayUpdates(messages = []) {
   }
 
   const updates = [];
-  for (const rawMessage of messages) {
+  for (const [index, rawMessage] of messages.entries()) {
     if (!rawMessage || typeof rawMessage !== "object") {
       continue;
     }
+    const historyMessageId =
+      (typeof rawMessage.id === "string" && rawMessage.id.trim()) || `history-${index}`;
     const role = typeof rawMessage.role === "string" ? rawMessage.role.toLowerCase() : "";
     const content = normalizeHistoryContent(rawMessage.content);
 
@@ -182,6 +184,7 @@ export function buildHistoryReplayUpdates(messages = []) {
       if (text) {
         updates.push({
           sessionUpdate: "user_message_chunk",
+          historyMessageId,
           content: { type: "text", text },
         });
       }
@@ -202,6 +205,7 @@ export function buildHistoryReplayUpdates(messages = []) {
       if (text) {
         updates.push({
           sessionUpdate: "agent_message_chunk",
+          historyMessageId,
           content: { type: "text", text },
         });
       }

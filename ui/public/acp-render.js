@@ -126,6 +126,7 @@
       blocks: Array.isArray(message.blocks) ? message.blocks : [],
       streaming: Boolean(message.streaming),
       toolCallId: message.toolCallId || '',
+      historyMessageId: message.historyMessageId || '',
     });
     return transcript.messages[transcript.messages.length - 1];
   }
@@ -136,12 +137,24 @@
     return [{ type: 'text', text: normalized }];
   }
 
-  function appendHistoricalText(transcript, kind, text) {
+  function appendHistoricalText(transcript, kind, text, messageKey = '') {
     const value = String(text || '');
     if (!value) return;
+    const normalizedKey = String(messageKey || '').trim();
+    const last = transcript.messages[transcript.messages.length - 1];
+    if (normalizedKey && last && last.kind === kind && last.historyMessageId === normalizedKey) {
+      const textBlock = last.blocks.find((block) => block.type === 'text');
+      if (textBlock) {
+        textBlock.text += value;
+      } else {
+        last.blocks.push({ type: 'text', text: value });
+      }
+      return;
+    }
     pushMessage(transcript, {
       kind,
       streaming: false,
+      historyMessageId: normalizedKey,
       blocks: createTextBlocks(value),
     });
   }
@@ -246,7 +259,12 @@
     const historical = Boolean(options.historical);
     if (kind === 'user_message_chunk') {
       if (historical) {
-        appendHistoricalText(transcript, 'user', extractACPText(update.content));
+        appendHistoricalText(
+          transcript,
+          'user',
+          extractACPText(update.content),
+          update.historyMessageId || update.messageId,
+        );
       } else {
         appendStreamingText(transcript, 'user', extractACPText(update.content));
       }
@@ -254,7 +272,12 @@
     }
     if (kind === 'agent_message_chunk') {
       if (historical) {
-        appendHistoricalText(transcript, 'assistant', extractACPText(update.content));
+        appendHistoricalText(
+          transcript,
+          'assistant',
+          extractACPText(update.content),
+          update.historyMessageId || update.messageId,
+        );
       } else {
         appendStreamingText(transcript, 'assistant', extractACPText(update.content));
       }

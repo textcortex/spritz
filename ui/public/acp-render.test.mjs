@@ -98,6 +98,7 @@ test('ACP render adapter treats bootstrap replay chunks as historical messages',
     transcript,
     {
       sessionUpdate: 'user_message_chunk',
+      historyMessageId: 'history-0',
       content: { type: 'text', text: 'Earlier user message' },
     },
     { historical: true },
@@ -106,6 +107,7 @@ test('ACP render adapter treats bootstrap replay chunks as historical messages',
     transcript,
     {
       sessionUpdate: 'agent_message_chunk',
+      historyMessageId: 'history-1',
       content: { type: 'text', text: 'Earlier assistant message' },
     },
     { historical: true },
@@ -118,4 +120,31 @@ test('ACP render adapter treats bootstrap replay chunks as historical messages',
   assert.equal(transcript.messages[1].kind, 'assistant');
   assert.equal(transcript.messages[1].streaming, false);
   assert.equal(transcript.messages[1].blocks[0].text, 'Earlier assistant message');
+});
+
+test('ACP render adapter coalesces bootstrap replay chunks for the same historical message', () => {
+  const ACPRender = loadRenderModule();
+  const transcript = ACPRender.createTranscript();
+
+  ACPRender.applySessionUpdate(
+    transcript,
+    {
+      sessionUpdate: 'agent_message_chunk',
+      historyMessageId: 'history-1',
+      content: { type: 'text', text: 'Earlier assistant ' },
+    },
+    { historical: true },
+  );
+  ACPRender.applySessionUpdate(
+    transcript,
+    {
+      sessionUpdate: 'agent_message_chunk',
+      historyMessageId: 'history-1',
+      content: { type: 'text', text: 'message' },
+    },
+    { historical: true },
+  );
+
+  assert.equal(transcript.messages.length, 1);
+  assert.equal(transcript.messages[0].blocks[0].text, 'Earlier assistant message');
 });

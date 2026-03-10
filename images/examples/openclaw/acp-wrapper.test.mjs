@@ -180,9 +180,11 @@ test('buildHistoryReplayUpdates converts gateway history into ACP replay updates
     ['user_message_chunk', 'tool_call', 'agent_message_chunk', 'tool_call_update'],
   );
   assert.equal(updates[0].content.text, 'hello from history');
+  assert.equal(updates[0].historyMessageId, 'history-0');
   assert.equal(updates[1].toolCallId, 'tool-1');
   assert.equal(updates[1].rawInput.command, 'pwd');
   assert.equal(updates[2].content.text, 'I checked the directory.');
+  assert.equal(updates[2].historyMessageId, 'history-1');
   assert.equal(updates[3].rawOutput, '/home/dev');
 });
 
