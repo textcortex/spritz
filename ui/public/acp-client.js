@@ -44,10 +44,22 @@
     const pending = new Map();
     let sessionId = conversation?.spec?.sessionId || '';
     let loadSessionSupported = false;
+    let bootstrapComplete = false;
 
     function createACPError(code, message) {
       const error = new Error(message);
       error.code = code;
+      return error;
+    }
+
+    function createRPCError(payload) {
+      const baseMessage = String(payload?.message || 'ACP request failed.');
+      const details =
+        typeof payload?.data?.details === 'string' && payload.data.details.trim()
+          ? payload.data.details.trim()
+          : '';
+      const error = createACPError('ACP_RPC_ERROR', details ? `${baseMessage}: ${details}` : baseMessage);
+      error.rpcError = payload || null;
       return error;
     }
 
@@ -92,6 +104,24 @@
       sendRaw({ jsonrpc: '2.0', method, params });
     }
 
+    function isMissingSessionError(error) {
+      const message = String(error?.message || '').toLowerCase();
+      return message.includes('session') && message.includes('not found');
+    }
+
+    async function createNewSession() {
+      onStatus('Creating session…');
+      const created = await requestRPC('session/new', {
+        cwd: conversation?.spec?.cwd || '/home/dev',
+        mcpServers: [],
+      });
+      sessionId = created?.sessionId || '';
+      if (sessionId && typeof onSessionId === 'function') {
+        await onSessionId(sessionId);
+      }
+      onStatus('Connected');
+    }
+
     async function bootstrapSession() {
       onStatus('Negotiating ACP…');
       const init = await requestRPC('initialize', {
@@ -105,25 +135,24 @@
       }
       if (sessionId && loadSessionSupported) {
         onStatus('Loading conversation…');
-        await requestRPC('session/load', {
-          sessionId,
-          cwd: conversation?.spec?.cwd || '/home/dev',
-          mcpServers: [],
-        });
-        onStatus('Connected');
-        return;
+        try {
+          await requestRPC('session/load', {
+            sessionId,
+            cwd: conversation?.spec?.cwd || '/home/dev',
+            mcpServers: [],
+          });
+          onStatus('Connected');
+          return;
+        } catch (error) {
+          if (!isMissingSessionError(error)) {
+            throw error;
+          }
+          sessionId = '';
+          onStatus('Stored session is unavailable. Creating a new session…');
+        }
       }
 
-      onStatus('Creating session…');
-      const created = await requestRPC('session/new', {
-        cwd: conversation?.spec?.cwd || '/home/dev',
-        mcpServers: [],
-      });
-      sessionId = created?.sessionId || '';
-      if (sessionId && typeof onSessionId === 'function') {
-        await onSessionId(sessionId);
-      }
-      onStatus('Connected');
+      await createNewSession();
     }
 
     function handleIncoming(message) {
@@ -136,7 +165,7 @@
           if (pendingRequest.method === 'session/prompt' && typeof onPromptStateChange === 'function') {
             onPromptStateChange(false);
           }
-          pendingRequest.reject(new Error(message.error.message || 'ACP request failed.'));
+          pendingRequest.reject(createRPCError(message.error));
           return;
         }
         pendingRequest.resolve(message.result);
@@ -176,6 +205,7 @@
     function start() {
       disposed = false;
       ready = false;
+      bootstrapComplete = false;
       if (typeof onReadyChange === 'function') {
         onReadyChange(false);
       }
@@ -183,13 +213,19 @@
         ws = new WebSocket(wsUrl);
         ws.onopen = async () => {
           try {
+            await bootstrapSession();
+            bootstrapComplete = true;
             ready = true;
             if (typeof onReadyChange === 'function') {
               onReadyChange(true);
             }
-            await bootstrapSession();
             resolve();
           } catch (err) {
+            bootstrapComplete = false;
+            ready = false;
+            if (typeof onReadyChange === 'function') {
+              onReadyChange(false);
+            }
             reject(err);
             try {
               ws.close();
@@ -215,6 +251,7 @@
         };
         ws.onclose = () => {
           ready = false;
+          bootstrapComplete = false;
           cleanupPending(createACPError('ACP_CONNECTION_CLOSED', 'ACP connection closed.'));
           if (typeof onReadyChange === 'function') {
             onReadyChange(false);
@@ -229,10 +266,10 @@
     return {
       start,
       isReady() {
-        return Boolean(ws && ws.readyState === WebSocket.OPEN && ready);
+        return Boolean(ws && ws.readyState === WebSocket.OPEN && ready && bootstrapComplete);
       },
       async sendPrompt(text) {
-        if (!sessionId) {
+        if (!sessionId || !this.isReady()) {
           throw new Error('ACP session is not ready yet.');
         }
         if (typeof onPromptStateChange === 'function') {
@@ -253,6 +290,7 @@
       dispose() {
         disposed = true;
         ready = false;
+        bootstrapComplete = false;
         cleanupPending(createACPError('ACP_CLIENT_DISPOSED', 'ACP client disposed.'));
         try {
           if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
