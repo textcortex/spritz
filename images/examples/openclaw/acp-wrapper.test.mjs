@@ -188,7 +188,7 @@ test('buildHistoryReplayUpdates converts gateway history into ACP replay updates
   assert.equal(updates[3].rawOutput, '/home/dev');
 });
 
-test('loadSession replays gateway history before returning', async () => {
+test('loadSession replays persisted session transcript before returning', async () => {
   class FakeBaseAgent {
     constructor() {
       this.logged = [];
@@ -202,9 +202,9 @@ test('loadSession replays gateway history before returning', async () => {
       };
       this.gateway = {
         async request(method, params) {
-          if (method === 'chat.history') {
+          if (method === 'sessions.get') {
             assert.deepEqual(params, {
-              sessionKey: 'agent:main:spritz-acp:123e4567-e89b-42d3-a456-426614174000',
+              key: 'agent:main:spritz-acp:123e4567-e89b-42d3-a456-426614174000',
               limit: 1000,
             });
             return {
@@ -212,7 +212,6 @@ test('loadSession replays gateway history before returning', async () => {
                 { role: 'user', content: [{ type: 'text', text: 'hello from history' }] },
                 { role: 'assistant', content: [{ type: 'text', text: 'history reply' }] },
               ],
-              thinkingLevel: 'high',
             };
           }
           throw new Error(`unexpected gateway method ${method}`);
@@ -255,14 +254,13 @@ test('loadSession replays gateway history before returning', async () => {
     mcpServers: [],
   });
 
-  assert.equal(agent.connection.updates.length, 3);
+  assert.equal(agent.connection.updates.length, 2);
   assert.deepEqual(
     agent.connection.updates.map((entry) => entry.update.sessionUpdate),
-    ['user_message_chunk', 'agent_message_chunk', 'current_mode_update'],
+    ['user_message_chunk', 'agent_message_chunk'],
   );
   assert.equal(agent.connection.updates[0].update.content.text, 'hello from history');
   assert.equal(agent.connection.updates[1].update.content.text, 'history reply');
-  assert.equal(agent.connection.updates[2].update.mode, 'high');
   assert.deepEqual(agent.rateLimits, ['loadSession']);
   assert.deepEqual(agent.sentAvailableCommands, ['123e4567-e89b-42d3-a456-426614174000']);
 });

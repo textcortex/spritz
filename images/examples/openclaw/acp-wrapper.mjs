@@ -161,7 +161,7 @@ function buildHistoryToolResultUpdate(message, content) {
 }
 
 /**
- * Converts persisted OpenClaw chat history into ACP session updates so
+ * Converts persisted OpenClaw session transcript entries into ACP session updates so
  * `session/load` can reconstruct prior transcript state for any ACP client.
  */
 export function buildHistoryReplayUpdates(messages = []) {
@@ -223,32 +223,21 @@ export function buildHistoryReplayUpdates(messages = []) {
   return updates;
 }
 
-async function replayGatewayHistory(agent, session) {
+async function replayGatewayTranscript(agent, session) {
   if (!agent?.gateway?.request || !agent?.connection?.sessionUpdate) {
     return;
   }
 
-  const history = await agent.gateway.request("chat.history", {
-    sessionKey: session.sessionKey,
+  const transcript = await agent.gateway.request("sessions.get", {
+    key: session.sessionKey,
     limit: 1000,
   });
 
-  const updates = buildHistoryReplayUpdates(history?.messages);
+  const updates = buildHistoryReplayUpdates(transcript?.messages);
   for (const update of updates) {
     await agent.connection.sessionUpdate({
       sessionId: session.sessionId,
       update,
-    });
-  }
-
-  const thinkingLevel = typeof history?.thinkingLevel === "string" ? history.thinkingLevel.trim() : "";
-  if (thinkingLevel) {
-    await agent.connection.sessionUpdate({
-      sessionId: session.sessionId,
-      update: {
-        sessionUpdate: "current_mode_update",
-        mode: thinkingLevel,
-      },
     });
   }
 }
@@ -335,7 +324,7 @@ export function createSpritzAcpGatewayAgentClass(AcpGatewayAgent, env = process.
         cwd: params.cwd,
       });
       this.log(`loadSession: ${session.sessionId} -> ${session.sessionKey}`);
-      await replayGatewayHistory(this, session);
+      await replayGatewayTranscript(this, session);
       await this.sendAvailableCommands(session.sessionId);
       return {};
     }
