@@ -1,10 +1,11 @@
 (function (global) {
   const { createACPClient } = global.SpritzACPClient;
   const ACPRender = global.SpritzACPRender;
-  const ACP_TRANSCRIPT_CACHE_VERSION = 2;
-  const ACP_TRANSCRIPT_CACHE_PREFIX = 'spritz:acp:transcript:';
-  const ACP_TRANSCRIPT_CACHE_INDEX_KEY = 'spritz:acp:transcript:index';
+  const ACP_TRANSCRIPT_CACHE_PREFIX = 'spritz:acp:thread:';
+  const ACP_TRANSCRIPT_CACHE_INDEX_KEY = 'spritz:acp:thread:index';
   const ACP_TRANSCRIPT_CACHE_LIMIT = 25;
+  const PRE_CUTOVER_ACP_TRANSCRIPT_CACHE_PREFIX = 'spritz:acp:transcript:';
+  const PRE_CUTOVER_ACP_TRANSCRIPT_CACHE_INDEX_KEY = 'spritz:acp:transcript:index';
 
   function chatPagePath(name = '', conversationId = '') {
     if (!name) return '#chat';
@@ -142,14 +143,7 @@
   }
 
   function readTranscriptCacheIndex(storage) {
-    if (!storage) return [];
-    try {
-      const raw = storage.getItem(ACP_TRANSCRIPT_CACHE_INDEX_KEY);
-      const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string' && item) : [];
-    } catch {
-      return [];
-    }
+    return readTranscriptCacheIndexFromKey(storage, ACP_TRANSCRIPT_CACHE_INDEX_KEY);
   }
 
   function writeTranscriptCacheIndex(storage, ids) {
@@ -165,12 +159,38 @@
     return `${ACP_TRANSCRIPT_CACHE_PREFIX}${conversationId}`;
   }
 
+  function purgePreCutoverTranscriptCache(storage) {
+    if (!storage) return;
+    try {
+      const priorIndex = readTranscriptCacheIndexFromKey(storage, PRE_CUTOVER_ACP_TRANSCRIPT_CACHE_INDEX_KEY);
+      priorIndex.forEach((conversationId) => {
+        storage.removeItem(`${PRE_CUTOVER_ACP_TRANSCRIPT_CACHE_PREFIX}${conversationId}`);
+      });
+      storage.removeItem(PRE_CUTOVER_ACP_TRANSCRIPT_CACHE_INDEX_KEY);
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  function readTranscriptCacheIndexFromKey(storage, key) {
+    if (!storage) return [];
+    try {
+      const raw = storage.getItem(key);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string' && item) : [];
+    } catch {
+      return [];
+    }
+  }
+
   function clearCachedConversationRecord(conversationId) {
     const normalizedId = String(conversationId || '').trim();
     if (!normalizedId) return;
     const storage = safeSessionStorage();
     if (!storage) return;
+    purgePreCutoverTranscriptCache(storage);
     try {
+      storage.removeItem(`${PRE_CUTOVER_ACP_TRANSCRIPT_CACHE_PREFIX}${normalizedId}`);
       storage.removeItem(conversationTranscriptCacheKey(normalizedId));
       writeTranscriptCacheIndex(
         storage,
@@ -186,11 +206,13 @@
     if (!normalizedId) return null;
     const storage = safeSessionStorage();
     if (!storage) return null;
+    purgePreCutoverTranscriptCache(storage);
     try {
+      storage.removeItem(`${PRE_CUTOVER_ACP_TRANSCRIPT_CACHE_PREFIX}${normalizedId}`);
       const raw = storage.getItem(conversationTranscriptCacheKey(normalizedId));
       if (!raw) return null;
       const parsed = JSON.parse(raw);
-      if (parsed?.version !== ACP_TRANSCRIPT_CACHE_VERSION || typeof parsed !== 'object') {
+      if (!parsed || typeof parsed !== 'object') {
         clearCachedConversationRecord(normalizedId);
         return null;
       }
@@ -205,10 +227,10 @@
     if (!conversationId) return;
     const storage = safeSessionStorage();
     if (!storage) return;
+    purgePreCutoverTranscriptCache(storage);
 
     const preview = ACPRender.getPreviewText(page.transcript);
     const payload = {
-      version: ACP_TRANSCRIPT_CACHE_VERSION,
       conversationId,
       spritzName: page.selectedName || '',
       sessionId: page.selectedConversation?.spec?.sessionId || '',
@@ -217,6 +239,7 @@
       transcript: ACPRender.serializeTranscript(page.transcript),
     };
     try {
+      storage.removeItem(`${PRE_CUTOVER_ACP_TRANSCRIPT_CACHE_PREFIX}${conversationId}`);
       storage.setItem(conversationTranscriptCacheKey(conversationId), JSON.stringify(payload));
       const nextIndex = [conversationId, ...readTranscriptCacheIndex(storage).filter((item) => item !== conversationId)];
       const prunedIndex = nextIndex.slice(0, ACP_TRANSCRIPT_CACHE_LIMIT);

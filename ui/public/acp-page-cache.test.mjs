@@ -66,6 +66,11 @@ function collectText(node) {
   return `${own} ${childText}`.replace(/\s+/g, ' ').trim();
 }
 
+const CURRENT_CACHE_KEY = 'spritz:acp:thread:conv-1';
+const CURRENT_CACHE_INDEX_KEY = 'spritz:acp:thread:index';
+const PRE_CUTOVER_CACHE_KEY = 'spritz:acp:transcript:conv-1';
+const PRE_CUTOVER_CACHE_INDEX_KEY = 'spritz:acp:transcript:index';
+
 function loadModules(storageSeed = {}, createACPClient = null) {
   const document = { createElement };
   const window = {
@@ -115,12 +120,10 @@ function loadModules(storageSeed = {}, createACPClient = null) {
 }
 
 test('ACP page restores cached transcript when revisiting a conversation', async () => {
-  const cacheKey = 'spritz:acp:transcript:conv-1';
   let releaseStart = () => {};
   const window = loadModules(
     {
-      [cacheKey]: JSON.stringify({
-        version: 2,
+      [CURRENT_CACHE_KEY]: JSON.stringify({
         conversationId: 'conv-1',
         transcript: {
           messages: [
@@ -232,12 +235,10 @@ test('ACP page restores cached transcript when revisiting a conversation', async
 });
 
 test('ACP page ignores stale cached transcript versions after cache cutover', async () => {
-  const cacheKey = 'spritz:acp:transcript:conv-1';
   let releaseStart = () => {};
   const window = loadModules(
     {
-      [cacheKey]: JSON.stringify({
-        version: 1,
+      [PRE_CUTOVER_CACHE_KEY]: JSON.stringify({
         conversationId: 'conv-1',
         transcript: {
           messages: [
@@ -258,6 +259,7 @@ test('ACP page ignores stale cached transcript versions after cache cutover', as
           usage: null,
         },
       }),
+      [PRE_CUTOVER_CACHE_INDEX_KEY]: JSON.stringify(['conv-1']),
     },
     ({ conversation }) => ({
       start: async () => {
@@ -345,16 +347,15 @@ test('ACP page ignores stale cached transcript versions after cache cutover', as
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.doesNotMatch(collectText(shellEl), /Stale cached assistant reply\./);
-  assert.equal(window.sessionStorage.getItem(cacheKey), null);
+  assert.equal(window.sessionStorage.getItem(PRE_CUTOVER_CACHE_KEY), null);
+  assert.equal(window.sessionStorage.getItem(PRE_CUTOVER_CACHE_INDEX_KEY), null);
   releaseStart();
 });
 
 test('ACP page replaces cached transcript with backend replay during bootstrap', async () => {
-  const cacheKey = 'spritz:acp:transcript:conv-1';
   const window = loadModules(
     {
-      [cacheKey]: JSON.stringify({
-        version: 2,
+      [CURRENT_CACHE_KEY]: JSON.stringify({
         conversationId: 'conv-1',
         transcript: {
           messages: [
@@ -467,11 +468,9 @@ test('ACP page replaces cached transcript with backend replay during bootstrap',
 });
 
 test('ACP page clears cached transcript when backend replay returns no transcript updates', async () => {
-  const cacheKey = 'spritz:acp:transcript:conv-1';
   const window = loadModules(
     {
-      [cacheKey]: JSON.stringify({
-        version: 2,
+      [CURRENT_CACHE_KEY]: JSON.stringify({
         conversationId: 'conv-1',
         transcript: {
           messages: [
@@ -580,10 +579,8 @@ test('ACP page clears cached transcript when backend replay returns no transcrip
 });
 
 test('ACP page drops cached HTML error documents during transcript restore', async () => {
-  const cacheKey = 'spritz:acp:transcript:conv-1';
   const window = loadModules({
-    [cacheKey]: JSON.stringify({
-      version: 1,
+    [CURRENT_CACHE_KEY]: JSON.stringify({
       conversationId: 'conv-1',
       transcript: {
         messages: [
