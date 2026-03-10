@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import {
   buildGatewayClientOptions,
+  buildHistoryReplayUpdates,
   buildBridgeFallbackSessionKey,
   createSpritzAcpGatewayAgentClass,
   loadOpenclawCompat,
@@ -151,6 +152,117 @@ test('createSpritzAcpGatewayAgentClass uses mapped fallback keys for new and loa
   );
   assert.deepEqual(agent.rateLimits, ['newSession']);
   assert.deepEqual(agent.sentAvailableCommands, [created.sessionId, created.sessionId]);
+});
+
+test('buildHistoryReplayUpdates converts gateway history into ACP replay updates', () => {
+  const updates = buildHistoryReplayUpdates([
+    {
+      role: 'user',
+      content: [{ type: 'text', text: 'hello from history' }],
+    },
+    {
+      role: 'assistant',
+      content: [
+        { type: 'toolCall', id: 'tool-1', name: 'bash', arguments: { command: 'pwd' } },
+        { type: 'text', text: 'I checked the directory.' },
+      ],
+    },
+    {
+      role: 'toolResult',
+      toolCallId: 'tool-1',
+      toolName: 'bash',
+      content: [{ type: 'tool_result', text: '/home/dev' }],
+    },
+  ]);
+
+  assert.deepEqual(
+    updates.map((update) => update.sessionUpdate),
+    ['user_message_chunk', 'tool_call', 'agent_message_chunk', 'tool_call_update'],
+  );
+  assert.equal(updates[0].content.text, 'hello from history');
+  assert.equal(updates[1].toolCallId, 'tool-1');
+  assert.equal(updates[1].rawInput.command, 'pwd');
+  assert.equal(updates[2].content.text, 'I checked the directory.');
+  assert.equal(updates[3].rawOutput, '/home/dev');
+});
+
+test('loadSession replays gateway history before returning', async () => {
+  class FakeBaseAgent {
+    constructor() {
+      this.logged = [];
+      this.rateLimits = [];
+      this.sentAvailableCommands = [];
+      this.connection = {
+        updates: [],
+        async sessionUpdate(payload) {
+          this.updates.push(payload);
+        },
+      };
+      this.gateway = {
+        async request(method, params) {
+          if (method === 'chat.history') {
+            assert.deepEqual(params, {
+              sessionKey: 'agent:main:spritz-acp:123e4567-e89b-42d3-a456-426614174000',
+              limit: 1000,
+            });
+            return {
+              messages: [
+                { role: 'user', content: [{ type: 'text', text: 'hello from history' }] },
+                { role: 'assistant', content: [{ type: 'text', text: 'history reply' }] },
+              ],
+              thinkingLevel: 'high',
+            };
+          }
+          throw new Error(`unexpected gateway method ${method}`);
+        },
+      };
+      this.sessionStore = {
+        entries: new Map(),
+        createSession: ({ sessionId, sessionKey, cwd }) => {
+          const session = { sessionId, sessionKey, cwd };
+          this.sessionStore.entries.set(sessionId, session);
+          return session;
+        },
+        hasSession: () => false,
+      };
+    }
+
+    log(message) {
+      this.logged.push(message);
+    }
+
+    enforceSessionCreateRateLimit(method) {
+      this.rateLimits.push(method);
+    }
+
+    async resolveSessionKeyFromMeta({ fallbackKey }) {
+      return fallbackKey;
+    }
+
+    async sendAvailableCommands(sessionId) {
+      this.sentAvailableCommands.push(sessionId);
+    }
+  }
+
+  const SpritzAgent = createSpritzAcpGatewayAgentClass(FakeBaseAgent, {});
+  const agent = new SpritzAgent();
+
+  await agent.loadSession({
+    sessionId: '123e4567-e89b-42d3-a456-426614174000',
+    cwd: '/home/dev',
+    mcpServers: [],
+  });
+
+  assert.equal(agent.connection.updates.length, 3);
+  assert.deepEqual(
+    agent.connection.updates.map((entry) => entry.update.sessionUpdate),
+    ['user_message_chunk', 'agent_message_chunk', 'current_mode_update'],
+  );
+  assert.equal(agent.connection.updates[0].update.content.text, 'hello from history');
+  assert.equal(agent.connection.updates[1].update.content.text, 'history reply');
+  assert.equal(agent.connection.updates[2].update.mode, 'high');
+  assert.deepEqual(agent.rateLimits, ['loadSession']);
+  assert.deepEqual(agent.sentAvailableCommands, ['123e4567-e89b-42d3-a456-426614174000']);
 });
 
 test('loadOpenclawCompat loads the generated stable compat module from the package root', async () => {

@@ -29,9 +29,11 @@ Today:
 - the ACP backend owns the actual runtime session
 - the browser keeps a session-scoped transcript cache so returning to the same
   URL restores the last rendered transcript immediately
+- OpenClaw-backed `session/load` replays stored transcript history from backend
+  session storage
 
-That browser cache improves user experience, but it is not the long-term source
-of truth for transcript restore.
+That browser cache improves user experience, but it is not the source of truth
+for transcript restore.
 
 ## Identity Model
 
@@ -163,6 +165,31 @@ For OpenClaw specifically, the expected behavior is:
 - translate stored history into ACP `session/update` notifications
 - emit the replay on `session/load`
 
+## Implemented Flow
+
+The current Spritz implementation now follows this model for OpenClaw-backed
+workspaces:
+
+1. Spritz routes by `SpritzConversation.metadata.name`
+2. Spritz reads `SpritzConversation.spec.sessionId`
+3. Spritz ACP UI connects through the Spritz API bridge
+4. the ACP client sends `session/load`
+5. the Spritz OpenClaw ACP wrapper resolves the OpenClaw gateway session key
+6. the wrapper calls OpenClaw `chat.history`
+7. the wrapper translates stored history into ordered ACP updates
+8. the UI replaces any cached transcript with the replayed backend transcript
+
+Concretely, the shipped implementation does the following:
+
+- replays historical user messages as `user_message_chunk`
+- replays historical assistant messages as `agent_message_chunk`
+- replays tool calls as `tool_call`
+- replays tool results as `tool_call_update`
+- replays current thinking level as `current_mode_update` when available
+
+This keeps the replay transport ACP-native and does not introduce a
+Spritz-specific transcript replay protocol.
+
 ## Client Behavior
 
 The client should treat backend replay as canonical.
@@ -174,6 +201,9 @@ The client should:
 - restore local cached transcript immediately when available
 - replace cached transcript state with backend replay once replay begins
 - continue to work when no browser cache exists
+
+During bootstrap replay, the client should treat replayed message chunks as
+historical completed messages, not as a live typing stream.
 
 The client should not:
 

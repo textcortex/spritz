@@ -136,6 +136,16 @@
     return [{ type: 'text', text: normalized }];
   }
 
+  function appendHistoricalText(transcript, kind, text) {
+    const value = String(text || '');
+    if (!value) return;
+    pushMessage(transcript, {
+      kind,
+      streaming: false,
+      blocks: createTextBlocks(value),
+    });
+  }
+
   function appendStreamingText(transcript, kind, text) {
     const chunk = String(text || '');
     if (!chunk) return;
@@ -231,14 +241,23 @@
       .replace(/\b\w/g, (match) => match.toUpperCase());
   }
 
-  function applySessionUpdate(transcript, update) {
+  function applySessionUpdate(transcript, update, options = {}) {
     const kind = update?.sessionUpdate || 'unknown';
+    const historical = Boolean(options.historical);
     if (kind === 'user_message_chunk') {
-      appendStreamingText(transcript, 'user', extractACPText(update.content));
+      if (historical) {
+        appendHistoricalText(transcript, 'user', extractACPText(update.content));
+      } else {
+        appendStreamingText(transcript, 'user', extractACPText(update.content));
+      }
       return null;
     }
     if (kind === 'agent_message_chunk') {
-      appendStreamingText(transcript, 'assistant', extractACPText(update.content));
+      if (historical) {
+        appendHistoricalText(transcript, 'assistant', extractACPText(update.content));
+      } else {
+        appendStreamingText(transcript, 'assistant', extractACPText(update.content));
+      }
       return null;
     }
     if (kind === 'tool_call' || kind === 'tool_call_update') {

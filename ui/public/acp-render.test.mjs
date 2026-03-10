@@ -89,3 +89,33 @@ test('ACP render adapter keeps commands out of transcript and upserts tool cards
   assert.equal(toolCard.blocks.some((block) => block.type === 'details' && block.title === 'Input'), true);
   assert.equal(toolCard.blocks.some((block) => block.type === 'details' && block.title === 'Result'), true);
 });
+
+test('ACP render adapter treats bootstrap replay chunks as historical messages', () => {
+  const ACPRender = loadRenderModule();
+  const transcript = ACPRender.createTranscript();
+
+  ACPRender.applySessionUpdate(
+    transcript,
+    {
+      sessionUpdate: 'user_message_chunk',
+      content: { type: 'text', text: 'Earlier user message' },
+    },
+    { historical: true },
+  );
+  ACPRender.applySessionUpdate(
+    transcript,
+    {
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'text', text: 'Earlier assistant message' },
+    },
+    { historical: true },
+  );
+
+  assert.equal(transcript.messages.length, 2);
+  assert.equal(transcript.messages[0].kind, 'user');
+  assert.equal(transcript.messages[0].streaming, false);
+  assert.equal(transcript.messages[0].blocks[0].text, 'Earlier user message');
+  assert.equal(transcript.messages[1].kind, 'assistant');
+  assert.equal(transcript.messages[1].streaming, false);
+  assert.equal(transcript.messages[1].blocks[0].text, 'Earlier assistant message');
+});

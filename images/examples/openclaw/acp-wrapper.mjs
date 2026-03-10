@@ -86,6 +86,169 @@ function parseSessionMeta(meta) {
   };
 }
 
+function normalizeHistoryContent(content) {
+  if (Array.isArray(content)) {
+    return content.filter((item) => item && typeof item === "object");
+  }
+  if (typeof content === "string" && content.trim()) {
+    return [{ type: "text", text: content }];
+  }
+  return [];
+}
+
+function readTextFromHistoryContent(content) {
+  return content
+    .map((item) => {
+      if (typeof item.text === "string" && item.text.trim()) {
+        return item.text;
+      }
+      if (typeof item.content === "string" && item.content.trim()) {
+        return item.content;
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+function buildHistoryToolCallUpdate(item) {
+  const toolCallId =
+    (typeof item.id === "string" && item.id.trim()) ||
+    (typeof item.toolCallId === "string" && item.toolCallId.trim()) ||
+    (typeof item.tool_call_id === "string" && item.tool_call_id.trim()) ||
+    "";
+  if (!toolCallId) {
+    return null;
+  }
+  const toolName =
+    (typeof item.name === "string" && item.name.trim()) ||
+    (typeof item.toolName === "string" && item.toolName.trim()) ||
+    (typeof item.tool_name === "string" && item.tool_name.trim()) ||
+    "tool";
+  const rawInput =
+    item.arguments ??
+    item.args ??
+    item.input ??
+    item.rawInput ??
+    undefined;
+  return {
+    sessionUpdate: "tool_call",
+    toolCallId,
+    title: `${toolName}`,
+    status: "completed",
+    rawInput,
+    kind: toolName,
+  };
+}
+
+function buildHistoryToolResultUpdate(message, content) {
+  const toolCallId =
+    (typeof message.toolCallId === "string" && message.toolCallId.trim()) ||
+    (typeof message.tool_call_id === "string" && message.tool_call_id.trim()) ||
+    (typeof message.id === "string" && message.id.trim()) ||
+    "";
+  if (!toolCallId) {
+    return null;
+  }
+  const rawOutput = readTextFromHistoryContent(content) || message.result || message.output || "";
+  return {
+    sessionUpdate: "tool_call_update",
+    toolCallId,
+    status: message.is_error || message.isError ? "failed" : "completed",
+    rawOutput,
+  };
+}
+
+/**
+ * Converts persisted OpenClaw chat history into ACP session updates so
+ * `session/load` can reconstruct prior transcript state for any ACP client.
+ */
+export function buildHistoryReplayUpdates(messages = []) {
+  if (!Array.isArray(messages)) {
+    return [];
+  }
+
+  const updates = [];
+  for (const rawMessage of messages) {
+    if (!rawMessage || typeof rawMessage !== "object") {
+      continue;
+    }
+    const role = typeof rawMessage.role === "string" ? rawMessage.role.toLowerCase() : "";
+    const content = normalizeHistoryContent(rawMessage.content);
+
+    if (role === "user") {
+      const text = readTextFromHistoryContent(content);
+      if (text) {
+        updates.push({
+          sessionUpdate: "user_message_chunk",
+          content: { type: "text", text },
+        });
+      }
+      continue;
+    }
+
+    if (role === "assistant") {
+      for (const item of content) {
+        const type = typeof item.type === "string" ? item.type.toLowerCase() : "";
+        if (["toolcall", "tool_call", "tooluse", "tool_use"].includes(type)) {
+          const toolUpdate = buildHistoryToolCallUpdate(item);
+          if (toolUpdate) {
+            updates.push(toolUpdate);
+          }
+        }
+      }
+      const text = readTextFromHistoryContent(content);
+      if (text) {
+        updates.push({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text },
+        });
+      }
+      continue;
+    }
+
+    if (role === "toolresult" || role === "tool_result" || role === "tool") {
+      const toolResultUpdate = buildHistoryToolResultUpdate(rawMessage, content);
+      if (toolResultUpdate) {
+        updates.push(toolResultUpdate);
+      }
+    }
+  }
+
+  return updates;
+}
+
+async function replayGatewayHistory(agent, session) {
+  if (!agent?.gateway?.request || !agent?.connection?.sessionUpdate) {
+    return;
+  }
+
+  const history = await agent.gateway.request("chat.history", {
+    sessionKey: session.sessionKey,
+    limit: 1000,
+  });
+
+  const updates = buildHistoryReplayUpdates(history?.messages);
+  for (const update of updates) {
+    await agent.connection.sessionUpdate({
+      sessionId: session.sessionId,
+      update,
+    });
+  }
+
+  const thinkingLevel = typeof history?.thinkingLevel === "string" ? history.thinkingLevel.trim() : "";
+  if (thinkingLevel) {
+    await agent.connection.sessionUpdate({
+      sessionId: session.sessionId,
+      update: {
+        sessionUpdate: "current_mode_update",
+        mode: thinkingLevel,
+      },
+    });
+  }
+}
+
 /**
  * Returns the deterministic gateway session key used for ACP session IDs that
  * do not already carry an explicit gateway session key.
@@ -168,6 +331,7 @@ export function createSpritzAcpGatewayAgentClass(AcpGatewayAgent, env = process.
         cwd: params.cwd,
       });
       this.log(`loadSession: ${session.sessionId} -> ${session.sessionKey}`);
+      await replayGatewayHistory(this, session);
       await this.sendAvailableCommands(session.sessionId);
       return {};
     }
