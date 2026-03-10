@@ -8,7 +8,7 @@ rules:
     resources: ["spritzes", "spritzconversations"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["spritz.sh"]
-    resources: ["spritzes/status"]
+    resources: ["spritzes/status", "spritzconversations/status"]
     verbs: ["get", "update", "patch"]
   - apiGroups: [""]
     resources: ["pods"]

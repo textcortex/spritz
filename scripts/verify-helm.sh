@@ -82,6 +82,7 @@ expect_contains "${auth_render}" "nginx.ingress.kubernetes.io/configuration-snip
 expect_contains "${auth_annotations_render}" "authonly: enabled" "auth ingress custom annotations in auth render"
 expect_contains "${acp_network_policy_render}" "kind: NetworkPolicy" "ACP network policy when enabled"
 expect_contains "${acp_network_policy_render}" "name: spritz-acp" "ACP network policy name when enabled"
+expect_contains "${default_render}" 'resources: ["spritzes/status", "spritzconversations/status"]' "status RBAC for spritz conversations"
 
 expect_failure \
   "api.auth.mode must be header or auto when authGateway.enabled=true" \
