@@ -238,9 +238,15 @@ button.ghost {
 }
 
 .shell[data-view="chat"] {
+  display: flex;
+  flex-direction: column;
   max-width: none;
-  min-height: 100vh;
+  height: 100dvh;
+  min-height: 100dvh;
   padding: 20px;
+  box-sizing: border-box;
+  overflow: hidden;
+  gap: 12px;
 }
 
 .shell[data-view="chat"] > header {
@@ -253,9 +259,10 @@ button.ghost {
 }
 
 .acp-shell {
+  flex: 1;
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
-  min-height: calc(100vh - 40px);
+  min-height: 0;
   padding: 0;
   overflow: hidden;
 }
@@ -265,7 +272,8 @@ button.ghost {
   flex-direction: column;
   border-right: 1px solid #e5e8ec;
   background: rgba(247, 247, 248, 0.96);
-  min-height: calc(100vh - 40px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .acp-sidebar-top {
@@ -275,6 +283,7 @@ button.ghost {
   padding: 20px;
   border-bottom: 1px solid #e5e8ec;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(247, 247, 248, 0.94));
+  flex-shrink: 0;
 }
 
 .acp-sidebar-nav {
@@ -313,11 +322,13 @@ button.ghost {
 
 .acp-thread-list {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  overscroll-behavior: contain;
 }
 
 .acp-thread-item {
@@ -392,13 +403,15 @@ button.ghost {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  min-height: calc(100vh - 40px);
+  min-height: 0;
+  overflow: hidden;
   background:
     radial-gradient(circle at top left, rgba(120, 177, 255, 0.08), transparent 28%),
     linear-gradient(180deg, #f7f8fa 0%, #eef1f5 100%);
 }
 
 .acp-main-header {
+  flex-shrink: 0;
   padding: 20px 24px 16px;
   border-bottom: 1px solid rgba(229, 232, 236, 0.9);
   background: rgba(255, 255, 255, 0.82);
@@ -438,8 +451,10 @@ button.ghost {
 
 .acp-main-body {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 28px 24px 12px;
+  overscroll-behavior: contain;
 }
 
 .acp-stream {
@@ -655,6 +670,7 @@ button.ghost {
 }
 
 .acp-main-footer {
+  flex-shrink: 0;
   border-top: 1px solid rgba(229, 232, 236, 0.9);
   background: rgba(255, 255, 255, 0.92);
 }
@@ -776,18 +792,19 @@ button.ghost {
 
   .acp-shell {
     grid-template-columns: 1fr;
-    min-height: 100vh;
+    height: 100%;
+    min-height: 0;
     border-radius: 0;
   }
 
   .acp-sidebar {
-    min-height: auto;
+    min-height: 0;
     border-right: 0;
     border-bottom: 1px solid #e5e8ec;
   }
 
   .acp-main {
-    min-height: auto;
+    min-height: 0;
   }
 
   .acp-main-header-top,
