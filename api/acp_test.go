@@ -264,3 +264,40 @@ func TestListAndPatchACPConversationsByID(t *testing.T) {
 		t.Fatalf("expected patched conversation fields, got %#v", getPayload.Data.Spec)
 	}
 }
+
+func TestListACPAgentsUsesSpecOwnerWhenOwnerLabelMissing(t *testing.T) {
+	ownedMissingLabel := readyACPSpritz("tidy-otter", "user-1")
+	ownedMissingLabel.Labels = nil
+	mislabelledOtherOwner := readyACPSpritz("wrong-owner", "user-2")
+	mislabelledOtherOwner.Labels = map[string]string{ownerLabelKey: ownerLabelValue("user-1")}
+
+	s := newACPTestServer(t, ownedMissingLabel, mislabelledOtherOwner)
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.GET("/api/acp/agents", s.listACPAgents)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/acp/agents", nil)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Status string `json:"status"`
+		Data   struct {
+			Items []acpAgentResponse `json:"items"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode agents response: %v", err)
+	}
+	if len(payload.Data.Items) != 1 {
+		t.Fatalf("expected exactly one ACP-ready agent, got %d", len(payload.Data.Items))
+	}
+	if payload.Data.Items[0].Spritz.Name != "tidy-otter" {
+		t.Fatalf("expected tidy-otter in ACP list, got %q", payload.Data.Items[0].Spritz.Name)
+	}
+}

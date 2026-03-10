@@ -36,6 +36,7 @@ const (
 	defaultSSHMode             = "service"
 	spritzContainerName        = "spritz"
 	spritzFinalizer            = "spritz.sh/finalizer"
+	ownerLabelKey             = "spritz.sh/owner"
 	defaultTTLGrace            = 5 * time.Minute
 	defaultRepoInitImage       = "alpine/git:2.45.2"
 	repoAuthMountPath          = "/var/run/spritz/repo-auth"
@@ -203,8 +204,12 @@ func (r *SpritzReconciler) reconcileLifecycle(ctx context.Context, spritz *sprit
 		return true, nil
 	}
 
+	metadataUpdated := reconcileSpritzMetadata(spritz)
 	if !controllerutil.ContainsFinalizer(spritz, spritzFinalizer) {
 		controllerutil.AddFinalizer(spritz, spritzFinalizer)
+		metadataUpdated = true
+	}
+	if metadataUpdated {
 		if err := r.Update(ctx, spritz); err != nil {
 			return true, err
 		}
@@ -212,6 +217,22 @@ func (r *SpritzReconciler) reconcileLifecycle(ctx context.Context, spritz *sprit
 	}
 
 	return false, nil
+}
+
+func reconcileSpritzMetadata(spritz *spritzv1.Spritz) bool {
+	ownerID := strings.TrimSpace(spritz.Spec.Owner.ID)
+	if ownerID == "" {
+		return false
+	}
+	desiredOwnerLabel := ownerLabelValue(ownerID)
+	if spritz.Labels == nil {
+		spritz.Labels = map[string]string{}
+	}
+	if spritz.Labels[ownerLabelKey] == desiredOwnerLabel {
+		return false
+	}
+	spritz.Labels[ownerLabelKey] = desiredOwnerLabel
+	return true
 }
 
 func (r *SpritzReconciler) reconcileResources(ctx context.Context, spritz *spritzv1.Spritz) error {
@@ -758,7 +779,7 @@ func baseLabels(spritz *spritzv1.Spritz) map[string]string {
 		"spritz.sh/name": spritz.Name,
 	}
 	if spritz.Spec.Owner.ID != "" {
-		labels["spritz.sh/owner"] = ownerLabelValue(spritz.Spec.Owner.ID)
+		labels[ownerLabelKey] = ownerLabelValue(spritz.Spec.Owner.ID)
 	}
 	return labels
 }

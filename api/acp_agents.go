@@ -29,9 +29,6 @@ func (s *server) listACPAgents(c echo.Context) error {
 	if namespace != "" {
 		opts = append(opts, client.InNamespace(namespace))
 	}
-	if s.auth.enabled() && !principal.IsAdmin {
-		opts = append(opts, client.MatchingLabels{ownerLabelKey: ownerLabelValue(principal.ID)})
-	}
 	if err := s.client.List(c.Request().Context(), list, opts...); err != nil {
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
