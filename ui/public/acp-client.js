@@ -265,6 +265,23 @@
 
     return {
       start,
+      getConversationId() {
+        return conversation?.metadata?.name || '';
+      },
+      getSessionId() {
+        return sessionId || '';
+      },
+      matchesConversation(targetConversation) {
+        const targetConversationId = targetConversation?.metadata?.name || '';
+        if (targetConversationId && targetConversationId !== (conversation?.metadata?.name || '')) {
+          return false;
+        }
+        const expectedSessionId = targetConversation?.spec?.sessionId || '';
+        if (expectedSessionId && sessionId && expectedSessionId !== sessionId) {
+          return false;
+        }
+        return true;
+      },
       isReady() {
         return Boolean(ws && ws.readyState === WebSocket.OPEN && ready && bootstrapComplete);
       },

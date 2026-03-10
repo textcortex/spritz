@@ -517,8 +517,34 @@
     page.statusEl.textContent = text || '';
   }
 
+  function selectedConversationClientMatches(page) {
+    return Boolean(
+      page.client &&
+        page.selectedConversation &&
+        typeof page.client.matchesConversation === 'function' &&
+        page.client.matchesConversation(page.selectedConversation),
+    );
+  }
+
+  async function ensureSelectedConversationClient(page) {
+    if (!page.selectedConversation) return false;
+    if (selectedConversationClientMatches(page)) {
+      return true;
+    }
+    if (!page.selectedConversationId) {
+      return false;
+    }
+    setStatus(page, 'Reconnecting conversation…');
+    await selectConversation(page, page.selectedConversationId);
+    return selectedConversationClientMatches(page);
+  }
+
   function syncComposer(page) {
-    const disabled = !page.client || !page.client.isReady() || !page.selectedConversation;
+    const disabled =
+      !page.client ||
+      !page.client.isReady() ||
+      !page.selectedConversation ||
+      !selectedConversationClientMatches(page);
     if (page.composerEl) page.composerEl.disabled = disabled || page.promptInFlight;
     if (page.sendBtn) page.sendBtn.disabled = disabled || page.promptInFlight;
     if (page.cancelBtn) page.cancelBtn.disabled = !page.promptInFlight;
@@ -577,7 +603,7 @@
     setStatus(page, 'Disconnected. Reconnecting…');
   }
 
-  async function connectSelectedConversation(page) {
+  async function connectSelectedConversation(page, options = {}) {
     if (!page.selectedAgent || !page.selectedConversation) {
       resetConversationRuntime(page);
       renderThread(page);
@@ -654,6 +680,14 @@
     });
     syncComposer(page);
     await page.client.start();
+    if (!selectedConversationClientMatches(page)) {
+      if (options.allowAutoRebind === false) {
+        throw new Error('ACP client bound to the wrong conversation.');
+      }
+      resetConversationRuntime(page);
+      await connectSelectedConversation(page, { allowAutoRebind: false });
+      return;
+    }
     if (page.cacheHydratedTranscript && !page.cacheReplacedByReplay) {
       page.transcript = ACPRender.createTranscript();
       renderConversationList(page);
@@ -934,6 +968,13 @@
     sendButton.addEventListener('click', async () => {
       const text = composerInput.value.trim();
       if (!text || !page.client || !page.selectedConversation) return;
+      const rebound = await ensureSelectedConversationClient(page);
+      if (!rebound || !page.client) {
+        reportACPError(page, new Error('Conversation is reconnecting. Try again.'), 'Conversation is reconnecting. Try again.', 'info');
+        syncComposer(page);
+        renderThread(page);
+        return;
+      }
       composerInput.value = '';
       ACPRender.applySessionUpdate(page.transcript, {
         sessionUpdate: 'user_message_chunk',
