@@ -62,6 +62,7 @@ If the backend is not natively ACP, the workspace should run an ACP adapter.
 The ACP adapter owns:
 
 - ACP transport termination on `2529`
+- HTTP health and metadata on the same port for control-plane use
 - ACP session lifecycle
 - deterministic mapping from ACP session id to backend runtime session
 - transcript replay for `session/load`
@@ -109,7 +110,7 @@ normal liveness path.
 The operator should use:
 
 - Kubernetes readiness for basic health
-- a lightweight metadata refresh path for ACP capability discovery
+- the adapter's lightweight HTTP health and metadata paths for ACP capability discovery
 
 ACP metadata refresh should be slow and side-effect free. It must not create
 or tear down backend runtime sessions as part of routine health checks.
@@ -158,6 +159,7 @@ process spawned for every websocket connection.
 Required behavior:
 
 - accept many ACP client connections over time
+- expose cheap HTTP health and metadata endpoints without starting real runtime sessions
 - keep backend session mapping deterministic
 - perform graceful shutdown of upstream resources
 - isolate transport disconnects from transcript correctness
@@ -204,14 +206,18 @@ The target is one clear path from browser to workspace ACP runtime.
 
 ## Implementation Direction
 
-The next implementation work should focus on these changes:
+The current cutover in Spritz implements the first step of this architecture:
 
-1. Introduce or harden a single long-lived ACP adapter runtime per workspace.
-2. Remove operator dependence on short-lived ACP websocket probes for health.
-3. Ensure all adapter-to-backend traffic stays pod-local or cluster-local.
-4. Keep conversation bootstrap and binding ownership in the API.
-5. Make transcript replay fully backend-driven through `session/load`.
-6. Add soak tests that keep chat sessions open across repeated metadata refresh
+- the OpenClaw example image now runs one long-lived ACP server process on `2529`
+- the operator now uses HTTP health and metadata instead of periodic ACP websocket probes
+- workspace pod readiness and liveness use the ACP health endpoint
+
+Remaining implementation work should focus on these changes:
+
+1. Ensure all adapter-to-backend traffic stays pod-local or cluster-local.
+2. Keep conversation bootstrap and binding ownership in the API.
+3. Make transcript replay fully backend-driven through `session/load`.
+4. Add soak tests that keep chat sessions open across repeated metadata refresh
    intervals and verify no websocket reset churn or transcript corruption.
 
 ## Validation

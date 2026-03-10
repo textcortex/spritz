@@ -174,7 +174,7 @@ Spritz is intended to remain portable and standalone:
 - `api/`: authenticated API and ACP gateway
 - `ui/`: built-in web UI
 - `helm/spritz/`: standalone deployment chart
-- `images/examples/openclaw/`: OpenClaw example runtime and ACP bridge
+- `images/examples/openclaw/`: OpenClaw example runtime and ACP adapter
 - `docs/`: architecture and deployment documents
 
 ## Key docs

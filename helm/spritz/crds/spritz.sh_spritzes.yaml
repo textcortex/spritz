@@ -580,6 +580,9 @@ spec:
                     type: object
                   lastError:
                     type: string
+                  lastMetadataAt:
+                    format: date-time
+                    type: string
                   lastProbeAt:
                     format: date-time
                     type: string

@@ -35,12 +35,16 @@ The OpenClaw example entrypoint does the following:
    - `gateway.port` from `OPENCLAW_GATEWAY_PORT` (default `8080`)
    - `gateway.bind` from `OPENCLAW_GATEWAY_BIND` (default `lan`)
 4. Ensures `OPENCLAW_GATEWAY_TOKEN` exists (uses provided token or generates one).
-5. Writes the gateway token to a local token file for bridge use.
-6. Starts an image-owned ACP compatibility bridge on `0.0.0.0:2529` unless `OPENCLAW_ACP_ENABLED=false`.
-7. When gateway auth mode is `trusted-proxy`, automatically trusts loopback for the internal bridge,
-   injects the required trusted-proxy headers on the bridge's upstream gateway hop, and rewrites the
+5. Writes the gateway token to a local token file for ACP adapter use.
+6. Starts an image-owned ACP adapter on `0.0.0.0:2529` unless `OPENCLAW_ACP_ENABLED=false`.
+7. Exposes:
+   - WebSocket ACP on `/`
+   - `GET /healthz`
+   - `GET /.well-known/spritz-acp`
+8. When gateway auth mode is `trusted-proxy`, automatically trusts loopback for the internal adapter,
+   injects the required trusted-proxy headers on the adapter's upstream gateway hop, and rewrites the
    upstream gateway `connect` handshake into a Control UI operator session without device identity.
-8. Auto-starts OpenClaw when command is default (`sleep infinity`), unless `OPENCLAW_AUTO_START=false`.
+9. Auto-starts OpenClaw when command is default (`sleep infinity`), unless `OPENCLAW_AUTO_START=false`.
 
 Key implication: direct `/w/{name}` access with `bind=lan` expects real gateway auth.
 
@@ -61,15 +65,16 @@ Spritz will then:
 
 This ACP path is separate from OpenClaw's dashboard and gateway UI.
 
-Today the example image satisfies that contract with a compatibility bridge:
+Today the example image satisfies that contract with a long-lived ACP adapter:
 
-- WebSocket server inside the image listens on `2529`
-- each ACP connection spawns `spritz-openclaw-acp-wrapper`
-- the wrapper talks to the local OpenClaw gateway over loopback WebSocket
-- if gateway auth mode is `trusted-proxy`, the bridge uses a loopback-only header injector so the
+- one long-lived Node ACP server inside the image listens on `2529`
+- the adapter talks to the local OpenClaw gateway over loopback WebSocket
+- ACP websocket clients connect to that long-lived adapter instead of spawning a fresh runtime
+- the adapter also exposes cheap HTTP health and metadata endpoints for Spritz operator discovery
+- if gateway auth mode is `trusted-proxy`, the adapter uses a loopback-only header injector so the
   internal ACP hop satisfies the same trusted-proxy contract as the browser route
-- in trusted-proxy mode, the wrapper impersonates a Control UI-style operator profile without
-  device identity so OpenClaw does not force pairing for the internal ACP bridge
+- in trusted-proxy mode, the adapter impersonates a Control UI-style operator profile without
+  device identity so OpenClaw does not force pairing for the internal ACP client
 
 This keeps the Spritz side backend-agnostic while OpenClaw remains free to add native socket ACP
 later.

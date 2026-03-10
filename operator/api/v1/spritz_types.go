@@ -155,6 +155,7 @@ type SpritzACPStatus struct {
 	Capabilities    *SpritzACPCapabilities `json:"capabilities,omitempty"`
 	AuthMethods     []string               `json:"authMethods,omitempty"`
 	LastProbeAt     *metav1.Time           `json:"lastProbeAt,omitempty"`
+	LastMetadataAt  *metav1.Time           `json:"lastMetadataAt,omitempty"`
 	LastError       string                 `json:"lastError,omitempty"`
 }
 
@@ -552,6 +553,9 @@ func (in *SpritzACPStatus) DeepCopyInto(out *SpritzACPStatus) {
 	}
 	if in.LastProbeAt != nil {
 		out.LastProbeAt = in.LastProbeAt.DeepCopy()
+	}
+	if in.LastMetadataAt != nil {
+		out.LastMetadataAt = in.LastMetadataAt.DeepCopy()
 	}
 }
 

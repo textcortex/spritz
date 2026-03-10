@@ -3,46 +3,44 @@ package controllers
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	xwebsocket "golang.org/x/net/websocket"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	spritzv1 "spritz.sh/operator/api/v1"
 )
 
 const (
-	defaultACPProbeTimeout    = 3 * time.Second
-	defaultACPRefreshInterval = 30 * time.Second
+	defaultACPProbeTimeout            = 3 * time.Second
+	defaultACPRefreshInterval         = 30 * time.Second
+	defaultACPMetadataRefreshInterval = 5 * time.Minute
+	defaultACPHealthPath              = "/healthz"
+	defaultACPMetadataPath            = "/.well-known/spritz-acp"
 )
 
 type ACPProbeConfig struct {
-	Enabled         bool
-	Port            int32
-	Path            string
-	ProbeTimeout    time.Duration
-	RefreshInterval time.Duration
-	ClientInfo      acpImplementationInfo
-	WorkspaceURL    func(namespace, name string) string
+	Enabled                 bool
+	Port                    int32
+	Path                    string
+	HealthPath              string
+	MetadataPath            string
+	ProbeTimeout            time.Duration
+	RefreshInterval         time.Duration
+	MetadataRefreshInterval time.Duration
+	ClientInfo              acpImplementationInfo
+	WorkspaceURL            func(namespace, name string) string
 }
 
 type acpImplementationInfo struct {
 	Name    string `json:"name,omitempty"`
 	Title   string `json:"title,omitempty"`
 	Version string `json:"version,omitempty"`
-}
-
-type acpInitializeRequest struct {
-	ProtocolVersion    int                   `json:"protocolVersion"`
-	ClientCapabilities map[string]any        `json:"clientCapabilities,omitempty"`
-	ClientInfo         acpImplementationInfo `json:"clientInfo,omitempty"`
 }
 
 type acpPromptCapabilities struct {
@@ -57,30 +55,16 @@ type acpMCPTransportCapabilities struct {
 }
 
 type acpAgentCapabilities struct {
-	LoadSession        bool                         `json:"loadSession,omitempty"`
-	PromptCapabilities *acpPromptCapabilities       `json:"promptCapabilities,omitempty"`
-	MCP                *acpMCPTransportCapabilities `json:"mcp,omitempty"`
+	LoadSession bool                         `json:"loadSession,omitempty"`
+	Prompt      *acpPromptCapabilities       `json:"promptCapabilities,omitempty"`
+	MCP         *acpMCPTransportCapabilities `json:"mcp,omitempty"`
 }
 
-type acpInitializeResult struct {
+type acpMetadataResponse struct {
 	ProtocolVersion   int32                 `json:"protocolVersion"`
 	AgentCapabilities acpAgentCapabilities  `json:"agentCapabilities,omitempty"`
 	AgentInfo         acpImplementationInfo `json:"agentInfo,omitempty"`
 	AuthMethods       []string              `json:"authMethods,omitempty"`
-}
-
-type acpJSONRPCMessage struct {
-	JSONRPC string           `json:"jsonrpc,omitempty"`
-	ID      any              `json:"id,omitempty"`
-	Method  string           `json:"method,omitempty"`
-	Params  json.RawMessage  `json:"params,omitempty"`
-	Result  json.RawMessage  `json:"result,omitempty"`
-	Error   *acpJSONRPCError `json:"error,omitempty"`
-}
-
-type acpJSONRPCError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
 }
 
 func NewACPProbeConfigFromEnv() ACPProbeConfig {
@@ -92,11 +76,14 @@ func NewACPProbeConfigFromEnv() ACPProbeConfig {
 		path = "/" + path
 	}
 	return ACPProbeConfig{
-		Enabled:         parseBoolEnv("SPRITZ_ACP_ENABLED", true),
-		Port:            int32(parseIntEnv("SPRITZ_ACP_PORT", int(spritzv1.DefaultACPPort))),
-		Path:            path,
-		ProbeTimeout:    parseDurationEnv("SPRITZ_ACP_PROBE_TIMEOUT", defaultACPProbeTimeout),
-		RefreshInterval: parseDurationEnv("SPRITZ_ACP_REFRESH_INTERVAL", defaultACPRefreshInterval),
+		Enabled:                 parseBoolEnv("SPRITZ_ACP_ENABLED", true),
+		Port:                    int32(parseIntEnv("SPRITZ_ACP_PORT", int(spritzv1.DefaultACPPort))),
+		Path:                    path,
+		HealthPath:              normalizeACPPath(envOrDefault("SPRITZ_ACP_HEALTH_PATH", defaultACPHealthPath), defaultACPHealthPath),
+		MetadataPath:            normalizeACPPath(envOrDefault("SPRITZ_ACP_METADATA_PATH", defaultACPMetadataPath), defaultACPMetadataPath),
+		ProbeTimeout:            parseDurationEnv("SPRITZ_ACP_PROBE_TIMEOUT", defaultACPProbeTimeout),
+		RefreshInterval:         parseDurationEnv("SPRITZ_ACP_REFRESH_INTERVAL", defaultACPRefreshInterval),
+		MetadataRefreshInterval: parseDurationEnv("SPRITZ_ACP_METADATA_REFRESH_INTERVAL", defaultACPMetadataRefreshInterval),
 		ClientInfo: acpImplementationInfo{
 			Name:    envOrDefault("SPRITZ_ACP_CLIENT_NAME", "spritz-operator"),
 			Title:   envOrDefault("SPRITZ_ACP_CLIENT_TITLE", "Spritz ACP Operator"),
@@ -105,7 +92,18 @@ func NewACPProbeConfigFromEnv() ACPProbeConfig {
 	}
 }
 
-func (c ACPProbeConfig) shouldProbe(status *spritzv1.SpritzACPStatus) bool {
+func normalizeACPPath(value, fallback string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fallback
+	}
+	if strings.HasPrefix(trimmed, "/") {
+		return trimmed
+	}
+	return "/" + trimmed
+}
+
+func (c ACPProbeConfig) shouldCheckHealth(status *spritzv1.SpritzACPStatus) bool {
 	if !c.Enabled {
 		return false
 	}
@@ -118,15 +116,36 @@ func (c ACPProbeConfig) shouldProbe(status *spritzv1.SpritzACPStatus) bool {
 	return time.Since(status.LastProbeAt.Time) >= c.RefreshInterval
 }
 
-func (c ACPProbeConfig) workspaceURL(namespace, name string) string {
+func (c ACPProbeConfig) shouldRefreshMetadata(status *spritzv1.SpritzACPStatus) bool {
+	if !c.Enabled {
+		return false
+	}
+	if status == nil || status.LastMetadataAt == nil {
+		return true
+	}
+	if status.AgentInfo == nil || status.Capabilities == nil {
+		return true
+	}
+	return time.Since(status.LastMetadataAt.Time) >= c.MetadataRefreshInterval
+}
+
+func (c ACPProbeConfig) workspaceBaseURL(namespace, name string) string {
 	if c.WorkspaceURL != nil {
 		return c.WorkspaceURL(namespace, name)
 	}
 	return (&url.URL{
-		Scheme: "ws",
+		Scheme: "http",
 		Host:   fmt.Sprintf("%s.%s.svc.cluster.local:%d", name, namespace, c.Port),
-		Path:   c.Path,
 	}).String()
+}
+
+func (c ACPProbeConfig) endpointURL(namespace, name, requestPath string) string {
+	base, err := url.Parse(c.workspaceBaseURL(namespace, name))
+	if err != nil {
+		return ""
+	}
+	base.Path = requestPath
+	return base.String()
 }
 
 func (r *SpritzReconciler) reconcileACPStatus(ctx context.Context, spritz *spritzv1.Spritz, workloadReady bool) (*spritzv1.SpritzACPStatus, *time.Duration, error) {
@@ -139,120 +158,135 @@ func (r *SpritzReconciler) reconcileACPStatus(ctx context.Context, spritz *sprit
 		status.LastError = ""
 		return status, nil, nil
 	}
-	if !r.ACP.shouldProbe(spritz.Status.ACP) {
-		return deepCopyACPStatus(spritz.Status.ACP), durationPtr(time.Until(spritz.Status.ACP.LastProbeAt.Time.Add(r.ACP.RefreshInterval))), nil
+
+	currentStatus := deepCopyACPStatus(spritz.Status.ACP)
+	if currentStatus == nil {
+		currentStatus = baseACPStatus(r.ACP)
 	}
-	status, err := r.probeACP(ctx, spritz.Namespace, spritz.Name)
-	return status, durationPtr(r.ACP.RefreshInterval), err
+
+	healthNeedsCheck := r.ACP.shouldCheckHealth(currentStatus)
+	metadataNeedsRefresh := r.ACP.shouldRefreshMetadata(currentStatus)
+	if !healthNeedsCheck && !metadataNeedsRefresh {
+		next := minDurationPtr(
+			durationPtr(time.Until(currentStatus.LastProbeAt.Time.Add(r.ACP.RefreshInterval))),
+			durationPtr(time.Until(currentStatus.LastMetadataAt.Time.Add(r.ACP.MetadataRefreshInterval))),
+		)
+		return currentStatus, next, nil
+	}
+
+	status, err := r.fetchACPStatus(ctx, spritz.Namespace, spritz.Name, currentStatus, metadataNeedsRefresh)
+	next := minDurationPtr(durationPtr(r.ACP.RefreshInterval), durationPtr(r.ACP.MetadataRefreshInterval))
+	return status, next, err
 }
 
-func (r *SpritzReconciler) probeACP(ctx context.Context, namespace, name string) (*spritzv1.SpritzACPStatus, error) {
+func (r *SpritzReconciler) fetchACPStatus(
+	ctx context.Context,
+	namespace, name string,
+	currentStatus *spritzv1.SpritzACPStatus,
+	refreshMetadata bool,
+) (*spritzv1.SpritzACPStatus, error) {
 	status := baseACPStatus(r.ACP)
+	if currentStatus != nil {
+		currentStatus.DeepCopyInto(status)
+	}
 	now := metav1.Now()
 	status.State = "probing"
 	status.LastProbeAt = &now
 
-	conn, err := dialACP(ctx, r.ACP, namespace, name)
-	if err != nil {
-		status.State = "unavailable"
-		status.LastError = err.Error()
-		return status, err
-	}
-	defer func() {
-		_ = conn.Close()
-	}()
-	_ = conn.SetDeadline(time.Now().Add(r.ACP.ProbeTimeout))
-
-	requestID := "spritz-initialize"
-	if err := xwebsocket.JSON.Send(conn, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      requestID,
-		"method":  "initialize",
-		"params": acpInitializeRequest{
-			ProtocolVersion:    1,
-			ClientCapabilities: map[string]any{},
-			ClientInfo:         r.ACP.ClientInfo,
-		},
-	}); err != nil {
+	if err := checkACPHealth(ctx, r.ACP, namespace, name); err != nil {
 		status.State = "unavailable"
 		status.LastError = err.Error()
 		return status, err
 	}
 
-	for {
-		var message acpJSONRPCMessage
-		if err := xwebsocket.JSON.Receive(conn, &message); err != nil {
-			status.State = "unavailable"
-			status.LastError = err.Error()
-			return status, err
-		}
-		if fmt.Sprint(message.ID) != requestID {
-			continue
-		}
-		if message.Error != nil {
-			status.State = "error"
-			status.LastError = message.Error.Message
-			return status, errors.New(message.Error.Message)
-		}
-		var result acpInitializeResult
-		if err := json.Unmarshal(message.Result, &result); err != nil {
-			status.State = "error"
-			status.LastError = err.Error()
-			return status, err
-		}
+	if !refreshMetadata {
 		status.State = "ready"
-		status.ProtocolVersion = result.ProtocolVersion
-		status.AgentInfo = &spritzv1.SpritzACPAgentInfo{
-			Name:    result.AgentInfo.Name,
-			Title:   result.AgentInfo.Title,
-			Version: result.AgentInfo.Version,
-		}
-		status.Capabilities = &spritzv1.SpritzACPCapabilities{
-			LoadSession: result.AgentCapabilities.LoadSession,
-		}
-		if result.AgentCapabilities.PromptCapabilities != nil {
-			status.Capabilities.Prompt = &spritzv1.SpritzACPPromptCapabilities{
-				Image:           result.AgentCapabilities.PromptCapabilities.Image,
-				Audio:           result.AgentCapabilities.PromptCapabilities.Audio,
-				EmbeddedContext: result.AgentCapabilities.PromptCapabilities.EmbeddedContext,
-			}
-		}
-		if result.AgentCapabilities.MCP != nil {
-			status.Capabilities.MCP = &spritzv1.SpritzACPMCPTransportCapabilities{
-				HTTP: result.AgentCapabilities.MCP.HTTP,
-				SSE:  result.AgentCapabilities.MCP.SSE,
-			}
-		}
-		if len(result.AuthMethods) > 0 {
-			status.AuthMethods = append([]string(nil), result.AuthMethods...)
-		}
 		status.LastError = ""
 		return status, nil
 	}
+
+	metadata, err := fetchACPMetadata(ctx, r.ACP, namespace, name)
+	if err != nil {
+		status.State = "error"
+		status.LastError = err.Error()
+		return status, err
+	}
+
+	status.State = "ready"
+	status.ProtocolVersion = metadata.ProtocolVersion
+	status.AgentInfo = &spritzv1.SpritzACPAgentInfo{
+		Name:    metadata.AgentInfo.Name,
+		Title:   metadata.AgentInfo.Title,
+		Version: metadata.AgentInfo.Version,
+	}
+	status.Capabilities = &spritzv1.SpritzACPCapabilities{
+		LoadSession: metadata.AgentCapabilities.LoadSession,
+	}
+	if metadata.AgentCapabilities.Prompt != nil {
+		status.Capabilities.Prompt = &spritzv1.SpritzACPPromptCapabilities{
+			Image:           metadata.AgentCapabilities.Prompt.Image,
+			Audio:           metadata.AgentCapabilities.Prompt.Audio,
+			EmbeddedContext: metadata.AgentCapabilities.Prompt.EmbeddedContext,
+		}
+	}
+	if metadata.AgentCapabilities.MCP != nil {
+		status.Capabilities.MCP = &spritzv1.SpritzACPMCPTransportCapabilities{
+			HTTP: metadata.AgentCapabilities.MCP.HTTP,
+			SSE:  metadata.AgentCapabilities.MCP.SSE,
+		}
+	}
+	status.AuthMethods = append([]string(nil), metadata.AuthMethods...)
+	status.LastMetadataAt = &now
+	status.LastError = ""
+	return status, nil
 }
 
-func dialACP(ctx context.Context, cfg ACPProbeConfig, namespace, name string) (*xwebsocket.Conn, error) {
-	wsURL := cfg.workspaceURL(namespace, name)
-	config, err := xwebsocket.NewConfig(wsURL, "http://spritz-operator.local")
+func checkACPHealth(ctx context.Context, cfg ACPProbeConfig, namespace, name string) error {
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		cfg.endpointURL(namespace, name, cfg.HealthPath),
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: cfg.ProbeTimeout}
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("ACP health returned %d", response.StatusCode)
+	}
+	return nil
+}
+
+func fetchACPMetadata(ctx context.Context, cfg ACPProbeConfig, namespace, name string) (*acpMetadataResponse, error) {
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		cfg.endpointURL(namespace, name, cfg.MetadataPath),
+		nil,
+	)
 	if err != nil {
 		return nil, err
 	}
-	config.Dialer = &net.Dialer{Timeout: cfg.ProbeTimeout}
-	type dialResult struct {
-		conn *xwebsocket.Conn
-		err  error
+	client := &http.Client{Timeout: cfg.ProbeTimeout}
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, err
 	}
-	resultCh := make(chan dialResult, 1)
-	go func() {
-		conn, err := xwebsocket.DialConfig(config)
-		resultCh <- dialResult{conn: conn, err: err}
-	}()
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case result := <-resultCh:
-		return result.conn, result.err
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ACP metadata returned %d", response.StatusCode)
 	}
+	var metadata acpMetadataResponse
+	if err := json.NewDecoder(response.Body).Decode(&metadata); err != nil {
+		return nil, err
+	}
+	return &metadata, nil
 }
 
 func baseACPStatus(cfg ACPProbeConfig) *spritzv1.SpritzACPStatus {
@@ -273,21 +307,21 @@ func deepCopyACPStatus(status *spritzv1.SpritzACPStatus) *spritzv1.SpritzACPStat
 	return out
 }
 
-func durationPtr(value time.Duration) *time.Duration {
-	if value <= 0 {
-		return nil
-	}
-	copy := value
-	return &copy
-}
-
-func parseBoolEnv(key string, fallback bool) bool {
+func envOrDefault(key, fallback string) string {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
 		return fallback
 	}
-	parsed, err := strconv.ParseBool(value)
-	if err != nil {
+	return value
+}
+
+func parseDurationEnv(key string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil || parsed <= 0 {
 		return fallback
 	}
 	return parsed
@@ -305,22 +339,17 @@ func parseIntEnv(key string, fallback int) int {
 	return parsed
 }
 
-func parseDurationEnv(key string, fallback time.Duration) time.Duration {
-	value := strings.TrimSpace(os.Getenv(key))
+func parseBoolEnv(key string, fallback bool) bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
 	if value == "" {
 		return fallback
 	}
-	parsed, err := time.ParseDuration(value)
-	if err != nil {
+	switch value {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
 		return fallback
 	}
-	return parsed
-}
-
-func envOrDefault(key, fallback string) string {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	return value
 }

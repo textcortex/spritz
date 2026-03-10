@@ -11,8 +11,11 @@ acp:
   enabled: true
   port: 2529
   path: /
+  healthPath: /healthz
+  metadataPath: /.well-known/spritz-acp
   probeTimeout: 3s
   refreshInterval: 30s
+  metadataRefreshInterval: 5m
   networkPolicy:
     enabled: false
 

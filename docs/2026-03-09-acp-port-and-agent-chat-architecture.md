@@ -30,15 +30,24 @@ Spritz reserves one internal service/container port for ACP:
 
 If a workspace process listens there and answers ACP `initialize`, Spritz treats it as an ACP agent.
 
+For the current Spritz ACP runtime contract, the same service should also expose:
+
+- `GET /healthz`
+- `GET /.well-known/spritz-acp`
+
+Those HTTP endpoints exist for control-plane health and metadata discovery. Browser and API ACP
+traffic still uses the WebSocket endpoint.
+
 ### Discovery ownership
 
 The operator owns ACP discovery.
 
 When a workspace deployment is ready, the operator:
 
-1. connects to `ws://<spritz>.<namespace>.svc.cluster.local:2529/`
-2. sends ACP `initialize`
-3. normalizes the response into `status.acp`
+1. checks `http://<spritz>.<namespace>.svc.cluster.local:2529/healthz`
+2. fetches `http://<spritz>.<namespace>.svc.cluster.local:2529/.well-known/spritz-acp` when ACP
+   metadata is missing or stale
+3. normalizes that response into `status.acp`
 4. sets the `ACPReady` condition on the `Spritz` resource
 
 The API does not probe ACP during user requests.
@@ -88,8 +97,11 @@ acp:
   enabled: true
   port: 2529
   path: /
+  healthPath: /healthz
+  metadataPath: /.well-known/spritz-acp
   probeTimeout: 3s
   refreshInterval: 30s
+  metadataRefreshInterval: 5m
   networkPolicy:
     enabled: false
 
@@ -117,10 +129,14 @@ Any workspace backend may be used as long as it:
 
 OpenClaw is one example backend, not the protocol owner.
 
-For the current OpenClaw preset, Spritz ships an image-owned compatibility bridge that exposes
-WebSocket ACP on `2529` and forwards each connection into the image-owned
-`spritz-openclaw-acp-wrapper` over stdio. This bridge is intentionally confined to the image so
-the Spritz ACP control plane does not become OpenClaw-specific.
+For the current OpenClaw preset, Spritz ships an image-owned ACP adapter that exposes:
+
+- WebSocket ACP on `2529`
+- `GET /healthz`
+- `GET /.well-known/spritz-acp`
+
+That adapter owns OpenClaw-specific session mapping and transcript replay, so the Spritz ACP
+control plane stays backend-agnostic.
 
 ## UI behavior
 
@@ -137,7 +153,7 @@ On reconnect:
 - the UI first asks Spritz API to bootstrap the selected conversation
 - Spritz API loads the stored ACP session or explicitly repairs it if the
   backend confirms that the session is missing
-- the UI then connects through the ACP bridge using the confirmed conversation
+- the UI then connects through the ACP gateway path using the confirmed conversation
   binding
 
 ## Security model

@@ -11,7 +11,7 @@ acp_enabled="${OPENCLAW_ACP_ENABLED:-true}"
 acp_bind="${OPENCLAW_ACP_BIND:-0.0.0.0}"
 acp_port="${OPENCLAW_ACP_PORT:-2529}"
 acp_path="${OPENCLAW_ACP_PATH:-/}"
-bridge_bin="${SPRITZ_OPENCLAW_BRIDGE_BIN:-/usr/local/bin/spritz-openclaw-acp-bridge}"
+server_bin="${SPRITZ_OPENCLAW_SERVER_BIN:-/usr/local/bin/spritz-openclaw-acp-server}"
 spritz_entrypoint_bin="${SPRITZ_OPENCLAW_MAIN_ENTRYPOINT:-/usr/local/bin/spritz-entrypoint}"
 
 detect_bridge_gateway_host() {
@@ -188,25 +188,26 @@ export SPRITZ_OPENCLAW_ACP_ALLOW_INSECURE_PRIVATE_WS="${SPRITZ_OPENCLAW_ACP_ALLO
 export SPRITZ_OPENCLAW_ACP_GATEWAY_TOKEN_FILE="${SPRITZ_OPENCLAW_ACP_GATEWAY_TOKEN_FILE:-${gateway_token_file}}"
 export SPRITZ_OPENCLAW_ACP_LISTEN_ADDR="${SPRITZ_OPENCLAW_ACP_LISTEN_ADDR:-${acp_bind}:${acp_port}}"
 export SPRITZ_OPENCLAW_ACP_PATH="${SPRITZ_OPENCLAW_ACP_PATH:-${acp_path}}"
-export SPRITZ_OPENCLAW_ACP_COMMAND="${SPRITZ_OPENCLAW_ACP_COMMAND:-/usr/local/bin/spritz-openclaw-acp-wrapper}"
+export SPRITZ_OPENCLAW_ACP_HEALTH_PATH="${SPRITZ_OPENCLAW_ACP_HEALTH_PATH:-/healthz}"
+export SPRITZ_OPENCLAW_ACP_METADATA_PATH="${SPRITZ_OPENCLAW_ACP_METADATA_PATH:-/.well-known/spritz-acp}"
 
-"${bridge_bin}" &
-bridge_pid=$!
+"${server_bin}" &
+server_pid=$!
 
 "${spritz_entrypoint_bin}" "$@" &
 main_pid=$!
 
 cleanup() {
-  kill "${main_pid}" "${bridge_pid}" 2>/dev/null || true
+  kill "${main_pid}" "${server_pid}" 2>/dev/null || true
 }
 
 trap cleanup INT TERM
 
-wait -n "${main_pid}" "${bridge_pid}"
+wait -n "${main_pid}" "${server_pid}"
 status=$?
 
 cleanup
 wait "${main_pid}" 2>/dev/null || true
-wait "${bridge_pid}" 2>/dev/null || true
+wait "${server_pid}" 2>/dev/null || true
 
 exit "${status}"
