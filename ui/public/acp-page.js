@@ -654,6 +654,11 @@
     });
     syncComposer(page);
     await page.client.start();
+    if (page.cacheHydratedTranscript && !page.cacheReplacedByReplay) {
+      page.transcript = ACPRender.createTranscript();
+      renderConversationList(page);
+      renderThread(page);
+    }
     page.bootstrapComplete = true;
     writeCachedConversationRecord(page);
     clearACPNotice(page);

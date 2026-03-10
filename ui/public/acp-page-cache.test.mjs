@@ -108,30 +108,43 @@ function loadModules(storageSeed = {}, createACPClient = null) {
 
 test('ACP page restores cached transcript when revisiting a conversation', async () => {
   const cacheKey = 'spritz:acp:transcript:conv-1';
-  const window = loadModules({
-    [cacheKey]: JSON.stringify({
-      version: 1,
-      conversationId: 'conv-1',
-      transcript: {
-        messages: [
-          {
-            id: 'assistant-1',
-            kind: 'assistant',
-            title: '',
-            status: '',
-            tone: '',
-            meta: '',
-            blocks: [{ type: 'text', text: 'Cached assistant reply.' }],
-            streaming: false,
-            toolCallId: '',
-          },
-        ],
-        availableCommands: [],
-        currentMode: '',
-        usage: null,
+  let releaseStart = () => {};
+  const window = loadModules(
+    {
+      [cacheKey]: JSON.stringify({
+        version: 1,
+        conversationId: 'conv-1',
+        transcript: {
+          messages: [
+            {
+              id: 'assistant-1',
+              kind: 'assistant',
+              title: '',
+              status: '',
+              tone: '',
+              meta: '',
+              blocks: [{ type: 'text', text: 'Cached assistant reply.' }],
+              streaming: false,
+              toolCallId: '',
+            },
+          ],
+          availableCommands: [],
+          currentMode: '',
+          usage: null,
+        },
+      }),
+    },
+    () => ({
+      start: async () => {
+        await new Promise((resolve) => {
+          releaseStart = resolve;
+        });
       },
+      isReady: () => true,
+      cancelPrompt() {},
+      dispose() {},
     }),
-  });
+  );
 
   const shellEl = createElement('main');
   const createSection = createElement('section');
@@ -187,6 +200,7 @@ test('ACP page restores cached transcript when revisiting a conversation', async
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.match(collectText(shellEl), /Cached assistant reply\./);
+  releaseStart();
 });
 
 test('ACP page replaces cached transcript with backend replay during bootstrap', async () => {
@@ -284,4 +298,97 @@ test('ACP page replaces cached transcript with backend replay during bootstrap',
   assert.match(text, /Replay user message\./);
   assert.match(text, /Replay assistant reply\./);
   assert.doesNotMatch(text, /Cached assistant reply\./);
+});
+
+test('ACP page clears cached transcript when backend replay returns no transcript updates', async () => {
+  const cacheKey = 'spritz:acp:transcript:conv-1';
+  const window = loadModules(
+    {
+      [cacheKey]: JSON.stringify({
+        version: 1,
+        conversationId: 'conv-1',
+        transcript: {
+          messages: [
+            {
+              id: 'assistant-cached',
+              kind: 'assistant',
+              title: '',
+              status: '',
+              tone: '',
+              meta: '',
+              blocks: [{ type: 'text', text: 'Cached assistant reply.' }],
+              streaming: false,
+              toolCallId: '',
+            },
+          ],
+          availableCommands: [],
+          currentMode: '',
+          usage: null,
+        },
+      }),
+    },
+    () => ({
+      start: async () => {},
+      isReady: () => true,
+      cancelPrompt() {},
+      dispose() {},
+    }),
+  );
+
+  const shellEl = createElement('main');
+  const createSection = createElement('section');
+  const listSection = createElement('section');
+
+  window.SpritzACPPage.renderACPPage('young-crest', 'conv-1', {
+    activePage: null,
+    apiBaseUrl: '',
+    authBearerTokenParam: 'token',
+    getAuthToken() {
+      return '';
+    },
+    async request(path) {
+      if (path === '/acp/agents') {
+        return {
+          items: [
+            {
+              spritz: {
+                metadata: { name: 'young-crest' },
+                status: {
+                  acp: { agentInfo: { title: 'OpenClaw ACP Gateway', version: '2026.3.8' } },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (path.startsWith('/acp/conversations?')) {
+        return {
+          items: [
+            {
+              metadata: { name: 'conv-1' },
+              spec: { title: 'Replay conversation', sessionId: 'sess-1' },
+              status: { updatedAt: '2026-03-10T06:00:00Z' },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    },
+    showNotice() {},
+    buildOpenUrl(url) {
+      return url;
+    },
+    cleanupTerminal() {},
+    shellEl,
+    createSection,
+    listSection,
+    setHeaderCopy() {},
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const text = collectText(shellEl);
+  assert.doesNotMatch(text, /Cached assistant reply\./);
+  assert.match(text, /Conversation is ready\. Send a message to begin\./);
 });
