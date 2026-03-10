@@ -20,6 +20,15 @@ import (
 
 var errACPUnavailable = errors.New("acp unavailable")
 
+func spritzSupportsACPConversations(spritz *spritzv1.Spritz) bool {
+	return spritz != nil &&
+		spritz.Status.Phase == "Ready" &&
+		spritz.Status.ACP != nil &&
+		spritz.Status.ACP.State == "ready" &&
+		spritz.Status.ACP.Capabilities != nil &&
+		spritz.Status.ACP.Capabilities.LoadSession
+}
+
 func displayAgentName(spritz *spritzv1.Spritz) string {
 	if spritz == nil || spritz.Status.ACP == nil || spritz.Status.ACP.AgentInfo == nil {
 		if spritz == nil {
@@ -168,7 +177,7 @@ func (s *server) getAuthorizedACPReadySpritz(ctx context.Context, principal prin
 	if err != nil {
 		return nil, err
 	}
-	if spritz.Status.Phase != "Ready" || spritz.Status.ACP == nil || spritz.Status.ACP.State != "ready" {
+	if !spritzSupportsACPConversations(spritz) {
 		return nil, errACPUnavailable
 	}
 	return spritz, nil

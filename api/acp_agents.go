@@ -38,7 +38,7 @@ func (s *server) listACPAgents(c echo.Context) error {
 		if s.auth.enabled() && !principal.IsAdmin && item.Spec.Owner.ID != principal.ID {
 			continue
 		}
-		if item.Status.Phase != "Ready" || item.Status.ACP == nil || item.Status.ACP.State != "ready" {
+		if !spritzSupportsACPConversations(&item) {
 			continue
 		}
 		records = append(records, acpAgentResponse{Spritz: item})

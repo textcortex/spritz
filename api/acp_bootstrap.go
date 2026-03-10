@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
@@ -292,6 +291,9 @@ func (s *server) bootstrapACPConversation(c echo.Context) error {
 		return writeError(c, http.StatusUnauthorized, "unauthenticated")
 	}
 	namespace := s.requestNamespace(c)
+	if namespace == "" {
+		namespace = "default"
+	}
 	conversation, err := s.getAuthorizedConversation(c.Request().Context(), principal, namespace, c.Param("id"))
 	if err != nil {
 		return s.writeACPConversationError(c, err)
@@ -314,10 +316,10 @@ func (s *server) bootstrapACPConversation(c echo.Context) error {
 }
 
 func (s *server) bootstrapACPConversationBinding(ctx context.Context, conversation *spritzv1.SpritzConversation, spritz *spritzv1.Spritz) (*acpBootstrapResponse, error) {
-	bootstrapCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	dialCtx, cancel := context.WithTimeout(ctx, s.acp.bootstrapDialTimeout)
 	defer cancel()
 
-	workspaceConn, _, err := websocket.DefaultDialer.DialContext(bootstrapCtx, s.acpWorkspaceURL(spritz.Namespace, spritz.Name), nil)
+	workspaceConn, _, err := websocket.DefaultDialer.DialContext(dialCtx, s.acpWorkspaceURL(spritz.Namespace, spritz.Name), nil)
 	if err != nil {
 		s.recordConversationBindingError(ctx, conversation.Namespace, conversation.Name, "", err)
 		return nil, err
@@ -327,7 +329,7 @@ func (s *server) bootstrapACPConversationBinding(ctx context.Context, conversati
 		_ = client.close()
 	}()
 
-	initResult, err := client.initialize(bootstrapCtx, s.acp.clientInfo)
+	initResult, err := client.initialize(ctx, s.acp.clientInfo)
 	if err != nil {
 		s.recordConversationBindingError(ctx, conversation.Namespace, conversation.Name, "", err)
 		return nil, err
@@ -349,12 +351,12 @@ func (s *server) bootstrapACPConversationBinding(ctx context.Context, conversati
 	var replayMessageCount int32
 
 	if effectiveSessionID != "" {
-		replayMessageCount, err = client.loadSession(bootstrapCtx, effectiveSessionID, normalizeConversationCWD(conversation.Spec.CWD))
+		replayMessageCount, err = client.loadSession(ctx, effectiveSessionID, normalizeConversationCWD(conversation.Spec.CWD))
 		if err != nil {
 			var rpcErr *acpBootstrapRPCError
 			if errors.As(err, &rpcErr) && rpcErr.missingSession() {
 				previousSessionID = effectiveSessionID
-				effectiveSessionID, err = client.newSession(bootstrapCtx, normalizeConversationCWD(conversation.Spec.CWD))
+				effectiveSessionID, err = client.newSession(ctx, normalizeConversationCWD(conversation.Spec.CWD))
 				if err != nil {
 					s.recordConversationBindingError(ctx, conversation.Namespace, conversation.Name, previousSessionID, err)
 					return nil, err
@@ -369,7 +371,7 @@ func (s *server) bootstrapACPConversationBinding(ctx context.Context, conversati
 			loaded = true
 		}
 	} else {
-		effectiveSessionID, err = client.newSession(bootstrapCtx, normalizeConversationCWD(conversation.Spec.CWD))
+		effectiveSessionID, err = client.newSession(ctx, normalizeConversationCWD(conversation.Spec.CWD))
 		if err != nil {
 			s.recordConversationBindingError(ctx, conversation.Namespace, conversation.Name, "", err)
 			return nil, err

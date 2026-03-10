@@ -46,9 +46,10 @@ func newACPTestServer(t *testing.T, objects ...client.Object) *server {
 		},
 		internalAuth: internalAuthConfig{enabled: false},
 		acp: acpConfig{
-			enabled: true,
-			port:    spritzv1.DefaultACPPort,
-			path:    spritzv1.DefaultACPPath,
+			enabled:              true,
+			port:                 spritzv1.DefaultACPPort,
+			path:                 spritzv1.DefaultACPPath,
+			bootstrapDialTimeout: 5 * time.Second,
 		},
 	}
 }
@@ -194,6 +195,9 @@ func readyACPSpritz(name, owner string) *spritzv1.Spritz {
 			Phase: "Ready",
 			ACP: &spritzv1.SpritzACPStatus{
 				State: "ready",
+				Capabilities: &spritzv1.SpritzACPCapabilities{
+					LoadSession: true,
+				},
 				Endpoint: &spritzv1.SpritzACPEndpoint{
 					Port: spritzv1.DefaultACPPort,
 					Path: spritzv1.DefaultACPPath,
@@ -232,6 +236,8 @@ func conversationFor(name, spritzName, owner, title string, createdAt metav1.Tim
 func TestListACPAgentsUsesStoredStatusOnly(t *testing.T) {
 	ready := readyACPSpritz("tidy-otter", "user-1")
 	ready.Status.ACP.LastProbeAt = nil
+	unsupported := readyACPSpritz("echo-harbor", "user-1")
+	unsupported.Status.ACP.Capabilities.LoadSession = false
 	ignored := &spritzv1.Spritz{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "slow-reef",
@@ -244,7 +250,7 @@ func TestListACPAgentsUsesStoredStatusOnly(t *testing.T) {
 		Status: spritzv1.SpritzStatus{Phase: "Provisioning"},
 	}
 
-	s := newACPTestServer(t, ready, ignored)
+	s := newACPTestServer(t, ready, unsupported, ignored)
 	e := echo.New()
 	secured := e.Group("", s.authMiddleware())
 	secured.GET("/api/acp/agents", s.listACPAgents)
@@ -319,6 +325,27 @@ func TestCreateACPConversationGeneratesIndependentConversationID(t *testing.T) {
 	stored := &spritzv1.SpritzConversation{}
 	if err := s.client.Get(context.Background(), clientKey("spritz-test", payload.Data.Name), stored); err != nil {
 		t.Fatalf("expected conversation resource to be persisted: %v", err)
+	}
+}
+
+func TestCreateACPConversationRejectsAgentsWithoutLoadSessionSupport(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	spritz.Status.ACP.Capabilities.LoadSession = false
+
+	s := newACPTestServer(t, spritz)
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/acp/conversations", s.createACPConversation)
+
+	body := strings.NewReader(`{"spritzName":"tidy-otter"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/acp/conversations", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected status 409, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -568,5 +595,31 @@ func TestBootstrapACPConversationRepairsMissingSessionExplicitly(t *testing.T) {
 	}
 	if fakeACP.newCalls != 1 {
 		t.Fatalf("expected one session/new call, got %d", fakeACP.newCalls)
+	}
+}
+
+func TestBootstrapACPConversationUsesDefaultNamespaceWhenRequestOmitsIt(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	spritz.Namespace = "default"
+	conversation := conversationFor("tidy-otter-conv", "tidy-otter", "user-1", "Latest", metav1.Now())
+	conversation.Namespace = "default"
+	conversation.Spec.SessionID = "session-existing"
+	fakeACP := newFakeACPBootstrapServer(t, fakeACPBootstrapServerOptions{})
+
+	s := newACPTestServer(t, spritz, conversation)
+	s.namespace = ""
+	s.acp.workspaceURL = func(namespace, name string) string { return fakeACP.url }
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/acp/conversations/:id/bootstrap", s.bootstrapACPConversation)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/acp/conversations/"+conversation.Name+"/bootstrap", nil)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
