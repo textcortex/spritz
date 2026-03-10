@@ -49,6 +49,7 @@ func newACPTestServer(t *testing.T, objects ...client.Object) *server {
 			enabled:              true,
 			port:                 spritzv1.DefaultACPPort,
 			path:                 spritzv1.DefaultACPPath,
+			clientCapabilities:   defaultACPClientCapabilities(),
 			bootstrapDialTimeout: 5 * time.Second,
 		},
 	}
@@ -61,11 +62,12 @@ type fakeACPBootstrapServerOptions struct {
 }
 
 type fakeACPBootstrapServer struct {
-	url      string
-	server   *httptest.Server
-	mu       sync.Mutex
-	loadIDs  []string
-	newCalls int
+	url          string
+	server       *httptest.Server
+	mu           sync.Mutex
+	loadIDs      []string
+	newCalls     int
+	initRequests []acpBootstrapInitializeRequest
 }
 
 func newFakeACPBootstrapServer(t *testing.T, options fakeACPBootstrapServerOptions) *fakeACPBootstrapServer {
@@ -95,6 +97,13 @@ func newFakeACPBootstrapServer(t *testing.T, options fakeACPBootstrapServerOptio
 			}
 			switch message.Method {
 			case "initialize":
+				var params acpBootstrapInitializeRequest
+				if err := json.Unmarshal(message.Params, &params); err != nil {
+					t.Fatalf("failed to decode initialize params: %v", err)
+				}
+				fakeServer.mu.Lock()
+				fakeServer.initRequests = append(fakeServer.initRequests, params)
+				fakeServer.mu.Unlock()
 				if err := conn.WriteJSON(map[string]any{
 					"jsonrpc": "2.0",
 					"id":      message.ID,
@@ -673,5 +682,53 @@ func TestBootstrapACPConversationUsesDefaultNamespaceWhenRequestOmitsIt(t *testi
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBootstrapACPConversationAdvertisesRichClientCapabilities(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	conversation := conversationFor("tidy-otter-conv", "tidy-otter", "user-1", "Latest", metav1.Now())
+	conversation.Spec.SessionID = "session-existing"
+	fakeACP := newFakeACPBootstrapServer(t, fakeACPBootstrapServerOptions{})
+
+	s := newACPTestServer(t, spritz, conversation)
+	s.acp.workspaceURL = func(namespace, name string) string { return fakeACP.url }
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/acp/conversations/:id/bootstrap", s.bootstrapACPConversation)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/acp/conversations/"+conversation.Name+"/bootstrap", nil)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	fakeACP.mu.Lock()
+	defer fakeACP.mu.Unlock()
+	if len(fakeACP.initRequests) != 1 {
+		t.Fatalf("expected one initialize request, got %d", len(fakeACP.initRequests))
+	}
+	initRequest := fakeACP.initRequests[0]
+	authCapabilities, ok := initRequest.ClientCapabilities["auth"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected auth client capabilities, got %#v", initRequest.ClientCapabilities)
+	}
+	if authCapabilities["terminal"] != true {
+		t.Fatalf("expected terminal auth capability, got %#v", authCapabilities)
+	}
+	authMeta, ok := authCapabilities["_meta"].(map[string]any)
+	if !ok || authMeta["gateway"] != true {
+		t.Fatalf("expected gateway auth capability, got %#v", authCapabilities)
+	}
+	metaCapabilities, ok := initRequest.ClientCapabilities["_meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected _meta client capabilities, got %#v", initRequest.ClientCapabilities)
+	}
+	if metaCapabilities["terminal-auth"] != true || metaCapabilities["terminal_output"] != true {
+		t.Fatalf("expected terminal metadata capabilities, got %#v", metaCapabilities)
 	}
 }

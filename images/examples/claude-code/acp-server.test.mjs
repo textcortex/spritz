@@ -331,3 +331,107 @@ test("a new ACP client handoff replaces the previous attached socket", async (t)
     },
   });
 });
+
+test("initialize preserves adapter-negotiated auth methods across reconnects", async (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "spritz-claude-code-runtime-"));
+  const adapterPath = path.join(tempRoot, "mock-adapter.mjs");
+  fs.writeFileSync(
+    adapterPath,
+    [
+      "process.stdin.setEncoding('utf8');",
+      "let pending = '';",
+      "function send(message) { process.stdout.write(JSON.stringify(message) + '\\n'); }",
+      "function handle(message) {",
+      "  if (message.method === 'initialize') {",
+      "    const supportsGatewayAuth = message.params?.clientCapabilities?.auth?._meta?.gateway === true;",
+      "    send({",
+      "      id: message.id,",
+      "      jsonrpc: '2.0',",
+      "      result: {",
+      "        protocolVersion: 1,",
+      "        agentCapabilities: { loadSession: true, promptCapabilities: {} },",
+      "        agentInfo: { name: 'mock', title: 'Mock', version: '1.0.0' },",
+      "        authMethods: supportsGatewayAuth ? [{ id: 'gateway', name: 'Gateway' }] : [],",
+      "      },",
+      "    });",
+      "    return;",
+      "  }",
+      "  send({ id: message.id, jsonrpc: '2.0', result: {} });",
+      "}",
+      "process.stdin.on('data', (chunk) => {",
+      "  pending += chunk;",
+      "  let newline = pending.indexOf('\\n');",
+      "  while (newline !== -1) {",
+      "    const line = pending.slice(0, newline).trim();",
+      "    pending = pending.slice(newline + 1);",
+      "    if (line) { handle(JSON.parse(line)); }",
+      "    newline = pending.indexOf('\\n');",
+      "  }",
+      "});",
+    ].join("\n"),
+  );
+  const runtime = new ACPRuntime(
+    {
+      adapterBin: "node",
+      adapterArgs: [adapterPath],
+      workdir: tempRoot,
+      metadata: {
+        protocolVersion: 1,
+        agentCapabilities: { loadSession: true, promptCapabilities: {} },
+        agentInfo: { name: "mock", title: "Mock", version: "1.0.0" },
+        authMethods: [],
+      },
+    },
+    {
+      ...process.env,
+      ANTHROPIC_API_KEY: "test-key",
+    },
+    console,
+  );
+  t.after(() => {
+    runtime.stop();
+  });
+
+  const firstSocket = new FakeSocket();
+  runtime.attach(firstSocket);
+  const firstInit = await sendRuntimeRPC(firstSocket, {
+    id: "init-1",
+    jsonrpc: "2.0",
+    method: "initialize",
+    params: {
+      protocolVersion: 1,
+      clientCapabilities: {
+        auth: {
+          _meta: {
+            gateway: true,
+          },
+        },
+      },
+      clientInfo: {
+        name: "client-a",
+        title: "Client A",
+        version: "1.0.0",
+      },
+    },
+  });
+  assert.deepEqual(firstInit.result.authMethods, [{ id: "gateway", name: "Gateway" }]);
+  firstSocket.close();
+
+  const secondSocket = new FakeSocket();
+  runtime.attach(secondSocket);
+  const secondInit = await sendRuntimeRPC(secondSocket, {
+    id: "init-2",
+    jsonrpc: "2.0",
+    method: "initialize",
+    params: {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: {
+        name: "client-b",
+        title: "Client B",
+        version: "1.0.0",
+      },
+    },
+  });
+  assert.deepEqual(secondInit.result.authMethods, [{ id: "gateway", name: "Gateway" }]);
+});

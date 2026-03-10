@@ -26,7 +26,23 @@ type acpConfig struct {
 	allowedOrigins       map[string]struct{}
 	workspaceURL         func(namespace, name string) string
 	clientInfo           acpBootstrapClientInfo
+	clientCapabilities   map[string]any
 	bootstrapDialTimeout time.Duration
+}
+
+func defaultACPClientCapabilities() map[string]any {
+	return map[string]any{
+		"auth": map[string]any{
+			"terminal": true,
+			"_meta": map[string]any{
+				"gateway": true,
+			},
+		},
+		"_meta": map[string]any{
+			"terminal-auth":  true,
+			"terminal_output": true,
+		},
+	}
 }
 
 func newACPConfig() acpConfig {
@@ -47,6 +63,7 @@ func newACPConfig() acpConfig {
 			Title:   envOrDefault("SPRITZ_ACP_CLIENT_TITLE", "Spritz ACP API"),
 			Version: envOrDefault("SPRITZ_ACP_CLIENT_VERSION", "1.0.0"),
 		},
+		clientCapabilities:   defaultACPClientCapabilities(),
 		bootstrapDialTimeout: parseDurationEnv("SPRITZ_ACP_BOOTSTRAP_DIAL_TIMEOUT", 5*time.Second),
 	}
 }

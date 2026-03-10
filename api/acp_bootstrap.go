@@ -114,11 +114,11 @@ func (c *acpBootstrapWorkspaceClient) close() error {
 	return c.conn.Close()
 }
 
-func (c *acpBootstrapWorkspaceClient) initialize(ctx context.Context, clientInfo acpBootstrapClientInfo) (*acpBootstrapInitializeResult, error) {
+func (c *acpBootstrapWorkspaceClient) initialize(ctx context.Context, clientInfo acpBootstrapClientInfo, clientCapabilities map[string]any) (*acpBootstrapInitializeResult, error) {
 	result := &acpBootstrapInitializeResult{}
 	if err := c.request(ctx, "initialize", acpBootstrapInitializeRequest{
 		ProtocolVersion:    1,
-		ClientCapabilities: map[string]any{},
+		ClientCapabilities: clientCapabilities,
 		ClientInfo:         clientInfo,
 	}, result, nil); err != nil {
 		return nil, err
@@ -335,7 +335,7 @@ func (s *server) bootstrapACPConversationBinding(ctx context.Context, conversati
 		_ = client.close()
 	}()
 
-	initResult, err := client.initialize(ctx, s.acp.clientInfo)
+	initResult, err := client.initialize(ctx, s.acp.clientInfo, s.acp.clientCapabilities)
 	if err != nil {
 		s.recordConversationBindingError(ctx, conversation.Namespace, conversation.Name, "", err)
 		return nil, err
