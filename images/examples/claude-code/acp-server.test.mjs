@@ -4,9 +4,15 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { ACPRuntime } from "./acp-server.mjs";
 
+const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
+
 function once(child, event) {
+  if (event === "exit" && child.exitCode !== null) {
+    return Promise.resolve([child.exitCode, child.signalCode]);
+  }
   return new Promise((resolve) => child.once(event, resolve));
 }
 
@@ -70,6 +76,8 @@ class FakeSocket {
     this.handlers = new Map();
     this.readyState = 1;
     this.sent = [];
+    this.closeCode = null;
+    this.closeReason = null;
   }
 
   on(event, handler) {
@@ -84,6 +92,8 @@ class FakeSocket {
     if (this.readyState !== 1) {
       return;
     }
+    this.closeCode = _code ?? null;
+    this.closeReason = _reason ?? null;
     this.readyState = 3;
     const handler = this.handlers.get("close");
     if (handler) {
@@ -117,8 +127,8 @@ test("health and metadata endpoints stay available with a fake ws module", async
   const packageRoot = path.join(tempRoot, "claude-agent-acp");
   fs.mkdirSync(packageRoot, { recursive: true });
   fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ version: "0.21.0" }));
-  const child = spawn("node", ["images/examples/claude-code/acp-server.mjs"], {
-    cwd: process.cwd(),
+  const child = spawn("node", [path.join(TEST_DIR, "acp-server.mjs")], {
+    cwd: tempRoot,
     env: {
       ...process.env,
       ANTHROPIC_API_KEY: "test-key",
@@ -160,6 +170,8 @@ test("session/load works after reconnecting to the same ACP server", async (t) =
       "function send(message) { process.stdout.write(JSON.stringify(message) + '\\n'); }",
       "function handle(message) {",
       "  if (message.method === 'initialize') {",
+      "    globalThis.initCount = (globalThis.initCount || 0) + 1;",
+      "    if (globalThis.initCount > 1) { sessions.clear(); }",
       "    send({ id: message.id, jsonrpc: '2.0', result: { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: {} }, agentInfo: { name: 'mock', title: 'Mock', version: '1.0.0' } } });",
       "    return;",
       "  }",
@@ -239,4 +251,83 @@ test("session/load works after reconnecting to the same ACP server", async (t) =
   if (runtime.child) {
     await once(runtime.child, "exit");
   }
+});
+
+test("a new ACP client handoff replaces the previous attached socket", async (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "spritz-claude-code-runtime-"));
+  const adapterPath = path.join(tempRoot, "mock-adapter.mjs");
+  fs.writeFileSync(
+    adapterPath,
+    [
+      "process.stdin.setEncoding('utf8');",
+      "let pending = '';",
+      "function send(message) { process.stdout.write(JSON.stringify(message) + '\\n'); }",
+      "function handle(message) {",
+      "  if (message.method === 'initialize') {",
+      "    send({ id: message.id, jsonrpc: '2.0', result: { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: {} }, agentInfo: { name: 'mock', title: 'Mock', version: '1.0.0' } } });",
+      "    return;",
+      "  }",
+      "  send({ id: message.id, jsonrpc: '2.0', result: {} });",
+      "}",
+      "process.stdin.on('data', (chunk) => {",
+      "  pending += chunk;",
+      "  let newline = pending.indexOf('\\n');",
+      "  while (newline !== -1) {",
+      "    const line = pending.slice(0, newline).trim();",
+      "    pending = pending.slice(newline + 1);",
+      "    if (line) { handle(JSON.parse(line)); }",
+      "    newline = pending.indexOf('\\n');",
+      "  }",
+      "});",
+    ].join("\n"),
+  );
+  const runtime = new ACPRuntime(
+    {
+      adapterBin: "node",
+      adapterArgs: [adapterPath],
+      workdir: tempRoot,
+      metadata: {
+        protocolVersion: 1,
+        agentCapabilities: { loadSession: true, promptCapabilities: {} },
+        agentInfo: { name: "mock", title: "Mock", version: "1.0.0" },
+        authMethods: [],
+      },
+    },
+    {
+      ...process.env,
+      ANTHROPIC_API_KEY: "test-key",
+    },
+    console,
+  );
+  t.after(() => {
+    runtime.stop();
+  });
+
+  const firstSocket = new FakeSocket();
+  runtime.attach(firstSocket);
+  await sendRuntimeRPC(firstSocket, { id: "init-1", jsonrpc: "2.0", method: "initialize", params: {} });
+
+  const secondSocket = new FakeSocket();
+  runtime.attach(secondSocket);
+
+  assert.equal(firstSocket.readyState, 3);
+  assert.equal(firstSocket.closeCode, 1001);
+  assert.equal(firstSocket.closeReason, "ACP client replaced");
+
+  const initResponse = await sendRuntimeRPC(secondSocket, {
+    id: "init-2",
+    jsonrpc: "2.0",
+    method: "initialize",
+    params: {},
+  });
+  assert.deepEqual(initResponse, {
+    id: "init-2",
+    jsonrpc: "2.0",
+    result: {
+      protocolVersion: 1,
+      agentCapabilities: { loadSession: true, promptCapabilities: {} },
+      agentInfo: { name: "mock", title: "Mock", version: "1.0.0" },
+      authMethods: [],
+    },
+  });
 });
