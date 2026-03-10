@@ -5,6 +5,7 @@ import http from "node:http";
 import {
   createACPRequestHandler,
   parseListenAddress,
+  resolveWSExports,
 } from "./acp-server.mjs";
 
 test("parseListenAddress supports IPv4 and bracketed IPv6", () => {
@@ -68,4 +69,22 @@ test("ACP request handler serves health and metadata without mutating runtime st
   assert.equal(upgradeRes.status, 426);
 
   await new Promise((resolve) => server.close(resolve));
+});
+
+test("resolveWSExports accepts ws modules that expose constructors via the default export", () => {
+  const WebSocket = class WebSocket {};
+  const WebSocketServer = class WebSocketServer {};
+
+  assert.deepEqual(
+    resolveWSExports({
+      default: {
+        WebSocket,
+        WebSocketServer,
+      },
+    }),
+    {
+      WebSocket,
+      WebSocketServer,
+    },
+  );
 });
