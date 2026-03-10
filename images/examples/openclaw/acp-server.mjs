@@ -168,7 +168,7 @@ export function resolveWSExports(wsModule) {
 }
 
 async function loadWSModule(env = process.env) {
-  return await importOpenclawDependency("ws/wrapper.mjs", env);
+  return await importOpenclawDependency("ws", env);
 }
 
 async function startGatewayProxy(params) {

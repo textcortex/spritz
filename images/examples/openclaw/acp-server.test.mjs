@@ -1,12 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   createACPRequestHandler,
   parseListenAddress,
   resolveWSExports,
 } from "./acp-server.mjs";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 test("parseListenAddress supports IPv4 and bracketed IPv6", () => {
   assert.deepEqual(parseListenAddress("0.0.0.0:2529"), {
@@ -87,4 +92,11 @@ test("resolveWSExports accepts ws modules that expose constructors via the defau
       WebSocketServer,
     },
   );
+});
+
+test("ACP server loads ws from the exported package entrypoint", () => {
+  const source = fs.readFileSync(path.join(__dirname, "acp-server.mjs"), "utf8");
+
+  assert.match(source, /importOpenclawDependency\("ws", env\)/);
+  assert.doesNotMatch(source, /importOpenclawDependency\("ws\/wrapper\.mjs", env\)/);
 });
