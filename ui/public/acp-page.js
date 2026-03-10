@@ -1,7 +1,7 @@
 (function (global) {
   const { createACPClient } = global.SpritzACPClient;
   const ACPRender = global.SpritzACPRender;
-  const ACP_TRANSCRIPT_CACHE_VERSION = 1;
+  const ACP_TRANSCRIPT_CACHE_VERSION = 2;
   const ACP_TRANSCRIPT_CACHE_PREFIX = 'spritz:acp:transcript:';
   const ACP_TRANSCRIPT_CACHE_INDEX_KEY = 'spritz:acp:transcript:index';
   const ACP_TRANSCRIPT_CACHE_LIMIT = 25;
@@ -191,6 +191,7 @@
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       if (parsed?.version !== ACP_TRANSCRIPT_CACHE_VERSION || typeof parsed !== 'object') {
+        clearCachedConversationRecord(normalizedId);
         return null;
       }
       return parsed;

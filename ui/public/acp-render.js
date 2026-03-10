@@ -573,9 +573,10 @@
   function renderBlock(block) {
     if (!block) return null;
     if (block.type === 'text') {
+      const htmlError = detectHtmlErrorDocument(block.text);
       const wrapper = document.createElement('div');
       wrapper.className = 'acp-block acp-block--text';
-      wrapper.appendChild(renderRichText(block.text || ''));
+      wrapper.appendChild(renderRichText(htmlError ? htmlError.text : block.text || ''));
       return wrapper;
     }
     if (block.type === 'plan') {
@@ -614,14 +615,15 @@
       return grid;
     }
     if (block.type === 'details') {
+      const htmlError = detectHtmlErrorDocument(block.text);
       const details = document.createElement('details');
       details.className = 'acp-details';
-      details.open = Boolean(block.open);
+      details.open = htmlError ? false : Boolean(block.open);
       const summary = document.createElement('summary');
       summary.textContent = block.title || 'Details';
       const pre = document.createElement('pre');
       pre.className = 'acp-details-body';
-      pre.textContent = block.text || '';
+      pre.textContent = htmlError ? htmlError.text : block.text || '';
       details.append(summary, pre);
       return details;
     }
@@ -678,9 +680,19 @@
       if (!message) continue;
       if (message.kind === 'assistant' || message.kind === 'user') {
         const textBlock = message.blocks.find((block) => block.type === 'text' && block.text);
-        if (textBlock) return excerpt(textBlock.text);
+        if (textBlock) {
+          const htmlError = detectHtmlErrorDocument(textBlock.text);
+          if (!htmlError) {
+            return excerpt(textBlock.text);
+          }
+        }
       }
       if (message.kind === 'tool') {
+        const resultBlock = message.blocks.find((block) => block.type === 'details' && block.title === 'Result' && block.text);
+        const htmlError = detectHtmlErrorDocument(resultBlock?.text);
+        if (htmlError) {
+          return excerpt(htmlError.text);
+        }
         return excerpt(`${message.title || 'Tool call'} · ${message.status || 'running'}`);
       }
     }

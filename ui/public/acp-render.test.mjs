@@ -24,6 +24,13 @@ function createElement(tagName) {
   };
 }
 
+function collectText(node) {
+  if (!node) return '';
+  const own = typeof node.textContent === 'string' ? node.textContent : '';
+  const childText = Array.isArray(node.children) ? node.children.map((child) => collectText(child)).join(' ') : '';
+  return `${own} ${childText}`.replace(/\s+/g, ' ').trim();
+}
+
 function loadRenderModule() {
   const document = { createElement };
   const window = {
@@ -143,6 +150,28 @@ test('ACP render adapter drops HTML error pages from assistant text updates', ()
   assert.equal(result?.toast?.kind, 'error');
   assert.match(result?.toast?.message || '', /502/i);
   assert.equal((result?.toast?.message || '').includes('<!DOCTYPE html>'), false);
+});
+
+test('ACP render adapter sanitizes raw HTML error pages at render time', () => {
+  const ACPRender = loadRenderModule();
+
+  const node = ACPRender.renderMessage({
+    kind: 'assistant',
+    blocks: [
+      {
+        type: 'text',
+        text:
+          '<!DOCTYPE html><html><head><title>textcortex.com | 502: Bad gateway</title></head><body>' +
+          '<span class="code-label">Error code 502</span><span>staging.spritz.textcortex.com</span>' +
+          '<span>Cloudflare</span></body></html>',
+      },
+    ],
+  });
+
+  const text = collectText(node);
+  assert.match(text, /502/i);
+  assert.match(text, /staging\.spritz\.textcortex\.com/i);
+  assert.equal(text.includes('<!DOCTYPE html>'), false);
 });
 
 test('ACP render adapter treats bootstrap replay chunks as historical messages', () => {

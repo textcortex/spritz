@@ -120,7 +120,7 @@ test('ACP page restores cached transcript when revisiting a conversation', async
   const window = loadModules(
     {
       [cacheKey]: JSON.stringify({
-        version: 1,
+        version: 2,
         conversationId: 'conv-1',
         transcript: {
           messages: [
@@ -231,12 +231,130 @@ test('ACP page restores cached transcript when revisiting a conversation', async
   releaseStart();
 });
 
+test('ACP page ignores stale cached transcript versions after cache cutover', async () => {
+  const cacheKey = 'spritz:acp:transcript:conv-1';
+  let releaseStart = () => {};
+  const window = loadModules(
+    {
+      [cacheKey]: JSON.stringify({
+        version: 1,
+        conversationId: 'conv-1',
+        transcript: {
+          messages: [
+            {
+              id: 'assistant-1',
+              kind: 'assistant',
+              title: '',
+              status: '',
+              tone: '',
+              meta: '',
+              blocks: [{ type: 'text', text: 'Stale cached assistant reply.' }],
+              streaming: false,
+              toolCallId: '',
+            },
+          ],
+          availableCommands: [],
+          currentMode: '',
+          usage: null,
+        },
+      }),
+    },
+    ({ conversation }) => ({
+      start: async () => {
+        await new Promise((resolve) => {
+          releaseStart = resolve;
+        });
+      },
+      isReady: () => true,
+      getConversationId: () => conversation?.metadata?.name || '',
+      getSessionId: () => conversation?.spec?.sessionId || '',
+      matchesConversation(targetConversation) {
+        return (
+          this.getConversationId() === (targetConversation?.metadata?.name || '') &&
+          this.getSessionId() === (targetConversation?.spec?.sessionId || '')
+        );
+      },
+      cancelPrompt() {},
+      dispose() {},
+    }),
+  );
+
+  const shellEl = createElement('main');
+  const createSection = createElement('section');
+  const listSection = createElement('section');
+
+  window.SpritzACPPage.renderACPPage('young-crest', 'conv-1', {
+    activePage: null,
+    apiBaseUrl: '',
+    authBearerTokenParam: 'token',
+    getAuthToken() {
+      return '';
+    },
+    async request(path) {
+      if (path === '/acp/agents') {
+        return {
+          items: [
+            {
+              spritz: {
+                metadata: { name: 'young-crest' },
+                status: {
+                  acp: { agentInfo: { title: 'OpenClaw ACP Gateway', version: '2026.3.8' } },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (path.startsWith('/acp/conversations?')) {
+        return {
+          items: [
+            {
+              metadata: { name: 'conv-1' },
+              spec: { title: 'Cached conversation', sessionId: 'sess-1', cwd: '/home/dev' },
+              status: { updatedAt: '2026-03-10T06:00:00Z' },
+            },
+          ],
+        };
+      }
+      if (path === '/acp/conversations/conv-1/bootstrap') {
+        return {
+          conversation: {
+            metadata: { name: 'conv-1' },
+            spec: { title: 'Cached conversation', sessionId: 'sess-1', cwd: '/home/dev' },
+            status: { bindingState: 'active', boundSessionId: 'sess-1', updatedAt: '2026-03-10T06:00:00Z' },
+          },
+          effectiveSessionId: 'sess-1',
+          bindingState: 'active',
+          replaced: false,
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    },
+    showNotice() {},
+    buildOpenUrl(url) {
+      return url;
+    },
+    cleanupTerminal() {},
+    shellEl,
+    createSection,
+    listSection,
+    setHeaderCopy() {},
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.doesNotMatch(collectText(shellEl), /Stale cached assistant reply\./);
+  assert.equal(window.sessionStorage.getItem(cacheKey), null);
+  releaseStart();
+});
+
 test('ACP page replaces cached transcript with backend replay during bootstrap', async () => {
   const cacheKey = 'spritz:acp:transcript:conv-1';
   const window = loadModules(
     {
       [cacheKey]: JSON.stringify({
-        version: 1,
+        version: 2,
         conversationId: 'conv-1',
         transcript: {
           messages: [
@@ -353,7 +471,7 @@ test('ACP page clears cached transcript when backend replay returns no transcrip
   const window = loadModules(
     {
       [cacheKey]: JSON.stringify({
-        version: 1,
+        version: 2,
         conversationId: 'conv-1',
         transcript: {
           messages: [
