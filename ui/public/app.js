@@ -39,7 +39,7 @@ const listSection = listEl?.closest('section');
 let activeTerminalSession = null;
 let activeTerminalName = '';
 let activeACPPage = null;
-let presetsInitialized = false;
+let presetController = null;
 let activePresetEnv = null;
 const authRedirectStorageKey = 'spritz-auth-redirected';
 let authRefreshInFlight = null;
@@ -1353,6 +1353,23 @@ function cleanupACP() {
   }
 }
 
+function setupPresets() {
+  if (presetController) return;
+  const module = window.SpritzPresetPanel;
+  if (!module || typeof module.setupPresetPanel !== 'function') return;
+  presetController = module.setupPresetPanel({
+    document,
+    form,
+    presets,
+    hideRepoInputs,
+    applyRepoDefaults,
+    normalizePresetEnv,
+    setActivePresetEnv(env) {
+      activePresetEnv = env;
+    },
+  });
+}
+
 function handleRoute() {
   const chatName = chatNameFromPath();
   if (window.location.hash === '#chat' || chatName) {
@@ -1444,12 +1461,7 @@ if (form && refreshBtn) {
 
       form.reset();
       activePresetEnv = null;
-      const presetSelect = document.getElementById('preset-select');
-      if (presetSelect) {
-        presetSelect.value = '';
-        const help = form.querySelector('.preset-help');
-        if (help) help.textContent = '';
-      }
+      if (presetController) presetController.reset();
       applyNameDefaults();
       applyRepoDefaults();
       applyUserConfigDefaults();
