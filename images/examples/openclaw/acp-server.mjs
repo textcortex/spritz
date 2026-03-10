@@ -3,19 +3,18 @@
 import http from "node:http";
 import net from "node:net";
 import { PassThrough, Readable, Writable } from "node:stream";
-import { createRequire } from "node:module";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 import {
   buildGatewayClientOptions,
   buildSpritzOpenclawAcpMetadata,
   createLazyGatewayController,
   createSpritzAcpGatewayAgentClass,
+  importOpenclawDependency,
   loadAcpSdk,
   loadOpenclawCompat,
   parseArgs,
   readOpenclawPackageVersion,
-  resolveOpenclawPackageRoot,
   useTrustedProxyControlUiBridge,
 } from "./acp-wrapper.mjs";
 
@@ -156,18 +155,26 @@ function rewriteConnectFrameAsTrustedProxyControlUi(payload) {
   return Buffer.from(JSON.stringify(frame), "utf8");
 }
 
+export function resolveWSExports(wsModule) {
+  const WebSocket =
+    wsModule?.WebSocket ??
+    wsModule?.default?.WebSocket ??
+    wsModule?.default ??
+    wsModule;
+  const WebSocketServer =
+    wsModule?.WebSocketServer ??
+    wsModule?.default?.WebSocketServer;
+  return { WebSocket, WebSocketServer };
+}
+
 async function loadWSModule(env = process.env) {
-  const packageRoot = resolveOpenclawPackageRoot(env);
-  const requireFromOpenclaw = createRequire(`${packageRoot}/package.json`);
-  const resolvedPath = requireFromOpenclaw.resolve("ws");
-  return await import(pathToFileURL(resolvedPath).href);
+  return await importOpenclawDependency("ws/wrapper.mjs", env);
 }
 
 async function startGatewayProxy(params) {
   const { upstreamURL, headers, trustedProxyControlUi, env, logger } = params;
   const wsModule = await loadWSModule(env);
-  const WebSocket = wsModule.WebSocket ?? wsModule.default ?? wsModule;
-  const WebSocketServer = wsModule.WebSocketServer;
+  const { WebSocket, WebSocketServer } = resolveWSExports(wsModule);
   if (!WebSocket || !WebSocketServer) {
     throw new Error("Failed to load ws module for the Spritz OpenClaw gateway proxy.");
   }
@@ -582,7 +589,7 @@ export async function serveSpritzOpenclawAcpServer(env = process.env, logger = c
   const config = configFromEnv(env);
   const runtime = await createRuntime(config, env, logger);
   const wsModule = await loadWSModule(env);
-  const WebSocketServer = wsModule.WebSocketServer;
+  const { WebSocketServer } = resolveWSExports(wsModule);
   if (!WebSocketServer) {
     throw new Error("Failed to load WebSocketServer from ws.");
   }
