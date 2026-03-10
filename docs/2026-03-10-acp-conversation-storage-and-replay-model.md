@@ -1,0 +1,210 @@
+---
+date: 2026-03-10
+author: Onur <onur@textcortex.com>
+title: ACP Conversation Storage and Replay Model
+tags: [spritz, acp, conversation, transcript, architecture]
+---
+
+## Overview
+
+This document defines how ACP conversations should be identified, stored, and
+restored in Spritz.
+
+The goal is a model that keeps Spritz backend-agnostic, keeps Kubernetes
+resources small, and makes conversation restore correct across reconnects,
+browser refreshes, and different clients.
+
+## Current State
+
+Spritz currently uses three different identifiers in the ACP chat flow:
+
+1. `SpritzConversation.metadata.name`
+2. `SpritzConversation.spec.sessionId`
+3. the backend runtime session key used by the ACP implementation
+
+Today:
+
+- the URL uses `SpritzConversation.metadata.name`
+- Spritz stores ACP session metadata in `SpritzConversation`
+- the ACP backend owns the actual runtime session
+- the browser keeps a session-scoped transcript cache so returning to the same
+  URL restores the last rendered transcript immediately
+
+That browser cache improves user experience, but it is not the long-term source
+of truth for transcript restore.
+
+## Identity Model
+
+### Spritz conversation id
+
+`SpritzConversation.metadata.name` is the stable Spritz thread id.
+
+Example:
+
+- `young-crest-c2195b88`
+
+Responsibilities:
+
+- identifies the chat thread in Spritz
+- appears in the URL as `#chat/<spritz>/<conversation>`
+- keys browser-local transcript cache
+- owns thread metadata such as title, owner, workspace, and cwd
+
+### ACP session id
+
+`SpritzConversation.spec.sessionId` is the ACP protocol session id for that
+thread.
+
+Responsibilities:
+
+- identifies the ACP session lifecycle
+- is passed to `session/load`
+- is updated by Spritz when a new ACP session is created
+
+This id is not used as the route id.
+
+### Backend runtime session key
+
+The ACP backend may map the ACP session id to its own runtime session key.
+
+For OpenClaw this is currently a gateway session key derived from the ACP
+session id.
+
+Responsibilities:
+
+- identifies the real backend conversation state
+- keys backend transcript storage
+- remains an implementation detail of the ACP backend
+
+This id must not be used as the Spritz route id.
+
+## Storage Responsibilities
+
+### Spritz stores metadata
+
+Spritz stores conversation metadata in `SpritzConversation`.
+
+It should store:
+
+- spritz name
+- owner
+- title
+- cwd
+- ACP `sessionId`
+- normalized agent metadata and capabilities when useful
+
+It should not store:
+
+- full transcript history
+- high-churn streamed message state
+- backend-specific transcript structures
+
+### ACP backend stores transcript truth
+
+The ACP backend should store the actual conversation history in its own session
+store.
+
+That store must be keyed by the backend runtime session identity, not by the
+Spritz conversation object name.
+
+For OpenClaw, this means:
+
+- OpenClaw gateway/session storage remains the transcript source of truth
+- `session/load` must resolve the backend session from the ACP `sessionId`
+- history replay must be built from that backend store
+
+### Browser stores only an acceleration cache
+
+The browser may keep a session-scoped cache of the last rendered transcript.
+
+That cache is allowed only as a user-experience optimization:
+
+- to show the previous thread immediately while backend replay starts
+- to survive short route changes within the same browser session
+
+It must not be required for correctness.
+
+## Replay Model
+
+The correct restore flow is:
+
+1. User opens `#chat/<spritz>/<conversation>`
+2. Spritz loads `SpritzConversation`
+3. Spritz reads `spec.sessionId`
+4. Spritz opens the ACP bridge to the selected workspace
+5. Spritz sends `session/load(sessionId=...)`
+6. The ACP backend resolves the real backend session
+7. The ACP backend reads stored transcript history
+8. The ACP backend replays the transcript through ordered `session/update`
+   events
+9. The client rebuilds the thread from replayed updates
+
+The browser transcript cache may render first, but the backend replay must be
+able to reconstruct the same conversation without relying on that cache.
+
+## Backend Requirements
+
+To make this model correct, the ACP backend must implement `session/load` as a
+real replay operation.
+
+Minimum requirements:
+
+- resolve the ACP `sessionId` to the backend session
+- read persisted message history from backend storage
+- replay historical user and assistant messages in order
+- replay tool-call state when the backend can represent it
+- replay session metadata updates needed by the client
+- keep the replay idempotent and safe across reconnects
+
+For OpenClaw specifically, the expected behavior is:
+
+- map ACP `sessionId` to the OpenClaw gateway session key
+- read transcript data from existing gateway session storage
+- translate stored history into ACP `session/update` notifications
+- emit the replay on `session/load`
+
+## Client Behavior
+
+The client should treat backend replay as canonical.
+
+The client should:
+
+- route by Spritz conversation id
+- use `spec.sessionId` only for ACP session operations
+- restore local cached transcript immediately when available
+- replace cached transcript state with backend replay once replay begins
+- continue to work when no browser cache exists
+
+The client should not:
+
+- invent transcript history when the backend has none
+- depend on browser storage for correctness
+- route directly by ACP session id or backend session key
+
+## Why This Split Is Correct
+
+This split keeps each layer responsible for the right thing:
+
+- Spritz owns routing, ownership, and thread records
+- the ACP backend owns runtime session state and transcript history
+- the browser owns only temporary local rendering state
+
+That keeps Spritz portable across different ACP backends while preserving a
+correct restore model.
+
+## Validation
+
+The system should be considered correct when all of the following are true:
+
+- reopening the same URL in the same tab restores immediately
+- refreshing the page restores from backend replay even with empty browser
+  storage
+- opening the same conversation from a second browser/client restores the same
+  transcript from backend replay
+- transcript restore does not require Kubernetes transcript storage
+- route ids remain stable and independent from backend runtime ids
+
+## References
+
+- `docs/2026-03-09-acp-port-and-agent-chat-architecture.md`
+- `docs/2026-02-24-simplest-spritz-deployment-spec.md`
