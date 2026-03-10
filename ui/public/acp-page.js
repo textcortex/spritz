@@ -644,6 +644,9 @@
     const result = ACPRender.applySessionUpdate(page.transcript, update, {
       historical: !page.bootstrapComplete,
     });
+    if (result?.toast?.message) {
+      showACPToast(page, result.toast.message, result.toast.kind || 'error');
+    }
     if (result?.conversationTitle) {
       patchSelectedConversation(page, { title: result.conversationTitle }).catch(() => {});
     }

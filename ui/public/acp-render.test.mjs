@@ -90,6 +90,40 @@ test('ACP render adapter keeps commands out of transcript and upserts tool cards
   assert.equal(toolCard.blocks.some((block) => block.type === 'details' && block.title === 'Result'), true);
 });
 
+test('ACP render adapter summarizes HTML error pages in tool results', () => {
+  const ACPRender = loadRenderModule();
+  const transcript = ACPRender.createTranscript();
+
+  ACPRender.applySessionUpdate(transcript, {
+    sessionUpdate: 'tool_call',
+    toolCallId: 'tool-502',
+    title: 'Fetch workspace',
+    status: 'completed',
+    rawInput: { url: 'https://staging.spritz.textcortex.com/' },
+  });
+
+  ACPRender.applySessionUpdate(transcript, {
+    sessionUpdate: 'tool_call_update',
+    toolCallId: 'tool-502',
+    status: 'completed',
+    rawOutput:
+      '<!DOCTYPE html><html><head><title>textcortex.com | 502: Bad gateway</title></head><body>' +
+      '<span class="code-label">Error code 502</span><span>staging.spritz.textcortex.com</span>' +
+      '<span>Cloudflare</span><p>The web server reported a bad gateway error.</p></body></html>',
+  });
+
+  assert.equal(transcript.messages.length, 1);
+  const toolCard = transcript.messages[0];
+  const resultBlock = toolCard.blocks.find((block) => block.type === 'details' && block.title === 'Result');
+  assert.ok(resultBlock);
+  assert.equal(resultBlock.open, false);
+  assert.match(resultBlock.text, /502/i);
+  assert.match(resultBlock.text, /staging\.spritz\.textcortex\.com/i);
+  assert.match(resultBlock.text, /cloudflare/i);
+  assert.match(resultBlock.text, /bad gateway/i);
+  assert.equal(resultBlock.text.includes('<!DOCTYPE html>'), false);
+});
+
 test('ACP render adapter treats bootstrap replay chunks as historical messages', () => {
   const ACPRender = loadRenderModule();
   const transcript = ACPRender.createTranscript();
