@@ -238,12 +238,48 @@ export function resolveBridgeFallbackSessionKey(sessionId, env = process.env) {
 }
 
 /**
+ * Lazily starts the OpenClaw gateway connection only when ACP session methods
+ * actually need it. This prevents initialize-only ACP probes from opening and
+ * then abruptly tearing down gateway webchat sessions.
+ */
+export function createLazyGatewayController(gateway, hooks = {}) {
+  let ensureReadyPromise = null;
+  let stopped = false;
+
+  return {
+    async ensureReady() {
+      if (stopped) {
+        throw new Error("Gateway controller has already been stopped.");
+      }
+      if (!ensureReadyPromise) {
+        gateway.start();
+        ensureReadyPromise = Promise.resolve()
+          .then(() => hooks.waitUntilReady?.())
+          .catch((error) => {
+            throw error;
+          });
+      }
+      return ensureReadyPromise;
+    },
+    stop() {
+      if (stopped) {
+        return;
+      }
+      stopped = true;
+      hooks.onStop?.();
+      gateway.stop();
+    },
+  };
+}
+
+/**
  * Extends OpenClaw's ACP gateway agent so the default ACP session flow maps to
  * normal agent-scoped gateway sessions instead of ACP runtime session keys.
  */
-export function createSpritzAcpGatewayAgentClass(AcpGatewayAgent, env = process.env) {
+export function createSpritzAcpGatewayAgentClass(AcpGatewayAgent, env = process.env, hooks = {}) {
   return class SpritzOpenclawAcpGatewayAgent extends AcpGatewayAgent {
     async newSession(params) {
+      await hooks.ensureGatewayReady?.();
       if (params.mcpServers.length > 0) {
         this.log(`ignoring ${params.mcpServers.length} MCP servers`);
       }
@@ -261,6 +297,7 @@ export function createSpritzAcpGatewayAgentClass(AcpGatewayAgent, env = process.
     }
 
     async loadSession(params) {
+      await hooks.ensureGatewayReady?.();
       if (params.mcpServers.length > 0) {
         this.log(`ignoring ${params.mcpServers.length} MCP servers`);
       }
@@ -555,32 +592,31 @@ async function serveSpritzOpenclawAcp(opts = {}, env = process.env) {
     },
   });
 
+  const gatewayController = createLazyGatewayController(gateway, {
+    waitUntilReady: () => gatewayReady,
+    onStop: () => {
+      resolveGatewayReady();
+      onClosed();
+    },
+  });
+
   const shutdown = () => {
     if (stopped) {
       return;
     }
     stopped = true;
-    resolveGatewayReady();
-    gateway.stop();
-    onClosed();
+    gatewayController.stop();
   };
 
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
 
-  gateway.start();
-  await gatewayReady.catch((error) => {
-    shutdown();
-    throw error;
-  });
-  if (stopped) {
-    return closed;
-  }
-
   const input = Writable.toWeb(process.stdout);
   const output = Readable.toWeb(process.stdin);
   const stream = ndJsonStream(input, output);
-  const SpritzAcpGatewayAgent = createSpritzAcpGatewayAgentClass(AcpGatewayAgent, env);
+  const SpritzAcpGatewayAgent = createSpritzAcpGatewayAgentClass(AcpGatewayAgent, env, {
+    ensureGatewayReady: () => gatewayController.ensureReady(),
+  });
 
   new AgentSideConnection((connectionInstance) => {
     agent = new SpritzAcpGatewayAgent(connectionInstance, gateway, opts);

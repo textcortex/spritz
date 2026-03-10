@@ -8,6 +8,7 @@ import {
   buildGatewayClientOptions,
   buildHistoryReplayUpdates,
   buildBridgeFallbackSessionKey,
+  createLazyGatewayController,
   createSpritzAcpGatewayAgentClass,
   loadOpenclawCompat,
   parseArgs,
@@ -315,6 +316,90 @@ test('loadSession replays persisted session transcript before returning', async 
   assert.equal(agent.connection.updates[1].update.content.text, 'history reply');
   assert.deepEqual(agent.rateLimits, ['loadSession']);
   assert.deepEqual(agent.sentAvailableCommands, ['123e4567-e89b-42d3-a456-426614174000']);
+});
+
+test('Spritz ACP gateway agent ensures the gateway is ready before session lifecycle calls', async () => {
+  class FakeBaseAgent {
+    constructor() {
+      this.sessionStore = {
+        entries: new Map(),
+        createSession: ({ sessionId, sessionKey, cwd }) => {
+          const session = { sessionId, sessionKey, cwd };
+          this.sessionStore.entries.set(sessionId, session);
+          return session;
+        },
+        hasSession: () => false,
+      };
+      this.sentAvailableCommands = [];
+      this.connection = {
+        async sessionUpdate() {},
+      };
+      this.gateway = {
+        async request() {
+          return { messages: [] };
+        },
+      };
+    }
+
+    log() {}
+    enforceSessionCreateRateLimit() {}
+    async sendAvailableCommands(sessionId) {
+      this.sentAvailableCommands.push(sessionId);
+    }
+  }
+
+  const ensureGatewayReadyCalls = [];
+  const SpritzAgent = createSpritzAcpGatewayAgentClass(
+    FakeBaseAgent,
+    {},
+    {
+      async ensureGatewayReady() {
+        ensureGatewayReadyCalls.push('ready');
+      },
+    },
+  );
+  const agent = new SpritzAgent();
+
+  const created = await agent.newSession({
+    cwd: '/home/dev',
+    mcpServers: [],
+  });
+  await agent.loadSession({
+    sessionId: created.sessionId,
+    cwd: '/home/dev',
+    mcpServers: [],
+  });
+
+  assert.deepEqual(ensureGatewayReadyCalls, ['ready', 'ready']);
+});
+
+test('lazy gateway controller defers gateway start until the first session lifecycle call', async () => {
+  const events = [];
+  const controller = createLazyGatewayController(
+    {
+      start() {
+        events.push('start');
+      },
+      stop() {
+        events.push('stop');
+      },
+    },
+    {
+      async waitUntilReady() {
+        events.push('wait');
+      },
+      onStop() {
+        events.push('onStop');
+      },
+    },
+  );
+
+  assert.deepEqual(events, []);
+  await controller.ensureReady();
+  await controller.ensureReady();
+  controller.stop();
+
+  assert.deepEqual(events, ['start', 'wait', 'onStop', 'stop']);
 });
 
 test('loadOpenclawCompat loads the generated stable compat module from the package root', async () => {
