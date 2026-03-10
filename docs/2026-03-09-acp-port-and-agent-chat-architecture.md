@@ -165,4 +165,5 @@ A deployment is considered correct when all of these are true:
 
 - `README.md`
 - `OPENCLAW.md`
+- `docs/2026-03-10-acp-adapter-and-runtime-target-architecture.md`
 - `docs/2026-02-24-simplest-spritz-deployment-spec.md`

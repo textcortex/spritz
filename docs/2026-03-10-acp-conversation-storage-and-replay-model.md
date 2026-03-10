@@ -248,4 +248,5 @@ The system should be considered correct when all of the following are true:
 ## References
 
 - `docs/2026-03-09-acp-port-and-agent-chat-architecture.md`
+- `docs/2026-03-10-acp-adapter-and-runtime-target-architecture.md`
 - `docs/2026-02-24-simplest-spritz-deployment-spec.md`
