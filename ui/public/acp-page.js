@@ -216,6 +216,13 @@
         clearCachedConversationRecord(normalizedId);
         return null;
       }
+      if (
+        ACPRender.transcriptContainsHtmlError?.(parsed.transcript) ||
+        ACPRender.detectHtmlErrorDocument?.(parsed.preview)
+      ) {
+        clearCachedConversationRecord(normalizedId);
+        return null;
+      }
       return parsed;
     } catch {
       return null;

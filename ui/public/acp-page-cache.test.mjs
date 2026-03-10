@@ -234,7 +234,7 @@ test('ACP page restores cached transcript when revisiting a conversation', async
   releaseStart();
 });
 
-test('ACP page ignores stale cached transcript versions after cache cutover', async () => {
+test('ACP page purges pre-cutover cached transcripts after the namespace cutover', async () => {
   let releaseStart = () => {};
   const window = loadModules(
     {
@@ -349,6 +349,133 @@ test('ACP page ignores stale cached transcript versions after cache cutover', as
   assert.doesNotMatch(collectText(shellEl), /Stale cached assistant reply\./);
   assert.equal(window.sessionStorage.getItem(PRE_CUTOVER_CACHE_KEY), null);
   assert.equal(window.sessionStorage.getItem(PRE_CUTOVER_CACHE_INDEX_KEY), null);
+  releaseStart();
+});
+
+test('ACP page drops cached transcripts that contain raw HTML error documents', async () => {
+  let releaseStart = () => {};
+  const window = loadModules(
+    {
+      [CURRENT_CACHE_KEY]: JSON.stringify({
+        conversationId: 'conv-1',
+        transcript: {
+          messages: [
+            {
+              id: 'assistant-html',
+              kind: 'assistant',
+              title: '',
+              status: '',
+              tone: '',
+              meta: '',
+              blocks: [
+                {
+                  type: 'text',
+                  text:
+                    '<!DOCTYPE html><html><head><title>textcortex.com | 502: Bad gateway</title></head>' +
+                    '<body><span class="code-label">Error code 502</span>' +
+                    '<span>staging.spritz.textcortex.com</span><span>Cloudflare</span></body></html>',
+                },
+              ],
+              streaming: false,
+              toolCallId: '',
+            },
+          ],
+          availableCommands: [],
+          currentMode: '',
+          usage: null,
+        },
+      }),
+      [CURRENT_CACHE_INDEX_KEY]: JSON.stringify(['conv-1']),
+    },
+    ({ conversation }) => ({
+      start: async () => {
+        await new Promise((resolve) => {
+          releaseStart = resolve;
+        });
+      },
+      isReady: () => true,
+      getConversationId: () => conversation?.metadata?.name || '',
+      getSessionId: () => conversation?.spec?.sessionId || '',
+      matchesConversation(targetConversation) {
+        return (
+          this.getConversationId() === (targetConversation?.metadata?.name || '') &&
+          this.getSessionId() === (targetConversation?.spec?.sessionId || '')
+        );
+      },
+      cancelPrompt() {},
+      dispose() {},
+    }),
+  );
+
+  const shellEl = createElement('main');
+  const createSection = createElement('section');
+  const listSection = createElement('section');
+
+  window.SpritzACPPage.renderACPPage('young-crest', 'conv-1', {
+    activePage: null,
+    apiBaseUrl: '',
+    authBearerTokenParam: 'token',
+    getAuthToken() {
+      return '';
+    },
+    async request(path) {
+      if (path === '/acp/agents') {
+        return {
+          items: [
+            {
+              spritz: {
+                metadata: { name: 'young-crest' },
+                status: {
+                  acp: { agentInfo: { title: 'OpenClaw ACP Gateway', version: '2026.3.8' } },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (path.startsWith('/acp/conversations?')) {
+        return {
+          items: [
+            {
+              metadata: { name: 'conv-1' },
+              spec: { title: 'Cached conversation', sessionId: 'sess-1', cwd: '/home/dev' },
+              status: { updatedAt: '2026-03-10T06:00:00Z' },
+            },
+          ],
+        };
+      }
+      if (path === '/acp/conversations/conv-1/bootstrap') {
+        return {
+          conversation: {
+            metadata: { name: 'conv-1' },
+            spec: { title: 'Cached conversation', sessionId: 'sess-1', cwd: '/home/dev' },
+            status: { bindingState: 'active', boundSessionId: 'sess-1', updatedAt: '2026-03-10T06:00:00Z' },
+          },
+          effectiveSessionId: 'sess-1',
+          bindingState: 'active',
+          replaced: false,
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    },
+    showNotice() {},
+    buildOpenUrl(url) {
+      return url;
+    },
+    cleanupTerminal() {},
+    shellEl,
+    createSection,
+    listSection,
+    setHeaderCopy() {},
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.doesNotMatch(collectText(shellEl), /<!DOCTYPE html>/i);
+  assert.doesNotMatch(collectText(shellEl), /textcortex\.com \| 502: Bad gateway/i);
+  assert.equal(window.sessionStorage.getItem(CURRENT_CACHE_KEY), null);
+  assert.equal(window.sessionStorage.getItem(CURRENT_CACHE_INDEX_KEY), JSON.stringify([]));
   releaseStart();
 });
 

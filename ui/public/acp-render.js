@@ -253,6 +253,18 @@
     };
   }
 
+  function transcriptContainsHtmlError(transcript) {
+    const messages = Array.isArray(transcript?.messages) ? transcript.messages : [];
+    return messages.some((message) => {
+      const blocks = Array.isArray(message?.blocks) ? message.blocks : [];
+      return blocks.some((block) => {
+        if (!block || typeof block !== 'object') return false;
+        if (block.type !== 'text' && block.type !== 'details') return false;
+        return Boolean(detectHtmlErrorDocument(block.text));
+      });
+    });
+  }
+
   function pushMessage(transcript, message) {
     transcript.messages.push({
       id: message.id || createId(message.kind || 'message'),
@@ -720,6 +732,7 @@
   global.SpritzACPRender = {
     buildCommandItems,
     createTranscript,
+    detectHtmlErrorDocument,
     applySessionUpdate,
     finalizeStreaming,
     getPreviewText,
@@ -727,5 +740,6 @@
     isTranscriptBearingUpdate,
     renderMessage,
     serializeTranscript,
+    transcriptContainsHtmlError,
   };
 })(window);
