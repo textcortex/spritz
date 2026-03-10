@@ -2,12 +2,11 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
-
-	xwebsocket "golang.org/x/net/websocket"
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,21 +30,14 @@ func newControllerTestScheme(t *testing.T) *runtime.Scheme {
 }
 
 func TestReconcileStatusStoresACPReadyCondition(t *testing.T) {
-	wsServer := httptest.NewServer(xwebsocket.Handler(func(conn *xwebsocket.Conn) {
-		defer conn.Close()
-		var message map[string]any
-		if err := xwebsocket.JSON.Receive(conn, &message); err != nil {
-			t.Errorf("failed to read initialize request: %v", err)
-			return
-		}
-		if message["method"] != "initialize" {
-			t.Errorf("expected initialize request, got %#v", message["method"])
-			return
-		}
-		if err := xwebsocket.JSON.Send(conn, map[string]any{
-			"jsonrpc": "2.0",
-			"id":      message["id"],
-			"result": map[string]any{
+	metadataServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		case "/.well-known/spritz-acp":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"protocolVersion": 1,
 				"agentCapabilities": map[string]any{
 					"loadSession": true,
@@ -55,12 +47,13 @@ func TestReconcileStatusStoresACPReadyCondition(t *testing.T) {
 					"title":   "Agent Otter",
 					"version": "1.2.3",
 				},
-			},
-		}); err != nil {
-			t.Errorf("failed to send initialize response: %v", err)
+				"authMethods": []string{},
+			})
+		default:
+			http.NotFound(w, r)
 		}
 	}))
-	defer wsServer.Close()
+	defer metadataServer.Close()
 
 	scheme := newControllerTestScheme(t)
 	spritz := &spritzv1.Spritz{
@@ -88,13 +81,16 @@ func TestReconcileStatusStoresACPReadyCondition(t *testing.T) {
 			Path:            spritzv1.DefaultACPPath,
 			ProbeTimeout:    2 * time.Second,
 			RefreshInterval: 30 * time.Second,
+			MetadataRefreshInterval: 5 * time.Minute,
+			HealthPath:      "/healthz",
+			MetadataPath:    "/.well-known/spritz-acp",
 			ClientInfo: acpImplementationInfo{
 				Name:    "spritz-operator",
 				Title:   "Spritz ACP Operator",
 				Version: "1.0.0",
 			},
 			WorkspaceURL: func(namespace, name string) string {
-				return strings.Replace(wsServer.URL, "http://", "ws://", 1)
+				return metadataServer.URL
 			},
 		},
 	}
@@ -112,6 +108,9 @@ func TestReconcileStatusStoresACPReadyCondition(t *testing.T) {
 	}
 	if stored.Status.ACP.AgentInfo == nil || stored.Status.ACP.AgentInfo.Title != "Agent Otter" {
 		t.Fatalf("expected agent info from ACP probe, got %#v", stored.Status.ACP.AgentInfo)
+	}
+	if stored.Status.ACP.LastMetadataAt == nil {
+		t.Fatalf("expected ACP last metadata timestamp to be set")
 	}
 	condition := meta.FindStatusCondition(stored.Status.Conditions, "ACPReady")
 	if condition == nil {
@@ -145,6 +144,9 @@ func TestReconcileStatusMarksACPUnknownWhileProvisioning(t *testing.T) {
 			Path:            spritzv1.DefaultACPPath,
 			ProbeTimeout:    2 * time.Second,
 			RefreshInterval: 30 * time.Second,
+			MetadataRefreshInterval: 5 * time.Minute,
+			HealthPath:      "/healthz",
+			MetadataPath:    "/.well-known/spritz-acp",
 		},
 	}
 
@@ -165,5 +167,96 @@ func TestReconcileStatusMarksACPUnknownWhileProvisioning(t *testing.T) {
 	}
 	if condition.Status != metav1.ConditionFalse || condition.Reason != "Unknown" {
 		t.Fatalf("expected ACPReady false/Unknown, got %#v", condition)
+	}
+}
+
+func TestReconcileStatusUsesHealthChecksBetweenMetadataRefreshes(t *testing.T) {
+	var healthRequests int
+	var metadataRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz":
+			healthRequests++
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		case "/.well-known/spritz-acp":
+			metadataRequests++
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"protocolVersion": 1,
+				"agentCapabilities": map[string]any{
+					"loadSession": true,
+				},
+				"agentInfo": map[string]any{
+					"name":    "agent-otter",
+					"title":   "Agent Otter",
+					"version": "1.2.3",
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	scheme := newControllerTestScheme(t)
+	now := metav1.NewTime(time.Now().Add(-31 * time.Second))
+	metadataAt := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+	spritz := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{Name: "steady-otter", Namespace: "spritz-test"},
+		Spec: spritzv1.SpritzSpec{
+			Image: "example.com/openclaw:latest",
+			Owner: spritzv1.SpritzOwner{ID: "user-1"},
+		},
+		Status: spritzv1.SpritzStatus{
+			ACP: &spritzv1.SpritzACPStatus{
+				State:       "ready",
+				LastProbeAt: &now,
+				LastMetadataAt: &metadataAt,
+				AgentInfo: &spritzv1.SpritzACPAgentInfo{
+					Name:    "agent-otter",
+					Title:   "Agent Otter",
+					Version: "1.2.3",
+				},
+				Capabilities: &spritzv1.SpritzACPCapabilities{LoadSession: true},
+			},
+		},
+	}
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "steady-otter", Namespace: "spritz-test"},
+		Status:     appsv1.DeploymentStatus{AvailableReplicas: 1},
+	}
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&spritzv1.Spritz{}).
+		WithObjects(spritz, deployment).
+		Build()
+	reconciler := &SpritzReconciler{
+		Client: k8sClient,
+		Scheme: scheme,
+		ACP: ACPProbeConfig{
+			Enabled:                 true,
+			Port:                    spritzv1.DefaultACPPort,
+			Path:                    spritzv1.DefaultACPPath,
+			ProbeTimeout:            2 * time.Second,
+			RefreshInterval:         30 * time.Second,
+			MetadataRefreshInterval: 10 * time.Minute,
+			HealthPath:              "/healthz",
+			MetadataPath:            "/.well-known/spritz-acp",
+			WorkspaceURL: func(namespace, name string) string {
+				return server.URL
+			},
+		},
+	}
+
+	if _, err := reconciler.reconcileStatus(context.Background(), spritz); err != nil {
+		t.Fatalf("reconcileStatus returned error: %v", err)
+	}
+
+	if healthRequests != 1 {
+		t.Fatalf("expected exactly one health request, got %d", healthRequests)
+	}
+	if metadataRequests != 0 {
+		t.Fatalf("expected no metadata refresh, got %d", metadataRequests)
 	}
 }

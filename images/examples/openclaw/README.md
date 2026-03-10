@@ -43,11 +43,11 @@ By default, when the container command is the image default (`sleep infinity`),
 it auto-starts the OpenClaw gateway on port `8080` with a LAN bind so Spritz `Open` can render
 OpenClaw UI immediately.
 
-The image also starts an internal ACP compatibility bridge by default:
+The image also starts an internal ACP adapter by default:
 
 - listen address: `0.0.0.0:2529`
 - WebSocket path: `/`
-- backend: per-connection `spritz-openclaw-acp-wrapper` stdio bridge to the local gateway over loopback
+- backend: one long-lived ACP server process that talks to the local gateway over loopback
 - session mapping: ACP session IDs are deterministically mapped onto normal OpenClaw
   agent-scoped gateway session keys so reconnects work without ACP clients knowing OpenClaw internals
 
@@ -69,24 +69,24 @@ Auto-start related runtime overrides:
 - `OPENCLAW_ACP_PORT` (default: `2529`)
 - `OPENCLAW_ACP_PATH` (default: `/`)
 - `SPRITZ_OPENCLAW_ACP_GATEWAY_HOST` (optional; defaults to `127.0.0.1`)
-- `SPRITZ_OPENCLAW_ACP_GATEWAY_URL` (optional; overrides the computed bridge target)
-- `SPRITZ_OPENCLAW_ACP_GATEWAY_HEADERS_JSON` (optional; JSON object of headers injected into the bridge's upstream gateway connection)
+- `SPRITZ_OPENCLAW_ACP_GATEWAY_URL` (optional; overrides the computed adapter upstream target)
+- `SPRITZ_OPENCLAW_ACP_GATEWAY_HEADERS_JSON` (optional; JSON object of headers injected into the adapter's upstream gateway connection)
 - `SPRITZ_OPENCLAW_ACP_TRUSTED_PROXY_USER` (optional; default internal trusted-proxy user identity)
 - `SPRITZ_OPENCLAW_ACP_TRUSTED_PROXY_EMAIL` (optional; default internal trusted-proxy email identity)
-- `SPRITZ_OPENCLAW_ACP_FALLBACK_AGENT_ID` (default: `main`; agent id used when the bridge maps ACP UUID session IDs onto OpenClaw gateway session keys)
+- `SPRITZ_OPENCLAW_ACP_FALLBACK_AGENT_ID` (default: `main`; agent id used when the adapter maps ACP UUID session IDs onto OpenClaw gateway session keys)
 - `SPRITZ_OPENCLAW_ACP_FALLBACK_SESSION_PREFIX` (default: `spritz-acp`; session-key namespace used for ACP-managed gateway transcripts)
-- `SPRITZ_OPENCLAW_ACP_ALLOW_INSECURE_PRIVATE_WS` (default: `0`; only needed when overriding the bridge target away from loopback onto a trusted private-network `ws://` endpoint)
+- `SPRITZ_OPENCLAW_ACP_ALLOW_INSECURE_PRIVATE_WS` (default: `0`; only needed when overriding the adapter target away from loopback onto a trusted private-network `ws://` endpoint)
 
 When the OpenClaw gateway itself is configured with `gateway.auth.mode="trusted-proxy"`, the
 entrypoint automatically:
 
 - appends `127.0.0.1` and `::1` to `gateway.trustedProxies`
-- derives a header set for the internal ACP bridge
-- routes the bridge child through a loopback-only header-injecting WebSocket proxy
+- derives a header set for the internal ACP adapter
+- routes the adapter through a loopback-only header-injecting WebSocket proxy
 - rewrites the upstream gateway `connect` handshake to the Control UI operator profile without a
-  device identity, so the bridge does not trigger device pairing
+  device identity, so the adapter does not trigger device pairing
 
-This keeps `/w/{name}` tokenless for browser users while allowing the internal ACP bridge to
+This keeps `/w/{name}` tokenless for browser users while allowing the internal ACP adapter to
 authenticate cleanly without using pod-IP workarounds.
 
 ## Generic Config Support
@@ -116,12 +116,12 @@ The intended model is one UI endpoint per running devbox instance.
 When used as a Spritz ACP backend, this image exposes ACP on the reserved internal port `2529`
 automatically. Spritz can then:
 
-- probe the workspace with ACP `initialize`
+- fetch health and metadata from the workspace ACP adapter
 - mark the workspace ACP-ready in `status.acp`
 - proxy browser ACP traffic through `spritz-api`
 
-The ACP bridge is image-owned compatibility glue. Once OpenClaw grows a native socket transport,
-this bridge should be removed and the image should hand traffic to OpenClaw directly.
+The ACP adapter is image-owned compatibility glue. Once OpenClaw grows a native socket transport,
+this adapter should be removed and the image should hand traffic to OpenClaw directly.
 
 ## Quick Check
 

@@ -55,10 +55,16 @@ spec:
               value: {{ .Values.acp.port | quote }}
             - name: SPRITZ_ACP_PATH
               value: {{ .Values.acp.path | quote }}
+            - name: SPRITZ_ACP_HEALTH_PATH
+              value: {{ .Values.acp.healthPath | quote }}
+            - name: SPRITZ_ACP_METADATA_PATH
+              value: {{ .Values.acp.metadataPath | quote }}
             - name: SPRITZ_ACP_PROBE_TIMEOUT
               value: {{ .Values.acp.probeTimeout | quote }}
             - name: SPRITZ_ACP_REFRESH_INTERVAL
               value: {{ .Values.acp.refreshInterval | quote }}
+            - name: SPRITZ_ACP_METADATA_REFRESH_INTERVAL
+              value: {{ .Values.acp.metadataRefreshInterval | quote }}
             {{- if and .Values.operator.sharedMounts .Values.operator.sharedMounts.enabled }}
             - name: SPRITZ_SHARED_MOUNTS
               value: {{ toJson .Values.operator.sharedMounts.mounts | quote }}

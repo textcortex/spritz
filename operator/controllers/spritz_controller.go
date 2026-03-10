@@ -251,6 +251,13 @@ func (r *SpritzReconciler) reconcileResources(ctx context.Context, spritz *sprit
 	return nil
 }
 
+func (r *SpritzReconciler) acpHealthProbePath() string {
+	if strings.TrimSpace(r.ACP.HealthPath) != "" {
+		return r.ACP.HealthPath
+	}
+	return defaultACPHealthPath
+}
+
 func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spritzv1.Spritz) error {
 	labels := baseLabels(spritz)
 	workspaceSizeLimit := emptyDirSizeLimit("SPRITZ_WORKSPACE_SIZE_LIMIT", defaultWorkspaceSizeLimit)
@@ -369,6 +376,31 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 				},
 			},
 			Volumes: volumes,
+		}
+		if shouldExposeACP(spritz) {
+			podSpec.Containers[0].ReadinessProbe = &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					HTTPGet: &corev1.HTTPGetAction{
+						Path: r.acpHealthProbePath(),
+						Port: intstrFromInt(spritzv1.DefaultACPPort),
+					},
+				},
+				PeriodSeconds:    10,
+				TimeoutSeconds:   2,
+				FailureThreshold: 3,
+			}
+			podSpec.Containers[0].LivenessProbe = &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					HTTPGet: &corev1.HTTPGetAction{
+						Path: r.acpHealthProbePath(),
+						Port: intstrFromInt(spritzv1.DefaultACPPort),
+					},
+				},
+				InitialDelaySeconds: 10,
+				PeriodSeconds:       15,
+				TimeoutSeconds:      2,
+				FailureThreshold:    3,
+			}
 		}
 		podSpec.SecurityContext = buildPodSecurityContext(sharedMountsSettings.enabled, len(repoInitContainers) > 0)
 		initContainers := []corev1.Container{}
@@ -735,6 +767,14 @@ func minDurationPtr(left, right *time.Duration) *time.Duration {
 	default:
 		return right
 	}
+}
+
+func durationPtr(value time.Duration) *time.Duration {
+	if value <= 0 {
+		return nil
+	}
+	copy := value
+	return &copy
 }
 
 func spritzURL(spritz *spritzv1.Spritz) string {

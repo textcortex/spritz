@@ -139,7 +139,7 @@ The correct restore flow is:
 5. Spritz API initializes ACP against the selected workspace
 6. Spritz API loads the existing ACP session or explicitly repairs it by
    creating a replacement session and patching the conversation record
-7. The browser opens the ACP bridge for that conversation and sends
+7. The browser opens the ACP connection for that conversation and sends
    `session/load(sessionId=...)`
 8. The ACP backend resolves the real backend session
 9. The ACP backend reads stored transcript history
@@ -248,4 +248,5 @@ The system should be considered correct when all of the following are true:
 ## References
 
 - `docs/2026-03-09-acp-port-and-agent-chat-architecture.md`
+- `docs/2026-03-10-acp-adapter-and-runtime-target-architecture.md`
 - `docs/2026-02-24-simplest-spritz-deployment-spec.md`

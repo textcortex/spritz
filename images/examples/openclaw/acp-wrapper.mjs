@@ -21,11 +21,16 @@ const TRUTHY_VALUES = new Set(["1", "true", "yes", "on"]);
 const DEFAULT_OPENCLAW_PACKAGE_ROOT = "/usr/local/lib/node_modules/openclaw";
 const DEFAULT_FALLBACK_AGENT_ID = "main";
 const DEFAULT_FALLBACK_SESSION_PREFIX = "spritz-acp";
+const DEFAULT_ACP_PROTOCOL_VERSION = 1;
+const DEFAULT_OPENCLAW_ACP_AGENT_INFO = {
+  name: "openclaw-acp",
+  title: "OpenClaw ACP Gateway",
+};
 const UUIDISH_SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
- * Returns whether the image-owned ACP bridge should impersonate a trusted-proxy
+ * Returns whether the image-owned ACP adapter should impersonate a trusted-proxy
  * Control UI client instead of the normal CLI ACP client.
  */
 export function useTrustedProxyControlUiBridge(env = process.env) {
@@ -273,6 +278,33 @@ export function createLazyGatewayController(gateway, hooks = {}) {
 }
 
 /**
+ * Builds the static ACP metadata advertised by the Spritz OpenClaw adapter.
+ * This mirrors the ACP initialize surface the runtime exposes over WebSocket.
+ */
+export function buildSpritzOpenclawAcpMetadata(version = "unknown") {
+  return {
+    protocolVersion: DEFAULT_ACP_PROTOCOL_VERSION,
+    agentCapabilities: {
+      loadSession: true,
+      promptCapabilities: {
+        image: true,
+        audio: false,
+        embeddedContext: true,
+      },
+      mcp: {
+        http: false,
+        sse: false,
+      },
+    },
+    agentInfo: {
+      ...DEFAULT_OPENCLAW_ACP_AGENT_INFO,
+      version,
+    },
+    authMethods: [],
+  };
+}
+
+/**
  * Extends OpenClaw's ACP gateway agent so the default ACP session flow maps to
  * normal agent-scoped gateway sessions instead of ACP runtime session keys.
  */
@@ -475,7 +507,7 @@ function defaultReadSecretFromFile(filePath, label) {
   }
 }
 
-function resolveOpenclawPackageRoot(env = process.env) {
+export function resolveOpenclawPackageRoot(env = process.env) {
   const raw = env.SPRITZ_OPENCLAW_PACKAGE_ROOT;
   if (typeof raw === "string" && raw.trim()) {
     return raw.trim();
@@ -483,11 +515,15 @@ function resolveOpenclawPackageRoot(env = process.env) {
   return DEFAULT_OPENCLAW_PACKAGE_ROOT;
 }
 
-async function importOpenclawDependency(specifier, env = process.env) {
+export async function importOpenclawDependency(specifier, env = process.env) {
   const packageRoot = resolveOpenclawPackageRoot(env);
   const requireFromOpenclaw = createRequire(path.join(packageRoot, "package.json"));
   const resolvedPath = requireFromOpenclaw.resolve(specifier);
   return await import(pathToFileURL(resolvedPath).href);
+}
+
+export async function loadAcpSdk(env = process.env) {
+  return await importOpenclawDependency("@agentclientprotocol/sdk", env);
 }
 
 export async function loadOpenclawCompat(env = process.env) {
@@ -496,8 +532,20 @@ export async function loadOpenclawCompat(env = process.env) {
   return await import(pathToFileURL(resolvedPath).href);
 }
 
+export function readOpenclawPackageVersion(env = process.env) {
+  const packageRoot = resolveOpenclawPackageRoot(env);
+  const packageJSONPath = path.join(packageRoot, "package.json");
+  try {
+    const parsed = JSON.parse(fs.readFileSync(packageJSONPath, "utf8"));
+    const version = typeof parsed.version === "string" ? parsed.version.trim() : "";
+    return version || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 async function serveSpritzOpenclawAcp(opts = {}, env = process.env) {
-  const sdk = await importOpenclawDependency("@agentclientprotocol/sdk", env);
+  const sdk = await loadAcpSdk(env);
   const {
     AcpGatewayAgent,
     GatewayClient,
