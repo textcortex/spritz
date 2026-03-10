@@ -143,6 +143,9 @@ func buildACPConversationResource(spritz *spritzv1.Spritz, requestedTitle, reque
 			AgentInfo:    normalizeConversationAgentInfo(spritz.Status.ACP),
 			Capabilities: normalizeConversationCapabilities(spritz.Status.ACP),
 		},
+		Status: spritzv1.SpritzConversationStatus{
+			BindingState: "pending",
+		},
 	}, nil
 }
 

@@ -31,7 +31,6 @@
       onAgentInfo,
       onUpdate,
       onPermissionRequest,
-      onSessionId,
       onPromptStateChange,
       onClose,
       onProtocolError,
@@ -109,19 +108,6 @@
       return message.includes('session') && message.includes('not found');
     }
 
-    async function createNewSession() {
-      onStatus('Creating session…');
-      const created = await requestRPC('session/new', {
-        cwd: conversation?.spec?.cwd || '/home/dev',
-        mcpServers: [],
-      });
-      sessionId = created?.sessionId || '';
-      if (sessionId && typeof onSessionId === 'function') {
-        await onSessionId(sessionId);
-      }
-      onStatus('Connected');
-    }
-
     async function bootstrapSession() {
       onStatus('Negotiating ACP…');
       const init = await requestRPC('initialize', {
@@ -133,26 +119,30 @@
       if (typeof onAgentInfo === 'function') {
         onAgentInfo(init?.agentInfo || null);
       }
-      if (sessionId && loadSessionSupported) {
-        onStatus('Loading conversation…');
-        try {
-          await requestRPC('session/load', {
-            sessionId,
-            cwd: conversation?.spec?.cwd || '/home/dev',
-            mcpServers: [],
-          });
-          onStatus('Connected');
-          return;
-        } catch (error) {
-          if (!isMissingSessionError(error)) {
-            throw error;
-          }
-          sessionId = '';
-          onStatus('Stored session is unavailable. Creating a new session…');
-        }
+      if (!loadSessionSupported) {
+        throw createACPError('ACP_LOAD_SESSION_UNSUPPORTED', 'ACP agent does not support session/load.');
       }
-
-      await createNewSession();
+      if (!sessionId) {
+        throw createACPError('ACP_SESSION_ID_REQUIRED', 'Conversation is missing an ACP session id.');
+      }
+      onStatus('Loading conversation…');
+      try {
+        await requestRPC('session/load', {
+          sessionId,
+          cwd: conversation?.spec?.cwd || '/home/dev',
+          mcpServers: [],
+        });
+      } catch (error) {
+        if (isMissingSessionError(error)) {
+          const details =
+            typeof error?.rpcError?.data?.details === 'string' && error.rpcError.data.details.trim()
+              ? error.rpcError.data.details.trim()
+              : error.message || 'ACP session not found.';
+          throw createACPError('ACP_SESSION_MISSING', details);
+        }
+        throw error;
+      }
+      onStatus('Connected');
     }
 
     function handleIncoming(message) {

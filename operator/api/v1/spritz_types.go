@@ -213,6 +213,19 @@ type SpritzConversationSpec struct {
 	Capabilities *SpritzACPCapabilities `json:"capabilities,omitempty"`
 }
 
+// SpritzConversationStatus stores observed ACP binding state for a conversation.
+type SpritzConversationStatus struct {
+	// +kubebuilder:validation:Enum=pending;active;missing;replaced;error
+	BindingState           string       `json:"bindingState,omitempty"`
+	BoundSessionID         string       `json:"boundSessionId,omitempty"`
+	PreviousSessionID      string       `json:"previousSessionId,omitempty"`
+	LastBoundAt            *metav1.Time `json:"lastBoundAt,omitempty"`
+	LastReplayAt           *metav1.Time `json:"lastReplayAt,omitempty"`
+	LastReplayMessageCount int32        `json:"lastReplayMessageCount,omitempty"`
+	LastError              string       `json:"lastError,omitempty"`
+	UpdatedAt              *metav1.Time `json:"updatedAt,omitempty"`
+}
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,shortName=spr
@@ -243,13 +256,16 @@ type SpritzList struct {
 // +kubebuilder:printcolumn:name="Spritz",type=string,JSONPath=".spec.spritzName"
 // +kubebuilder:printcolumn:name="Owner",type=string,JSONPath=".spec.owner.id"
 // +kubebuilder:printcolumn:name="Session",type=string,JSONPath=".spec.sessionId"
+// +kubebuilder:printcolumn:name="Binding",type=string,JSONPath=".status.bindingState"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 // SpritzConversation stores ACP conversation metadata for a spritz workspace.
+// +kubebuilder:subresource:status
 type SpritzConversation struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec SpritzConversationSpec `json:"spec"`
+	Spec   SpritzConversationSpec   `json:"spec"`
+	Status SpritzConversationStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -325,6 +341,7 @@ func (in *SpritzConversation) DeepCopyInto(out *SpritzConversation) {
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
 	in.Spec.DeepCopyInto(&out.Spec)
+	in.Status.DeepCopyInto(&out.Status)
 }
 
 func (in *SpritzConversation) DeepCopyObject() runtime.Object {
@@ -499,6 +516,19 @@ func (in *SpritzConversationSpec) DeepCopyInto(out *SpritzConversationSpec) {
 	if in.Capabilities != nil {
 		out.Capabilities = &SpritzACPCapabilities{}
 		in.Capabilities.DeepCopyInto(out.Capabilities)
+	}
+}
+
+func (in *SpritzConversationStatus) DeepCopyInto(out *SpritzConversationStatus) {
+	*out = *in
+	if in.LastBoundAt != nil {
+		out.LastBoundAt = in.LastBoundAt.DeepCopy()
+	}
+	if in.LastReplayAt != nil {
+		out.LastReplayAt = in.LastReplayAt.DeepCopy()
+	}
+	if in.UpdatedAt != nil {
+		out.UpdatedAt = in.UpdatedAt.DeepCopy()
 	}
 }
 

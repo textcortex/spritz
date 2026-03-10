@@ -154,6 +154,58 @@ test('createSpritzAcpGatewayAgentClass uses mapped fallback keys for new and loa
   assert.deepEqual(agent.sentAvailableCommands, [created.sessionId, created.sessionId]);
 });
 
+test('createSpritzAcpGatewayAgentClass ignores ACP meta session key overrides', async () => {
+  class FakeBaseAgent {
+    constructor() {
+      this.sessionStore = {
+        entries: new Map(),
+        createSession: ({ sessionId, sessionKey, cwd }) => {
+          const session = { sessionId, sessionKey, cwd };
+          this.sessionStore.entries.set(sessionId, session);
+          return session;
+        },
+        hasSession: () => false,
+      };
+      this.sentAvailableCommands = [];
+      this.connection = {
+        async sessionUpdate() {},
+      };
+      this.gateway = {
+        async request() {
+          return { messages: [] };
+        },
+      };
+    }
+
+    log() {}
+    enforceSessionCreateRateLimit() {}
+    async resolveSessionKeyFromMeta() {
+      throw new Error('meta session keys must not be consulted');
+    }
+    async sendAvailableCommands(sessionId) {
+      this.sentAvailableCommands.push(sessionId);
+    }
+  }
+
+  const SpritzAgent = createSpritzAcpGatewayAgentClass(FakeBaseAgent, {});
+  const agent = new SpritzAgent();
+
+  await agent.loadSession({
+    sessionId: '123e4567-e89b-42d3-a456-426614174000',
+    cwd: '/home/dev',
+    mcpServers: [],
+    _meta: {
+      sessionKey: 'agent:main:unexpected',
+    },
+  });
+
+  const loadedSession = agent.sessionStore.entries.get('123e4567-e89b-42d3-a456-426614174000');
+  assert.equal(
+    loadedSession.sessionKey,
+    'agent:main:spritz-acp:123e4567-e89b-42d3-a456-426614174000',
+  );
+});
+
 test('buildHistoryReplayUpdates converts gateway history into ACP replay updates', () => {
   const updates = buildHistoryReplayUpdates([
     {

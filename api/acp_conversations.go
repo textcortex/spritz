@@ -21,9 +21,8 @@ type createACPConversationRequest struct {
 }
 
 type updateACPConversationRequest struct {
-	Title     *string `json:"title,omitempty"`
-	SessionID *string `json:"sessionId,omitempty"`
-	CWD       *string `json:"cwd,omitempty"`
+	Title *string `json:"title,omitempty"`
+	CWD   *string `json:"cwd,omitempty"`
 }
 
 func (s *server) listACPConversations(c echo.Context) error {
@@ -152,10 +151,6 @@ func (s *server) updateACPConversation(c echo.Context) error {
 		if conversation.Spec.Title == "" {
 			conversation.Spec.Title = defaultACPConversationTitle
 		}
-		changed = true
-	}
-	if body.SessionID != nil && conversation.Spec.SessionID != strings.TrimSpace(*body.SessionID) {
-		conversation.Spec.SessionID = strings.TrimSpace(*body.SessionID)
 		changed = true
 	}
 	if body.CWD != nil && conversation.Spec.CWD != normalizeConversationCWD(*body.CWD) {

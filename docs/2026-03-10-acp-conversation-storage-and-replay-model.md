@@ -26,6 +26,7 @@ Today:
 
 - the URL uses `SpritzConversation.metadata.name`
 - Spritz stores ACP session metadata in `SpritzConversation`
+- Spritz API owns the authoritative thread-to-session bootstrap and repair flow
 - the ACP backend owns the actual runtime session
 - the browser keeps a session-scoped transcript cache so returning to the same
   URL restores the last rendered transcript immediately
@@ -93,6 +94,7 @@ It should store:
 - title
 - cwd
 - ACP `sessionId`
+- binding status such as active vs replaced
 - normalized agent metadata and capabilities when useful
 
 It should not store:
@@ -132,14 +134,18 @@ The correct restore flow is:
 
 1. User opens `#chat/<spritz>/<conversation>`
 2. Spritz loads `SpritzConversation`
-3. Spritz reads `spec.sessionId`
-4. Spritz opens the ACP bridge to the selected workspace
-5. Spritz sends `session/load(sessionId=...)`
-6. The ACP backend resolves the real backend session
-7. The ACP backend reads stored transcript history
-8. The ACP backend replays the transcript through ordered `session/update`
+3. Spritz API bootstraps the selected conversation
+4. Spritz API reads `spec.sessionId`
+5. Spritz API initializes ACP against the selected workspace
+6. Spritz API loads the existing ACP session or explicitly repairs it by
+   creating a replacement session and patching the conversation record
+7. The browser opens the ACP bridge for that conversation and sends
+   `session/load(sessionId=...)`
+8. The ACP backend resolves the real backend session
+9. The ACP backend reads stored transcript history
+10. The ACP backend replays the transcript through ordered `session/update`
    events
-9. The client rebuilds the thread from replayed updates
+11. The client rebuilds the thread from replayed updates
 
 The browser transcript cache may render first, but the backend replay must be
 able to reconstruct the same conversation without relying on that cache.
@@ -171,13 +177,17 @@ The current Spritz implementation now follows this model for OpenClaw-backed
 workspaces:
 
 1. Spritz routes by `SpritzConversation.metadata.name`
-2. Spritz reads `SpritzConversation.spec.sessionId`
-3. Spritz ACP UI connects through the Spritz API bridge
-4. the ACP client sends `session/load`
-5. the Spritz OpenClaw ACP wrapper resolves the OpenClaw gateway session key
-6. the wrapper calls OpenClaw `chat.history`
-7. the wrapper translates stored history into ordered ACP updates
-8. the UI replaces any cached transcript with the replayed backend transcript
+2. Spritz API bootstraps the selected conversation before the UI connects
+3. Spritz API keeps `SpritzConversation.spec.sessionId` as the canonical ACP
+   session id for that thread
+4. the ACP UI connects through the Spritz API bridge using the conversation id
+5. the ACP client sends `initialize` and `session/load` for the confirmed
+   session id
+6. the Spritz OpenClaw ACP wrapper resolves the OpenClaw gateway session key
+   deterministically from the ACP session id
+7. the wrapper calls OpenClaw `sessions.get`
+8. the wrapper translates stored history into ordered ACP updates
+9. the UI replaces any cached transcript with the replayed backend transcript
 
 Concretely, the shipped implementation does the following:
 
@@ -197,7 +207,7 @@ The client should treat backend replay as canonical.
 The client should:
 
 - route by Spritz conversation id
-- use `spec.sessionId` only for ACP session operations
+- use `spec.sessionId` only for ACP session operations after API bootstrap
 - restore local cached transcript immediately when available
 - replace cached transcript state with backend replay once replay begins
 - continue to work when no browser cache exists
@@ -209,6 +219,7 @@ The client should not:
 
 - invent transcript history when the backend has none
 - depend on browser storage for correctness
+- create or replace ACP sessions on its own
 - route directly by ACP session id or backend session key
 
 ## Why This Split Is Correct

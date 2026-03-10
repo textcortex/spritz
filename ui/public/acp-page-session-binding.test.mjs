@@ -95,6 +95,7 @@ test('ACP page rebinds the selected conversation before sending on a stale clien
   const sentPrompts = [];
   let clientCount = 0;
   const toastMessages = [];
+  const requestPaths = [];
 
   const window = loadModules(({ conversation }) => {
     clientCount += 1;
@@ -138,6 +139,7 @@ test('ACP page rebinds the selected conversation before sending on a stale clien
       return '';
     },
     async request(path) {
+      requestPaths.push(path);
       if (path === '/acp/agents') {
         return {
           items: [
@@ -162,6 +164,18 @@ test('ACP page rebinds the selected conversation before sending on a stale clien
               status: { updatedAt: '2026-03-10T08:00:00Z' },
             },
           ],
+        };
+      }
+      if (path === '/acp/conversations/conv-1/bootstrap') {
+        return {
+          conversation: {
+            metadata: { name: 'conv-1' },
+            spec: { title: 'Test conversation', sessionId: 'session-fresh', cwd: '/home/dev' },
+            status: { bindingState: 'active', boundSessionId: 'session-fresh' },
+          },
+          effectiveSessionId: 'session-fresh',
+          bindingState: 'active',
+          replaced: false,
         };
       }
       throw new Error(`unexpected path ${path}`);
@@ -198,4 +212,5 @@ test('ACP page rebinds the selected conversation before sending on a stale clien
   assert.deepEqual(startedConversations, ['conv-1', 'conv-1']);
   assert.deepEqual(sentPrompts, [{ clientIndex: 2, conversationId: 'conv-1', text: 'test 3' }]);
   assert.deepEqual(toastMessages, []);
+  assert.equal(requestPaths.filter((path) => path === '/acp/conversations/conv-1/bootstrap').length, 2);
 });

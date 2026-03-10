@@ -36,13 +36,13 @@
     return chatRouteState(hash).conversationId;
   }
 
-  function acpWsUrl(name, deps) {
+  function acpWsUrl(conversationId, deps) {
     const base = deps.apiBaseUrl || '';
     const resolved = base.startsWith('http') ? base : `${window.location.origin}${base}`;
     const wsBase = resolved.replace(/^http/, 'ws');
     const token = deps.getAuthToken();
     const query = token ? `?${encodeURIComponent(deps.authBearerTokenParam)}=${encodeURIComponent(token)}` : '';
-    return `${wsBase}/acp/connect/${encodeURIComponent(name)}${query}`;
+    return `${wsBase}/acp/conversations/${encodeURIComponent(conversationId)}/connect${query}`;
   }
 
   async function fetchACPAgentsData(deps) {
@@ -70,6 +70,12 @@
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+    });
+  }
+
+  async function bootstrapACPConversationData(deps, id) {
+    return deps.request(`/acp/conversations/${encodeURIComponent(id)}/bootstrap`, {
+      method: 'POST',
     });
   }
 
@@ -157,6 +163,22 @@
 
   function conversationTranscriptCacheKey(conversationId) {
     return `${ACP_TRANSCRIPT_CACHE_PREFIX}${conversationId}`;
+  }
+
+  function clearCachedConversationRecord(conversationId) {
+    const normalizedId = String(conversationId || '').trim();
+    if (!normalizedId) return;
+    const storage = safeSessionStorage();
+    if (!storage) return;
+    try {
+      storage.removeItem(conversationTranscriptCacheKey(normalizedId));
+      writeTranscriptCacheIndex(
+        storage,
+        readTranscriptCacheIndex(storage).filter((item) => item !== normalizedId),
+      );
+    } catch {
+      // ignore storage errors
+    }
   }
 
   function readCachedConversationRecord(conversationId) {
@@ -562,6 +584,62 @@
     renderThread(page);
   }
 
+  function applyBootstrappedConversation(page, response) {
+    const updated = response?.conversation;
+    if (!updated?.metadata?.name) {
+      return null;
+    }
+    const conversationId = updated.metadata.name;
+    const previousSessionId = page.selectedConversation?.spec?.sessionId || '';
+    const nextSessionId = updated.spec?.sessionId || '';
+    const replaced = Boolean(response?.replaced || (previousSessionId && nextSessionId && previousSessionId !== nextSessionId));
+
+    page.selectedConversation = updated;
+    page.selectedConversationId = conversationId;
+    page.conversations = page.conversations.map((item) =>
+      item.metadata?.name === conversationId ? updated : item,
+    );
+
+    if (replaced) {
+      clearCachedConversationRecord(conversationId);
+      page.previewByConversationId.delete(conversationId);
+      page.transcript = ACPRender.createTranscript();
+      page.cacheHydratedTranscript = false;
+      page.cacheReplacedByReplay = false;
+    }
+
+    if (response?.agentInfo && page.selectedAgent?.spritz) {
+      page.selectedAgent = {
+        ...page.selectedAgent,
+        spritz: {
+          ...page.selectedAgent.spritz,
+          status: {
+            ...(page.selectedAgent.spritz.status || {}),
+            acp: {
+              ...(page.selectedAgent.spritz.status?.acp || {}),
+              agentInfo: response.agentInfo,
+            },
+          },
+        },
+      };
+    }
+
+    renderConversationList(page);
+    renderThread(page);
+    return updated;
+  }
+
+  async function bootstrapSelectedConversation(page) {
+    const conversationId = page.selectedConversation?.metadata?.name || '';
+    if (!conversationId) {
+      throw new Error('Conversation not selected.');
+    }
+    setStatus(page, 'Preparing conversation…');
+    const response = await bootstrapACPConversationData(page.deps, conversationId);
+    applyBootstrappedConversation(page, response);
+    return response;
+  }
+
   function applyACPUpdate(page, update) {
     const result = ACPRender.applySessionUpdate(page.transcript, update, {
       historical: !page.bootstrapComplete,
@@ -609,12 +687,13 @@
       renderThread(page);
       return;
     }
+    const bootstrap = await bootstrapSelectedConversation(page);
     page.bootstrapComplete = false;
     page.cacheHydratedTranscript = page.transcript.messages.length > 0;
     page.cacheReplacedByReplay = false;
     renderThread(page);
     page.client = createACPClient({
-      wsUrl: acpWsUrl(page.selectedName, page.deps),
+      wsUrl: acpWsUrl(page.selectedConversation.metadata?.name || '', page.deps),
       conversation: page.selectedConversation,
       onStatus(text) {
         setStatus(page, text);
@@ -657,9 +736,6 @@
         page.permissionQueue.push(entry);
         renderPermissionPrompt(page);
       },
-      async onSessionId(sessionId) {
-        await patchSelectedConversation(page, { sessionId });
-      },
       onPromptStateChange(value) {
         page.promptInFlight = value;
         if (!value) {
@@ -679,7 +755,16 @@
       },
     });
     syncComposer(page);
-    await page.client.start();
+    try {
+      await page.client.start();
+    } catch (err) {
+      if (err?.code === 'ACP_SESSION_MISSING' && options.allowRepairRetry !== false) {
+        resetConversationRuntime(page);
+        await connectSelectedConversation(page, { ...options, allowRepairRetry: false });
+        return;
+      }
+      throw err;
+    }
     if (!selectedConversationClientMatches(page)) {
       if (options.allowAutoRebind === false) {
         throw new Error('ACP client bound to the wrong conversation.');
@@ -687,6 +772,11 @@
       resetConversationRuntime(page);
       await connectSelectedConversation(page, { allowAutoRebind: false });
       return;
+    }
+    if (bootstrap?.replaced) {
+      page.transcript = ACPRender.createTranscript();
+      renderConversationList(page);
+      renderThread(page);
     }
     if (page.cacheHydratedTranscript && !page.cacheReplacedByReplay) {
       page.transcript = ACPRender.createTranscript();
