@@ -1325,6 +1325,22 @@ function sendResize(ws, term) {
   ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
 }
 
+function cleanupTerminal() {
+  if (activeTerminalSession) {
+    activeTerminalSession.dispose();
+    activeTerminalSession = null;
+  }
+  if (activeTerminalPoll) {
+    activeTerminalPoll.cancelled = true;
+    activeTerminalPoll = null;
+  }
+  const terminalCard = document.querySelector('.terminal-card');
+  if (terminalCard) terminalCard.remove();
+  if (createSection) createSection.hidden = false;
+  if (listSection) listSection.hidden = false;
+  activeTerminalName = '';
+}
+
 function renderACPPage(name) {
   activeACPPage = window.SpritzACPPage.renderACPPage(
     name,
