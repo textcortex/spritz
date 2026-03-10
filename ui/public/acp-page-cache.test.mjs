@@ -460,3 +460,108 @@ test('ACP page clears cached transcript when backend replay returns no transcrip
   assert.doesNotMatch(text, /Cached assistant reply\./);
   assert.match(text, /Conversation is ready\. Send a message to begin\./);
 });
+
+test('ACP page drops cached HTML error documents during transcript restore', async () => {
+  const cacheKey = 'spritz:acp:transcript:conv-1';
+  const window = loadModules({
+    [cacheKey]: JSON.stringify({
+      version: 1,
+      conversationId: 'conv-1',
+      transcript: {
+        messages: [
+          {
+            id: 'assistant-html',
+            kind: 'assistant',
+            title: '',
+            status: '',
+            tone: '',
+            meta: '',
+            blocks: [
+              {
+                type: 'text',
+                text:
+                  '<!DOCTYPE html><html><head><title>textcortex.com | 502: Bad gateway</title></head><body>' +
+                  '<span>staging.spritz.textcortex.com</span><span>Cloudflare</span></body></html>',
+              },
+            ],
+            streaming: false,
+            toolCallId: '',
+          },
+        ],
+        availableCommands: [],
+        currentMode: '',
+        usage: null,
+      },
+    }),
+  });
+
+  const shellEl = createElement('main');
+  const createSection = createElement('section');
+  const listSection = createElement('section');
+
+  window.SpritzACPPage.renderACPPage('young-crest', 'conv-1', {
+    activePage: null,
+    apiBaseUrl: '',
+    authBearerTokenParam: 'token',
+    getAuthToken() {
+      return '';
+    },
+    async request(path) {
+      if (path === '/acp/agents') {
+        return {
+          items: [
+            {
+              spritz: {
+                metadata: { name: 'young-crest' },
+                status: {
+                  acp: { agentInfo: { title: 'OpenClaw ACP Gateway', version: '2026.3.8' } },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (path.startsWith('/acp/conversations?')) {
+        return {
+          items: [
+            {
+              metadata: { name: 'conv-1' },
+              spec: { title: 'Replay conversation', sessionId: 'sess-1', cwd: '/home/dev' },
+              status: { updatedAt: '2026-03-10T06:00:00Z' },
+            },
+          ],
+        };
+      }
+      if (path === '/acp/conversations/conv-1/bootstrap') {
+        return {
+          conversation: {
+            metadata: { name: 'conv-1' },
+            spec: { title: 'Replay conversation', sessionId: 'sess-1', cwd: '/home/dev' },
+            status: { bindingState: 'active', boundSessionId: 'sess-1', updatedAt: '2026-03-10T06:00:00Z' },
+          },
+          effectiveSessionId: 'sess-1',
+          bindingState: 'active',
+          replaced: false,
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    },
+    showNotice() {},
+    buildOpenUrl(url) {
+      return url;
+    },
+    cleanupTerminal() {},
+    shellEl,
+    createSection,
+    listSection,
+    setHeaderCopy() {},
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const text = collectText(shellEl);
+  assert.doesNotMatch(text, /<!DOCTYPE html>/);
+  assert.doesNotMatch(text, /Cloudflare/);
+  assert.match(text, /Conversation is ready\. Send a message to begin\./);
+});
