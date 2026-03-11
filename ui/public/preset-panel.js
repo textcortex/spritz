@@ -21,19 +21,6 @@
       return null;
     }
 
-    const existingSelect = document.getElementById('preset-select');
-    if (existingSelect) {
-      return {
-        reset() {
-          existingSelect.value = '';
-          const help = form.querySelector('.preset-help');
-          if (help) help.textContent = '';
-          setActivePresetEnv(null);
-          if (typeof setActivePreset === 'function') setActivePreset(null);
-        },
-      };
-    }
-
     const imageInput = form.querySelector('input[name="image"]');
     const repoInput = form.querySelector('input[name="repo"]');
     const branchInput = form.querySelector('input[name="branch"]');
@@ -46,33 +33,37 @@
       applyRepoDefaults();
     }
 
-    const panel = document.createElement('div');
-    panel.className = 'preset-panel';
+    let select = document.getElementById('preset-select');
+    let help = form.querySelector('.preset-help');
+    if (!select) {
+      const panel = document.createElement('div');
+      panel.className = 'preset-panel';
 
-    const label = document.createElement('label');
-    label.textContent = 'Preset';
+      const label = document.createElement('label');
+      label.textContent = 'Preset';
 
-    const select = document.createElement('select');
-    select.id = 'preset-select';
+      select = document.createElement('select');
+      select.id = 'preset-select';
 
-    const customOption = document.createElement('option');
-    customOption.value = '';
-    customOption.textContent = 'Custom';
-    select.append(customOption);
+      const customOption = document.createElement('option');
+      customOption.value = '';
+      customOption.textContent = 'Custom';
+      select.append(customOption);
 
-    presets.forEach((preset, index) => {
-      const option = document.createElement('option');
-      option.value = String(index);
-      option.textContent = `${preset.name} (${preset.image})`;
-      select.append(option);
-    });
+      presets.forEach((preset, index) => {
+        const option = document.createElement('option');
+        option.value = String(index);
+        option.textContent = `${preset.name} (${preset.image})`;
+        select.append(option);
+      });
 
-    const help = document.createElement('small');
-    help.className = 'preset-help';
+      help = document.createElement('small');
+      help.className = 'preset-help';
 
-    label.append(select);
-    panel.append(label, help);
-    form.prepend(panel);
+      label.append(select);
+      panel.append(label, help);
+      form.prepend(panel);
+    }
 
     const applyPreset = (preset) => {
       if (!preset) return;
@@ -94,6 +85,35 @@
       if (typeof setActivePreset === 'function') setActivePreset(null);
     };
 
+    const findPresetIndex = (selection) => {
+      if (!selection || selection.mode !== 'preset') return -1;
+      const presetName = String(selection.presetName || '').trim();
+      const presetImage = String(selection.presetImage || '').trim();
+      return presets.findIndex((preset) => {
+        const matchesImage = presetImage && String(preset.image || '').trim() === presetImage;
+        const matchesName = presetName && String(preset.name || '').trim() === presetName;
+        if (presetImage && presetName) {
+          return matchesImage && matchesName;
+        }
+        return matchesImage || matchesName;
+      });
+    };
+
+    const restoreSelection = (selection) => {
+      if (!selection || selection.mode === 'custom') {
+        reset();
+        return true;
+      }
+      const index = findPresetIndex(selection);
+      if (index < 0) {
+        reset();
+        return false;
+      }
+      select.value = String(index);
+      applyPreset(presets[index]);
+      return true;
+    };
+
     select.addEventListener('change', () => {
       if (!select.value) {
         reset();
@@ -107,7 +127,7 @@
       applyPreset(presets[0]);
     }
 
-    return { reset };
+    return { reset, restoreSelection };
   }
 
   return { setupPresetPanel };

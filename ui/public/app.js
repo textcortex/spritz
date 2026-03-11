@@ -48,6 +48,7 @@ let authRefreshInFlight = null;
 let authRefreshAttemptId = 0;
 let lastAuthRefreshAt = 0;
 let activeTerminalPoll = null;
+const createFormStateModule = window.SpritzCreateFormState || null;
 const presetPlaceholder = '__SPRITZ_UI_PRESETS__';
 const ACP_CLIENT_INFO = {
   name: 'spritz-ui',
@@ -338,6 +339,60 @@ const defaultUserConfigYaml = `sharedMounts:
     mode: snapshot
     syncMode: poll
     pollSeconds: 30`;
+
+function getCreateFormStorage() {
+  return window.localStorage || null;
+}
+
+function getCreateFormField(name) {
+  if (!form) return null;
+  return form.querySelector(`input[name="${name}"]`) || form.querySelector(`textarea[name="${name}"]`) || null;
+}
+
+function buildCreateFormStateSnapshot() {
+  if (!createFormStateModule || !form) return null;
+  return createFormStateModule.buildCreateFormState({
+    activePreset,
+    image: getCreateFormField('image')?.value || '',
+    repo: getCreateFormField('repo')?.value || '',
+    branch: getCreateFormField('branch')?.value || '',
+    ttl: getCreateFormField('ttl')?.value || '',
+    namespace: getCreateFormField('namespace')?.value || '',
+    userConfig: getCreateFormField('user_config')?.value || '',
+  });
+}
+
+function persistCreateFormState() {
+  if (!createFormStateModule) return;
+  createFormStateModule.writeCreateFormState(getCreateFormStorage(), buildCreateFormStateSnapshot());
+}
+
+function applyPersistedCreateFormState(state) {
+  if (!state || !form) return false;
+  if (presetController && typeof presetController.restoreSelection === 'function') {
+    presetController.restoreSelection(state.selection);
+  }
+  const fields = state.fields || {};
+  const imageInput = getCreateFormField('image');
+  const repoInput = getCreateFormField('repo');
+  const branchInput = getCreateFormField('branch');
+  const ttlInput = getCreateFormField('ttl');
+  const namespaceInput = getCreateFormField('namespace');
+  const userConfigInput = getCreateFormField('user_config');
+  if (imageInput) imageInput.value = fields.image || '';
+  if (repoInput) repoInput.value = fields.repo || '';
+  if (branchInput) branchInput.value = fields.branch || '';
+  if (ttlInput) ttlInput.value = fields.ttl || '';
+  if (namespaceInput) namespaceInput.value = fields.namespace || '';
+  if (userConfigInput) userConfigInput.value = fields.userConfig || '';
+  return true;
+}
+
+function restoreCreateFormState() {
+  if (!createFormStateModule) return false;
+  const state = createFormStateModule.readCreateFormState(getCreateFormStorage());
+  return applyPersistedCreateFormState(state);
+}
 
 function normalizePresetEnv(env) {
   if (!env) return null;
@@ -1330,6 +1385,7 @@ function handleRoute() {
       applyRepoDefaults();
       applyUserConfigDefaults();
       setupPresets();
+      restoreCreateFormState();
       fetchSpritzes();
     }
   }
@@ -1337,6 +1393,12 @@ function handleRoute() {
 window.addEventListener('hashchange', handleRoute);
 
 if (form && refreshBtn) {
+  const persistCreateFormStateFromEvent = () => {
+    persistCreateFormState();
+  };
+  form.addEventListener('input', persistCreateFormStateFromEvent);
+  form.addEventListener('change', persistCreateFormStateFromEvent);
+
   if (randomNameBtn) {
     randomNameBtn.addEventListener('click', async () => {
       const input = form.querySelector('input[name="name"]');
@@ -1414,12 +1476,11 @@ if (form && refreshBtn) {
         body: JSON.stringify(payload),
       });
 
-      form.reset();
-      activePresetEnv = null;
-      if (presetController) presetController.reset();
-      applyNameDefaults();
-      applyRepoDefaults();
-      applyUserConfigDefaults();
+      const nameInput = getCreateFormField('name');
+      if (nameInput) {
+        nameInput.value = '';
+      }
+      persistCreateFormState();
       await fetchSpritzes();
       showNotice('');
     } catch (err) {

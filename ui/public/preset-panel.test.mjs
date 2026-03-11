@@ -224,3 +224,59 @@ test('setupPresetPanel injects the preset selector and updates image fields', as
   assert.equal(activeEnv, null);
   assert.equal(activePreset, null);
 });
+
+test('setupPresetPanel restores a saved preset selection and falls back to custom', async () => {
+  const require = createRequire(import.meta.url);
+  const { setupPresetPanel } = require('./preset-panel.js');
+
+  const { document, form, imageInput, repoInput, branchInput, ttlInput } = buildFormFixture();
+  let activePreset = null;
+  const presets = [
+    {
+      name: 'Starter Devbox',
+      image: 'spritz-starter:latest',
+      description: 'Starter image',
+      repoUrl: 'https://example.com/a.git',
+      branch: 'main',
+      ttl: '8h',
+    },
+    {
+      name: 'OpenClaw Devbox',
+      image: 'spritz-openclaw:latest',
+      description: 'OpenClaw image',
+      repoUrl: 'https://example.com/b.git',
+      branch: 'staging',
+      ttl: '12h',
+    },
+  ];
+
+  const controller = setupPresetPanel({
+    document,
+    form,
+    presets,
+    hideRepoInputs: false,
+    applyRepoDefaults() {},
+    normalizePresetEnv() {
+      return null;
+    },
+    setActivePresetEnv() {},
+    setActivePreset(preset) {
+      activePreset = preset;
+    },
+  });
+
+  assert.equal(
+    controller.restoreSelection({ mode: 'preset', presetName: 'OpenClaw Devbox', presetImage: 'spritz-openclaw:latest' }),
+    true,
+  );
+  assert.equal(document.getElementById('preset-select').value, '1');
+  assert.equal(imageInput.value, 'spritz-openclaw:latest');
+  assert.equal(repoInput.value, 'https://example.com/b.git');
+  assert.equal(branchInput.value, 'staging');
+  assert.equal(ttlInput.value, '12h');
+  assert.equal(activePreset?.name, 'OpenClaw Devbox');
+
+  assert.equal(controller.restoreSelection({ mode: 'custom' }), true);
+  assert.equal(document.getElementById('preset-select').value, '');
+  assert.equal(activePreset, null);
+});
