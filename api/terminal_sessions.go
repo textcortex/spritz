@@ -48,7 +48,7 @@ func (s *server) listTerminalSessions(c echo.Context) error {
 		return writeError(c, http.StatusNotFound, "spritz not found")
 	}
 
-	if s.auth.enabled() && !principal.IsAdmin && spritz.Spec.Owner.ID != principal.ID {
+	if err := authorizeHumanOwnedAccess(principal, spritz.Spec.Owner.ID, s.auth.enabled()); err != nil {
 		log.Printf("spritz terminal sessions: owner mismatch name=%s namespace=%s user_id=%s owner_id=%s", name, namespace, principal.ID, spritz.Spec.Owner.ID)
 		return writeError(c, http.StatusForbidden, "owner mismatch")
 	}

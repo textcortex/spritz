@@ -27,11 +27,12 @@ import (
 )
 
 type terminalConfig struct {
-	enabled        bool
-	containerName  string
-	command        []string
-	allowedOrigins map[string]struct{}
-	sessionMode    terminalSessionMode
+	enabled          bool
+	containerName    string
+	command          []string
+	allowedOrigins   map[string]struct{}
+	sessionMode      terminalSessionMode
+	activityDebounce time.Duration
 }
 
 type terminalSessionMode string
@@ -43,11 +44,12 @@ const (
 
 func newTerminalConfig() terminalConfig {
 	return terminalConfig{
-		enabled:        parseBoolEnv("SPRITZ_TERMINAL_ENABLED", true),
-		containerName:  envOrDefault("SPRITZ_TERMINAL_CONTAINER", "spritz"),
-		command:        splitCommand(envOrDefault("SPRITZ_TERMINAL_COMMAND", "bash -l")),
-		allowedOrigins: splitSet(os.Getenv("SPRITZ_TERMINAL_ORIGINS")),
-		sessionMode:    parseTerminalSessionMode(os.Getenv("SPRITZ_TERMINAL_SESSION_MODE")),
+		enabled:          parseBoolEnv("SPRITZ_TERMINAL_ENABLED", true),
+		containerName:    envOrDefault("SPRITZ_TERMINAL_CONTAINER", "spritz"),
+		command:          splitCommand(envOrDefault("SPRITZ_TERMINAL_COMMAND", "bash -l")),
+		allowedOrigins:   splitSet(os.Getenv("SPRITZ_TERMINAL_ORIGINS")),
+		sessionMode:      parseTerminalSessionMode(os.Getenv("SPRITZ_TERMINAL_SESSION_MODE")),
+		activityDebounce: parseDurationEnv("SPRITZ_TERMINAL_ACTIVITY_DEBOUNCE", 5*time.Second),
 	}
 }
 
@@ -132,7 +134,7 @@ func (s *server) openTerminal(c echo.Context) error {
 		return writeError(c, http.StatusNotFound, "spritz not found")
 	}
 
-	if s.auth.enabled() && !principal.IsAdmin && spritz.Spec.Owner.ID != principal.ID {
+	if err := authorizeHumanOwnedAccess(principal, spritz.Spec.Owner.ID, s.auth.enabled()); err != nil {
 		log.Printf("spritz terminal: owner mismatch name=%s namespace=%s user_id=%s owner_id=%s", name, namespace, principal.ID, spritz.Spec.Owner.ID)
 		return writeError(c, http.StatusForbidden, "owner mismatch")
 	}
@@ -159,10 +161,13 @@ func (s *server) openTerminal(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := s.markSpritzActivity(c.Request().Context(), namespace, name, time.Now()); err != nil {
+		log.Printf("spritz terminal: failed to record activity name=%s namespace=%s user_id=%s err=%v", name, namespace, principal.ID, err)
+	}
 	if usingZmx {
 		log.Printf("spritz terminal: zmx attach name=%s namespace=%s session=%s user_id=%s", name, namespace, resolvedSession, principal.ID)
 	}
-	if err := s.streamTerminal(c.Request().Context(), pod, conn, command); err != nil {
+	if err := s.streamTerminal(c.Request().Context(), namespace, name, pod, conn, command); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil
 		}
@@ -199,7 +204,7 @@ func (s *server) findRunningPod(ctx context.Context, namespace, name, container 
 	return nil, fmt.Errorf("spritz not ready")
 }
 
-func (s *server) streamTerminal(ctx context.Context, pod *corev1.Pod, conn *websocket.Conn, command []string) error {
+func (s *server) streamTerminal(ctx context.Context, namespace, name string, pod *corev1.Pod, conn *websocket.Conn, command []string) error {
 	if len(command) == 0 {
 		return errors.New("terminal command missing")
 	}
@@ -230,10 +235,17 @@ func (s *server) streamTerminal(ctx context.Context, pod *corev1.Pod, conn *webs
 	stdinReader, stdinWriter := io.Pipe()
 	sizeQueue := newTerminalSizeQueue()
 	wsWriter := &terminalWSWriter{conn: conn}
+	reportActivity := debounceTerminalActivity(s.terminal.activityDebounce, func() {
+		refreshCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := s.markSpritzActivity(refreshCtx, namespace, name, time.Now()); err != nil {
+			log.Printf("spritz terminal: failed to refresh activity name=%s namespace=%s pod=%s err=%v", name, namespace, pod.Name, err)
+		}
+	})
 
 	readErr := make(chan error, 1)
 	go func() {
-		readErr <- readTerminalInput(ctx, conn, stdinWriter, sizeQueue)
+		readErr <- readTerminalInput(ctx, conn, stdinWriter, sizeQueue, reportActivity)
 	}()
 
 	streamErr := executor.StreamWithContext(ctx, remotecommand.StreamOptions{
@@ -265,7 +277,7 @@ type resizeMessage struct {
 	Rows int    `json:"rows"`
 }
 
-func readTerminalInput(ctx context.Context, conn *websocket.Conn, stdin *io.PipeWriter, sizeQueue *terminalSizeQueue) error {
+func readTerminalInput(ctx context.Context, conn *websocket.Conn, stdin *io.PipeWriter, sizeQueue *terminalSizeQueue, onInput func()) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -287,7 +299,32 @@ func readTerminalInput(ctx context.Context, conn *websocket.Conn, stdin *io.Pipe
 			if _, err := stdin.Write(payload); err != nil {
 				return err
 			}
+			if onInput != nil {
+				onInput()
+			}
 		}
+	}
+}
+
+func debounceTerminalActivity(interval time.Duration, report func()) func() {
+	if report == nil {
+		return func() {}
+	}
+	if interval <= 0 {
+		return report
+	}
+	var mu sync.Mutex
+	var last time.Time
+	return func() {
+		now := time.Now()
+		mu.Lock()
+		if !last.IsZero() && now.Sub(last) < interval {
+			mu.Unlock()
+			return
+		}
+		last = now
+		mu.Unlock()
+		report()
 	}
 }
 

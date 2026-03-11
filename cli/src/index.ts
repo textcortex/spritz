@@ -362,7 +362,8 @@ function usage() {
 
 Usage:
   spritz list [--namespace <ns>]
-  spritz create <name> --image <image> [--repo <url>] [--branch <branch>] [--ttl <duration>] [--namespace <ns>]
+  spritz create [name] [--preset <id>] [--image <image>] [--repo <url>] [--branch <branch>] [--owner-id <id>] [--idle-ttl <duration>] [--ttl <duration>] [--idempotency-key <id>] [--source <source>] [--request-id <id>] [--name-prefix <prefix>] [--namespace <ns>]
+  spritz suggest-name [--preset <id>] [--image <image>] [--name-prefix <prefix>] [--namespace <ns>]
   spritz delete <name> [--namespace <ns>]
   spritz open <name> [--namespace <ns>]
   spritz terminal <name> [--namespace <ns>] [--session <name>] [--transport <ws|ssh>] [--print]
@@ -379,6 +380,7 @@ Alias:
 
 Environment:
   SPRITZ_API_URL (default: ${process.env.SPRITZ_API_URL || defaultApiBase})
+  SPRITZ_BEARER_TOKEN
   SPRITZ_USER_ID, SPRITZ_USER_EMAIL, SPRITZ_USER_TEAMS, SPRITZ_OWNER_ID
   SPRITZ_API_HEADER_ID, SPRITZ_API_HEADER_EMAIL, SPRITZ_API_HEADER_TEAMS
   SPRITZ_TERMINAL_TRANSPORT (default: ${terminalTransportDefault})
@@ -403,6 +405,22 @@ function argValueInfo(flag: string): { present: boolean; value?: string } {
 
 function hasFlag(flag: string): boolean {
   return rest.includes(flag);
+}
+
+function positionalArgs(): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < rest.length; index += 1) {
+    const token = rest[index];
+    if (token.startsWith('--')) {
+      const next = rest[index + 1];
+      if (next && !next.startsWith('--')) {
+        index += 1;
+      }
+      continue;
+    }
+    values.push(token);
+  }
+  return values;
 }
 
 function normalizeHeaders(headers?: HeadersInit): Record<string, string> {
@@ -534,6 +552,10 @@ function isJSend(payload: any): payload is { status: string; data?: any; message
 }
 
 async function authHeaders(): Promise<Record<string, string>> {
+  const token = argValue('--token') || process.env.SPRITZ_BEARER_TOKEN;
+  if (token?.trim()) {
+    return { Authorization: `Bearer ${token.trim()}` };
+  }
   const { profile } = await resolveProfile({ allowFlag: true });
   const headers: Record<string, string> = {};
   const userId = process.env.SPRITZ_USER_ID || profile?.userId || process.env.USER;
@@ -543,6 +565,17 @@ async function authHeaders(): Promise<Record<string, string>> {
   if (userEmail) headers[headerEmail] = userEmail;
   if (userTeams) headers[headerTeams] = userTeams;
   return headers;
+}
+
+async function resolveDefaultOwnerId(): Promise<string | undefined> {
+  const { profile } = await resolveProfile({ allowFlag: true });
+  return (
+    process.env.SPRITZ_OWNER_ID ||
+    process.env.SPRITZ_USER_ID ||
+    profile?.userId ||
+    process.env.USER ||
+    undefined
+  );
 }
 
 async function request(path: string, init?: RequestInit) {
@@ -1023,40 +1056,57 @@ async function main() {
     return;
   }
 
+  if (command === 'suggest-name') {
+    const ns = await resolveNamespace();
+    const data = await request('/spritzes/suggest-name', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        namespace: ns,
+        presetId: argValue('--preset'),
+        image: argValue('--image'),
+        namePrefix: argValue('--name-prefix'),
+      }),
+    });
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+
   if (command === 'create') {
-    const name = rest[0];
-    if (!name) throw new Error('name is required');
+    const name = positionalArgs()[0];
+    const presetId = argValue('--preset');
     const image = argValue('--image');
-    if (!image) throw new Error('--image is required');
 
     const repo = argValue('--repo');
     const branch = argValue('--branch');
+    const token = argValue('--token') || process.env.SPRITZ_BEARER_TOKEN;
+    const ownerId = argValue('--owner-id') || (token?.trim() ? process.env.SPRITZ_OWNER_ID : await resolveDefaultOwnerId());
+    const idleTtl = argValue('--idle-ttl');
     const ttl = argValue('--ttl');
+    const idempotencyKey = argValue('--idempotency-key');
+    const source = argValue('--source');
+    const requestId = argValue('--request-id');
+    const namePrefix = argValue('--name-prefix');
     const ns = await resolveNamespace();
-    const { profile } = await resolveProfile({ allowFlag: true });
-    const ownerId =
-      process.env.SPRITZ_OWNER_ID ||
-      process.env.SPRITZ_USER_ID ||
-      profile?.userId ||
-      process.env.USER;
-    if (!ownerId) {
-      throw new Error('SPRITZ_OWNER_ID, SPRITZ_USER_ID, or USER environment variable must be set');
-    }
-
     const body: any = {
-      name,
       namespace: ns,
-      spec: {
-        image,
-        owner: { id: ownerId },
-      },
+      spec: {},
     };
+    if (name) body.name = name;
+    if (namePrefix) body.namePrefix = namePrefix;
+    if (presetId) body.presetId = presetId;
+    if (ownerId) body.ownerId = ownerId;
+    if (idleTtl) body.idleTtl = idleTtl;
+    if (ttl) body.ttl = ttl;
+    if (idempotencyKey) body.idempotencyKey = idempotencyKey;
+    if (source) body.source = source;
+    if (requestId) body.requestId = requestId;
+    if (image) body.spec.image = image;
 
     if (repo) {
       body.spec.repo = { url: repo };
       if (branch) body.spec.repo.branch = branch;
     }
-    if (ttl) body.spec.ttl = ttl;
 
     const data = await request('/spritzes', {
       method: 'POST',

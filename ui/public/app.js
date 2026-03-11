@@ -463,28 +463,28 @@ function isJSend(payload) {
   return payload && typeof payload === 'object' && typeof payload.status === 'string';
 }
 
-function showNotice(message, kind = 'error') {
+function showNotice(message, type = 'error') {
   if (!noticeEl) return;
   if (!message) {
     noticeEl.hidden = true;
     noticeEl.textContent = '';
-    noticeEl.dataset.kind = '';
+    noticeEl.dataset.type = '';
     return;
   }
   noticeEl.hidden = false;
   noticeEl.textContent = message;
-  noticeEl.dataset.kind = kind;
+  noticeEl.dataset.type = type;
 }
 
 function clearNotice() {
   showNotice('');
 }
 
-function showToast(message, kind = 'error', options = {}) {
+function showToast(message, type = 'error', options = {}) {
   if (!toastRegionEl || !message) return;
   const toast = document.createElement('div');
   toast.className = 'toast';
-  toast.dataset.kind = kind;
+  toast.dataset.type = type;
 
   const copy = document.createElement('div');
   copy.className = 'toast-copy';
@@ -510,7 +510,7 @@ function showToast(message, kind = 'error', options = {}) {
   toast.append(copy, dismiss);
   toastRegionEl.appendChild(toast);
 
-  const durationMs = Number(options.durationMs) > 0 ? Number(options.durationMs) : kind === 'error' ? 5200 : 3600;
+  const durationMs = Number(options.durationMs) > 0 ? Number(options.durationMs) : type === 'error' ? 5200 : 3600;
   timeoutId = setTimeout(removeToast, durationMs);
 }
 

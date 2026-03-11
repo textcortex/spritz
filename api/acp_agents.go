@@ -32,10 +32,13 @@ func (s *server) listACPAgents(c echo.Context) error {
 	if err := s.client.List(c.Request().Context(), list, opts...); err != nil {
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
+	if err := authorizeHumanOnly(principal, s.auth.enabled()); err != nil {
+		return writeForbidden(c)
+	}
 
 	records := make([]acpAgentResponse, 0, len(list.Items))
 	for _, item := range list.Items {
-		if s.auth.enabled() && !principal.IsAdmin && item.Spec.Owner.ID != principal.ID {
+		if err := authorizeHumanOwnedAccess(principal, item.Spec.Owner.ID, s.auth.enabled()); err != nil {
 			continue
 		}
 		if !spritzSupportsACPConversations(&item) {

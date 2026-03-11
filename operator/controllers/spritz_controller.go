@@ -622,18 +622,29 @@ func (r *SpritzReconciler) reconcileStatus(ctx context.Context, spritz *spritzv1
 	}
 
 	var statusRequeue *time.Duration
-	if spritz.Spec.TTL != "" {
-		ttl, err := time.ParseDuration(spritz.Spec.TTL)
-		if err != nil {
-			return nil, r.setStatus(ctx, spritz, "Error", "", sshInfo, "InvalidTTL", "invalid ttl format", deepCopyACPStatus(spritz.Status.ACP))
+	idleExpiresAt, maxExpiresAt, effectiveExpiresAt, lifecycleReason, err := spritzv1.LifecycleExpiryTimes(spritz)
+	if err != nil {
+		switch err.Error() {
+		case "invalid idle ttl format":
+			return nil, r.setStatus(ctx, spritz, "Error", "", sshInfo, "InvalidIdleTTL", err.Error(), deepCopyACPStatus(spritz.Status.ACP))
+		default:
+			return nil, r.setStatus(ctx, spritz, "Error", "", sshInfo, "InvalidTTL", err.Error(), deepCopyACPStatus(spritz.Status.ACP))
 		}
-		expiry := spritz.CreationTimestamp.Add(ttl)
-		expiresAt := metav1.NewTime(expiry)
-		spritz.Status.ExpiresAt = &expiresAt
+	}
+	spritz.Status.IdleExpiresAt = idleExpiresAt
+	spritz.Status.MaxExpiresAt = maxExpiresAt
+	spritz.Status.ExpiresAt = effectiveExpiresAt
+	spritz.Status.LifecycleReason = lifecycleReason
+	if effectiveExpiresAt != nil {
+		expiry := effectiveExpiresAt.Time
 		grace := ttlGracePeriod()
 		deleteAt := expiry.Add(grace)
 		if now.After(deleteAt) {
-			if err := r.setStatus(ctx, spritz, "Expired", "", sshInfo, "Expired", "ttl expired", deepCopyACPStatus(spritz.Status.ACP)); err != nil {
+			message := "maximum lifetime expired"
+			if lifecycleReason == spritzv1.LifecycleReasonIdleTTL {
+				message = "idle lifetime expired"
+			}
+			if err := r.setStatus(ctx, spritz, "Expired", "", sshInfo, "Expired", message, deepCopyACPStatus(spritz.Status.ACP)); err != nil {
 				logger.Error(err, "failed to set expired status")
 			}
 			return nil, r.Delete(ctx, spritz)
@@ -643,15 +654,16 @@ func (r *SpritzReconciler) reconcileStatus(ctx context.Context, spritz *spritzv1
 			if remaining < 0 {
 				remaining = 0
 			}
-			message := fmt.Sprintf("ttl expired; deleting in %s", remaining.Round(time.Second))
+			message := fmt.Sprintf("maximum lifetime expired; deleting in %s", remaining.Round(time.Second))
+			if lifecycleReason == spritzv1.LifecycleReasonIdleTTL {
+				message = fmt.Sprintf("idle lifetime expired; deleting in %s", remaining.Round(time.Second))
+			}
 			if err := r.setStatus(ctx, spritz, "Expiring", spritzURL(spritz), sshInfo, "Expiring", message, deepCopyACPStatus(spritz.Status.ACP)); err != nil {
 				return nil, err
 			}
 			return &remaining, nil
 		}
 		statusRequeue = durationPtr(time.Until(expiry))
-	} else {
-		spritz.Status.ExpiresAt = nil
 	}
 
 	var deploy appsv1.Deployment
@@ -778,30 +790,7 @@ func durationPtr(value time.Duration) *time.Duration {
 }
 
 func spritzURL(spritz *spritzv1.Spritz) string {
-	if spritz.Spec.Ingress != nil && spritz.Spec.Ingress.Host != "" {
-		path := spritz.Spec.Ingress.Path
-		if path == "" {
-			path = "/"
-		}
-		if path != "/" && !strings.HasSuffix(path, "/") {
-			path += "/"
-		}
-		return fmt.Sprintf("https://%s%s", spritz.Spec.Ingress.Host, path)
-	}
-
-	if len(spritz.Spec.Ports) == 0 {
-		if !isWebEnabled(spritz) {
-			return ""
-		}
-		return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", spritz.Name, spritz.Namespace, defaultWebPort)
-	}
-
-	port := spritz.Spec.Ports[0]
-	servicePort := port.ContainerPort
-	if port.ServicePort != 0 {
-		servicePort = port.ServicePort
-	}
-	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", spritz.Name, spritz.Namespace, servicePort)
+	return spritzv1.AccessURLForSpritz(spritz)
 }
 
 func (r *SpritzReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -1263,13 +1252,7 @@ func emptyDirSizeLimit(key string, fallback resource.Quantity) *resource.Quantit
 }
 
 func isWebEnabled(spritz *spritzv1.Spritz) bool {
-	if spritz.Spec.Features == nil {
-		return true
-	}
-	if spritz.Spec.Features.Web == nil {
-		return true
-	}
-	return *spritz.Spec.Features.Web
+	return spritzv1.IsWebEnabled(spritz.Spec)
 }
 
 func isSSHEnabled(spritz *spritzv1.Spritz) bool {

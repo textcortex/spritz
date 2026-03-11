@@ -26,8 +26,11 @@ func newListSpritzTestServer(t *testing.T, objects ...client.Object) *server {
 		scheme:    scheme,
 		namespace: "spritz-test",
 		auth: authConfig{
-			mode:     authModeHeader,
-			headerID: "X-Spritz-User-Id",
+			mode:                     authModeHeader,
+			headerID:                 "X-Spritz-User-Id",
+			headerType:               "X-Spritz-Principal-Type",
+			headerTrustTypeAndScopes: true,
+			headerDefaultType:        principalTypeHuman,
 		},
 		internalAuth: internalAuthConfig{enabled: false},
 	}
@@ -82,5 +85,39 @@ func TestListSpritzesUsesSpecOwnerWhenOwnerLabelMissing(t *testing.T) {
 	}
 	if payload.Data.Items[0].Name != "tidy-otter" {
 		t.Fatalf("expected tidy-otter, got %q", payload.Data.Items[0].Name)
+	}
+}
+
+func TestListSpritzesRejectsServicePrincipal(t *testing.T) {
+	s := newListSpritzTestServer(t, spritzForOwner("tidy-otter", "user-1", nil))
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.GET("/api/spritzes", s.listSpritzes)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/spritzes", nil)
+	req.Header.Set("X-Spritz-User-Id", "zenobot")
+	req.Header.Set("X-Spritz-Principal-Type", "service")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDeleteSpritzRejectsServicePrincipal(t *testing.T) {
+	s := newListSpritzTestServer(t, spritzForOwner("tidy-otter", "user-1", nil))
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.DELETE("/api/spritzes/:name", s.deleteSpritz)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/spritzes/tidy-otter", nil)
+	req.Header.Set("X-Spritz-User-Id", "zenobot")
+	req.Header.Set("X-Spritz-Principal-Type", "service")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

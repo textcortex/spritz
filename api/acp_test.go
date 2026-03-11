@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -25,6 +26,9 @@ func newACPTestScheme(t *testing.T) *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	if err := spritzv1.AddToScheme(scheme); err != nil {
 		t.Fatalf("failed to register spritz scheme: %v", err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to register core scheme: %v", err)
 	}
 	return scheme
 }
@@ -41,8 +45,9 @@ func newACPTestServer(t *testing.T, objects ...client.Object) *server {
 		scheme:    scheme,
 		namespace: "spritz-test",
 		auth: authConfig{
-			mode:     authModeHeader,
-			headerID: "X-Spritz-User-Id",
+			mode:              authModeHeader,
+			headerID:          "X-Spritz-User-Id",
+			headerDefaultType: principalTypeHuman,
 		},
 		internalAuth: internalAuthConfig{enabled: false},
 		acp: acpConfig{
@@ -424,6 +429,41 @@ func TestListAndPatchACPConversationsByID(t *testing.T) {
 	}
 	if getPayload.Data.Spec.Title != "Renamed" || getPayload.Data.Spec.SessionID != "sess-tidy-otter-new" || getPayload.Data.Spec.CWD != "/workspace/app" {
 		t.Fatalf("expected patched conversation fields, got %#v", getPayload.Data.Spec)
+	}
+}
+
+func TestListACPConversationsAllowsAdminToSeeAllOwners(t *testing.T) {
+	now := metav1.Now()
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	ownerOne := conversationFor("tidy-otter-user-1", "tidy-otter", "user-1", "Owner one", now)
+	ownerTwo := conversationFor("tidy-otter-user-2", "tidy-otter", "user-2", "Owner two", now)
+
+	s := newACPTestServer(t, spritz, ownerOne, ownerTwo)
+	s.auth.adminIDs = map[string]struct{}{"admin-1": {}}
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.GET("/api/acp/conversations", s.listACPConversations)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/acp/conversations?spritz=tidy-otter", nil)
+	req.Header.Set("X-Spritz-User-Id", "admin-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Status string `json:"status"`
+		Data   struct {
+			Items []spritzv1.SpritzConversation `json:"items"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode list response: %v", err)
+	}
+	if len(payload.Data.Items) != 2 {
+		t.Fatalf("expected 2 visible conversations for admin, got %d", len(payload.Data.Items))
 	}
 }
 

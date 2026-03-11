@@ -13,6 +13,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/remotecommand"
+
+	spritzv1 "spritz.sh/operator/api/v1"
 )
 
 const sshPrincipalDelimiter = ":"
@@ -97,6 +99,14 @@ func (s *server) handleSSHSession(sess sshserver.Session) {
 	log.Printf("spritz ssh: session start name=%s namespace=%s user_id=%s", name, namespace, keyID)
 	defer log.Printf("spritz ssh: session end name=%s namespace=%s user_id=%s", name, namespace, keyID)
 
+	spritz := &spritzv1.Spritz{}
+	if err := s.client.Get(sess.Context(), clientKey(namespace, name), spritz); err != nil {
+		log.Printf("spritz ssh: spritz not found name=%s namespace=%s user_id=%s err=%v", name, namespace, keyID, err)
+		_, _ = io.WriteString(sess, "spritz not ready\n")
+		_ = sess.Exit(1)
+		return
+	}
+
 	pod, err := s.findRunningPod(sess.Context(), namespace, name, s.sshGateway.containerName)
 	if err != nil {
 		log.Printf("spritz ssh: pod not ready name=%s namespace=%s err=%v", name, namespace, err)
@@ -104,6 +114,7 @@ func (s *server) handleSSHSession(sess sshserver.Session) {
 		_ = sess.Exit(1)
 		return
 	}
+	s.startSSHActivityLoop(sess.Context(), spritz)
 
 	pty, winCh, hasPty := sess.Pty()
 	sizeQueue := newTerminalSizeQueue()
@@ -122,6 +133,56 @@ func (s *server) handleSSHSession(sess sshserver.Session) {
 		return
 	}
 	_ = sess.Exit(0)
+}
+
+func sshActivityRefreshInterval(spec spritzv1.SpritzSpec, fallback time.Duration) time.Duration {
+	interval := fallback
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	if raw := strings.TrimSpace(spec.IdleTTL); raw != "" {
+		if idleTTL, err := time.ParseDuration(raw); err == nil && idleTTL > 0 {
+			candidate := idleTTL / 2
+			if candidate <= 0 {
+				candidate = idleTTL
+			}
+			if candidate > 0 && candidate < interval {
+				interval = candidate
+			}
+		}
+	}
+	if interval <= 0 {
+		return time.Minute
+	}
+	return interval
+}
+
+func (s *server) startSSHActivityLoop(ctx context.Context, spritz *spritzv1.Spritz) {
+	if s == nil || spritz == nil {
+		return
+	}
+	record := func(when time.Time) {
+		refreshCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.recordSpritzActivity(refreshCtx, spritz.Namespace, spritz.Name, when); err != nil {
+			log.Printf("spritz ssh: failed to refresh activity name=%s namespace=%s err=%v", spritz.Name, spritz.Namespace, err)
+		}
+	}
+	record(time.Now())
+
+	interval := sshActivityRefreshInterval(spritz.Spec, s.sshGateway.activityRefresh)
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case tick := <-ticker.C:
+				record(tick)
+			}
+		}
+	}()
 }
 
 func (s *server) streamSSH(ctx context.Context, pod *corev1.Pod, sess sshserver.Session, hasPty bool, sizeQueue *terminalSizeQueue) error {

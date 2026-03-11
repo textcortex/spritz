@@ -29,6 +29,8 @@ type SpritzSpec struct {
 	SharedMounts []sharedmounts.MountSpec `json:"sharedMounts,omitempty"`
 	// +kubebuilder:validation:Pattern="^([0-9]+h)?([0-9]+m)?([0-9]+s)?$"
 	TTL         string                      `json:"ttl,omitempty"`
+	// +kubebuilder:validation:Pattern="^([0-9]+h)?([0-9]+m)?([0-9]+s)?$"
+	IdleTTL     string                      `json:"idleTtl,omitempty"`
 	Resources   corev1.ResourceRequirements `json:"resources,omitempty"`
 	Owner       SpritzOwner                 `json:"owner"`
 	Labels      map[string]string           `json:"labels,omitempty"`
@@ -139,7 +141,10 @@ type SpritzStatus struct {
 	SSH            *SpritzSSHInfo     `json:"ssh,omitempty"`
 	Message        string             `json:"message,omitempty"`
 	LastActivityAt *metav1.Time       `json:"lastActivityAt,omitempty"`
+	IdleExpiresAt  *metav1.Time       `json:"idleExpiresAt,omitempty"`
+	MaxExpiresAt   *metav1.Time       `json:"maxExpiresAt,omitempty"`
 	ExpiresAt      *metav1.Time       `json:"expiresAt,omitempty"`
+	LifecycleReason string            `json:"lifecycleReason,omitempty"`
 	ReadyAt        *metav1.Time       `json:"readyAt,omitempty"`
 	Conditions     []metav1.Condition `json:"conditions,omitempty"`
 }
@@ -493,6 +498,12 @@ func (in *SpritzStatus) DeepCopyInto(out *SpritzStatus) {
 	}
 	if in.LastActivityAt != nil {
 		out.LastActivityAt = in.LastActivityAt.DeepCopy()
+	}
+	if in.IdleExpiresAt != nil {
+		out.IdleExpiresAt = in.IdleExpiresAt.DeepCopy()
+	}
+	if in.MaxExpiresAt != nil {
+		out.MaxExpiresAt = in.MaxExpiresAt.DeepCopy()
 	}
 	if in.ExpiresAt != nil {
 		out.ExpiresAt = in.ExpiresAt.DeepCopy()

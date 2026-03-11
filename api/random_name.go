@@ -30,7 +30,7 @@ var spritzNameAdjectives = []string{
 	"good",
 	"grand",
 	"keen",
-	"kind",
+	"bright",
 	"lucky",
 	"marine",
 	"mellow",
@@ -296,6 +296,9 @@ func randomSuffix(length int) string {
 }
 
 func (s *server) newSpritzNameGenerator(ctx context.Context, namespace string, prefix string) (func() string, error) {
+	if s.nameGeneratorFactory != nil {
+		return s.nameGeneratorFactory(ctx, namespace, prefix)
+	}
 	list := &spritzv1.SpritzList{}
 	opts := []client.ListOption{client.InNamespace(namespace)}
 	if err := s.client.List(ctx, list, opts...); err != nil {

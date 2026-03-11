@@ -68,7 +68,7 @@ func (s *server) mintSSHCert(c echo.Context) error {
 		log.Printf("spritz ssh: spritz not found name=%s namespace=%s user_id=%s err=%v", name, namespace, principal.ID, err)
 		return writeError(c, http.StatusNotFound, "spritz not found")
 	}
-	if s.auth.enabled() && !principal.IsAdmin && spritz.Spec.Owner.ID != principal.ID {
+	if err := authorizeHumanOwnedAccess(principal, spritz.Spec.Owner.ID, s.auth.enabled()); err != nil {
 		log.Printf("spritz ssh: owner mismatch name=%s namespace=%s user_id=%s owner_id=%s", name, namespace, principal.ID, spritz.Spec.Owner.ID)
 		return writeError(c, http.StatusForbidden, "owner mismatch")
 	}
@@ -90,6 +90,9 @@ func (s *server) mintSSHCert(c echo.Context) error {
 	knownHosts := formatKnownHosts(s.sshGateway.publicHost, s.sshGateway.publicPort, s.sshGateway.hostPublicKey)
 	expiresAt := time.Unix(int64(cert.ValidBefore), 0).UTC().Format(time.RFC3339)
 	log.Printf("spritz ssh: cert issued name=%s namespace=%s user_id=%s expires_at=%s", name, namespace, principal.ID, expiresAt)
+	if err := s.markSpritzActivity(c.Request().Context(), namespace, name, time.Now()); err != nil {
+		log.Printf("spritz ssh: failed to record activity name=%s namespace=%s user_id=%s err=%v", name, namespace, principal.ID, err)
+	}
 	resp := sshMintResponse{
 		Host:       s.sshGateway.publicHost,
 		Port:       s.sshGateway.publicPort,

@@ -21,6 +21,7 @@ type sshGatewayConfig struct {
 	user            string
 	principalPrefix string
 	certTTL         time.Duration
+	activityRefresh time.Duration
 	containerName   string
 	command         []string
 	caSigner        ssh.Signer
@@ -76,6 +77,10 @@ func newSSHGatewayConfig() (sshGatewayConfig, error) {
 	if certTTL <= 0 {
 		certTTL = 15 * time.Minute
 	}
+	activityRefresh := parseDurationEnv("SPRITZ_SSH_ACTIVITY_REFRESH", time.Minute)
+	if activityRefresh <= 0 {
+		activityRefresh = time.Minute
+	}
 	containerName := envOrDefault("SPRITZ_SSH_CONTAINER", "spritz")
 	command := splitCommand(envOrDefault("SPRITZ_SSH_COMMAND", "bash -l"))
 
@@ -93,6 +98,7 @@ func newSSHGatewayConfig() (sshGatewayConfig, error) {
 		user:            user,
 		principalPrefix: principalPrefix,
 		certTTL:         certTTL,
+		activityRefresh: activityRefresh,
 		containerName:   containerName,
 		command:         command,
 		caSigner:        caSigner,

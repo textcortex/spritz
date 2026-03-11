@@ -35,7 +35,7 @@
   function rebuildToolCallIndex(transcript) {
     transcript.toolCallIndex = new Map();
     transcript.messages.forEach((message, index) => {
-      if (message?.kind === 'tool' && message.toolCallId) {
+      if (message?.type === 'tool' && message.toolCallId) {
         transcript.toolCallIndex.set(message.toolCallId, index);
       }
     });
@@ -47,7 +47,7 @@
       messages: Array.isArray(transcript?.messages)
         ? transcript.messages.map((message) => ({
             id: message.id || '',
-            kind: message.kind || 'system',
+            type: message.type || 'system',
             title: message.title || '',
             status: message.status || '',
             tone: message.tone || '',
@@ -197,12 +197,12 @@
     };
   }
 
-  function sanitizeHydratedBlock(kind, block) {
+  function sanitizeHydratedBlock(type, block) {
     if (!block || typeof block !== 'object') return null;
     if (block.type === 'text') {
       const htmlError = detectHtmlErrorDocument(block.text);
       if (htmlError) {
-        return kind === 'tool'
+        return type === 'tool'
           ? { ...block, type: 'details', title: 'Result', text: htmlError.text, open: false }
           : null;
       }
@@ -219,7 +219,7 @@
   }
 
   function sanitizeHydratedMessage(message) {
-    const kind = message?.kind || 'system';
+    const type = message?.type || message?.kind || 'system';
     const hadHtmlError = Array.isArray(message?.blocks)
       ? message.blocks.some((block) => {
           if (!block || typeof block !== 'object') return false;
@@ -228,21 +228,21 @@
         })
       : false;
     const blocks = Array.isArray(message?.blocks)
-      ? message.blocks.map((block) => sanitizeHydratedBlock(kind, block)).filter(Boolean)
+      ? message.blocks.map((block) => sanitizeHydratedBlock(type, block)).filter(Boolean)
       : [];
-    if (!blocks.length && (kind === 'assistant' || kind === 'user')) {
+    if (!blocks.length && (type === 'assistant' || type === 'user')) {
       return null;
     }
     return {
-      id: message?.id || createId(kind || 'message'),
-      kind,
+      id: message?.id || createId(type || 'message'),
+      type,
       title: message?.title || '',
       status:
-        kind === 'tool' && hadHtmlError && (!message?.status || message.status === 'completed')
+        type === 'tool' && hadHtmlError && (!message?.status || message.status === 'completed')
           ? 'failed'
           : message?.status || '',
       tone:
-        kind === 'tool' && hadHtmlError
+        type === 'tool' && hadHtmlError
           ? 'danger'
           : message?.tone || '',
       meta: message?.meta || '',
@@ -267,8 +267,8 @@
 
   function pushMessage(transcript, message) {
     transcript.messages.push({
-      id: message.id || createId(message.kind || 'message'),
-      kind: message.kind,
+      id: message.id || createId(message.type || 'message'),
+      type: message.type,
       title: message.title || '',
       status: message.status || '',
       tone: message.tone || '',
@@ -287,12 +287,12 @@
     return [{ type: 'text', text: normalized }];
   }
 
-  function appendHistoricalText(transcript, kind, text, messageKey = '') {
+  function appendHistoricalText(transcript, type, text, messageKey = '') {
     const value = String(text || '');
     if (!value) return;
     const normalizedKey = String(messageKey || '').trim();
     const last = transcript.messages[transcript.messages.length - 1];
-    if (normalizedKey && last && last.kind === kind && last.historyMessageId === normalizedKey) {
+    if (normalizedKey && last && last.type === type && last.historyMessageId === normalizedKey) {
       const textBlock = last.blocks.find((block) => block.type === 'text');
       if (textBlock) {
         textBlock.text += value;
@@ -302,18 +302,18 @@
       return;
     }
     pushMessage(transcript, {
-      kind,
+      type,
       streaming: false,
       historyMessageId: normalizedKey,
       blocks: createTextBlocks(value),
     });
   }
 
-  function appendStreamingText(transcript, kind, text) {
+  function appendStreamingText(transcript, type, text) {
     const chunk = String(text || '');
     if (!chunk) return;
     const last = transcript.messages[transcript.messages.length - 1];
-    if (last && last.kind === kind && last.streaming) {
+    if (last && last.type === type && last.streaming) {
       const textBlock = last.blocks.find((block) => block.type === 'text');
       if (textBlock) {
         textBlock.text += chunk;
@@ -323,7 +323,7 @@
       return;
     }
     pushMessage(transcript, {
-      kind,
+      type,
       streaming: true,
       blocks: createTextBlocks(chunk),
     });
@@ -331,7 +331,7 @@
 
   function finalizeStreaming(transcript) {
     transcript.messages.forEach((message) => {
-      if (message.kind === 'assistant' || message.kind === 'user') {
+      if (message.type === 'assistant' || message.type === 'user') {
         message.streaming = false;
       }
     });
@@ -372,11 +372,11 @@
         ? 'failed'
         : update.status || existing?.status || 'pending';
     const next = {
-      kind: 'tool',
+      type: 'tool',
       title,
       status,
       tone: status === 'completed' ? 'success' : status === 'failed' ? 'danger' : 'info',
-      meta: update.kind || existing?.meta || '',
+      meta: update.type || existing?.meta || '',
       blocks: normalizedBlocks.blocks,
       toolCallId,
     };
@@ -408,22 +408,22 @@
     return entries;
   }
 
-  function humanizeUpdateKind(kind) {
-    return String(kind || 'Update')
+  function humanizeUpdateType(type) {
+    return String(type || 'Update')
       .replace(/_/g, ' ')
       .replace(/\b\w/g, (match) => match.toUpperCase());
   }
 
   function applySessionUpdate(transcript, update, options = {}) {
-    const kind = update?.sessionUpdate || 'unknown';
+    const type = update?.sessionUpdate || 'unknown';
     const historical = Boolean(options.historical);
-    if (kind === 'user_message_chunk') {
+    if (type === 'user_message_chunk') {
       const text = extractACPText(update.content);
       const htmlError = detectHtmlErrorDocument(text);
       if (htmlError) {
         return {
           toast: {
-            kind: 'error',
+            type: 'error',
             message: htmlError.text,
           },
         };
@@ -440,13 +440,13 @@
       }
       return null;
     }
-    if (kind === 'agent_message_chunk') {
+    if (type === 'agent_message_chunk') {
       const text = extractACPText(update.content);
       const htmlError = detectHtmlErrorDocument(text);
       if (htmlError) {
         return {
           toast: {
-            kind: 'error',
+            type: 'error',
             message: htmlError.text,
           },
         };
@@ -463,27 +463,27 @@
       }
       return null;
     }
-    if (kind === 'tool_call' || kind === 'tool_call_update') {
+    if (type === 'tool_call' || type === 'tool_call_update') {
       const toolResult = upsertToolCall(transcript, update);
       if (!historical && toolResult?.isError && toolResult.summary) {
         return {
           toast: {
-            kind: 'error',
+            type: 'error',
             message: toolResult.summary,
           },
         };
       }
       return null;
     }
-    if (kind === 'available_commands_update') {
+    if (type === 'available_commands_update') {
       transcript.availableCommands = Array.isArray(update.availableCommands) ? update.availableCommands : [];
       return null;
     }
-    if (kind === 'current_mode_update') {
+    if (type === 'current_mode_update') {
       transcript.currentMode = String(update.mode || update.currentMode || '').trim();
       return null;
     }
-    if (kind === 'usage_update') {
+    if (type === 'usage_update') {
       transcript.usage = {
         label: String(update.label || 'Usage'),
         used: typeof update.used === 'number' ? update.used : null,
@@ -494,9 +494,9 @@
       }
       return null;
     }
-    if (kind === 'plan') {
+    if (type === 'plan') {
       pushMessage(transcript, {
-        kind: 'plan',
+        type: 'plan',
         title: 'Plan',
         blocks: [
           {
@@ -507,14 +507,14 @@
       });
       return null;
     }
-    if (kind === 'session_info_update') {
+    if (type === 'session_info_update') {
       return {
         conversationTitle: update?.title || update?.sessionInfo?.title || '',
       };
     }
-    if (kind === 'config_option_update') {
+    if (type === 'config_option_update') {
       pushMessage(transcript, {
-        kind: 'system',
+        type: 'system',
         title: 'Setting updated',
         tone: 'muted',
         blocks: [
@@ -530,8 +530,8 @@
       return null;
     }
     pushMessage(transcript, {
-      kind: 'system',
-      title: humanizeUpdateKind(kind),
+      type: 'system',
+      title: humanizeUpdateType(type),
       tone: 'muted',
       blocks: [
         {
@@ -644,17 +644,17 @@
 
   function renderMessage(message) {
     const article = document.createElement('article');
-    article.className = `acp-message acp-message--${message.kind}`;
-    article.dataset.kind = message.kind;
+    article.className = `acp-message acp-message--${message.type}`;
+    article.dataset.type = message.type;
 
     const bubble = document.createElement('div');
-    bubble.className = message.kind === 'user' || message.kind === 'assistant' ? 'acp-bubble' : 'acp-event-card';
+    bubble.className = message.type === 'user' || message.type === 'assistant' ? 'acp-bubble' : 'acp-event-card';
 
     if (message.title || message.status || message.meta) {
       const header = document.createElement('div');
       header.className = 'acp-message-meta';
       const title = document.createElement('strong');
-      title.textContent = message.title || (message.kind === 'assistant' ? 'Assistant' : message.kind === 'user' ? 'You' : 'Update');
+      title.textContent = message.title || (message.type === 'assistant' ? 'Assistant' : message.type === 'user' ? 'You' : 'Update');
       header.appendChild(title);
       if (message.status || message.meta) {
         const meta = document.createElement('div');
@@ -690,7 +690,7 @@
     for (let index = transcript.messages.length - 1; index >= 0; index -= 1) {
       const message = transcript.messages[index];
       if (!message) continue;
-      if (message.kind === 'assistant' || message.kind === 'user') {
+      if (message.type === 'assistant' || message.type === 'user') {
         const textBlock = message.blocks.find((block) => block.type === 'text' && block.text);
         if (textBlock) {
           const htmlError = detectHtmlErrorDocument(textBlock.text);
@@ -699,7 +699,7 @@
           }
         }
       }
-      if (message.kind === 'tool') {
+      if (message.type === 'tool') {
         const resultBlock = message.blocks.find((block) => block.type === 'details' && block.title === 'Result' && block.text);
         const htmlError = detectHtmlErrorDocument(resultBlock?.text);
         if (htmlError) {
@@ -719,14 +719,14 @@
   }
 
   function isTranscriptBearingUpdate(update) {
-    const kind = update?.sessionUpdate || '';
+    const type = update?.sessionUpdate || '';
     return ![
       '',
       'available_commands_update',
       'current_mode_update',
       'usage_update',
       'session_info_update',
-    ].includes(kind);
+    ].includes(type);
   }
 
   global.SpritzACPRender = {

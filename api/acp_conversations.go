@@ -36,6 +36,9 @@ func (s *server) listACPConversations(c echo.Context) error {
 
 	namespace := s.requestNamespace(c)
 	spritzName := strings.TrimSpace(c.QueryParam("spritz"))
+	if err := authorizeHumanOnly(principal, s.auth.enabled()); err != nil {
+		return writeForbidden(c)
+	}
 	list := &spritzv1.SpritzConversationList{}
 	opts := []client.ListOption{}
 	if namespace != "" {
@@ -45,7 +48,7 @@ func (s *server) listACPConversations(c echo.Context) error {
 	if spritzName != "" {
 		labels[acpConversationSpritzLabelKey] = spritzName
 	}
-	if s.auth.enabled() && !principal.IsAdmin {
+	if s.auth.enabled() && !principal.isAdminPrincipal() {
 		labels[acpConversationOwnerLabelKey] = ownerLabelValue(principal.ID)
 	}
 	opts = append(opts, client.MatchingLabels(labels))
@@ -55,7 +58,7 @@ func (s *server) listACPConversations(c echo.Context) error {
 
 	items := make([]spritzv1.SpritzConversation, 0, len(list.Items))
 	for _, item := range list.Items {
-		if s.auth.enabled() && !principal.IsAdmin && item.Spec.Owner.ID != principal.ID {
+		if err := authorizeHumanOwnedAccess(principal, item.Spec.Owner.ID, s.auth.enabled()); err != nil {
 			continue
 		}
 		if spritzName != "" && item.Spec.SpritzName != spritzName {
@@ -75,6 +78,9 @@ func (s *server) getACPConversation(c echo.Context) error {
 	if s.auth.enabled() && (!ok || principal.ID == "") {
 		return writeError(c, http.StatusUnauthorized, "unauthenticated")
 	}
+	if err := authorizeHumanOnly(principal, s.auth.enabled()); err != nil {
+		return writeForbidden(c)
+	}
 	conversation, err := s.getAuthorizedConversation(c.Request().Context(), principal, s.requestNamespace(c), c.Param("id"))
 	if err != nil {
 		return s.writeACPConversationError(c, err)
@@ -89,6 +95,9 @@ func (s *server) createACPConversation(c echo.Context) error {
 	principal, ok := principalFromContext(c)
 	if s.auth.enabled() && (!ok || principal.ID == "") {
 		return writeError(c, http.StatusUnauthorized, "unauthenticated")
+	}
+	if err := authorizeHumanOnly(principal, s.auth.enabled()); err != nil {
+		return writeForbidden(c)
 	}
 
 	var body createACPConversationRequest
@@ -134,6 +143,9 @@ func (s *server) updateACPConversation(c echo.Context) error {
 	principal, ok := principalFromContext(c)
 	if s.auth.enabled() && (!ok || principal.ID == "") {
 		return writeError(c, http.StatusUnauthorized, "unauthenticated")
+	}
+	if err := authorizeHumanOnly(principal, s.auth.enabled()); err != nil {
+		return writeForbidden(c)
 	}
 	conversation, err := s.getAuthorizedConversation(c.Request().Context(), principal, s.requestNamespace(c), c.Param("id"))
 	if err != nil {
@@ -189,7 +201,7 @@ func (s *server) getAuthorizedConversation(ctx context.Context, principal princi
 	if err := s.client.Get(ctx, clientKey(namespace, name), conversation); err != nil {
 		return nil, err
 	}
-	if s.auth.enabled() && !principal.IsAdmin && conversation.Spec.Owner.ID != principal.ID {
+	if err := authorizeHumanOwnedAccess(principal, conversation.Spec.Owner.ID, s.auth.enabled()); err != nil {
 		return nil, errForbidden
 	}
 	return conversation, nil

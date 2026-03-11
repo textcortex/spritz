@@ -129,6 +129,10 @@ api:
     headerId: X-Spritz-User-Id
     headerEmail: X-Spritz-User-Email
     headerTeams: X-Spritz-User-Teams
+    headerType: X-Spritz-Principal-Type
+    headerScopes: X-Spritz-Principal-Scopes
+    headerTrustTypeAndScopes: false
+    headerDefaultType: human
     adminIds: []
     adminTeams: []
     bearer:
@@ -143,6 +147,7 @@ api:
       emailPaths:
         - email
       teamsPaths: []
+      typePaths: []
       jwks:
         url: ""
         issuer: ""
@@ -154,9 +159,29 @@ api:
         refreshTimeout: 5s
         rateLimit: 10s
         fallbackToIntrospection: false
+      scopesPaths:
+        - scope
+        - scopes
+        - scp
+      defaultType: ""
+  provisioners:
+    defaultPresetId: ""
+    allowedPresetIds: []
+    allowCustomImage: false
+    allowCustomRepo: false
+    allowNamespaceOverride: false
+    allowedNamespaces: []
+    defaultIdleTtl: 24h
+    maxIdleTtl: 24h
+    defaultTtl: 168h
+    maxTtl: 168h
+    maxActivePerOwner: 0
+    maxCreatesPerActor: 0
+    maxCreatesPerOwner: 0
+    rateWindow: 1h
   cors:
     origins: []
-    allowHeaders: Content-Type,Authorization,X-Spritz-User-Id,X-Spritz-User-Email,X-Spritz-User-Teams
+    allowHeaders: Content-Type,Authorization,X-Spritz-User-Id,X-Spritz-User-Email,X-Spritz-User-Teams,X-Spritz-Principal-Type,X-Spritz-Principal-Scopes
     allowMethods: GET,POST,PUT,PATCH,DELETE,OPTIONS
     allowCredentials: true
   defaultIngress:
@@ -172,6 +197,7 @@ api:
     container: spritz
     command: "bash -l"
     origins: []
+    activityDebounce: 5s
   acp:
     origins: []
   sshGateway:
@@ -182,6 +208,7 @@ api:
     user: spritz
     principalPrefix: spritz
     certTtl: 15m
+    activityRefresh: 1m
     mintLimit: 5
     mintWindow: 1m
     mintBurst: 5

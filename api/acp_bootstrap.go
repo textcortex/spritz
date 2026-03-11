@@ -296,6 +296,9 @@ func (s *server) bootstrapACPConversation(c echo.Context) error {
 	if s.auth.enabled() && (!ok || principal.ID == "") {
 		return writeError(c, http.StatusUnauthorized, "unauthenticated")
 	}
+	if err := authorizeHumanOnly(principal, s.auth.enabled()); err != nil {
+		return writeForbidden(c)
+	}
 	namespace := s.requestNamespace(c)
 	if namespace == "" {
 		namespace = "default"

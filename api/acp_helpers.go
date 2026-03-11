@@ -166,7 +166,7 @@ func (s *server) getAuthorizedSpritz(ctx context.Context, principal principal, n
 		}
 		return nil, err
 	}
-	if s.auth.enabled() && !principal.IsAdmin && spritz.Spec.Owner.ID != principal.ID {
+	if err := authorizeHumanOwnedAccess(principal, spritz.Spec.Owner.ID, s.auth.enabled()); err != nil {
 		return nil, errForbidden
 	}
 	return spritz, nil

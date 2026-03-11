@@ -129,7 +129,7 @@ test('ACP page restores cached transcript when revisiting a conversation', async
           messages: [
             {
               id: 'assistant-1',
-              kind: 'assistant',
+              type: 'assistant',
               title: '',
               status: '',
               tone: '',
@@ -244,7 +244,7 @@ test('ACP page purges pre-cutover cached transcripts after the namespace cutover
           messages: [
             {
               id: 'assistant-1',
-              kind: 'assistant',
+              type: 'assistant',
               title: '',
               status: '',
               tone: '',
@@ -362,7 +362,7 @@ test('ACP page drops cached transcripts that contain raw HTML error documents', 
           messages: [
             {
               id: 'assistant-html',
-              kind: 'assistant',
+              type: 'assistant',
               title: '',
               status: '',
               tone: '',
@@ -488,7 +488,7 @@ test('ACP page replaces cached transcript with backend replay during bootstrap',
           messages: [
             {
               id: 'assistant-cached',
-              kind: 'assistant',
+              type: 'assistant',
               title: '',
               status: '',
               tone: '',
@@ -603,7 +603,7 @@ test('ACP page clears cached transcript when backend replay returns no transcrip
           messages: [
             {
               id: 'assistant-cached',
-              kind: 'assistant',
+              type: 'assistant',
               title: '',
               status: '',
               tone: '',
@@ -713,7 +713,7 @@ test('ACP page drops cached HTML error documents during transcript restore', asy
         messages: [
           {
             id: 'assistant-html',
-            kind: 'assistant',
+            type: 'assistant',
             title: '',
             status: '',
             tone: '',
