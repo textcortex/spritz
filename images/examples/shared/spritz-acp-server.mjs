@@ -42,8 +42,21 @@ export function writeJSON(res, status, body) {
 
 export function resolveWSExports(wsModule) {
   const WebSocket = wsModule?.WebSocket ?? wsModule?.default?.WebSocket ?? wsModule?.default ?? wsModule;
-  const WebSocketServer = wsModule?.WebSocketServer ?? wsModule?.default?.WebSocketServer;
+  const WebSocketServer =
+    wsModule?.WebSocketServer ??
+    wsModule?.Server ??
+    wsModule?.default?.WebSocketServer ??
+    wsModule?.default?.Server;
   return { WebSocket, WebSocketServer };
+}
+
+export function resolveWebSocketServerExport(wsModule) {
+  return (
+    wsModule?.WebSocketServer ??
+    wsModule?.Server ??
+    wsModule?.default?.WebSocketServer ??
+    wsModule?.default?.Server
+  );
 }
 
 export function createACPRequestHandler({ config, runtime, logger }) {
@@ -79,7 +92,7 @@ export async function serveSpritzACPServer({
   shutdownTimeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS,
 }) {
   const wsModule = await loadWSModule();
-  const { WebSocketServer } = resolveWSExports(wsModule);
+  const WebSocketServer = resolveWebSocketServerExport(wsModule);
   if (!WebSocketServer) {
     throw new Error("Failed to load WebSocketServer from ws.");
   }

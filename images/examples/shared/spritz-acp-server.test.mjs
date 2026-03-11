@@ -6,6 +6,7 @@ import {
   createACPRequestHandler,
   parseListenAddress,
   resolveWSExports,
+  resolveWebSocketServerExport,
   serveSpritzACPServer,
 } from "./spritz-acp-server.mjs";
 
@@ -88,6 +89,18 @@ test("resolveWSExports accepts ws modules that expose constructors via the defau
       WebSocketServer,
     },
   );
+});
+
+test("resolveWSExports accepts ws modules that expose the server constructor as Server", () => {
+  const WebSocket = class WebSocket {};
+  const WebSocketServer = class WebSocketServer {};
+  WebSocket.Server = WebSocketServer;
+
+  assert.deepEqual(resolveWSExports({ default: WebSocket }), {
+    WebSocket,
+    WebSocketServer,
+  });
+  assert.equal(resolveWebSocketServerExport({ default: WebSocket }), WebSocketServer);
 });
 
 test("serveSpritzACPServer wires the shared ACP shell once", async () => {
