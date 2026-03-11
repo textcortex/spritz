@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import http from "node:http";
 import net from "node:net";
 import { PassThrough, Readable, Writable } from "node:stream";
 import { pathToFileURL } from "node:url";

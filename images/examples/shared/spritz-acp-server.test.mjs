@@ -113,7 +113,7 @@ test("serveSpritzACPServer wires the shared ACP shell once", async () => {
 
   const service = await serveSpritzACPServer({
     config: {
-      listenAddr: "127.0.0.1:32539",
+      listenAddr: "127.0.0.1:0",
       acpPath: "/",
       healthPath: "/healthz",
       metadataPath: "/.well-known/spritz-acp",
@@ -138,10 +138,14 @@ test("serveSpritzACPServer wires the shared ACP shell once", async () => {
     },
   });
 
+  const address = service.server.address();
+  assert.ok(address && typeof address !== "string");
+  const baseURL = `http://127.0.0.1:${address.port}`;
+
   const [healthRes, metadataRes, upgradeRes] = await Promise.all([
-    fetch("http://127.0.0.1:32539/healthz"),
-    fetch("http://127.0.0.1:32539/.well-known/spritz-acp"),
-    fetch("http://127.0.0.1:32539/"),
+    fetch(`${baseURL}/healthz`),
+    fetch(`${baseURL}/.well-known/spritz-acp`),
+    fetch(`${baseURL}/`),
   ]);
 
   assert.equal(healthRes.status, 200);
