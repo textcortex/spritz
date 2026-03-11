@@ -138,6 +138,22 @@ For the current OpenClaw preset, Spritz ships an image-owned ACP adapter that ex
 That adapter owns OpenClaw-specific session mapping and transcript replay, so the Spritz ACP
 control plane stays backend-agnostic.
 
+The preferred long-term shape is to converge backend examples on one shared
+Spritz ACP server harness on port `2529`, with a backend ACP stdio command
+behind it.
+
+That means the common server shell should stay the same across examples, while
+the backend-specific command can differ:
+
+- `openclaw acp`
+- `claude-agent-acp`
+- any other ACP-capable stdio command
+
+This is also the part of the design that `acpx` validates well: one stable ACP
+interface can front many different backend commands. Spritz should keep owning
+conversation binding and gatewaying itself rather than depending on `acpx`
+session management directly.
+
 ## UI behavior
 
 The default Spritz UI provides a test and operator surface for ACP:
@@ -150,11 +166,19 @@ Each thread maps to one `SpritzConversation` and one ACP session lifecycle.
 
 On reconnect:
 
-- the UI first asks Spritz API to bootstrap the selected conversation
-- Spritz API loads the stored ACP session or explicitly repairs it if the
-  backend confirms that the session is missing
-- the UI then connects through the ACP gateway path using the confirmed conversation
-  binding
+- if the conversation is new or the binding is missing or broken, the UI asks
+  Spritz API to bootstrap the selected conversation first
+- if the conversation already has an active binding, the UI reconnects directly
+  through the ACP gateway path without bootstrapping again first
+- Spritz API repairs the binding only when the backend confirms that the
+  stored ACP session is missing or invalid
+
+Socket ownership rules matter here:
+
+- initialize-only sockets must not steal an active runtime session
+- short-lived bootstrap or repair sockets must not interrupt a live chat socket
+- only real session traffic for the selected conversation should be allowed to
+  claim runtime ownership
 
 ## Security model
 

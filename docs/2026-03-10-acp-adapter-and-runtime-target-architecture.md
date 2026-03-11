@@ -71,6 +71,42 @@ The ACP adapter owns:
 
 The ACP adapter must be the only backend-specific integration layer.
 
+## Preferred Adapter Shape
+
+The preferred shape is one generic Spritz ACP server harness on port `2529`
+with a backend ACP command behind it.
+
+That means:
+
+- Spritz owns one stable WebSocket and HTTP surface on `2529`
+- the backend integration behind that surface should preferably be a command
+  that already speaks ACP over stdio
+- backend-specific logic should be limited to a small adapter shim when the
+  backend needs custom session or replay behavior
+
+Examples of the desired command-side interface:
+
+- `openclaw acp`
+- `claude-agent-acp`
+- any other command that speaks ACP over stdio
+
+This keeps the workspace contract stable even when the backend changes.
+
+The shared harness should own:
+
+- HTTP `GET /healthz`
+- HTTP `GET /.well-known/spritz-acp`
+- WebSocket upgrade and ACP transport handling
+- connection lifecycle and graceful shutdown
+- common error normalization
+
+The backend shim should own only:
+
+- backend command startup
+- backend-specific session mapping
+- backend-specific transcript replay
+- backend-specific event translation where ACP stdio is not sufficient
+
 ### Backend runtime
 
 The backend runtime owns:
@@ -81,6 +117,31 @@ The backend runtime owns:
 - backend-native storage and runtime semantics
 
 The backend runtime should not be directly coupled to Spritz.
+
+## Relation To ACPX
+
+`acpx` is a useful reference because it already demonstrates one interface for
+multiple ACP-capable backends through stdio commands.
+
+That validates the direction above:
+
+- one stable ACP-facing surface
+- many interchangeable backend commands behind it
+
+Spritz should not depend on `acpx` as its runtime session layer, though.
+
+Spritz already owns:
+
+- conversation records
+- conversation to ACP session binding
+- authenticated gatewaying
+
+Adding `acpx` session management as a second runtime control layer would make
+session ownership harder to reason about.
+
+The preferred use of `acpx` here is as a design reference for backend command
+registration and stdio ACP integration, not as the deployed workspace session
+manager.
 
 ## Target Workspace Contract
 
@@ -99,6 +160,8 @@ Spritz should be able to assume:
 - `session/new` creates a backend session for a Spritz conversation
 - `session/load` replays transcript from backend storage
 - disconnecting one client does not corrupt or abruptly terminate the backend
+- metadata-only or initialize-only sockets do not steal active runtime session
+  ownership from a real conversation connection
 
 ## Control-Plane Changes
 
@@ -139,9 +202,13 @@ The UI should stay thin.
 It should:
 
 - select conversations by Spritz conversation id
-- ask the API to bootstrap the conversation
+- ask the API to bootstrap the conversation when the conversation is new or the
+  binding is missing or broken
 - connect through the Spritz ACP gateway
 - render replayed and live ACP updates
+
+For an already active conversation binding, reconnect should go straight to the
+ACP gateway without running bootstrap again first.
 
 It should not:
 
@@ -161,6 +228,8 @@ Required behavior:
 - accept many ACP client connections over time
 - expose cheap HTTP health and metadata endpoints without starting real runtime sessions
 - keep backend session mapping deterministic
+- keep runtime ownership rules explicit so short-lived probe or bootstrap
+  sockets cannot steal an active session from the main chat connection
 - perform graceful shutdown of upstream resources
 - isolate transport disconnects from transcript correctness
 - support replay from backend transcript storage
@@ -214,10 +283,14 @@ The current cutover in Spritz implements the first step of this architecture:
 
 Remaining implementation work should focus on these changes:
 
-1. Ensure all adapter-to-backend traffic stays pod-local or cluster-local.
-2. Keep conversation bootstrap and binding ownership in the API.
-3. Make transcript replay fully backend-driven through `session/load`.
-4. Add soak tests that keep chat sessions open across repeated metadata refresh
+1. Extract and standardize the shared `2529` ACP server harness so backend
+   examples reuse one outer server shape.
+2. Ensure all adapter-to-backend traffic stays pod-local or cluster-local.
+3. Keep conversation bootstrap and binding ownership in the API.
+4. Make transcript replay fully backend-driven through `session/load`.
+5. Define and enforce socket ownership rules so initialize-only and bootstrap
+   connections cannot disrupt active conversation sockets.
+6. Add soak tests that keep chat sessions open across repeated metadata refresh
    intervals and verify no websocket reset churn or transcript corruption.
 
 ## Validation
