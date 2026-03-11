@@ -41,6 +41,7 @@ WORKDIR /workspace
 
 COPY --chown=dev:dev --chmod=0755 examples/base/entrypoint.sh /usr/local/bin/spritz-entrypoint
 COPY --chown=dev:dev --chmod=0755 examples/claude-code/entrypoint.sh /usr/local/bin/spritz-claude-code-entrypoint
+COPY --chown=dev:dev --chmod=0755 examples/shared/spritz-acp-server.mjs /usr/local/shared/spritz-acp-server.mjs
 COPY --chown=dev:dev --chmod=0755 examples/claude-code/acp-server.mjs /usr/local/bin/spritz-claude-code-acp-server
 
 ENTRYPOINT ["/usr/local/bin/spritz-claude-code-entrypoint"]

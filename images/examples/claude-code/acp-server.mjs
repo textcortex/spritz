@@ -2,9 +2,13 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
-import http from "node:http";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+
+import {
+  normalizePath,
+  serveSpritzACPServer,
+} from "../shared/spritz-acp-server.mjs";
 
 const DEFAULTS = {
   listenAddr: "0.0.0.0:2529",
@@ -34,39 +38,6 @@ const DEFAULT_CLIENT_CAPABILITIES = Object.freeze({
     terminal_output: true,
   },
 });
-
-function trimPath(value, fallback) {
-  const next = typeof value === "string" ? value.trim() : "";
-  if (!next) {
-    return fallback;
-  }
-  return next.startsWith("/") ? next : `/${next}`;
-}
-
-function parseListenAddr(value) {
-  const raw = String(value || "").trim();
-  if (!raw) {
-    throw new Error("SPRITZ_CLAUDE_CODE_ACP_LISTEN_ADDR is required");
-  }
-  if (raw.startsWith("[")) {
-    const closing = raw.indexOf("]");
-    if (closing === -1 || raw[closing + 1] !== ":") {
-      throw new Error(`invalid listen address: ${raw}`);
-    }
-    return {
-      host: raw.slice(1, closing),
-      port: Number.parseInt(raw.slice(closing + 2), 10),
-    };
-  }
-  const separator = raw.lastIndexOf(":");
-  if (separator === -1) {
-    throw new Error(`invalid listen address: ${raw}`);
-  }
-  return {
-    host: raw.slice(0, separator),
-    port: Number.parseInt(raw.slice(separator + 1), 10),
-  };
-}
 
 function parseArgsJSON(value) {
   if (typeof value !== "string" || value.trim() === "") {
@@ -115,9 +86,9 @@ function buildConfig(env) {
     env.SPRITZ_CLAUDE_CODE_AGENT_PACKAGE_ROOT || DEFAULTS.agentPackageRoot;
   return {
     listenAddr: env.SPRITZ_CLAUDE_CODE_ACP_LISTEN_ADDR || DEFAULTS.listenAddr,
-    acpPath: trimPath(env.SPRITZ_CLAUDE_CODE_ACP_PATH, DEFAULTS.acpPath),
-    healthPath: trimPath(env.SPRITZ_CLAUDE_CODE_ACP_HEALTH_PATH, DEFAULTS.healthPath),
-    metadataPath: trimPath(env.SPRITZ_CLAUDE_CODE_ACP_METADATA_PATH, DEFAULTS.metadataPath),
+    acpPath: normalizePath(env.SPRITZ_CLAUDE_CODE_ACP_PATH, DEFAULTS.acpPath),
+    healthPath: normalizePath(env.SPRITZ_CLAUDE_CODE_ACP_HEALTH_PATH, DEFAULTS.healthPath),
+    metadataPath: normalizePath(env.SPRITZ_CLAUDE_CODE_ACP_METADATA_PATH, DEFAULTS.metadataPath),
     wsRoot: env.SPRITZ_CLAUDE_CODE_WS_PACKAGE_ROOT || DEFAULTS.wsRoot,
     adapterBin: env.SPRITZ_CLAUDE_CODE_ACP_BIN || DEFAULTS.adapterBin,
     adapterArgs: parseArgsJSON(env.SPRITZ_CLAUDE_CODE_ACP_ARGS_JSON),
@@ -144,11 +115,6 @@ function buildConfig(env) {
       authMethods: [],
     },
   };
-}
-
-function writeJSON(res, status, body) {
-  res.writeHead(status, { "content-type": "application/json" });
-  res.end(JSON.stringify(body));
 }
 
 function createLineForwarder(onLine) {
@@ -557,83 +523,40 @@ class ACPRuntime {
 
 async function main(env = process.env, logger = console) {
   const config = buildConfig(env);
-  const wsModule = await import(pathToFileURL(path.join(config.wsRoot, "index.js")).href);
-  const WebSocketServer =
-    wsModule?.WebSocketServer ?? wsModule?.default?.WebSocketServer ?? wsModule?.default;
-  if (!WebSocketServer) {
-    throw new Error("Failed to load WebSocketServer from ws");
-  }
-
   const runtime = new ACPRuntime(config, env, logger);
-  const server = http.createServer((req, res) => {
-    const pathname = new URL(req.url ?? "/", "http://spritz-acp.local").pathname;
-    if (req.method === "GET" && pathname === config.healthPath) {
+  const runtimeAdapter = {
+    metadata: config.metadata,
+    async health() {
       const missingEnv = resolveMissingEnv(config.requiredEnv, env);
       if (missingEnv.length > 0) {
-        writeJSON(res, 503, { ok: false, error: `missing required env: ${missingEnv.join(", ")}` });
-        return;
+        return { ok: false, error: `missing required env: ${missingEnv.join(", ")}` };
       }
       if (!commandExists(config.adapterBin, env)) {
-        writeJSON(res, 503, { ok: false, error: `command not found: ${config.adapterBin}` });
+        return { ok: false, error: `command not found: ${config.adapterBin}` };
+      }
+      return { ok: true };
+    },
+    attachWebSocket(socket) {
+      const missingEnv = resolveMissingEnv(config.requiredEnv, env);
+      if (missingEnv.length > 0) {
+        socket.close(1011, `missing required env: ${missingEnv.join(", ")}`);
         return;
       }
-      writeJSON(res, 200, { ok: true });
-      return;
-    }
-    if (req.method === "GET" && pathname === config.metadataPath) {
-      writeJSON(res, 200, config.metadata);
-      return;
-    }
-    if (req.method === "GET" && pathname === config.acpPath) {
-      res.writeHead(426, { "content-type": "text/plain; charset=utf-8" });
-      res.end("upgrade required");
-      return;
-    }
-    res.writeHead(404);
-    res.end();
-  });
-
-  const wss = new WebSocketServer({ noServer: true });
-  wss.on("connection", (socket) => {
-    const missingEnv = resolveMissingEnv(config.requiredEnv, env);
-    if (missingEnv.length > 0) {
-      socket.close(1011, `missing required env: ${missingEnv.join(", ")}`);
-      return;
-    }
-    runtime.attach(socket);
-  });
-
-  server.on("upgrade", (request, socket, head) => {
-    const pathname = new URL(request.url ?? "/", "http://spritz-acp.local").pathname;
-    if (pathname !== config.acpPath) {
-      socket.destroy();
-      return;
-    }
-    wss.handleUpgrade(request, socket, head, (websocket) => {
-      wss.emit("connection", websocket, request);
-    });
-  });
-
-  const { host, port } = parseListenAddr(config.listenAddr);
-  server.listen(port, host, () => {
-    logger.log?.(`spritz-claude-code-acp-server listening on ${host}:${port}${config.acpPath}`);
-  });
-  let shuttingDown = false;
-  const shutdown = () => {
-    if (shuttingDown) {
-      return;
-    }
-    shuttingDown = true;
-    runtime.stop();
-    server.closeIdleConnections?.();
-    server.closeAllConnections?.();
-    server.close(() => {
-      process.exit(0);
-    });
-    setTimeout(() => process.exit(1), DEFAULTS.shutdownTimeoutMs).unref();
+      runtime.attach(socket);
+    },
+    async close() {
+      runtime.stop();
+    },
   };
-  process.once("SIGTERM", shutdown);
-  process.once("SIGINT", shutdown);
+
+  await serveSpritzACPServer({
+    config,
+    runtime: runtimeAdapter,
+    loadWSModule: async () => import(pathToFileURL(path.join(config.wsRoot, "index.js")).href),
+    logger,
+    serverName: "spritz-claude-code-acp-server",
+    shutdownTimeoutMs: DEFAULTS.shutdownTimeoutMs,
+  });
 }
 
 const entrypoint = process.argv[1];

@@ -12,4 +12,8 @@ test("Dockerfile marks the Claude Code entrypoints executable", () => {
     dockerfile,
     /COPY --chown=dev:dev --chmod=0755 examples\/claude-code\/entrypoint\.sh \/usr\/local\/bin\/spritz-claude-code-entrypoint/,
   );
+  assert.match(
+    dockerfile,
+    /COPY --chown=dev:dev --chmod=0755 examples\/shared\/spritz-acp-server\.mjs \/usr\/local\/shared\/spritz-acp-server\.mjs/,
+  );
 });

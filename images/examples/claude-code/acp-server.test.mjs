@@ -158,6 +158,13 @@ test("health and metadata endpoints stay available with a fake ws module", async
   await once(child, "exit");
 });
 
+test("claude ACP server uses the shared ACP harness", () => {
+  const source = fs.readFileSync(path.join(TEST_DIR, "acp-server.mjs"), "utf8");
+
+  assert.match(source, /\.\.\/shared\/spritz-acp-server\.mjs/);
+  assert.match(source, /serveSpritzACPServer\(/);
+});
+
 test("session/load works after reconnecting to the same ACP server", async (t) => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "spritz-claude-code-runtime-"));
   const adapterPath = path.join(tempRoot, "mock-adapter.mjs");

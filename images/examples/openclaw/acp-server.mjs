@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 
-import http from "node:http";
 import net from "node:net";
 import { PassThrough, Readable, Writable } from "node:stream";
 import { pathToFileURL } from "node:url";
 
+import {
+  normalizePath,
+  resolveWSExports,
+  serveSpritzACPServer,
+} from "../shared/spritz-acp-server.mjs";
 import {
   buildGatewayClientOptions,
   buildSpritzOpenclawAcpMetadata,
@@ -22,7 +26,6 @@ const DEFAULT_LISTEN_ADDR = "0.0.0.0:2529";
 const DEFAULT_ACP_PATH = "/";
 const DEFAULT_HEALTH_PATH = "/healthz";
 const DEFAULT_METADATA_PATH = "/.well-known/spritz-acp";
-const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 500;
 const WEBSOCKET_OPEN = 1;
 
@@ -70,39 +73,6 @@ function parseGatewayHeaders(raw) {
     headers[trimmedKey] = trimmedValue;
   }
   return Object.keys(headers).length > 0 ? headers : null;
-}
-
-function normalizePath(value, fallback) {
-  const raw = typeof value === "string" ? value.trim() : "";
-  if (!raw) {
-    return fallback;
-  }
-  return raw.startsWith("/") ? raw : `/${raw}`;
-}
-
-export function parseListenAddress(value) {
-  const raw = typeof value === "string" ? value.trim() : "";
-  if (!raw) {
-    throw new Error("listen address is required");
-  }
-  if (raw.startsWith("[")) {
-    const closing = raw.indexOf("]");
-    if (closing === -1 || raw[closing + 1] !== ":") {
-      throw new Error(`invalid listen address: ${raw}`);
-    }
-    return {
-      host: raw.slice(1, closing),
-      port: Number.parseInt(raw.slice(closing + 2), 10),
-    };
-  }
-  const separator = raw.lastIndexOf(":");
-  if (separator === -1) {
-    throw new Error(`invalid listen address: ${raw}`);
-  }
-  return {
-    host: raw.slice(0, separator),
-    port: Number.parseInt(raw.slice(separator + 1), 10),
-  };
 }
 
 export function normalizeGatewayProxyHeaders(headers, upstreamURL, trustedProxyControlUi) {
@@ -153,18 +123,6 @@ function rewriteConnectFrameAsTrustedProxyControlUi(payload) {
   delete frame.params.auth;
   delete frame.params.device;
   return Buffer.from(JSON.stringify(frame), "utf8");
-}
-
-export function resolveWSExports(wsModule) {
-  const WebSocket =
-    wsModule?.WebSocket ??
-    wsModule?.default?.WebSocket ??
-    wsModule?.default ??
-    wsModule;
-  const WebSocketServer =
-    wsModule?.WebSocketServer ??
-    wsModule?.default?.WebSocketServer;
-  return { WebSocket, WebSocketServer };
 }
 
 async function loadWSModule(env = process.env) {
@@ -283,32 +241,6 @@ function encodeFrameForACPInput(data) {
     return payload;
   }
   return Buffer.concat([payload, Buffer.from("\n")]);
-}
-
-export function createACPRequestHandler({ config, runtime, logger }) {
-  return async function handleRequest(req, res) {
-    const pathname = new URL(req.url ?? "/", "http://spritz-acp.local").pathname;
-    if (req.method === "GET" && pathname === config.healthPath) {
-      const health = await runtime.health();
-      const statusCode = health.ok ? 200 : 503;
-      res.writeHead(statusCode, { "content-type": "application/json" });
-      res.end(JSON.stringify(health));
-      return;
-    }
-    if (req.method === "GET" && pathname === config.metadataPath) {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(runtime.metadata));
-      return;
-    }
-    if (req.method === "GET" && pathname === config.acpPath) {
-      res.writeHead(426, { "content-type": "text/plain; charset=utf-8" });
-      res.end("upgrade required");
-      return;
-    }
-    logger?.warn?.(`unexpected ACP adapter request: ${req.method} ${pathname}`);
-    res.writeHead(404);
-    res.end();
-  };
 }
 
 async function createRuntime(config, env = process.env, logger = console) {
@@ -588,52 +520,13 @@ export function configFromEnv(env = process.env) {
 export async function serveSpritzOpenclawAcpServer(env = process.env, logger = console) {
   const config = configFromEnv(env);
   const runtime = await createRuntime(config, env, logger);
-  const wsModule = await loadWSModule(env);
-  const { WebSocketServer } = resolveWSExports(wsModule);
-  if (!WebSocketServer) {
-    throw new Error("Failed to load WebSocketServer from ws.");
-  }
-
-  const { host, port } = parseListenAddress(config.listenAddr);
-  const server = http.createServer(createACPRequestHandler({ config, runtime, logger }));
-  const wss = new WebSocketServer({ noServer: true });
-
-  server.on("upgrade", (request, socket, head) => {
-    const pathname = new URL(request.url ?? "/", "http://spritz-acp.local").pathname;
-    if (pathname !== config.acpPath) {
-      socket.destroy();
-      return;
-    }
-    wss.handleUpgrade(request, socket, head, (websocket) => {
-      runtime.attachWebSocket(websocket);
-    });
+  return serveSpritzACPServer({
+    config,
+    runtime,
+    loadWSModule: async () => loadWSModule(env),
+    logger,
+    serverName: "spritz-openclaw-acp-server",
   });
-
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, host, resolve);
-  });
-  logger?.log?.(`spritz-openclaw-acp-server listening on ${host}:${port}${config.acpPath}`);
-
-  const shutdown = async () => {
-    server.close();
-    for (const client of wss.clients) {
-      try {
-        client.close();
-      } catch {}
-    }
-    await runtime.close();
-  };
-
-  const signalHandler = () => {
-    void shutdown().finally(() => process.exit(0));
-  };
-  process.once("SIGINT", signalHandler);
-  process.once("SIGTERM", signalHandler);
-
-  return {
-    close: shutdown,
-  };
 }
 
 async function main() {

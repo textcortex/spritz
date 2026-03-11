@@ -39,6 +39,15 @@ test("openclaw image copies the ACP server into /usr/local/bin", () => {
   );
 });
 
+test("openclaw image copies the shared ACP harness next to the runtime import path", () => {
+  const dockerfile = fs.readFileSync(dockerfilePath, "utf8");
+
+  assert.match(
+    dockerfile,
+    /COPY --chown=dev:dev --chmod=0755 examples\/shared\/spritz-acp-server\.mjs \/usr\/local\/shared\/spritz-acp-server\.mjs/,
+  );
+});
+
 test("openclaw image copies the ACP wrapper next to the ACP server runtime path", () => {
   const dockerfile = fs.readFileSync(dockerfilePath, "utf8");
 
