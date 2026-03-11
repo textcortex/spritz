@@ -217,9 +217,6 @@ func validateProvisionerRequestSurface(body *createRequest) error {
 func provisionerSource(body *createRequest) string {
 	source := strings.TrimSpace(body.Source)
 	if source == "" {
-		source = strings.TrimSpace(body.RequestID)
-	}
-	if source == "" {
 		source = defaultProvisionerSource
 	}
 	return source

@@ -347,6 +347,39 @@ func TestCreateSpritzReplaysIdempotentProvisionerRequest(t *testing.T) {
 	}
 }
 
+func TestCreateSpritzReplaysIdempotentProvisionerRequestWhenRequestIDChanges(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	first := []byte(`{"presetId":"openclaw","ownerId":"user-123","idempotencyKey":"discord-request-id","requestId":"discord-delivery-1"}`)
+	second := []byte(`{"presetId":"openclaw","ownerId":"user-123","idempotencyKey":"discord-request-id","requestId":"discord-delivery-2"}`)
+
+	req1 := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(first))
+	req1.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req1.Header.Set("X-Spritz-User-Id", "zenobot")
+	req1.Header.Set("X-Spritz-Principal-Type", "service")
+	req1.Header.Set("X-Spritz-Principal-Scopes", "spritz.instances.create,spritz.instances.assign_owner")
+	rec1 := httptest.NewRecorder()
+	e.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusCreated {
+		t.Fatalf("expected first create status 201, got %d: %s", rec1.Code, rec1.Body.String())
+	}
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(second))
+	req2.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req2.Header.Set("X-Spritz-User-Id", "zenobot")
+	req2.Header.Set("X-Spritz-Principal-Type", "service")
+	req2.Header.Set("X-Spritz-Principal-Scopes", "spritz.instances.create,spritz.instances.assign_owner")
+	rec2 := httptest.NewRecorder()
+	e.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected replay status 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+}
+
 func TestCreateSpritzRejectsIdempotentProvisionerPayloadMismatch(t *testing.T) {
 	s := newCreateSpritzTestServer(t)
 	configureProvisionerTestServer(s)

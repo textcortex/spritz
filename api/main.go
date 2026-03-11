@@ -50,6 +50,7 @@ type server struct {
 	sharedMountsLive     *sharedMountsLatestNotifier
 	userConfigPolicy     userConfigPolicy
 	nameGeneratorFactory func(context.Context, string, string) (func() string, error)
+	activityRecorder     func(context.Context, string, string, time.Time) error
 }
 
 func main() {

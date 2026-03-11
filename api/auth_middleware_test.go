@@ -127,6 +127,48 @@ func TestAuthMiddlewareSetsPrincipalTypeAndScopes(t *testing.T) {
 	}
 }
 
+func TestAuthMiddlewareDoesNotGrantAdminFromHeaderTypeClaim(t *testing.T) {
+	t.Setenv("SPRITZ_AUTH_MODE", "header")
+	t.Setenv("SPRITZ_AUTH_HEADER_ID", "X-Spritz-User-Id")
+	t.Setenv("SPRITZ_AUTH_HEADER_TYPE", "X-Spritz-Principal-Type")
+
+	s := &server{auth: newAuthConfig()}
+	e := echo.New()
+
+	secured := e.Group("", s.authMiddleware())
+	secured.GET("/api/spritzes", func(c echo.Context) error {
+		p, ok := principalFromContext(c)
+		if !ok {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "missing principal"})
+		}
+		return c.JSON(http.StatusOK, map[string]any{
+			"type":  p.Type,
+			"admin": p.IsAdmin,
+		})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/spritzes", nil)
+	req.Header.Set("X-Spritz-User-Id", "user-123")
+	req.Header.Set("X-Spritz-Principal-Type", "admin")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	payload := map[string]any{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload["type"] != string(principalTypeHuman) {
+		t.Fatalf("expected header admin claim to fall back to human, got %#v", payload["type"])
+	}
+	if admin, _ := payload["admin"].(bool); admin {
+		t.Fatalf("expected header admin claim to remain non-admin")
+	}
+}
+
 func TestBearerAuthParsesSpaceDelimitedScopes(t *testing.T) {
 	introspection := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -266,5 +308,56 @@ func TestBearerAuthDefaultsToHumanTypeWithoutTypeClaimInBearerMode(t *testing.T)
 	}
 	if payload["type"] != string(principalTypeHuman) {
 		t.Fatalf("expected default bearer principal type to stay human in bearer mode, got %#v", payload["type"])
+	}
+}
+
+func TestBearerAuthDoesNotGrantAdminFromTypeClaim(t *testing.T) {
+	introspection := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"sub":   "zenobot",
+			"type":  "admin",
+			"scope": "spritz.instances.create spritz.instances.assign_owner",
+		})
+	}))
+	defer introspection.Close()
+
+	t.Setenv("SPRITZ_AUTH_MODE", "auto")
+	t.Setenv("SPRITZ_AUTH_BEARER_INTROSPECTION_URL", introspection.URL)
+	t.Setenv("SPRITZ_AUTH_BEARER_ID_PATHS", "sub")
+	t.Setenv("SPRITZ_AUTH_BEARER_TYPE_PATHS", "type")
+	t.Setenv("SPRITZ_AUTH_BEARER_SCOPES_PATHS", "scope")
+
+	s := &server{auth: newAuthConfig()}
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.GET("/api/spritzes", func(c echo.Context) error {
+		p, ok := principalFromContext(c)
+		if !ok {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "missing principal"})
+		}
+		return c.JSON(http.StatusOK, map[string]any{
+			"type":  p.Type,
+			"admin": p.IsAdmin,
+		})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/spritzes", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	payload := map[string]any{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload["type"] != string(principalTypeService) {
+		t.Fatalf("expected bearer admin claim to fall back to service, got %#v", payload["type"])
+	}
+	if admin, _ := payload["admin"].(bool); admin {
+		t.Fatalf("expected bearer admin claim to remain non-admin")
 	}
 }

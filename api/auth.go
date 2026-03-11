@@ -164,15 +164,13 @@ func normalizePrincipalType(raw string, fallback principalType) principalType {
 		return principalTypeHuman
 	case principalTypeService:
 		return principalTypeService
-	case principalTypeAdmin:
-		return principalTypeAdmin
 	default:
 		return fallback
 	}
 }
 
 func finalizePrincipal(id, email string, teams []string, subject, issuer string, principalTypeValue principalType, scopes []string, admin bool) principal {
-	isAdmin := admin || principalTypeValue == principalTypeAdmin
+	isAdmin := admin
 	if subject == "" {
 		subject = id
 	}
@@ -200,7 +198,7 @@ func (p principal) isService() bool {
 }
 
 func (p principal) isAdminPrincipal() bool {
-	return p.IsAdmin || p.Type == principalTypeAdmin
+	return p.IsAdmin
 }
 
 func (p principal) hasScope(scope string) bool {

@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
@@ -57,12 +56,7 @@ func (s *server) openACPConversationConnection(c echo.Context) error {
 		browserConn,
 		workspaceConn,
 		func(payload []byte) {
-			if !isACPPromptMessage(payload) {
-				return
-			}
-			if err := s.markSpritzActivity(c.Request().Context(), spritz.Namespace, spritz.Name, time.Now()); err != nil {
-				c.Logger().Warnf("failed to record acp activity for %s/%s: %v", spritz.Namespace, spritz.Name, err)
-			}
+			s.scheduleACPPromptActivity(c.Logger(), spritz.Namespace, spritz.Name, payload)
 		},
 		nil,
 	)
