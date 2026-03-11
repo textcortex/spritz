@@ -896,6 +896,8 @@ func TestCreateSpritzReplaysPendingIdempotentCreateBeforeQuotaCheck(t *testing.T
 			Namespace: s.namespace,
 			Annotations: map[string]string{
 				idempotencyHashAnnotationKey: fingerprint,
+				idempotencyKeyAnnotationKey:  body.IdempotencyKey,
+				actorIDAnnotationKey:         "zenobot",
 			},
 		},
 		Spec: spritzv1.SpritzSpec{
@@ -937,5 +939,40 @@ func TestCreateSpritzReplaysPendingIdempotentCreateBeforeQuotaCheck(t *testing.T
 	metadata := spritz["metadata"].(map[string]any)
 	if metadata["name"] != "openclaw-fixed" {
 		t.Fatalf("expected replay to return existing spritz, got %#v", metadata["name"])
+	}
+}
+
+func TestCreateSpritzDoesNotReplayDifferentActorOrKeyForSameNamedWorkspace(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	first := []byte(`{"name":"openclaw-fixed","presetId":"openclaw","ownerId":"user-123","idempotencyKey":"discord-a"}`)
+	second := []byte(`{"name":"openclaw-fixed","presetId":"openclaw","ownerId":"user-123","idempotencyKey":"discord-b"}`)
+
+	req1 := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(first))
+	req1.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req1.Header.Set("X-Spritz-User-Id", "zenobot-a")
+	req1.Header.Set("X-Spritz-Principal-Type", "service")
+	req1.Header.Set("X-Spritz-Principal-Scopes", "spritz.instances.create,spritz.instances.assign_owner")
+	rec1 := httptest.NewRecorder()
+	e.ServeHTTP(rec1, req1)
+
+	if rec1.Code != http.StatusCreated {
+		t.Fatalf("expected first create to succeed, got %d: %s", rec1.Code, rec1.Body.String())
+	}
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(second))
+	req2.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req2.Header.Set("X-Spritz-User-Id", "zenobot-b")
+	req2.Header.Set("X-Spritz-Principal-Type", "service")
+	req2.Header.Set("X-Spritz-Principal-Scopes", "spritz.instances.create,spritz.instances.assign_owner")
+	rec2 := httptest.NewRecorder()
+	e.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusConflict {
+		t.Fatalf("expected status 409, got %d: %s", rec2.Code, rec2.Body.String())
 	}
 }

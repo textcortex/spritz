@@ -444,7 +444,7 @@ func (s *server) createSpritz(c echo.Context) error {
 			return writeError(c, http.StatusInternalServerError, err.Error())
 		}
 		if existing != nil {
-			if strings.TrimSpace(existing.Annotations[idempotencyHashAnnotationKey]) != fingerprint {
+			if !matchesIdempotentReplayTarget(existing, principal, body.IdempotencyKey, fingerprint) {
 				if completed {
 					return writeError(c, http.StatusConflict, "idempotencyKey already used with a different request")
 				}
@@ -550,18 +550,18 @@ func (s *server) createSpritz(c echo.Context) error {
 		if err != nil {
 			return writeError(c, http.StatusBadRequest, err.Error())
 		}
-		if err := s.client.Create(c.Request().Context(), spritz); err != nil {
-			if principal.isService() && apierrors.IsAlreadyExists(err) {
-				existing, getErr := s.findReservedSpritz(c.Request().Context(), namespace, name)
-				if getErr != nil {
-					return writeError(c, http.StatusInternalServerError, getErr.Error())
-				}
-				if existing != nil && strings.TrimSpace(existing.Annotations[idempotencyHashAnnotationKey]) == strings.TrimSpace(annotations[idempotencyHashAnnotationKey]) {
-					return writeJSON(c, http.StatusOK, summarizeCreateResponse(existing, principal, body.PresetID, provisionerSource(&body), body.IdempotencyKey, true))
-				}
-				if !nameProvided {
-					continue
-				}
+			if err := s.client.Create(c.Request().Context(), spritz); err != nil {
+				if principal.isService() && apierrors.IsAlreadyExists(err) {
+					existing, getErr := s.findReservedSpritz(c.Request().Context(), namespace, name)
+					if getErr != nil {
+						return writeError(c, http.StatusInternalServerError, getErr.Error())
+					}
+					if matchesIdempotentReplayTarget(existing, principal, body.IdempotencyKey, annotations[idempotencyHashAnnotationKey]) {
+						return writeJSON(c, http.StatusOK, summarizeCreateResponse(existing, principal, body.PresetID, provisionerSource(&body), body.IdempotencyKey, true))
+					}
+					if !nameProvided {
+						continue
+					}
 				return writeError(c, http.StatusConflict, "idempotencyKey already used with a different request")
 			}
 			if !nameProvided && apierrors.IsAlreadyExists(err) {

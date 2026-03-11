@@ -680,6 +680,23 @@ func (s *server) findReservedSpritz(ctx context.Context, namespace, name string)
 	return spritz, nil
 }
 
+func matchesIdempotentReplayTarget(spritz *spritzv1.Spritz, principal principal, key, fingerprint string) bool {
+	if spritz == nil {
+		return false
+	}
+	annotations := spritz.GetAnnotations()
+	if strings.TrimSpace(annotations[idempotencyHashAnnotationKey]) != strings.TrimSpace(fingerprint) {
+		return false
+	}
+	if strings.TrimSpace(annotations[idempotencyKeyAnnotationKey]) != strings.TrimSpace(key) {
+		return false
+	}
+	if strings.TrimSpace(annotations[actorIDAnnotationKey]) != strings.TrimSpace(principal.ID) {
+		return false
+	}
+	return true
+}
+
 func summarizeCreateResponse(spritz *spritzv1.Spritz, principal principal, presetID, source, idempotencyKey string, replayed bool) createSpritzResponse {
 	createdAt := spritz.CreationTimestamp.DeepCopy()
 	idleExpiresAt, maxExpiresAt, expiresAt := lifecycleExpiryTimes(spritz, time.Now())
