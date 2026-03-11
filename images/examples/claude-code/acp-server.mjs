@@ -275,6 +275,7 @@ class ACPRuntime {
     this.initialized = false;
     this.initializing = null;
     this.initializeResult = null;
+    this.sessions = new Map();
   }
 
   ensureStarted() {
@@ -326,6 +327,7 @@ class ACPRuntime {
       this.initialized = false;
       this.initializing = null;
       this.initializeResult = null;
+      this.sessions.clear();
     });
     child.on("exit", (code, signal) => {
       if (this.killTimer.current) {
@@ -335,6 +337,7 @@ class ACPRuntime {
       this.initialized = false;
       this.initializing = null;
       this.initializeResult = null;
+      this.sessions.clear();
       this.rejectInternalRequests({
         code: -32000,
         message: signal ? `signal ${signal}` : `exit code ${code ?? 0}`,
@@ -369,6 +372,69 @@ class ACPRuntime {
         ),
       );
     });
+  }
+
+  normalizeRPCError(error) {
+    if (error && typeof error === "object" && Number.isInteger(error.code) && typeof error.message === "string") {
+      return {
+        code: error.code,
+        message: error.message,
+        ...(error.data !== undefined ? { data: error.data } : {}),
+      };
+    }
+    return {
+      code: -32000,
+      message: error instanceof Error ? error.message : String(error || "ACP request failed."),
+    };
+  }
+
+  sendRPCResponse(socket, id, body) {
+    if (socket.readyState !== WEBSOCKET_OPEN) {
+      return;
+    }
+    socket.send(JSON.stringify({ jsonrpc: "2.0", id, ...body }));
+  }
+
+  rememberSession(result, { replayable = false } = {}) {
+    const sessionId = String(result?.sessionId || "").trim();
+    if (!sessionId) {
+      return;
+    }
+    this.sessions.set(sessionId, {
+      sessionId,
+      replayable,
+      modes: cloneACPValue(result?.modes),
+      models: cloneACPValue(result?.models),
+      configOptions: cloneACPValue(result?.configOptions),
+    });
+  }
+
+  markSessionReplayable(sessionId) {
+    const key = String(sessionId || "").trim();
+    if (!key) {
+      return;
+    }
+    const cached = this.sessions.get(key);
+    if (!cached) {
+      return;
+    }
+    cached.replayable = true;
+  }
+
+  cachedLoadResult(sessionId) {
+    const key = String(sessionId || "").trim();
+    if (!key) {
+      return null;
+    }
+    const cached = this.sessions.get(key);
+    if (!cached || cached.replayable) {
+      return null;
+    }
+    return {
+      modes: cloneACPValue(cached.modes) || {},
+      models: cloneACPValue(cached.models) || {},
+      configOptions: cloneACPValue(cached.configOptions) || [],
+    };
   }
 
   async ensureInitialized(request) {
@@ -406,23 +472,42 @@ class ACPRuntime {
     this.ensureStarted();
     this.socket = socket;
     socket.on("message", async (data) => {
+      let payload = null;
       try {
-        const payload = parseACPMessage(Buffer.isBuffer(data) ? data.toString("utf8") : String(data));
+        payload = parseACPMessage(Buffer.isBuffer(data) ? data.toString("utf8") : String(data));
         if (payload.invalid) {
           socket.close(1002, "invalid ACP JSON");
           return;
         }
         if (payload.method === "initialize" && payload.id !== undefined) {
           const result = await this.ensureInitialized(payload.params);
-          if (socket.readyState === WEBSOCKET_OPEN) {
-            socket.send(
-              JSON.stringify({
-                jsonrpc: "2.0",
-                id: payload.id,
-                result,
-              }),
-            );
+          this.sendRPCResponse(socket, payload.id, { result });
+          return;
+        }
+        if (payload.method === "session/new" && payload.id !== undefined) {
+          await this.ensureInitialized();
+          const result = await this.requestChild("session/new", payload.params);
+          this.rememberSession(result, { replayable: false });
+          this.sendRPCResponse(socket, payload.id, { result });
+          return;
+        }
+        if (payload.method === "session/load" && payload.id !== undefined) {
+          await this.ensureInitialized();
+          const cached = this.cachedLoadResult(payload.params?.sessionId);
+          if (cached) {
+            this.sendRPCResponse(socket, payload.id, { result: cached });
+            return;
           }
+          const result = await this.requestChild("session/load", payload.params);
+          this.markSessionReplayable(payload.params?.sessionId);
+          this.sendRPCResponse(socket, payload.id, { result });
+          return;
+        }
+        if (payload.method === "session/prompt" && payload.id !== undefined) {
+          await this.ensureInitialized();
+          const result = await this.requestChild("session/prompt", payload.params);
+          this.markSessionReplayable(payload.params?.sessionId);
+          this.sendRPCResponse(socket, payload.id, { result });
           return;
         }
         await this.ensureInitialized();
@@ -430,6 +515,10 @@ class ACPRuntime {
           this.child.stdin.write(ensureLine(JSON.stringify(payload)));
         }
       } catch (error) {
+        if (payload?.id !== undefined) {
+          this.sendRPCResponse(socket, payload.id, { error: this.normalizeRPCError(error) });
+          return;
+        }
         this.logger.error?.(`claude-code ACP bridge error: ${String(error?.message || error)}`);
         socket.close(1011, "claude-code ACP bridge error");
       }

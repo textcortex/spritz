@@ -266,6 +266,92 @@ test('ACP page surfaces real startup errors as toasts', async () => {
   assert.deepEqual(toastMessages, ['Failed to connect to ACP gateway.']);
 });
 
+test('ACP page sanitizes raw HTML bootstrap failures before showing a toast', async () => {
+  const toastMessages = [];
+  const window = loadModules(({ conversation }) => ({
+    start: async () => {},
+    isReady: () => false,
+    getConversationId: () => conversation?.metadata?.name || '',
+    getSessionId: () => conversation?.spec?.sessionId || '',
+    matchesConversation(targetConversation) {
+      return (
+        this.getConversationId() === (targetConversation?.metadata?.name || '') &&
+        this.getSessionId() === (targetConversation?.spec?.sessionId || '')
+      );
+    },
+    cancelPrompt() {},
+    dispose() {},
+  }));
+  const shellEl = createElement('main');
+  const createSection = createElement('section');
+  const listSection = createElement('section');
+  const htmlError =
+    '<!DOCTYPE html><html><head><title>textcortex.com | 502: Bad gateway</title></head><body>' +
+    '<span class="code-label">Error code 502</span><span>staging.spritz.textcortex.com</span>' +
+    '<span>Cloudflare</span><p>The web server reported a bad gateway error.</p></body></html>';
+
+  window.SpritzACPPage.renderACPPage('young-crest', 'conv-1', {
+    activePage: null,
+    apiBaseUrl: '',
+    authBearerTokenParam: 'token',
+    getAuthToken() {
+      return '';
+    },
+    async request(path) {
+      if (path === '/acp/agents') {
+        return {
+          items: [
+            {
+              spritz: {
+                metadata: { name: 'young-crest' },
+                status: {
+                  acp: { agentInfo: { title: 'OpenClaw ACP Gateway', version: '2026.3.8' } },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (path.startsWith('/acp/conversations?')) {
+        return {
+          items: [
+            {
+              metadata: { name: 'conv-1' },
+              spec: { title: 'Test conversation', sessionId: 'sess-1', cwd: '/home/dev' },
+              status: { updatedAt: '2026-03-10T05:44:00Z' },
+            },
+          ],
+        };
+      }
+      if (path === '/acp/conversations/conv-1/bootstrap') {
+        throw new Error(htmlError);
+      }
+      throw new Error(`unexpected path ${path}`);
+    },
+    showNotice() {},
+    clearNotice() {},
+    showToast(message) {
+      toastMessages.push(message);
+    },
+    buildOpenUrl(url) {
+      return url;
+    },
+    cleanupTerminal() {},
+    shellEl,
+    createSection,
+    listSection,
+    setHeaderCopy() {},
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(toastMessages.length, 1);
+  assert.match(toastMessages[0], /HTTP 502/i);
+  assert.match(toastMessages[0], /staging\.spritz\.textcortex\.com/i);
+  assert.equal(toastMessages[0].includes('<!DOCTYPE html>'), false);
+});
+
 test('ACP page surfaces HTML tool failures as toasts without dumping raw markup', async () => {
   const toastMessages = [];
   const window = loadModules(({ conversation, onUpdate, onReadyChange }) => ({

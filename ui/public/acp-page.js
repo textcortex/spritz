@@ -123,14 +123,22 @@
     }
   }
 
+  function normalizeACPToastMessage(message) {
+    const raw = String(message || '').trim();
+    if (!raw) return '';
+    const htmlError = ACPRender.detectHtmlErrorDocument?.(raw);
+    return htmlError?.text || raw;
+  }
+
   function showACPToast(page, message, kind = 'error') {
-    if (!message) return;
+    const normalized = normalizeACPToastMessage(message);
+    if (!normalized) return;
     if (typeof page.deps.showToast === 'function') {
-      page.deps.showToast(message, kind);
+      page.deps.showToast(normalized, kind);
       return;
     }
     if (typeof page.deps.showNotice === 'function') {
-      page.deps.showNotice(message, kind);
+      page.deps.showNotice(normalized, kind);
     }
   }
 
