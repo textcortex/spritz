@@ -373,7 +373,7 @@ test("session/load reuses a freshly created session before the first prompt", as
   secondSocket.close();
 });
 
-test("a new ACP client handoff replaces the previous attached socket", async (t) => {
+test("an initialize-only probe does not replace the active ACP client", async (t) => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "spritz-claude-code-runtime-"));
   const adapterPath = path.join(tempRoot, "mock-adapter.mjs");
   fs.writeFileSync(
@@ -385,6 +385,14 @@ test("a new ACP client handoff replaces the previous attached socket", async (t)
       "function handle(message) {",
       "  if (message.method === 'initialize') {",
       "    send({ id: message.id, jsonrpc: '2.0', result: { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: {} }, agentInfo: { name: 'mock', title: 'Mock', version: '1.0.0' } } });",
+      "    return;",
+      "  }",
+      "  if (message.method === 'session/new') {",
+      "    send({ id: message.id, jsonrpc: '2.0', result: { sessionId: 'session-1' } });",
+      "    return;",
+      "  }",
+      "  if (message.method === 'session/prompt') {",
+      "    send({ id: message.id, jsonrpc: '2.0', result: { stopReason: 'end_turn' } });",
       "    return;",
       "  }",
       "  send({ id: message.id, jsonrpc: '2.0', result: {} });",
@@ -426,21 +434,26 @@ test("a new ACP client handoff replaces the previous attached socket", async (t)
   const firstSocket = new FakeSocket();
   runtime.attach(firstSocket);
   await sendRuntimeRPC(firstSocket, { id: "init-1", jsonrpc: "2.0", method: "initialize", params: {} });
+  await sendRuntimeRPC(firstSocket, {
+    id: "new-1",
+    jsonrpc: "2.0",
+    method: "session/new",
+    params: { cwd: "/workspace", mcpServers: [] },
+  });
 
   const secondSocket = new FakeSocket();
   runtime.attach(secondSocket);
-
-  assert.equal(firstSocket.readyState, 3);
-  assert.equal(firstSocket.closeCode, 1001);
-  assert.equal(firstSocket.closeReason, "ACP client replaced");
-
-  const initResponse = await sendRuntimeRPC(secondSocket, {
+  const secondInit = await sendRuntimeRPC(secondSocket, {
     id: "init-2",
     jsonrpc: "2.0",
     method: "initialize",
     params: {},
   });
-  assert.deepEqual(initResponse, {
+
+  assert.equal(firstSocket.readyState, 1);
+  assert.equal(firstSocket.closeCode, null);
+  assert.equal(firstSocket.closeReason, null);
+  assert.deepEqual(secondInit, {
     id: "init-2",
     jsonrpc: "2.0",
     result: {
@@ -450,6 +463,101 @@ test("a new ACP client handoff replaces the previous attached socket", async (t)
       authMethods: [],
     },
   });
+
+  const promptResponse = await sendRuntimeRPC(firstSocket, {
+    id: "prompt-1",
+    jsonrpc: "2.0",
+    method: "session/prompt",
+    params: {
+      sessionId: "session-1",
+      prompt: [{ type: "text", text: "hello" }],
+    },
+  });
+  assert.deepEqual(promptResponse, {
+    id: "prompt-1",
+    jsonrpc: "2.0",
+    result: { stopReason: "end_turn" },
+  });
+});
+
+test("real session traffic hands the runtime off to the new ACP client", async (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "spritz-claude-code-runtime-"));
+  const adapterPath = path.join(tempRoot, "mock-adapter.mjs");
+  fs.writeFileSync(
+    adapterPath,
+    [
+      "process.stdin.setEncoding('utf8');",
+      "let pending = '';",
+      "function send(message) { process.stdout.write(JSON.stringify(message) + '\\n'); }",
+      "function handle(message) {",
+      "  if (message.method === 'initialize') {",
+      "    send({ id: message.id, jsonrpc: '2.0', result: { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: {} }, agentInfo: { name: 'mock', title: 'Mock', version: '1.0.0' } } });",
+      "    return;",
+      "  }",
+      "  if (message.method === 'session/new') {",
+      "    send({ id: message.id, jsonrpc: '2.0', result: { sessionId: 'session-1' } });",
+      "    return;",
+      "  }",
+      "  send({ id: message.id, jsonrpc: '2.0', result: {} });",
+      "}",
+      "process.stdin.on('data', (chunk) => {",
+      "  pending += chunk;",
+      "  let newline = pending.indexOf('\\n');",
+      "  while (newline !== -1) {",
+      "    const line = pending.slice(0, newline).trim();",
+      "    pending = pending.slice(newline + 1);",
+      "    if (line) { handle(JSON.parse(line)); }",
+      "    newline = pending.indexOf('\\n');",
+      "  }",
+      "});",
+    ].join("\n"),
+  );
+  const runtime = new ACPRuntime(
+    {
+      adapterBin: "node",
+      adapterArgs: [adapterPath],
+      workdir: tempRoot,
+      metadata: {
+        protocolVersion: 1,
+        agentCapabilities: { loadSession: true, promptCapabilities: {} },
+        agentInfo: { name: "mock", title: "Mock", version: "1.0.0" },
+        authMethods: [],
+      },
+    },
+    {
+      ...process.env,
+      ANTHROPIC_API_KEY: "test-key",
+    },
+    console,
+  );
+  t.after(() => {
+    runtime.stop();
+  });
+
+  const firstSocket = new FakeSocket();
+  runtime.attach(firstSocket);
+  await sendRuntimeRPC(firstSocket, { id: "init-1", jsonrpc: "2.0", method: "initialize", params: {} });
+  await sendRuntimeRPC(firstSocket, {
+    id: "new-1",
+    jsonrpc: "2.0",
+    method: "session/new",
+    params: { cwd: "/workspace", mcpServers: [] },
+  });
+
+  const secondSocket = new FakeSocket();
+  runtime.attach(secondSocket);
+  await sendRuntimeRPC(secondSocket, { id: "init-2", jsonrpc: "2.0", method: "initialize", params: {} });
+  await sendRuntimeRPC(secondSocket, {
+    id: "new-2",
+    jsonrpc: "2.0",
+    method: "session/new",
+    params: { cwd: "/workspace", mcpServers: [] },
+  });
+
+  assert.equal(firstSocket.readyState, 3);
+  assert.equal(firstSocket.closeCode, 1001);
+  assert.equal(firstSocket.closeReason, "ACP client replaced");
+  assert.equal(secondSocket.readyState, 1);
 });
 
 test("initialize preserves adapter-negotiated auth methods across reconnects", async (t) => {
