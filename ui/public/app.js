@@ -42,12 +42,12 @@ let activeTerminalName = '';
 let activeACPPage = null;
 let presetController = null;
 let activePresetEnv = null;
+let activePreset = null;
 const authRedirectStorageKey = 'spritz-auth-redirected';
 let authRefreshInFlight = null;
 let authRefreshAttemptId = 0;
 let lastAuthRefreshAt = 0;
 let activeTerminalPoll = null;
-let knownSpritzNames = new Set();
 const presetPlaceholder = '__SPRITZ_UI_PRESETS__';
 const ACP_CLIENT_INFO = {
   name: 'spritz-ui',
@@ -73,108 +73,6 @@ const defaultPresets = [
   },
 ];
 
-const NAME_ADJECTIVES = [
-  'amber',
-  'briny',
-  'brisk',
-  'calm',
-  'clear',
-  'cool',
-  'crisp',
-  'dawn',
-  'delta',
-  'ember',
-  'faint',
-  'fast',
-  'fresh',
-  'gentle',
-  'glow',
-  'good',
-  'grand',
-  'keen',
-  'kind',
-  'lucky',
-  'marine',
-  'mellow',
-  'mild',
-  'neat',
-  'nimble',
-  'nova',
-  'oceanic',
-  'plaid',
-  'quick',
-  'quiet',
-  'rapid',
-  'salty',
-  'sharp',
-  'swift',
-  'tender',
-  'tidal',
-  'tidy',
-  'tide',
-  'vivid',
-  'warm',
-  'wild',
-  'young',
-];
-
-const NAME_NOUNS = [
-  'atlas',
-  'basil',
-  'bison',
-  'bloom',
-  'breeze',
-  'canyon',
-  'cedar',
-  'claw',
-  'cloud',
-  'comet',
-  'coral',
-  'cove',
-  'crest',
-  'crustacean',
-  'daisy',
-  'dune',
-  'ember',
-  'falcon',
-  'fjord',
-  'forest',
-  'glade',
-  'gulf',
-  'harbor',
-  'haven',
-  'kelp',
-  'lagoon',
-  'lobster',
-  'meadow',
-  'mist',
-  'nudibranch',
-  'nexus',
-  'ocean',
-  'orbit',
-  'otter',
-  'pine',
-  'prairie',
-  'reef',
-  'ridge',
-  'river',
-  'rook',
-  'sable',
-  'sage',
-  'seaslug',
-  'shell',
-  'shoal',
-  'shore',
-  'slug',
-  'summit',
-  'tidepool',
-  'trail',
-  'valley',
-  'wharf',
-  'willow',
-  'zephyr',
-];
-
 function parseBoolean(value, fallback) {
   if (value === undefined || value === null || value === '') return fallback;
   if (typeof value === 'boolean') return value;
@@ -188,48 +86,6 @@ function parseNumber(value, fallback) {
   if (value === undefined || value === null || value === '') return fallback;
   const parsed = Number(value);
   return Number.isNaN(parsed) ? fallback : parsed;
-}
-
-function randomChoice(values, fallback) {
-  return values[Math.floor(Math.random() * values.length)] ?? fallback;
-}
-
-function createNameBase(words = 2) {
-  const parts = [randomChoice(NAME_ADJECTIVES, 'steady'), randomChoice(NAME_NOUNS, 'harbor')];
-  if (words > 2) {
-    parts.push(randomChoice(NAME_NOUNS, 'reef'));
-  }
-  return parts.join('-');
-}
-
-function createRandomName(isTaken) {
-  const isIdTaken = typeof isTaken === 'function' ? isTaken : () => false;
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    const base = createNameBase(2);
-    if (!isIdTaken(base)) {
-      return base;
-    }
-    for (let i = 2; i <= 12; i += 1) {
-      const candidate = `${base}-${i}`;
-      if (!isIdTaken(candidate)) {
-        return candidate;
-      }
-    }
-  }
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    const base = createNameBase(3);
-    if (!isIdTaken(base)) {
-      return base;
-    }
-    for (let i = 2; i <= 12; i += 1) {
-      const candidate = `${base}-${i}`;
-      if (!isIdTaken(candidate)) {
-        return candidate;
-      }
-    }
-  }
-  const fallback = `${createNameBase(3)}-${Math.random().toString(36).slice(2, 5)}`;
-  return isIdTaken(fallback) ? `${fallback}-${Date.now().toString(36)}` : fallback;
 }
 
 function parseYamlScalar(value) {
@@ -514,18 +370,6 @@ function applyUserConfigDefaults() {
   if (!textarea.value.trim()) {
     textarea.value = defaultUserConfigYaml;
   }
-}
-
-function updateKnownSpritzNames(items) {
-  knownSpritzNames = new Set(
-    (items || [])
-      .map((item) => item?.metadata?.name)
-      .filter((name) => typeof name === 'string' && name.trim() !== ''),
-  );
-}
-
-function generateSpritzName() {
-  return createRandomName((candidate) => knownSpritzNames.has(candidate));
 }
 
 function applyNameDefaults() {
@@ -922,6 +766,44 @@ async function request(path, options = {}) {
   return text ? text : null;
 }
 
+function imagesMatch(left, right) {
+  return String(left || '').trim() === String(right || '').trim();
+}
+
+function resolveRequestedNamePrefix(imageValue) {
+  if (!activePreset || !imagesMatch(imageValue, activePreset.image)) {
+    return '';
+  }
+  return String(activePreset.namePrefix || '').trim();
+}
+
+async function suggestSpritzName() {
+  if (!form) {
+    throw new Error('Create form unavailable.');
+  }
+  const imageInput = form.querySelector('input[name="image"]');
+  const namespaceInput = form.querySelector('input[name="namespace"]');
+  const image = String(imageInput?.value || '').trim();
+  if (!image) {
+    throw new Error('Image is required before generating a name.');
+  }
+  const payload = { image };
+  const namespace = String(namespaceInput?.value || '').trim();
+  if (namespace) {
+    payload.namespace = namespace;
+  }
+  const namePrefix = resolveRequestedNamePrefix(image);
+  if (namePrefix) {
+    payload.namePrefix = namePrefix;
+  }
+  const data = await request('/spritzes/suggest-name', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return String(data?.name || '').trim();
+}
+
 async function fetchSpritzes() {
   try {
     const data = await request('/spritzes');
@@ -985,7 +867,6 @@ function buildOpenUrl(rawUrl, spritz) {
 }
 
 function renderList(items) {
-  updateKnownSpritzNames(items);
   if (!items.length) {
     listEl.innerHTML = '<p>No spritzes yet.</p>';
     return;
@@ -1424,6 +1305,9 @@ function setupPresets() {
     setActivePresetEnv(env) {
       activePresetEnv = env;
     },
+    setActivePreset(preset) {
+      activePreset = preset;
+    },
   });
 }
 
@@ -1454,10 +1338,18 @@ window.addEventListener('hashchange', handleRoute);
 
 if (form && refreshBtn) {
   if (randomNameBtn) {
-    randomNameBtn.addEventListener('click', () => {
+    randomNameBtn.addEventListener('click', async () => {
       const input = form.querySelector('input[name="name"]');
       if (!input) return;
-      input.value = generateSpritzName();
+      randomNameBtn.disabled = true;
+      try {
+        input.value = await suggestSpritzName();
+        showNotice('');
+      } catch (err) {
+        showNotice(err.message || 'Failed to generate a name.');
+      } finally {
+        randomNameBtn.disabled = false;
+      }
     });
   }
 
@@ -1467,15 +1359,21 @@ if (form && refreshBtn) {
     const name = data.get('name');
     const image = data.get('image');
     const rawName = (name || '').toString().trim();
+    const imageValue = (image || '').toString().trim();
 
     const payload = {
       namespace: data.get('namespace') || undefined,
       spec: {
-        image,
+        image: imageValue,
       },
     };
     if (rawName) {
       payload.name = rawName;
+    } else {
+      const namePrefix = resolveRequestedNamePrefix(imageValue);
+      if (namePrefix) {
+        payload.namePrefix = namePrefix;
+      }
     }
 
     if (config.ownerId) {

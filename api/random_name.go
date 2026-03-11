@@ -135,6 +135,60 @@ func randomIndex(max int) int {
 	return int(n.Int64())
 }
 
+func sanitizeSpritzNameToken(value string) string {
+	raw := strings.ToLower(strings.TrimSpace(value))
+	if raw == "" {
+		return ""
+	}
+	var out strings.Builder
+	lastDash := false
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z':
+			out.WriteRune(r)
+			lastDash = false
+		case r >= '0' && r <= '9':
+			out.WriteRune(r)
+			lastDash = false
+		default:
+			if out.Len() == 0 || lastDash {
+				continue
+			}
+			out.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(out.String(), "-")
+}
+
+func deriveSpritzNamePrefixFromImage(image string) string {
+	raw := strings.TrimSpace(image)
+	if raw == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(raw, "/"); idx >= 0 {
+		raw = raw[idx+1:]
+	}
+	if idx := strings.Index(raw, "@"); idx >= 0 {
+		raw = raw[:idx]
+	}
+	if idx := strings.Index(raw, ":"); idx >= 0 {
+		raw = raw[:idx]
+	}
+	prefix := sanitizeSpritzNameToken(raw)
+	if trimmed := strings.TrimPrefix(prefix, "spritz-"); trimmed != "" && trimmed != prefix {
+		return trimmed
+	}
+	return prefix
+}
+
+func resolveSpritzNamePrefix(explicit, image string) string {
+	if prefix := sanitizeSpritzNameToken(explicit); prefix != "" {
+		return prefix
+	}
+	return deriveSpritzNamePrefixFromImage(image)
+}
+
 func createSpritzNameBase(words int) string {
 	parts := []string{
 		randomChoice(spritzNameAdjectives, "steady"),
@@ -146,19 +200,61 @@ func createSpritzNameBase(words int) string {
 	return strings.Join(parts, "-")
 }
 
-func createRandomSpritzName(isTaken func(string) bool) string {
+func joinSpritzName(prefix, base, suffix string) string {
+	tailParts := []string{}
+	if base != "" {
+		tailParts = append(tailParts, sanitizeSpritzNameToken(base))
+	}
+	if suffix != "" {
+		tailParts = append(tailParts, sanitizeSpritzNameToken(suffix))
+	}
+	tail := strings.Trim(strings.Join(tailParts, "-"), "-")
+	if tail == "" {
+		tail = "spritz"
+	}
+	prefix = sanitizeSpritzNameToken(prefix)
+	if prefix == "" {
+		if len(tail) <= 63 {
+			return tail
+		}
+		return strings.Trim(tail[:63], "-")
+	}
+	if len(prefix)+1+len(tail) <= 63 {
+		return prefix + "-" + tail
+	}
+	maxPrefixLen := 63 - 1 - len(tail)
+	if maxPrefixLen <= 0 {
+		if len(tail) <= 63 {
+			return tail
+		}
+		return strings.Trim(tail[:63], "-")
+	}
+	if len(prefix) > maxPrefixLen {
+		prefix = strings.Trim(prefix[:maxPrefixLen], "-")
+	}
+	if prefix == "" {
+		if len(tail) <= 63 {
+			return tail
+		}
+		return strings.Trim(tail[:63], "-")
+	}
+	return prefix + "-" + tail
+}
+
+func createRandomSpritzName(prefix string, isTaken func(string) bool) string {
 	used := isTaken
 	if used == nil {
 		used = func(string) bool { return false }
 	}
 
 	for attempt := 0; attempt < 12; attempt++ {
-		base := createSpritzNameBase(2)
+		nameBase := createSpritzNameBase(2)
+		base := joinSpritzName(prefix, nameBase, "")
 		if !used(base) {
 			return base
 		}
 		for i := 2; i <= 12; i++ {
-			candidate := base + "-" + strconv.Itoa(i)
+			candidate := joinSpritzName(prefix, nameBase, strconv.Itoa(i))
 			if !used(candidate) {
 				return candidate
 			}
@@ -166,21 +262,23 @@ func createRandomSpritzName(isTaken func(string) bool) string {
 	}
 
 	for attempt := 0; attempt < 12; attempt++ {
-		base := createSpritzNameBase(3)
+		nameBase := createSpritzNameBase(3)
+		base := joinSpritzName(prefix, nameBase, "")
 		if !used(base) {
 			return base
 		}
 		for i := 2; i <= 12; i++ {
-			candidate := base + "-" + strconv.Itoa(i)
+			candidate := joinSpritzName(prefix, nameBase, strconv.Itoa(i))
 			if !used(candidate) {
 				return candidate
 			}
 		}
 	}
 
-	fallback := createSpritzNameBase(3) + "-" + randomSuffix(3)
+	nameBase := createSpritzNameBase(3)
+	fallback := joinSpritzName(prefix, nameBase, randomSuffix(3))
 	if used(fallback) {
-		return fallback + "-" + randomSuffix(4)
+		return joinSpritzName(prefix, nameBase, randomSuffix(4))
 	}
 	return fallback
 }
@@ -197,7 +295,7 @@ func randomSuffix(length int) string {
 	return out.String()
 }
 
-func (s *server) newSpritzNameGenerator(ctx context.Context, namespace string) (func() string, error) {
+func (s *server) newSpritzNameGenerator(ctx context.Context, namespace string, prefix string) (func() string, error) {
 	list := &spritzv1.SpritzList{}
 	opts := []client.ListOption{client.InNamespace(namespace)}
 	if err := s.client.List(ctx, list, opts...); err != nil {
@@ -210,7 +308,7 @@ func (s *server) newSpritzNameGenerator(ctx context.Context, namespace string) (
 		}
 	}
 	return func() string {
-		name := createRandomSpritzName(func(candidate string) bool {
+		name := createRandomSpritzName(prefix, func(candidate string) bool {
 			_, ok := existing[candidate]
 			return ok
 		})

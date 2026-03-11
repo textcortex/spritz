@@ -14,6 +14,7 @@
       applyRepoDefaults,
       normalizePresetEnv,
       setActivePresetEnv,
+      setActivePreset,
     } = options || {};
 
     if (!document || !form || !Array.isArray(presets) || presets.length === 0) {
@@ -28,6 +29,7 @@
           const help = form.querySelector('.preset-help');
           if (help) help.textContent = '';
           setActivePresetEnv(null);
+          if (typeof setActivePreset === 'function') setActivePreset(null);
         },
       };
     }
@@ -82,12 +84,14 @@
       if (ttlInput && preset.ttl !== undefined) ttlInput.value = preset.ttl || '';
       help.textContent = preset.description || '';
       setActivePresetEnv(typeof normalizePresetEnv === 'function' ? normalizePresetEnv(preset.env) : null);
+      if (typeof setActivePreset === 'function') setActivePreset(preset);
     };
 
     const reset = () => {
       select.value = '';
       help.textContent = '';
       setActivePresetEnv(null);
+      if (typeof setActivePreset === 'function') setActivePreset(null);
     };
 
     select.addEventListener('change', () => {

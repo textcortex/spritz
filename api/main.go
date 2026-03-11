@@ -190,6 +190,7 @@ func (s *server) registerRoutes(e *echo.Echo) {
 	internal.PUT("/shared-mounts/owner/:owner/:mount/latest", s.putSharedMountLatest)
 	secured := group.Group("", s.authMiddleware())
 	secured.GET("/spritzes", s.listSpritzes)
+	secured.POST("/spritzes/suggest-name", s.suggestSpritzName)
 	secured.POST("/spritzes", s.createSpritz)
 	secured.GET("/spritzes/:name", s.getSpritz)
 	secured.DELETE("/spritzes/:name", s.deleteSpritz)
@@ -214,11 +215,59 @@ func (s *server) handleHealthz(c echo.Context) error {
 
 type createRequest struct {
 	Name        string              `json:"name"`
+	NamePrefix  string              `json:"namePrefix,omitempty"`
 	Namespace   string              `json:"namespace,omitempty"`
 	Spec        spritzv1.SpritzSpec `json:"spec"`
 	UserConfig  json.RawMessage     `json:"userConfig,omitempty"`
 	Labels      map[string]string   `json:"labels,omitempty"`
 	Annotations map[string]string   `json:"annotations,omitempty"`
+}
+
+type suggestNameRequest struct {
+	Namespace  string `json:"namespace,omitempty"`
+	Image      string `json:"image,omitempty"`
+	NamePrefix string `json:"namePrefix,omitempty"`
+}
+
+func (s *server) resolveSpritzNamespace(requested string) (string, error) {
+	namespace := requested
+	if s.namespace != "" {
+		if namespace != "" && namespace != s.namespace {
+			return "", fmt.Errorf("namespace mismatch")
+		}
+		namespace = s.namespace
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+	return namespace, nil
+}
+
+func (s *server) suggestSpritzName(c echo.Context) error {
+	principal, ok := principalFromContext(c)
+	if s.auth.enabled() && (!ok || principal.ID == "") {
+		return writeError(c, http.StatusUnauthorized, "unauthenticated")
+	}
+
+	var body suggestNameRequest
+	if err := c.Bind(&body); err != nil {
+		return writeError(c, http.StatusBadRequest, "invalid json")
+	}
+	body.Image = strings.TrimSpace(body.Image)
+	if body.Image == "" {
+		return writeError(c, http.StatusBadRequest, "image is required")
+	}
+
+	namespace, err := s.resolveSpritzNamespace(body.Namespace)
+	if err != nil {
+		return writeError(c, http.StatusForbidden, err.Error())
+	}
+	namePrefix := resolveSpritzNamePrefix(body.NamePrefix, body.Image)
+	generator, err := s.newSpritzNameGenerator(c.Request().Context(), namespace, namePrefix)
+	if err != nil {
+		return writeError(c, http.StatusInternalServerError, "failed to generate spritz name")
+	}
+	return writeJSON(c, http.StatusOK, map[string]string{"name": generator()})
 }
 
 func (s *server) createSpritz(c echo.Context) error {
@@ -270,21 +319,16 @@ func (s *server) createSpritz(c echo.Context) error {
 		body.Spec.SharedMounts = normalized
 	}
 
-	namespace := body.Namespace
-	if s.namespace != "" {
-		if namespace != "" && namespace != s.namespace {
-			return writeError(c, http.StatusForbidden, "namespace mismatch")
-		}
-		namespace = s.namespace
-	}
-	if namespace == "" {
-		namespace = "default"
+	namespace, err := s.resolveSpritzNamespace(body.Namespace)
+	if err != nil {
+		return writeError(c, http.StatusForbidden, err.Error())
 	}
 
 	nameProvided := body.Name != ""
 	var nameGenerator func() string
 	if !nameProvided {
-		generator, err := s.newSpritzNameGenerator(c.Request().Context(), namespace)
+		namePrefix := resolveSpritzNamePrefix(body.NamePrefix, body.Spec.Image)
+		generator, err := s.newSpritzNameGenerator(c.Request().Context(), namespace, namePrefix)
 		if err != nil {
 			return writeError(c, http.StatusInternalServerError, "failed to generate spritz name")
 		}
