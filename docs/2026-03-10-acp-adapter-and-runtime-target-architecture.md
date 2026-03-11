@@ -107,6 +107,27 @@ The backend shim should own only:
 - backend-specific transcript replay
 - backend-specific event translation where ACP stdio is not sufficient
 
+To actually minimize duplication, this repository should treat the shared
+server harness as the single owner of the generic ACP server shell.
+
+That means new backend examples should not each implement their own copies of:
+
+- HTTP health and metadata endpoints
+- WebSocket upgrade and ACP transport shell
+- common shutdown logic
+- common error normalization
+- common socket ownership guardrails
+
+Instead, backend examples should plug backend-specific behavior into the shared
+harness through a narrow adapter interface.
+
+That adapter interface should cover only:
+
+- how to start or attach to the backend ACP command
+- how backend session ids map to ACP session ids when custom mapping is needed
+- how transcript replay works when the backend cannot rely on pure ACP stdio
+- any backend-specific metadata additions beyond the shared contract
+
 ### Backend runtime
 
 The backend runtime owns:
@@ -292,6 +313,15 @@ Remaining implementation work should focus on these changes:
    connections cannot disrupt active conversation sockets.
 6. Add soak tests that keep chat sessions open across repeated metadata refresh
    intervals and verify no websocket reset churn or transcript corruption.
+
+The shared harness extraction is the required duplication-reduction step.
+
+That refactor should end with these repository rules:
+
+- new ACP example images must reuse the shared harness
+- generic ACP server behavior must not be reimplemented inside backend example
+  directories
+- backend example directories may only own backend-specific adapter code
 
 ## Validation
 
