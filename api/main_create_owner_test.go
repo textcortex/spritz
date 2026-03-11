@@ -14,9 +14,9 @@ import (
 	"github.com/labstack/echo/v4"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -198,6 +198,80 @@ func TestSuggestSpritzNameUsesPrefixFromRequest(t *testing.T) {
 	}
 	if !strings.HasPrefix(name, "openclaw-") {
 		t.Fatalf("expected name prefix %q, got %q", "openclaw-", name)
+	}
+}
+
+func TestSuggestSpritzNameRejectsDisallowedProvisionerTargets(t *testing.T) {
+	testCases := []struct {
+		name       string
+		configure  func(*server)
+		body       []byte
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name: "preset allowlist",
+			configure: func(s *server) {
+				configureProvisionerTestServer(s)
+				s.presets = presetCatalog{
+					byID: []runtimePreset{
+						{ID: "openclaw", Name: "OpenClaw", Image: "example.com/spritz-openclaw:latest"},
+						{ID: "claude-code", Name: "Claude Code", Image: "example.com/spritz-claude-code:latest"},
+					},
+				}
+			},
+			body:       []byte(`{"presetId":"claude-code"}`),
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "preset is not allowed",
+		},
+		{
+			name: "namespace override",
+			configure: func(s *server) {
+				configureProvisionerTestServer(s)
+				s.namespace = ""
+				s.controlNamespace = "spritz-system"
+				s.provisioners.allowNamespaceOverride = true
+				s.provisioners.allowedNamespaces = map[string]struct{}{"team-a": {}}
+			},
+			body:       []byte(`{"presetId":"openclaw","namespace":"team-b"}`),
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "namespace is not allowed",
+		},
+		{
+			name: "custom image",
+			configure: func(s *server) {
+				configureProvisionerTestServer(s)
+			},
+			body:       []byte(`{"image":"example.com/spritz-claude-code:latest"}`),
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "custom image is not allowed",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newCreateSpritzTestServer(t)
+			tc.configure(s)
+			e := echo.New()
+			secured := e.Group("", s.authMiddleware())
+			secured.POST("/api/spritzes/suggest-name", s.suggestSpritzName)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/spritzes/suggest-name", bytes.NewReader(tc.body))
+			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+			req.Header.Set("X-Spritz-User-Id", "zenobot")
+			req.Header.Set("X-Spritz-Principal-Type", "service")
+			req.Header.Set("X-Spritz-Principal-Scopes", scopeInstancesSuggestName)
+			rec := httptest.NewRecorder()
+
+			e.ServeHTTP(rec, req)
+
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("expected status %d, got %d: %s", tc.wantStatus, rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), tc.wantBody) {
+				t.Fatalf("expected response body %q, got %s", tc.wantBody, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -1057,6 +1131,89 @@ func TestCreateSpritzReplaysPendingIdempotentCreateBeforeQuotaCheck(t *testing.T
 	metadata := spritz["metadata"].(map[string]any)
 	if metadata["name"] != "openclaw-fixed" {
 		t.Fatalf("expected replay to return existing spritz, got %#v", metadata["name"])
+	}
+}
+
+func TestSetIdempotencyReservationNameKeepsSinglePendingCandidate(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+
+	body := createRequest{
+		OwnerID:        "user-123",
+		IdempotencyKey: "discord-pending-single-name",
+		PresetID:       "openclaw",
+	}
+	applyTopLevelCreateFields(&body)
+	owner, err := normalizeCreateOwner(&body, principal{ID: "zenobot", Type: principalTypeService}, s.auth.enabled())
+	if err != nil {
+		t.Fatalf("normalizeCreateOwner failed: %v", err)
+	}
+	body.Spec.Owner = owner
+	if _, err := s.applyCreatePreset(&body); err != nil {
+		t.Fatalf("applyCreatePreset failed: %v", err)
+	}
+	if err := resolveCreateLifetimes(&body.Spec, s.provisioners, true); err != nil {
+		t.Fatalf("resolveCreateLifetimes failed: %v", err)
+	}
+	fingerprint, err := createFingerprint(body.Spec.Owner.ID, body.PresetID, "", "openclaw", s.namespace, provisionerSource(&body), body.Spec, nil)
+	if err != nil {
+		t.Fatalf("createFingerprint failed: %v", err)
+	}
+
+	if err := s.client.Create(context.Background(), &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      idempotencyReservationName("zenobot", body.IdempotencyKey),
+			Namespace: s.namespace,
+		},
+		Data: map[string]string{
+			idempotencyReservationHashKey: fingerprint,
+			idempotencyReservationNameKey: "openclaw-blocked",
+			idempotencyReservationDoneKey: "false",
+		},
+	}); err != nil {
+		t.Fatalf("failed to seed reservation: %v", err)
+	}
+	if err := s.client.Create(context.Background(), &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "openclaw-blocked",
+			Namespace: s.namespace,
+		},
+		Spec: spritzv1.SpritzSpec{
+			Image: "example.com/spritz-other:latest",
+			Owner: spritzv1.SpritzOwner{ID: "someone-else"},
+		},
+	}); err != nil {
+		t.Fatalf("failed to seed conflicting spritz: %v", err)
+	}
+
+	firstName, done, err := s.setIdempotencyReservationName(context.Background(), "zenobot", body.IdempotencyKey, fingerprint, "openclaw-blocked", "openclaw-alpha")
+	if err != nil {
+		t.Fatalf("first reservation update failed: %v", err)
+	}
+	if done {
+		t.Fatal("expected reservation to remain pending")
+	}
+	if firstName != "openclaw-alpha" {
+		t.Fatalf("expected first replacement name %q, got %q", "openclaw-alpha", firstName)
+	}
+
+	secondName, done, err := s.setIdempotencyReservationName(context.Background(), "zenobot", body.IdempotencyKey, fingerprint, "openclaw-blocked", "openclaw-beta")
+	if err != nil {
+		t.Fatalf("second reservation update failed: %v", err)
+	}
+	if done {
+		t.Fatal("expected reservation to remain pending")
+	}
+	if secondName != "openclaw-alpha" {
+		t.Fatalf("expected second caller to reuse %q, got %q", "openclaw-alpha", secondName)
+	}
+
+	reservation := &corev1.ConfigMap{}
+	if err := s.client.Get(context.Background(), clientKey(s.namespace, idempotencyReservationName("zenobot", body.IdempotencyKey)), reservation); err != nil {
+		t.Fatalf("failed to reload reservation: %v", err)
+	}
+	if got := strings.TrimSpace(reservation.Data[idempotencyReservationNameKey]); got != "openclaw-alpha" {
+		t.Fatalf("expected reservation to stay on %q, got %q", "openclaw-alpha", got)
 	}
 }
 

@@ -308,9 +308,6 @@ func (s *server) suggestSpritzName(c echo.Context) error {
 	if s.auth.enabled() && (!ok || principal.ID == "") {
 		return writeError(c, http.StatusUnauthorized, "unauthenticated")
 	}
-	if principal.isService() && !principal.hasScope(scopeInstancesSuggestName) && !principal.isAdminPrincipal() {
-		return writeError(c, http.StatusForbidden, "forbidden")
-	}
 
 	var body suggestNameRequest
 	if err := c.Bind(&body); err != nil {
@@ -324,6 +321,14 @@ func (s *server) suggestSpritzName(c echo.Context) error {
 	namespace, err := s.resolveSpritzNamespace(body.Namespace)
 	if err != nil {
 		return writeError(c, http.StatusForbidden, err.Error())
+	}
+	if principal.isService() {
+		if err := s.validateProvisionerPlacement(principal, namespace, metadata.presetID, strings.TrimSpace(body.Image) != "", strings.TrimSpace(body.Namespace) != "", scopeInstancesSuggestName); err != nil {
+			if errors.Is(err, errForbidden) {
+				return writeError(c, http.StatusForbidden, "forbidden")
+			}
+			return writeError(c, http.StatusBadRequest, err.Error())
+		}
 	}
 	generator, err := s.newSpritzNameGenerator(c.Request().Context(), namespace, metadata.namePrefix)
 	if err != nil {
@@ -441,6 +446,7 @@ func (s *server) createSpritz(c echo.Context) error {
 		return writeError(c, http.StatusInternalServerError, "failed to generate spritz name")
 	}
 
+	provisionerFingerprint := ""
 	if principal.isService() {
 		fingerprintName := body.Name
 		if !nameProvided {
@@ -457,6 +463,7 @@ func (s *server) createSpritz(c echo.Context) error {
 			}
 			return writeError(c, http.StatusBadRequest, err.Error())
 		}
+		provisionerFingerprint = fingerprint
 		reservedName, completed, err := s.reserveIdempotentCreateName(c.Request().Context(), namespace, principal, body.IdempotencyKey, fingerprint, body.Name)
 		if err != nil {
 			if strings.Contains(err.Error(), "idempotencyKey already used") {
@@ -490,7 +497,7 @@ func (s *server) createSpritz(c echo.Context) error {
 			sourceAnnotationKey:          provisionerSource(&body),
 			requestIDAnnotationKey:       body.RequestID,
 			idempotencyKeyAnnotationKey:  body.IdempotencyKey,
-			idempotencyHashAnnotationKey: fingerprint,
+			idempotencyHashAnnotationKey: provisionerFingerprint,
 		})
 	} else if s.auth.enabled() && !principal.isAdminPrincipal() && owner.ID != principal.ID {
 		return writeError(c, http.StatusForbidden, "owner mismatch")
@@ -567,32 +574,48 @@ func (s *server) createSpritz(c echo.Context) error {
 	if !nameProvided {
 		attempts = 8
 	}
-		for attempt := 0; attempt < attempts; attempt++ {
-			name := body.Name
-			if !nameProvided && attempt > 0 {
-				name = nameGenerator()
-			}
-			if principal.isService() {
-				if err := s.setIdempotencyReservationName(c.Request().Context(), principal.ID, body.IdempotencyKey, name); err != nil {
-					return writeError(c, http.StatusInternalServerError, err.Error())
-				}
-			}
-			spritz, err := createSpritzResource(name)
+	currentName := body.Name
+	for attempt := 0; attempt < attempts; attempt++ {
+		name := currentName
+		failedName := ""
+		if !nameProvided && attempt > 0 {
+			failedName = currentName
+			name = nameGenerator()
+		}
+		if principal.isService() {
+			reservedName, completed, err := s.setIdempotencyReservationName(c.Request().Context(), principal.ID, body.IdempotencyKey, provisionerFingerprint, failedName, name)
 			if err != nil {
-				return writeError(c, http.StatusBadRequest, err.Error())
+				return writeError(c, http.StatusInternalServerError, err.Error())
 			}
-			if err := s.client.Create(c.Request().Context(), spritz); err != nil {
-				if principal.isService() && apierrors.IsAlreadyExists(err) {
-					existing, getErr := s.findReservedSpritz(c.Request().Context(), namespace, name)
-					if getErr != nil {
-						return writeError(c, http.StatusInternalServerError, getErr.Error())
-					}
-					if matchesIdempotentReplayTarget(existing, principal, body.IdempotencyKey, annotations[idempotencyHashAnnotationKey]) {
-						return writeJSON(c, http.StatusOK, summarizeCreateResponse(existing, principal, body.PresetID, provisionerSource(&body), body.IdempotencyKey, true))
-					}
-					if !nameProvided {
-						continue
-					}
+			name = reservedName
+			if completed {
+				existing, getErr := s.findReservedSpritz(c.Request().Context(), namespace, name)
+				if getErr != nil {
+					return writeError(c, http.StatusInternalServerError, getErr.Error())
+				}
+				if matchesIdempotentReplayTarget(existing, principal, body.IdempotencyKey, provisionerFingerprint) {
+					return writeJSON(c, http.StatusOK, summarizeCreateResponse(existing, principal, body.PresetID, provisionerSource(&body), body.IdempotencyKey, true))
+				}
+				return writeError(c, http.StatusConflict, "idempotencyKey already used")
+			}
+		}
+		spritz, err := createSpritzResource(name)
+		if err != nil {
+			return writeError(c, http.StatusBadRequest, err.Error())
+		}
+		if err := s.client.Create(c.Request().Context(), spritz); err != nil {
+			if principal.isService() && apierrors.IsAlreadyExists(err) {
+				existing, getErr := s.findReservedSpritz(c.Request().Context(), namespace, name)
+				if getErr != nil {
+					return writeError(c, http.StatusInternalServerError, getErr.Error())
+				}
+				if matchesIdempotentReplayTarget(existing, principal, body.IdempotencyKey, annotations[idempotencyHashAnnotationKey]) {
+					return writeJSON(c, http.StatusOK, summarizeCreateResponse(existing, principal, body.PresetID, provisionerSource(&body), body.IdempotencyKey, true))
+				}
+				if !nameProvided {
+					currentName = name
+					continue
+				}
 				return writeError(c, http.StatusConflict, "idempotencyKey already used with a different request")
 			}
 			if !nameProvided && apierrors.IsAlreadyExists(err) {
