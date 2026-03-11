@@ -152,6 +152,7 @@ test('setupPresetPanel injects the preset selector and updates image fields', as
 
   const { document, form, imageInput, repoInput, branchInput, ttlInput } = buildFormFixture();
   let activeEnv = null;
+  let activePreset = null;
   let repoDefaultsApplied = 0;
   const presets = [
     {
@@ -188,6 +189,9 @@ test('setupPresetPanel injects the preset selector and updates image fields', as
     setActivePresetEnv(env) {
       activeEnv = env;
     },
+    setActivePreset(preset) {
+      activePreset = preset;
+    },
   });
 
   assert.ok(controller, 'expected a preset controller');
@@ -200,6 +204,7 @@ test('setupPresetPanel injects the preset selector and updates image fields', as
   assert.equal(branchInput.value, 'main');
   assert.equal(ttlInput.value, '8h');
   assert.deepEqual(activeEnv, [{ name: 'FOO', value: 'bar' }]);
+  assert.equal(activePreset?.name, 'Starter Devbox');
   assert.equal(form.querySelector('.preset-help').textContent, 'Starter image');
 
   presetSelect.value = '1';
@@ -210,10 +215,12 @@ test('setupPresetPanel injects the preset selector and updates image fields', as
   assert.equal(branchInput.value, 'staging');
   assert.equal(ttlInput.value, '12h');
   assert.deepEqual(activeEnv, [{ name: 'BAZ', value: 'qux' }]);
+  assert.equal(activePreset?.name, 'OpenClaw Devbox');
   assert.equal(form.querySelector('.preset-help').textContent, 'OpenClaw image');
 
   controller.reset();
   assert.equal(presetSelect.value, '');
   assert.equal(form.querySelector('.preset-help').textContent, '');
   assert.equal(activeEnv, null);
+  assert.equal(activePreset, null);
 });
