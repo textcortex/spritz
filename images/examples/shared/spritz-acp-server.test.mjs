@@ -170,3 +170,58 @@ test("serveSpritzACPServer wires the shared ACP shell once", async () => {
   await service.close();
   assert.equal(closeCalls, 1);
 });
+
+test("serveSpritzACPServer accepts default-exported WebSocketServer constructors", async () => {
+  let closeCalls = 0;
+  class DefaultWebSocketServer {
+    constructor() {
+      this.clients = new Set();
+      this.handlers = new Map();
+    }
+
+    on(event, handler) {
+      this.handlers.set(event, handler);
+    }
+
+    emit(event, ...args) {
+      this.handlers.get(event)?.(...args);
+    }
+
+    handleUpgrade(_request, _socket, _head, callback) {
+      callback({ readyState: 1, close() {} });
+    }
+  }
+
+  const service = await serveSpritzACPServer({
+    config: {
+      listenAddr: "127.0.0.1:0",
+      acpPath: "/",
+      healthPath: "/healthz",
+      metadataPath: "/.well-known/spritz-acp",
+    },
+    runtime: {
+      metadata: {
+        protocolVersion: 1,
+        agentInfo: { name: "generic-acp", title: "Generic ACP", version: "1.2.3" },
+      },
+      async health() {
+        return { ok: true };
+      },
+      attachWebSocket() {},
+      async close() {
+        closeCalls += 1;
+      },
+    },
+    loadWSModule: async () => ({ default: DefaultWebSocketServer }),
+    logger: {
+      log() {},
+      warn() {},
+    },
+  });
+
+  const address = service.server.address();
+  assert.ok(address && typeof address !== "string");
+
+  await service.close();
+  assert.equal(closeCalls, 1);
+});

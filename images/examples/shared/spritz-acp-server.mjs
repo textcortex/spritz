@@ -50,13 +50,24 @@ export function resolveWSExports(wsModule) {
   return { WebSocket, WebSocketServer };
 }
 
-export function resolveWebSocketServerExport(wsModule) {
+function looksLikeWebSocketServerConstructor(candidate) {
   return (
+    typeof candidate === "function" &&
+    typeof candidate.prototype?.on === "function" &&
+    typeof candidate.prototype?.handleUpgrade === "function"
+  );
+}
+
+export function resolveWebSocketServerExport(wsModule) {
+  const named =
     wsModule?.WebSocketServer ??
     wsModule?.Server ??
     wsModule?.default?.WebSocketServer ??
-    wsModule?.default?.Server
-  );
+    wsModule?.default?.Server;
+  if (named) {
+    return named;
+  }
+  return looksLikeWebSocketServerConstructor(wsModule?.default) ? wsModule.default : undefined;
 }
 
 export function createACPRequestHandler({ config, runtime, logger }) {
