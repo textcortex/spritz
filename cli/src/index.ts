@@ -1076,7 +1076,6 @@ async function main() {
     const name = positionalArgs()[0];
     const presetId = argValue('--preset');
     const image = argValue('--image');
-    if (!presetId && !image) throw new Error('--preset or --image is required');
 
     const repo = argValue('--repo');
     const branch = argValue('--branch');

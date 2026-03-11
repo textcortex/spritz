@@ -313,6 +313,7 @@ func (s *server) suggestSpritzName(c echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return writeError(c, http.StatusBadRequest, "invalid json")
 	}
+	s.applyProvisionerDefaultSuggestNamePreset(&body, principal)
 	metadata, err := s.resolveSuggestNameMetadata(body)
 	if err != nil {
 		return writeError(c, http.StatusBadRequest, err.Error())
@@ -322,8 +323,9 @@ func (s *server) suggestSpritzName(c echo.Context) error {
 	if err != nil {
 		return writeError(c, http.StatusForbidden, err.Error())
 	}
+	requestedNamespace := s.namespaceOverrideRequested(body.Namespace, namespace)
 	if principal.isService() {
-		if err := s.validateProvisionerPlacement(principal, namespace, metadata.presetID, strings.TrimSpace(body.Image) != "", strings.TrimSpace(body.Namespace) != "", scopeInstancesSuggestName); err != nil {
+		if err := s.validateProvisionerPlacement(principal, namespace, metadata.presetID, strings.TrimSpace(body.Image) != "", requestedNamespace, scopeInstancesSuggestName); err != nil {
 			if errors.Is(err, errForbidden) {
 				return writeError(c, http.StatusForbidden, "forbidden")
 			}

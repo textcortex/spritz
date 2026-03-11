@@ -275,6 +275,53 @@ func TestSuggestSpritzNameRejectsDisallowedProvisionerTargets(t *testing.T) {
 	}
 }
 
+func TestSuggestSpritzNameAllowsSameNamespaceWithoutTreatingItAsOverride(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes/suggest-name", s.suggestSpritzName)
+
+	body := []byte(`{"presetId":"openclaw","namespace":"spritz-test"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes/suggest-name", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "zenobot")
+	req.Header.Set("X-Spritz-Principal-Type", "service")
+	req.Header.Set("X-Spritz-Principal-Scopes", scopeInstancesSuggestName)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSuggestSpritzNameUsesProvisionerDefaultPreset(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	s.provisioners.defaultPresetID = "openclaw"
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes/suggest-name", s.suggestSpritzName)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes/suggest-name", bytes.NewReader([]byte(`{}`)))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "zenobot")
+	req.Header.Set("X-Spritz-Principal-Type", "service")
+	req.Header.Set("X-Spritz-Principal-Scopes", scopeInstancesSuggestName)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "openclaw-") {
+		t.Fatalf("expected generated openclaw-prefixed suggestion, got %s", rec.Body.String())
+	}
+}
+
 func TestCreateSpritzGeneratesPrefixedNameFromImage(t *testing.T) {
 	s := newCreateSpritzTestServer(t)
 	e := echo.New()

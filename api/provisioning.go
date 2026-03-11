@@ -148,6 +148,22 @@ func (s *server) applyProvisionerDefaultPreset(body *createRequest, principal pr
 	body.PresetID = s.provisioners.defaultPresetID
 }
 
+func (s *server) applyProvisionerDefaultSuggestNamePreset(body *suggestNameRequest, principal principal) {
+	if body == nil || !principal.isService() {
+		return
+	}
+	if strings.TrimSpace(body.PresetID) != "" {
+		return
+	}
+	if strings.TrimSpace(body.Image) != "" {
+		return
+	}
+	if s.provisioners.defaultPresetID == "" {
+		return
+	}
+	body.PresetID = s.provisioners.defaultPresetID
+}
+
 func applyTopLevelCreateFields(body *createRequest) {
 	if strings.TrimSpace(body.OwnerID) != "" && strings.TrimSpace(body.Spec.Owner.ID) == "" {
 		body.Spec.Owner.ID = strings.TrimSpace(body.OwnerID)
