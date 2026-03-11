@@ -164,6 +164,10 @@ api:
         - scopes
         - scp
       defaultType: ""
+      staticPrincipalsJson: ""
+      staticPrincipalsSecret:
+        name: ""
+        key: SPRITZ_AUTH_BEARER_STATIC_PRINCIPALS_JSON
   provisioners:
     defaultPresetId: ""
     allowedPresetIds: []

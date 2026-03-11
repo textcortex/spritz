@@ -124,6 +124,16 @@ spec:
             - name: SPRITZ_AUTH_BEARER_DEFAULT_TYPE
               value: {{ .Values.api.auth.bearer.defaultType | quote }}
             {{- end }}
+            {{- if .Values.api.auth.bearer.staticPrincipalsSecret.name }}
+            - name: SPRITZ_AUTH_BEARER_STATIC_PRINCIPALS_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.auth.bearer.staticPrincipalsSecret.name | quote }}
+                  key: {{ .Values.api.auth.bearer.staticPrincipalsSecret.key | quote }}
+            {{- else if .Values.api.auth.bearer.staticPrincipalsJson }}
+            - name: SPRITZ_AUTH_BEARER_STATIC_PRINCIPALS_JSON
+              value: {{ .Values.api.auth.bearer.staticPrincipalsJson | quote }}
+            {{- end }}
             {{- if .Values.api.auth.bearer.jwks.url }}
             - name: SPRITZ_AUTH_BEARER_JWKS_URL
               value: {{ .Values.api.auth.bearer.jwks.url | quote }}

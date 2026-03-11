@@ -93,6 +93,10 @@ func main() {
 	}
 
 	auth := newAuthConfig()
+	if auth.configErr != nil {
+		fmt.Fprintf(os.Stderr, "invalid auth config: %v\n", auth.configErr)
+		os.Exit(1)
+	}
 	ingressDefaults := newIngressDefaults()
 	terminal := newTerminalConfig()
 	acp := newACPConfig()

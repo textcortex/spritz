@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -73,10 +75,24 @@ type authConfig struct {
 	bearerJWKSRefreshInterval time.Duration
 	bearerJWKSRefreshTimeout  time.Duration
 	bearerJWKSRateLimit       time.Duration
+	bearerStaticPrincipals    []staticBearerPrincipal
 	bearerJWKSInitErr         error
 	bearerJWKSInitLock        sync.Mutex
 	bearerJWKSLastAttempt     time.Time
 	bearerJWKS                *keyfunc.JWKS
+	configErr                 error
+}
+
+type staticBearerPrincipal struct {
+	ID         string
+	Email      string
+	Teams      []string
+	Type       principalType
+	Subject    string
+	Issuer     string
+	Scopes     []string
+	TokenHash  string
+	parsedHash []byte
 }
 
 type principal struct {
@@ -104,6 +120,7 @@ func newAuthConfig() authConfig {
 	if mode == authModeAuto {
 		bearerDefaultType = principalTypeService
 	}
+	staticPrincipals, configErr := parseStaticBearerPrincipals(os.Getenv("SPRITZ_AUTH_BEARER_STATIC_PRINCIPALS_JSON"))
 	return authConfig{
 		mode:                      mode,
 		headerID:                  envOrDefault("SPRITZ_AUTH_HEADER_ID", "X-Spritz-User-Id"),
@@ -137,6 +154,8 @@ func newAuthConfig() authConfig {
 		bearerJWKSRefreshInterval: parseDurationEnv("SPRITZ_AUTH_BEARER_JWKS_REFRESH_INTERVAL", 5*time.Minute),
 		bearerJWKSRefreshTimeout:  parseDurationEnv("SPRITZ_AUTH_BEARER_JWKS_REFRESH_TIMEOUT", 5*time.Second),
 		bearerJWKSRateLimit:       parseDurationEnv("SPRITZ_AUTH_BEARER_JWKS_RATE_LIMIT", 10*time.Second),
+		bearerStaticPrincipals:    staticPrincipals,
+		configErr:                 configErr,
 	}
 }
 
@@ -267,7 +286,7 @@ func (a *authConfig) principal(r *http.Request) (principal, error) {
 				a.isAdmin(id, teams),
 			), nil
 		}
-		if a.bearerIntrospectionURL == "" && a.bearerJWKSURL == "" {
+		if a.bearerIntrospectionURL == "" && a.bearerJWKSURL == "" && len(a.bearerStaticPrincipals) == 0 {
 			return principal{}, errUnauthenticated
 		}
 		return a.principalFromBearer(r)
@@ -287,6 +306,9 @@ func (a *authConfig) principalFromBearer(r *http.Request) (principal, error) {
 	}
 	if token == "" {
 		return principal{}, errUnauthenticated
+	}
+	if resolved, ok := a.principalFromStaticBearerToken(token); ok {
+		return resolved, nil
 	}
 	if a.bearerJWKSURL != "" {
 		if resolved, err := a.principalFromJWT(r.Context(), token); err == nil {
@@ -368,6 +390,32 @@ func (a *authConfig) introspectToken(ctx context.Context, token string) (princip
 		firstScopeListPath(payload, a.bearerScopesPaths),
 		a.isAdmin(id, teams),
 	), nil
+}
+
+func (a *authConfig) principalFromStaticBearerToken(token string) (principal, bool) {
+	if len(a.bearerStaticPrincipals) == 0 {
+		return principal{}, false
+	}
+	sum := sha256.Sum256([]byte(strings.TrimSpace(token)))
+	for _, candidate := range a.bearerStaticPrincipals {
+		if len(candidate.parsedHash) != len(sum) {
+			continue
+		}
+		if subtle.ConstantTimeCompare(candidate.parsedHash, sum[:]) != 1 {
+			continue
+		}
+		return finalizePrincipal(
+			candidate.ID,
+			candidate.Email,
+			candidate.Teams,
+			firstNonEmpty(candidate.Subject, candidate.ID),
+			candidate.Issuer,
+			candidate.Type,
+			candidate.Scopes,
+			a.isAdmin(candidate.ID, candidate.Teams),
+		), true
+	}
+	return principal{}, false
 }
 
 func (a *authConfig) jwks() (*keyfunc.JWKS, error) {
@@ -584,6 +632,66 @@ func ownerLabelValue(id string) string {
 	}
 	sum := sha256.Sum256([]byte(id))
 	return fmt.Sprintf("owner-%x", sum[:16])
+}
+
+func parseStaticBearerPrincipals(raw string) ([]staticBearerPrincipal, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var payload []struct {
+		ID        string   `json:"id"`
+		Email     string   `json:"email"`
+		Teams     []string `json:"teams"`
+		Type      string   `json:"type"`
+		Subject   string   `json:"subject"`
+		Issuer    string   `json:"issuer"`
+		Scopes    []string `json:"scopes"`
+		TokenHash string   `json:"tokenHash"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return nil, fmt.Errorf("invalid SPRITZ_AUTH_BEARER_STATIC_PRINCIPALS_JSON: %w", err)
+	}
+	principals := make([]staticBearerPrincipal, 0, len(payload))
+	for index, item := range payload {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			return nil, fmt.Errorf("invalid SPRITZ_AUTH_BEARER_STATIC_PRINCIPALS_JSON: principals[%d].id is required", index)
+		}
+		hashHex := strings.ToLower(strings.TrimSpace(item.TokenHash))
+		if hashHex == "" {
+			return nil, fmt.Errorf("invalid SPRITZ_AUTH_BEARER_STATIC_PRINCIPALS_JSON: principals[%d].tokenHash is required", index)
+		}
+		hashBytes, err := hex.DecodeString(hashHex)
+		if err != nil || len(hashBytes) != sha256.Size {
+			return nil, fmt.Errorf("invalid SPRITZ_AUTH_BEARER_STATIC_PRINCIPALS_JSON: principals[%d].tokenHash must be a sha256 hex digest", index)
+		}
+		principalTypeValue := normalizePrincipalType(item.Type, principalTypeService)
+		if len(item.Scopes) == 0 {
+			return nil, fmt.Errorf("invalid SPRITZ_AUTH_BEARER_STATIC_PRINCIPALS_JSON: principals[%d].scopes is required", index)
+		}
+		principals = append(principals, staticBearerPrincipal{
+			ID:         id,
+			Email:      strings.TrimSpace(item.Email),
+			Teams:      dedupeStrings(item.Teams),
+			Type:       principalTypeValue,
+			Subject:    strings.TrimSpace(item.Subject),
+			Issuer:     strings.TrimSpace(item.Issuer),
+			Scopes:     dedupeStrings(item.Scopes),
+			TokenHash:  hashHex,
+			parsedHash: hashBytes,
+		})
+	}
+	return principals, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func envOrDefault(key, fallback string) string {

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -407,4 +409,106 @@ func TestBearerAuthDoesNotGrantAdminFromTypeClaim(t *testing.T) {
 	if admin, _ := payload["admin"].(bool); admin {
 		t.Fatalf("expected bearer admin claim to remain non-admin")
 	}
+}
+
+func TestBearerAuthAcceptsStaticServicePrincipal(t *testing.T) {
+	t.Setenv("SPRITZ_AUTH_MODE", "auto")
+	t.Setenv(
+		"SPRITZ_AUTH_BEARER_STATIC_PRINCIPALS_JSON",
+		`[{"id":"zenobot-staging","tokenHash":"`+sha256HexForTest("spritz-static-token")+`","scopes":["spritz.instances.create","spritz.instances.assign_owner"]}]`,
+	)
+
+	s := &server{auth: newAuthConfig()}
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.GET("/api/spritzes", func(c echo.Context) error {
+		p, ok := principalFromContext(c)
+		if !ok {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "missing principal"})
+		}
+		return c.JSON(http.StatusOK, map[string]any{
+			"id":     p.ID,
+			"type":   p.Type,
+			"scopes": p.Scopes,
+		})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/spritzes", nil)
+	req.Header.Set("Authorization", "Bearer spritz-static-token")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	payload := map[string]any{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload["id"] != "zenobot-staging" {
+		t.Fatalf("expected static principal id, got %#v", payload["id"])
+	}
+	if payload["type"] != string(principalTypeService) {
+		t.Fatalf("expected service principal type, got %#v", payload["type"])
+	}
+	scopes, _ := payload["scopes"].([]any)
+	if len(scopes) != 2 {
+		t.Fatalf("expected two scopes, got %#v", payload["scopes"])
+	}
+}
+
+func TestBearerAuthFallsBackWhenStaticPrincipalMisses(t *testing.T) {
+	introspection := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"sub":   "user-123",
+			"email": "user@example.com",
+		})
+	}))
+	defer introspection.Close()
+
+	t.Setenv("SPRITZ_AUTH_MODE", "auto")
+	t.Setenv("SPRITZ_AUTH_BEARER_INTROSPECTION_URL", introspection.URL)
+	t.Setenv("SPRITZ_AUTH_BEARER_ID_PATHS", "sub")
+	t.Setenv("SPRITZ_AUTH_BEARER_EMAIL_PATHS", "email")
+	t.Setenv(
+		"SPRITZ_AUTH_BEARER_STATIC_PRINCIPALS_JSON",
+		`[{"id":"zenobot-staging","tokenHash":"`+sha256HexForTest("some-other-token")+`","scopes":["spritz.instances.create"]}]`,
+	)
+
+	s := &server{auth: newAuthConfig()}
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.GET("/api/spritzes", func(c echo.Context) error {
+		p, ok := principalFromContext(c)
+		if !ok {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "missing principal"})
+		}
+		return c.JSON(http.StatusOK, map[string]any{
+			"id":    p.ID,
+			"email": p.Email,
+		})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/spritzes", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	payload := map[string]any{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload["id"] != "user-123" {
+		t.Fatalf("expected introspection fallback principal id, got %#v", payload["id"])
+	}
+}
+
+func sha256HexForTest(value string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(value)))
+	return hex.EncodeToString(sum[:])
 }
