@@ -45,6 +45,8 @@ func LifecycleExpiryTimes(spritz *Spritz) (*metav1.Time, *metav1.Time, *metav1.T
 	}
 
 	switch {
+	case idleExpiresAt == nil && maxExpiresAt == nil:
+		return nil, nil, nil, "", nil
 	case idleExpiresAt == nil:
 		return nil, maxExpiresAt, maxExpiresAt, LifecycleReasonTTL, nil
 	case maxExpiresAt == nil:

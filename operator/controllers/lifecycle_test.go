@@ -57,3 +57,22 @@ func TestComputeSpritzLifecycleWindowRejectsInvalidIdleTTL(t *testing.T) {
 		t.Fatal("expected invalid idle ttl error")
 	}
 }
+
+func TestComputeSpritzLifecycleWindowReturnsNoReasonWithoutLifetimes(t *testing.T) {
+	spritz := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{
+			CreationTimestamp: metav1.NewTime(time.Date(2026, 3, 11, 9, 0, 0, 0, time.UTC)),
+		},
+	}
+
+	idleExpiresAt, maxExpiresAt, effectiveExpiresAt, reason, err := spritzv1.LifecycleExpiryTimes(spritz)
+	if err != nil {
+		t.Fatalf("LifecycleExpiryTimes returned error: %v", err)
+	}
+	if idleExpiresAt != nil || maxExpiresAt != nil || effectiveExpiresAt != nil {
+		t.Fatalf("expected no expiry timestamps, got idle=%#v max=%#v effective=%#v", idleExpiresAt, maxExpiresAt, effectiveExpiresAt)
+	}
+	if reason != "" {
+		t.Fatalf("expected empty lifecycle reason, got %q", reason)
+	}
+}

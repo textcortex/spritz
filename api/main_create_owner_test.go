@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -58,6 +59,7 @@ func newCreateSpritzTestServer(t *testing.T) *server {
 type createInterceptClient struct {
 	client.Client
 	onCreate func(context.Context, client.Object) error
+	onUpdate func(context.Context, client.Object) error
 }
 
 func (c *createInterceptClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
@@ -67,6 +69,15 @@ func (c *createInterceptClient) Create(ctx context.Context, obj client.Object, o
 		}
 	}
 	return c.Client.Create(ctx, obj, opts...)
+}
+
+func (c *createInterceptClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+	if c.onUpdate != nil {
+		if err := c.onUpdate(ctx, obj); err != nil {
+			return err
+		}
+	}
+	return c.Client.Update(ctx, obj, opts...)
 }
 
 func configureProvisionerTestServer(s *server) {
@@ -696,6 +707,40 @@ func TestListPresetsOmitsPresetEnvValues(t *testing.T) {
 	}
 }
 
+func TestListPresetsFiltersProvisionerAllowlistForServicePrincipal(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	s.presets.byID = append(s.presets.byID, runtimePreset{
+		ID:         "claude-code",
+		Name:       "Claude Code",
+		Image:      "example.com/spritz-claude-code:latest",
+		NamePrefix: "claude-code",
+	})
+	s.provisioners.allowedPresetIDs = map[string]struct{}{"openclaw": {}}
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.GET("/api/presets", s.listPresets)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/presets", nil)
+	req.Header.Set("X-Spritz-User-Id", "zenobot")
+	req.Header.Set("X-Spritz-Principal-Type", "service")
+	req.Header.Set("X-Spritz-Principal-Scopes", "spritz.presets.read")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "claude-code") {
+		t.Fatalf("expected service preset list to exclude disallowed presets, got %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "openclaw") {
+		t.Fatalf("expected service preset list to include allowed preset, got %s", rec.Body.String())
+	}
+}
+
 func TestCreateSpritzUsesProvisionerDefaultPresetWhenPresetOmitted(t *testing.T) {
 	s := newCreateSpritzTestServer(t)
 	configureProvisionerTestServer(s)
@@ -1047,5 +1092,79 @@ func TestCreateSpritzDoesNotReplayDifferentActorOrKeyForSameNamedWorkspace(t *te
 
 	if rec2.Code != http.StatusConflict {
 		t.Fatalf("expected status 409, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+}
+
+func TestCreateSpritzReplaysGeneratedNameAfterCompletionFailure(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	s.nameGeneratorFactory = func(context.Context, string, string) (func() string, error) {
+		names := []string{"openclaw-replayable"}
+		index := 0
+		return func() string {
+			if index >= len(names) {
+				return names[len(names)-1]
+			}
+			value := names[index]
+			index++
+			return value
+		}, nil
+	}
+
+	baseClient := s.client
+	failComplete := true
+	s.client = &createInterceptClient{
+		Client: baseClient,
+		onUpdate: func(_ context.Context, obj client.Object) error {
+			configMap, ok := obj.(*corev1.ConfigMap)
+			if !ok {
+				return nil
+			}
+			if strings.HasPrefix(configMap.Name, idempotencyReservationPrefix) &&
+				failComplete &&
+				strings.EqualFold(strings.TrimSpace(configMap.Data[idempotencyReservationDoneKey]), "true") {
+				failComplete = false
+				return errors.New("forced completion failure")
+			}
+			return nil
+		},
+	}
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	reqBody := []byte(`{"presetId":"openclaw","ownerId":"user-123","idempotencyKey":"discord-generated-replay"}`)
+	req1 := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(reqBody))
+	req1.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req1.Header.Set("X-Spritz-User-Id", "zenobot")
+	req1.Header.Set("X-Spritz-Principal-Type", "service")
+	req1.Header.Set("X-Spritz-Principal-Scopes", "spritz.instances.create,spritz.instances.assign_owner")
+	rec1 := httptest.NewRecorder()
+	e.ServeHTTP(rec1, req1)
+
+	if rec1.Code != http.StatusInternalServerError {
+		t.Fatalf("expected first create to fail after workspace creation, got %d: %s", rec1.Code, rec1.Body.String())
+	}
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(reqBody))
+	req2.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req2.Header.Set("X-Spritz-User-Id", "zenobot")
+	req2.Header.Set("X-Spritz-Principal-Type", "service")
+	req2.Header.Set("X-Spritz-Principal-Scopes", "spritz.instances.create,spritz.instances.assign_owner")
+	rec2 := httptest.NewRecorder()
+	e.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected retry to replay created workspace, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec2.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response json: %v", err)
+	}
+	data := payload["data"].(map[string]any)
+	if replayed, _ := data["replayed"].(bool); !replayed {
+		t.Fatalf("expected replayed response, got %#v", data["replayed"])
 	}
 }

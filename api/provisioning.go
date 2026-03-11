@@ -392,6 +392,13 @@ func (c presetCatalog) public() []publicPreset {
 	if len(items) == 0 {
 		return nil
 	}
+	return publicPresetList(items)
+}
+
+func publicPresetList(items []runtimePreset) []publicPreset {
+	if len(items) == 0 {
+		return nil
+	}
 	publicItems := make([]publicPreset, 0, len(items))
 	for _, item := range items {
 		publicItems = append(publicItems, publicPreset{
@@ -407,6 +414,20 @@ func (c presetCatalog) public() []publicPreset {
 		})
 	}
 	return publicItems
+}
+
+func (c presetCatalog) publicAllowed(allowed map[string]struct{}) []publicPreset {
+	items := c.all()
+	if len(items) == 0 || len(allowed) == 0 {
+		return publicPresetList(items)
+	}
+	filtered := make([]runtimePreset, 0, len(items))
+	for _, item := range items {
+		if _, ok := allowed[item.ID]; ok {
+			filtered = append(filtered, item)
+		}
+	}
+	return publicPresetList(filtered)
 }
 
 func (c presetCatalog) get(id string) (*runtimePreset, bool) {
@@ -675,6 +696,30 @@ func (s *server) completeIdempotencyReservation(ctx context.Context, actorID, ke
 	}
 	current.Data[idempotencyReservationNameKey] = spritz.Name
 	current.Data[idempotencyReservationDoneKey] = "true"
+	return s.client.Update(ctx, current)
+}
+
+func (s *server) setIdempotencyReservationName(ctx context.Context, actorID, key, name string) error {
+	if strings.TrimSpace(actorID) == "" || strings.TrimSpace(key) == "" || strings.TrimSpace(name) == "" {
+		return nil
+	}
+	reservationName := idempotencyReservationName(actorID, key)
+	reservationNamespace := s.idempotencyReservationNamespace()
+	current := &corev1.ConfigMap{}
+	if err := s.client.Get(ctx, clientKey(reservationNamespace, reservationName), current); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	if current.Data == nil {
+		current.Data = map[string]string{}
+	}
+	if strings.TrimSpace(current.Data[idempotencyReservationNameKey]) == name && !strings.EqualFold(strings.TrimSpace(current.Data[idempotencyReservationDoneKey]), "true") {
+		return nil
+	}
+	current.Data[idempotencyReservationNameKey] = name
+	current.Data[idempotencyReservationDoneKey] = "false"
 	return s.client.Update(ctx, current)
 }
 

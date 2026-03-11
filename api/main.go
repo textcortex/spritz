@@ -296,7 +296,11 @@ func (s *server) listPresets(c echo.Context) error {
 	if principal.isService() && !principal.hasScope(scopePresetsRead) && !principal.isAdminPrincipal() {
 		return writeError(c, http.StatusForbidden, "forbidden")
 	}
-	return writeJSON(c, http.StatusOK, map[string]any{"items": s.presets.public()})
+	items := s.presets.public()
+	if principal.isService() && !principal.isAdminPrincipal() {
+		items = s.presets.publicAllowed(s.provisioners.allowedPresetIDs)
+	}
+	return writeJSON(c, http.StatusOK, map[string]any{"items": items})
 }
 
 func (s *server) suggestSpritzName(c echo.Context) error {
@@ -563,15 +567,20 @@ func (s *server) createSpritz(c echo.Context) error {
 	if !nameProvided {
 		attempts = 8
 	}
-	for attempt := 0; attempt < attempts; attempt++ {
-		name := body.Name
-		if !nameProvided && attempt > 0 {
-			name = nameGenerator()
-		}
-		spritz, err := createSpritzResource(name)
-		if err != nil {
-			return writeError(c, http.StatusBadRequest, err.Error())
-		}
+		for attempt := 0; attempt < attempts; attempt++ {
+			name := body.Name
+			if !nameProvided && attempt > 0 {
+				name = nameGenerator()
+			}
+			if principal.isService() {
+				if err := s.setIdempotencyReservationName(c.Request().Context(), principal.ID, body.IdempotencyKey, name); err != nil {
+					return writeError(c, http.StatusInternalServerError, err.Error())
+				}
+			}
+			spritz, err := createSpritzResource(name)
+			if err != nil {
+				return writeError(c, http.StatusBadRequest, err.Error())
+			}
 			if err := s.client.Create(c.Request().Context(), spritz); err != nil {
 				if principal.isService() && apierrors.IsAlreadyExists(err) {
 					existing, getErr := s.findReservedSpritz(c.Request().Context(), namespace, name)
