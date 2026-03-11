@@ -679,6 +679,13 @@
     return response;
   }
 
+  function conversationNeedsBootstrap(conversation, options = {}) {
+    if (options.forceBootstrap) return true;
+    const sessionId = String(conversation?.spec?.sessionId || '').trim();
+    if (!sessionId) return true;
+    return String(conversation?.status?.bindingState || '').trim().toLowerCase() !== 'active';
+  }
+
   function applyACPUpdate(page, update) {
     const result = ACPRender.applySessionUpdate(page.transcript, update, {
       historical: !page.bootstrapComplete,
@@ -729,7 +736,10 @@
       renderThread(page);
       return;
     }
-    const bootstrap = await bootstrapSelectedConversation(page);
+    let bootstrap = null;
+    if (conversationNeedsBootstrap(page.selectedConversation, options)) {
+      bootstrap = await bootstrapSelectedConversation(page);
+    }
     page.bootstrapComplete = false;
     page.cacheHydratedTranscript = page.transcript.messages.length > 0;
     page.cacheReplacedByReplay = false;
@@ -802,7 +812,7 @@
     } catch (err) {
       if (err?.code === 'ACP_SESSION_MISSING' && options.allowRepairRetry !== false) {
         resetConversationRuntime(page);
-        await connectSelectedConversation(page, { ...options, allowRepairRetry: false });
+        await connectSelectedConversation(page, { ...options, allowRepairRetry: false, forceBootstrap: true });
         return;
       }
       throw err;

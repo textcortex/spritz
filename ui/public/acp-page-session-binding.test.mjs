@@ -161,7 +161,7 @@ test('ACP page rebinds the selected conversation before sending on a stale clien
             {
               metadata: { name: 'conv-1' },
               spec: { title: 'Test conversation', sessionId: 'session-fresh' },
-              status: { updatedAt: '2026-03-10T08:00:00Z' },
+              status: { bindingState: 'active', updatedAt: '2026-03-10T08:00:00Z' },
             },
           ],
         };
@@ -212,5 +212,130 @@ test('ACP page rebinds the selected conversation before sending on a stale clien
   assert.deepEqual(startedConversations, ['conv-1', 'conv-1']);
   assert.deepEqual(sentPrompts, [{ clientIndex: 2, conversationId: 'conv-1', text: 'test 3' }]);
   assert.deepEqual(toastMessages, []);
-  assert.equal(requestPaths.filter((path) => path === '/acp/conversations/conv-1/bootstrap').length, 2);
+  assert.equal(requestPaths.filter((path) => path === '/acp/conversations/conv-1/bootstrap').length, 0);
+});
+
+test('ACP page repairs a missing session by bootstrapping once and reconnecting', async () => {
+  const startedConversations = [];
+  const requestPaths = [];
+  const sentPrompts = [];
+  let clientCount = 0;
+
+  const window = loadModules(({ conversation }) => {
+    clientCount += 1;
+    const clientIndex = clientCount;
+    return {
+      async start() {
+        startedConversations.push(conversation?.metadata?.name || '');
+        if (clientIndex === 1) {
+          const error = new Error('session missing');
+          error.code = 'ACP_SESSION_MISSING';
+          throw error;
+        }
+      },
+      isReady() {
+        return clientIndex > 1;
+      },
+      getConversationId() {
+        return conversation?.metadata?.name || '';
+      },
+      getSessionId() {
+        return conversation?.spec?.sessionId || '';
+      },
+      matchesConversation(targetConversation) {
+        return this.getConversationId() === (targetConversation?.metadata?.name || '') &&
+          this.getSessionId() === (targetConversation?.spec?.sessionId || '');
+      },
+      async sendPrompt(text) {
+        sentPrompts.push({ clientIndex, text });
+        return { stopReason: 'end_turn' };
+      },
+      cancelPrompt() {},
+      dispose() {},
+    };
+  });
+
+  const shellEl = createElement('main');
+  const createSection = createElement('section');
+  const listSection = createElement('section');
+
+  window.SpritzACPPage.renderACPPage('young-crest', 'conv-1', {
+    activePage: null,
+    apiBaseUrl: '',
+    authBearerTokenParam: 'token',
+    getAuthToken() {
+      return '';
+    },
+    async request(path) {
+      requestPaths.push(path);
+      if (path === '/acp/agents') {
+        return {
+          items: [
+            {
+              spritz: {
+                metadata: { name: 'young-crest' },
+                status: {
+                  acp: { agentInfo: { title: 'OpenClaw ACP Gateway', version: '2026.3.8' } },
+                  url: 'https://example.test/w/young-crest/',
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (path.startsWith('/acp/conversations?')) {
+        return {
+          items: [
+            {
+              metadata: { name: 'conv-1' },
+              spec: { title: 'Test conversation', sessionId: 'session-stale' },
+              status: { bindingState: 'active', updatedAt: '2026-03-10T08:00:00Z' },
+            },
+          ],
+        };
+      }
+      if (path === '/acp/conversations/conv-1/bootstrap') {
+        return {
+          conversation: {
+            metadata: { name: 'conv-1' },
+            spec: { title: 'Test conversation', sessionId: 'session-fresh', cwd: '/home/dev' },
+            status: { bindingState: 'active', boundSessionId: 'session-fresh' },
+          },
+          effectiveSessionId: 'session-fresh',
+          bindingState: 'active',
+          replaced: true,
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    },
+    showToast() {},
+    showNotice() {},
+    clearNotice() {},
+    buildOpenUrl(url) {
+      return url;
+    },
+    cleanupTerminal() {},
+    shellEl,
+    createSection,
+    listSection,
+    setHeaderCopy() {},
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const composer = walk(shellEl, (node) => node.tagName === 'textarea');
+  const sendButton = walk(shellEl, (node) => node.tagName === 'button' && node.textContent === 'Send');
+
+  assert.ok(composer);
+  assert.ok(sendButton);
+  composer.value = 'repair';
+  sendButton.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(startedConversations, ['conv-1', 'conv-1']);
+  assert.equal(requestPaths.filter((path) => path === '/acp/conversations/conv-1/bootstrap').length, 1);
+  assert.deepEqual(sentPrompts, [{ clientIndex: 2, text: 'repair' }]);
 });
