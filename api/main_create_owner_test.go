@@ -15,6 +15,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -555,5 +556,133 @@ func TestCreateSpritzAllowsProvisionerPresetWithInjectedEnv(t *testing.T) {
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("expected preset-backed service create to succeed, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateSpritzUsesProvisionerDefaultPresetWhenPresetOmitted(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	s.provisioners.defaultPresetID = "openclaw"
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	body := []byte(`{"ownerId":"user-123","idempotencyKey":"discord-default-preset"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "zenobot")
+	req.Header.Set("X-Spritz-Principal-Type", "service")
+	req.Header.Set("X-Spritz-Principal-Scopes", "spritz.instances.create,spritz.instances.assign_owner")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response json: %v", err)
+	}
+	data := payload["data"].(map[string]any)
+	if presetID := data["presetId"]; presetID != "openclaw" {
+		t.Fatalf("expected presetId openclaw, got %#v", presetID)
+	}
+	spritz := data["spritz"].(map[string]any)
+	metadata := spritz["metadata"].(map[string]any)
+	if name, _ := metadata["name"].(string); !strings.HasPrefix(name, "openclaw-") {
+		t.Fatalf("expected default preset name prefix, got %#v", name)
+	}
+	spec := spritz["spec"].(map[string]any)
+	if image := spec["image"]; image != "example.com/spritz-openclaw:latest" {
+		t.Fatalf("expected preset image, got %#v", image)
+	}
+}
+
+func TestCreateSpritzRetriesPendingIdempotencyReservationWithConflictingOccupant(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	s.nameGeneratorFactory = func(context.Context, string, string) (func() string, error) {
+		return func() string {
+			return "openclaw-fresh-name"
+		}, nil
+	}
+
+	body := createRequest{
+		OwnerID:        "user-123",
+		IdempotencyKey: "discord-pending",
+		PresetID:       "openclaw",
+	}
+	applyTopLevelCreateFields(&body)
+	owner, err := normalizeCreateOwner(&body, principal{ID: "zenobot", Type: principalTypeService}, s.auth.enabled())
+	if err != nil {
+		t.Fatalf("normalizeCreateOwner failed: %v", err)
+	}
+	body.Spec.Owner = owner
+	if _, err := s.applyCreatePreset(&body); err != nil {
+		t.Fatalf("applyCreatePreset failed: %v", err)
+	}
+	if err := resolveCreateLifetimes(&body.Spec, s.provisioners, true); err != nil {
+		t.Fatalf("resolveCreateLifetimes failed: %v", err)
+	}
+	fingerprint, err := createFingerprint(body.Spec.Owner.ID, body.PresetID, "", s.namespace, provisionerSource(&body), body.Spec, nil)
+	if err != nil {
+		t.Fatalf("createFingerprint failed: %v", err)
+	}
+
+	conflictingName := "openclaw-blocked-name"
+	if err := s.client.Create(context.Background(), &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      idempotencyReservationName("zenobot", body.IdempotencyKey),
+			Namespace: s.namespace,
+		},
+		Data: map[string]string{
+			idempotencyReservationHashKey: fingerprint,
+			idempotencyReservationNameKey: conflictingName,
+			idempotencyReservationDoneKey: "false",
+		},
+	}); err != nil {
+		t.Fatalf("failed to seed reservation: %v", err)
+	}
+	if err := s.client.Create(context.Background(), &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      conflictingName,
+			Namespace: s.namespace,
+		},
+		Spec: spritzv1.SpritzSpec{
+			Image: "example.com/spritz-other:latest",
+			Owner: spritzv1.SpritzOwner{ID: "someone-else"},
+		},
+	}); err != nil {
+		t.Fatalf("failed to seed conflicting spritz: %v", err)
+	}
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	reqBody := []byte(`{"presetId":"openclaw","ownerId":"user-123","idempotencyKey":"discord-pending"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(reqBody))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "zenobot")
+	req.Header.Set("X-Spritz-Principal-Type", "service")
+	req.Header.Set("X-Spritz-Principal-Scopes", "spritz.instances.create,spritz.instances.assign_owner")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response json: %v", err)
+	}
+	spritz := payload["data"].(map[string]any)["spritz"].(map[string]any)
+	metadata := spritz["metadata"].(map[string]any)
+	if name := metadata["name"]; name == conflictingName {
+		t.Fatalf("expected create to move past the poisoned reservation name, got %#v", name)
 	}
 }

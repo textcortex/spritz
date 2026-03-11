@@ -119,6 +119,22 @@ func (s *server) applyCreatePreset(body *createRequest) (*runtimePreset, error) 
 	return preset, nil
 }
 
+func (s *server) applyProvisionerDefaultPreset(body *createRequest, principal principal) {
+	if body == nil || !principal.isService() {
+		return
+	}
+	if strings.TrimSpace(body.PresetID) != "" {
+		return
+	}
+	if strings.TrimSpace(body.Spec.Image) != "" {
+		return
+	}
+	if s.provisioners.defaultPresetID == "" {
+		return
+	}
+	body.PresetID = s.provisioners.defaultPresetID
+}
+
 func applyTopLevelCreateFields(body *createRequest) {
 	if strings.TrimSpace(body.OwnerID) != "" && strings.TrimSpace(body.Spec.Owner.ID) == "" {
 		body.Spec.Owner.ID = strings.TrimSpace(body.OwnerID)
@@ -247,12 +263,6 @@ func (s *server) validateProvisionerCreate(ctx context.Context, principal princi
 	}
 	if err := s.provisioners.validateNamespace(namespace); err != nil {
 		return "", err
-	}
-	if body.PresetID == "" && s.provisioners.defaultPresetID != "" {
-		body.PresetID = s.provisioners.defaultPresetID
-		if _, err := s.applyCreatePreset(body); err != nil {
-			return "", err
-		}
 	}
 	if body.PresetID != "" {
 		if err := s.provisioners.validatePreset(body.PresetID); err != nil {
@@ -562,11 +572,39 @@ func (s *server) reserveIdempotentCreateName(ctx context.Context, namespace stri
 		if strings.TrimSpace(existing.Data[idempotencyReservationHashKey]) != fingerprint {
 			return "", false, fmt.Errorf("idempotencyKey already used with a different request")
 		}
+		done := strings.EqualFold(strings.TrimSpace(existing.Data[idempotencyReservationDoneKey]), "true")
 		name := strings.TrimSpace(existing.Data[idempotencyReservationNameKey])
+		if done {
+			if name == "" {
+				name = desiredName
+			}
+			return name, true, nil
+		}
 		if name == "" {
 			name = desiredName
 		}
-		done := strings.EqualFold(strings.TrimSpace(existing.Data[idempotencyReservationDoneKey]), "true")
+		if name != "" {
+			reservedSpritz, getErr := s.findReservedSpritz(ctx, namespace, name)
+			if getErr != nil {
+				return "", false, getErr
+			}
+			if reservedSpritz != nil && strings.TrimSpace(reservedSpritz.Annotations[idempotencyHashAnnotationKey]) != fingerprint {
+				name = desiredName
+			}
+		}
+		if name == "" {
+			name = desiredName
+		}
+		if name != strings.TrimSpace(existing.Data[idempotencyReservationNameKey]) {
+			if existing.Data == nil {
+				existing.Data = map[string]string{}
+			}
+			existing.Data[idempotencyReservationNameKey] = name
+			existing.Data[idempotencyReservationDoneKey] = "false"
+			if updateErr := s.client.Update(ctx, existing); updateErr != nil {
+				return "", false, updateErr
+			}
+		}
 		return name, done, nil
 	}
 	return desiredName, false, nil
