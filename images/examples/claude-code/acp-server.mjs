@@ -465,12 +465,19 @@ class ACPRuntime {
     this.socket = null;
   }
 
-  attach(socket) {
-    if (this.socket && this.socket.readyState === WEBSOCKET_OPEN) {
-      this.socket.close(1001, "ACP client replaced");
+  claimSocket(socket) {
+    if (this.socket === socket) {
+      return;
     }
-    this.ensureStarted();
+    const previousSocket = this.socket;
     this.socket = socket;
+    if (previousSocket?.readyState === WEBSOCKET_OPEN) {
+      previousSocket.close(1001, "ACP client replaced");
+    }
+  }
+
+  attach(socket) {
+    this.ensureStarted();
     socket.on("message", async (data) => {
       let payload = null;
       try {
@@ -486,6 +493,7 @@ class ACPRuntime {
         }
         if (payload.method === "session/new" && payload.id !== undefined) {
           await this.ensureInitialized();
+          this.claimSocket(socket);
           const result = await this.requestChild("session/new", payload.params);
           this.rememberSession(result, { replayable: false });
           this.sendRPCResponse(socket, payload.id, { result });
@@ -493,6 +501,7 @@ class ACPRuntime {
         }
         if (payload.method === "session/load" && payload.id !== undefined) {
           await this.ensureInitialized();
+          this.claimSocket(socket);
           const cached = this.cachedLoadResult(payload.params?.sessionId);
           if (cached) {
             this.sendRPCResponse(socket, payload.id, { result: cached });
@@ -505,12 +514,14 @@ class ACPRuntime {
         }
         if (payload.method === "session/prompt" && payload.id !== undefined) {
           await this.ensureInitialized();
+          this.claimSocket(socket);
           const result = await this.requestChild("session/prompt", payload.params);
           this.markSessionReplayable(payload.params?.sessionId);
           this.sendRPCResponse(socket, payload.id, { result });
           return;
         }
         await this.ensureInitialized();
+        this.claimSocket(socket);
         if (this.child?.stdin && !this.child.stdin.destroyed) {
           this.child.stdin.write(ensureLine(JSON.stringify(payload)));
         }
