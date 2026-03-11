@@ -15,7 +15,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	spritzv1 "spritz.sh/operator/api/v1"
@@ -769,63 +768,52 @@ func (s *server) idempotencyReservationNamespace() string {
 	return "default"
 }
 
+func (s *server) idempotencyReservations() *idempotencyReservationStore {
+	return newIdempotencyReservationStore(s.client, s.idempotencyReservationNamespace())
+}
+
 func (s *server) getIdempotencyReservation(ctx context.Context, actorID, key, fingerprint string) (string, bool, string, bool, error) {
-	if strings.TrimSpace(actorID) == "" || strings.TrimSpace(key) == "" {
-		return "", false, "", false, nil
-	}
-	current := &corev1.ConfigMap{}
-	if err := s.client.Get(ctx, clientKey(s.idempotencyReservationNamespace(), idempotencyReservationName(actorID, key)), current); err != nil {
-		if apierrors.IsNotFound(err) {
-			return "", false, "", false, nil
-		}
+	record, found, err := s.idempotencyReservations().get(ctx, actorID, key)
+	if err != nil {
 		return "", false, "", false, err
 	}
-	if strings.TrimSpace(current.Data[idempotencyReservationHashKey]) != strings.TrimSpace(fingerprint) {
+	if !found {
+		return "", false, "", false, nil
+	}
+	if strings.TrimSpace(record.fingerprint) != strings.TrimSpace(fingerprint) {
 		return "", false, "", false, errIdempotencyUsedDifferent
 	}
-	return strings.TrimSpace(current.Data[idempotencyReservationNameKey]),
-		strings.EqualFold(strings.TrimSpace(current.Data[idempotencyReservationDoneKey]), "true"),
-		strings.TrimSpace(current.Data[idempotencyReservationBodyKey]),
-		true,
-		nil
+	return record.name, record.completed, record.payload, true, nil
 }
 
 func (s *server) reserveIdempotentCreateName(ctx context.Context, namespace string, principal principal, key, desiredName string, state provisionerIdempotencyState) (string, bool, string, error) {
 	if strings.TrimSpace(key) == "" {
 		return desiredName, false, strings.TrimSpace(state.resolvedPayload), nil
 	}
-	reservationName := idempotencyReservationName(principal.ID, key)
-	reservationNamespace := s.idempotencyReservationNamespace()
-	record := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      reservationName,
-			Namespace: reservationNamespace,
-			Labels: map[string]string{
-				actorLabelKey:       actorLabelValue(principal.ID),
-				idempotencyLabelKey: idempotencyLabelValue(key),
-			},
-		},
-		Data: map[string]string{
-			idempotencyReservationHashKey: state.canonicalFingerprint,
-			idempotencyReservationNameKey: desiredName,
-			idempotencyReservationDoneKey: "false",
-			idempotencyReservationBodyKey: strings.TrimSpace(state.resolvedPayload),
-		},
+	store := s.idempotencyReservations()
+	record := idempotencyReservationRecord{
+		fingerprint: state.canonicalFingerprint,
+		name:        desiredName,
+		payload:     strings.TrimSpace(state.resolvedPayload),
+		completed:   false,
 	}
-	if err := s.client.Create(ctx, record); err != nil {
+	if err := store.create(ctx, principal.ID, key, record); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
 			return "", false, "", err
 		}
-		existing := &corev1.ConfigMap{}
-		if getErr := s.client.Get(ctx, clientKey(reservationNamespace, reservationName), existing); getErr != nil {
+		existing, found, getErr := store.get(ctx, principal.ID, key)
+		if getErr != nil {
 			return "", false, "", getErr
 		}
-		if strings.TrimSpace(existing.Data[idempotencyReservationHashKey]) != strings.TrimSpace(state.canonicalFingerprint) {
+		if !found {
+			return "", false, "", apierrors.NewNotFound(corev1.Resource("configmaps"), idempotencyReservationName(principal.ID, key))
+		}
+		if strings.TrimSpace(existing.fingerprint) != strings.TrimSpace(state.canonicalFingerprint) {
 			return "", false, "", errIdempotencyUsedDifferent
 		}
-		done := strings.EqualFold(strings.TrimSpace(existing.Data[idempotencyReservationDoneKey]), "true")
-		name := strings.TrimSpace(existing.Data[idempotencyReservationNameKey])
-		storedPayload := strings.TrimSpace(existing.Data[idempotencyReservationBodyKey])
+		done := existing.completed
+		name := existing.name
+		storedPayload := existing.payload
 		if storedPayload == "" {
 			return "", false, "", errIdempotencyIncompatiblePending
 		}
@@ -854,21 +842,15 @@ func (s *server) completeIdempotencyReservation(ctx context.Context, actorID, ke
 	if strings.TrimSpace(actorID) == "" || strings.TrimSpace(key) == "" || spritz == nil {
 		return nil
 	}
-	reservationName := idempotencyReservationName(actorID, key)
-	reservationNamespace := s.idempotencyReservationNamespace()
-	current := &corev1.ConfigMap{}
-	if err := s.client.Get(ctx, clientKey(reservationNamespace, reservationName), current); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return err
+	_, err := s.idempotencyReservations().update(ctx, actorID, key, func(record *idempotencyReservationRecord) error {
+		record.name = spritz.Name
+		record.completed = true
+		return nil
+	})
+	if apierrors.IsNotFound(err) {
+		return nil
 	}
-	if current.Data == nil {
-		current.Data = map[string]string{}
-	}
-	current.Data[idempotencyReservationNameKey] = spritz.Name
-	current.Data[idempotencyReservationDoneKey] = "true"
-	return s.client.Update(ctx, current)
+	return err
 }
 
 func (s *server) setIdempotencyReservationName(ctx context.Context, actorID, key, failedName, proposedName string, state provisionerIdempotencyState) (string, bool, string, error) {
@@ -877,80 +859,56 @@ func (s *server) setIdempotencyReservationName(ctx context.Context, actorID, key
 	if strings.TrimSpace(actorID) == "" || strings.TrimSpace(key) == "" {
 		return proposedName, false, strings.TrimSpace(state.resolvedPayload), nil
 	}
-	reservationName := idempotencyReservationName(actorID, key)
-	reservationNamespace := s.idempotencyReservationNamespace()
 	selectedName := proposedName
 	completed := false
 	selectedPayload := strings.TrimSpace(state.resolvedPayload)
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		current := &corev1.ConfigMap{}
-		if err := s.client.Get(ctx, clientKey(reservationNamespace, reservationName), current); err != nil {
-			if apierrors.IsNotFound(err) {
-				selectedName = proposedName
-				completed = false
-				selectedPayload = strings.TrimSpace(state.resolvedPayload)
-				return nil
-			}
-			return err
-		}
-		if strings.TrimSpace(current.Data[idempotencyReservationHashKey]) != strings.TrimSpace(state.canonicalFingerprint) {
+	_, err := s.idempotencyReservations().update(ctx, actorID, key, func(record *idempotencyReservationRecord) error {
+		if strings.TrimSpace(record.fingerprint) != strings.TrimSpace(state.canonicalFingerprint) {
 			return errIdempotencyUsedDifferent
 		}
-		storedName := strings.TrimSpace(current.Data[idempotencyReservationNameKey])
-		done := strings.EqualFold(strings.TrimSpace(current.Data[idempotencyReservationDoneKey]), "true")
-		storedPayload := strings.TrimSpace(current.Data[idempotencyReservationBodyKey])
-		if storedPayload == "" {
+		if strings.TrimSpace(record.payload) == "" {
 			return errIdempotencyIncompatiblePending
 		}
-		if done {
-			if storedName == "" {
-				storedName = proposedName
+		if record.completed {
+			if strings.TrimSpace(record.name) == "" {
+				record.name = proposedName
 			}
-			selectedName = storedName
+			selectedName = record.name
 			completed = true
-			selectedPayload = storedPayload
+			selectedPayload = record.payload
 			return nil
 		}
-		if storedName == "" {
+		if strings.TrimSpace(record.name) == "" {
 			if proposedName == "" {
 				selectedName = ""
 				completed = false
-				selectedPayload = storedPayload
+				selectedPayload = record.payload
 				return nil
 			}
-			if current.Data == nil {
-				current.Data = map[string]string{}
-			}
-			current.Data[idempotencyReservationNameKey] = proposedName
-			current.Data[idempotencyReservationDoneKey] = "false"
-			if err := s.client.Update(ctx, current); err != nil {
-				return err
-			}
+			record.name = proposedName
+			record.completed = false
 			selectedName = proposedName
 			completed = false
-			selectedPayload = storedPayload
+			selectedPayload = record.payload
 			return nil
 		}
-		if failedName == "" || storedName != failedName || proposedName == "" || proposedName == storedName {
-			selectedName = storedName
+		if failedName == "" || record.name != failedName || proposedName == "" || proposedName == record.name {
+			selectedName = record.name
 			completed = false
-			selectedPayload = storedPayload
+			selectedPayload = record.payload
 			return nil
 		}
-		if current.Data == nil {
-			current.Data = map[string]string{}
-		}
-		current.Data[idempotencyReservationNameKey] = proposedName
-		current.Data[idempotencyReservationDoneKey] = "false"
-		if err := s.client.Update(ctx, current); err != nil {
-			return err
-		}
+		record.name = proposedName
+		record.completed = false
 		selectedName = proposedName
 		completed = false
-		selectedPayload = storedPayload
+		selectedPayload = record.payload
 		return nil
 	})
 	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return proposedName, false, strings.TrimSpace(state.resolvedPayload), nil
+		}
 		return "", false, "", err
 	}
 	if strings.TrimSpace(selectedPayload) == "" {

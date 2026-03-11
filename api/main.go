@@ -349,90 +349,18 @@ func (s *server) createSpritz(c echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return writeError(c, http.StatusBadRequest, "invalid json")
 	}
-	body.Name = strings.TrimSpace(body.Name)
-	body.NamePrefix = strings.TrimSpace(body.NamePrefix)
-	applyTopLevelCreateFields(&body)
-	if principal.isService() {
-		if err := validateProvisionerRequestSurface(&body); err != nil {
-			return writeError(c, http.StatusBadRequest, err.Error())
-		}
-	}
-
-	namespace, err := s.resolveSpritzNamespace(body.Namespace)
+	normalized, err := s.normalizeCreateRequest(c.Request().Context(), principal, body)
 	if err != nil {
-		return writeError(c, http.StatusForbidden, err.Error())
+		return writeCreateRequestError(c, err)
 	}
-	requestedNamespace := s.namespaceOverrideRequested(body.Namespace, namespace)
-
-	owner, err := normalizeCreateOwner(&body, principal, s.auth.enabled())
-	if err != nil {
-		return writeError(c, http.StatusBadRequest, err.Error())
-	}
-	body.Spec.Owner = owner
-	provisionerFingerprintBody := body
-
-	requestedImage := strings.TrimSpace(body.Spec.Image) != ""
-	requestedRepo := body.Spec.Repo != nil || len(body.Spec.Repos) > 0
-	s.applyProvisionerDefaultPreset(&body, principal)
-	if _, err := s.applyCreatePreset(&body); err != nil {
-		return writeError(c, http.StatusBadRequest, err.Error())
-	}
-
-	userConfigKeys, userConfigPayload, err := parseUserConfig(body.UserConfig)
-	if err != nil {
-		return writeError(c, http.StatusBadRequest, err.Error())
-	}
-	if principal.isService() && len(userConfigKeys) > 0 {
-		return writeError(c, http.StatusBadRequest, "userConfig is not allowed for service principals")
-	}
-	var normalizedUserConfig json.RawMessage
-	if len(userConfigKeys) > 0 {
-		normalized, err := normalizeUserConfig(s.userConfigPolicy, userConfigKeys, userConfigPayload)
-		if err != nil {
-			return writeError(c, http.StatusBadRequest, err.Error())
-		}
-		userConfigPayload = normalized
-		encodedUserConfig, err := json.Marshal(userConfigPayload)
-		if err != nil {
-			return writeError(c, http.StatusBadRequest, "invalid userConfig")
-		}
-		normalizedUserConfig = encodedUserConfig
-		applyUserConfig(&body.Spec, userConfigKeys, userConfigPayload)
-		if _, ok := userConfigKeys["image"]; ok {
-			requestedImage = strings.TrimSpace(body.Spec.Image) != ""
-		}
-		if _, ok := userConfigKeys["repo"]; ok {
-			requestedRepo = body.Spec.Repo != nil || len(body.Spec.Repos) > 0
-		}
-	}
-
-	if body.Spec.Image == "" {
-		return writeError(c, http.StatusBadRequest, "spec.image is required")
-	}
-	if body.Spec.Repo != nil && len(body.Spec.Repos) > 0 {
-		return writeError(c, http.StatusBadRequest, "spec.repo cannot be set when spec.repos is provided")
-	}
-	if body.Spec.Repo != nil {
-		if err := validateRepoDir(body.Spec.Repo.Dir); err != nil {
-			return writeError(c, http.StatusBadRequest, err.Error())
-		}
-	}
-	for _, repo := range body.Spec.Repos {
-		if err := validateRepoDir(repo.Dir); err != nil {
-			return writeError(c, http.StatusBadRequest, err.Error())
-		}
-	}
-	if len(body.Spec.SharedMounts) > 0 {
-		normalized, err := normalizeSharedMounts(body.Spec.SharedMounts)
-		if err != nil {
-			return writeError(c, http.StatusBadRequest, err.Error())
-		}
-		body.Spec.SharedMounts = normalized
-	}
-
-	nameProvided := body.Name != ""
+	body = normalized.body
+	namespace := normalized.namespace
+	owner := normalized.owner
+	userConfigKeys := normalized.userConfigKeys
+	userConfigPayload := normalized.userConfigPayload
+	nameProvided := normalized.nameProvided
 	var nameGenerator func() string
-	requestedNamePrefix := strings.TrimSpace(provisionerFingerprintBody.NamePrefix)
+	requestedNamePrefix := normalized.requestedNamePrefix
 	buildNameGenerator := func(resolved createRequest) error {
 		namePrefix := requestedNamePrefix
 		if restoredNamePrefix := strings.TrimSpace(resolved.NamePrefix); restoredNamePrefix != "" {
@@ -466,11 +394,11 @@ func (s *server) createSpritz(c echo.Context) error {
 			principal,
 			namespace,
 			&body,
-			provisionerFingerprintBody,
-			normalizedUserConfig,
-			requestedImage,
-			requestedRepo,
-			requestedNamespace,
+			normalized.fingerprintRequest,
+			normalized.normalizedUserConfig,
+			normalized.requestedImage,
+			normalized.requestedRepo,
+			normalized.requestedNamespace,
 		)
 		if err := provisionerTx.prepare(); err != nil {
 			return writeProvisionerCreateError(c, err)
