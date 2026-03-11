@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -44,6 +45,12 @@ const (
 	defaultProvisionerSource      = "external"
 	defaultProvisionerIdleTTL     = 24 * time.Hour
 	defaultProvisionerMaxTTL      = 7 * 24 * time.Hour
+)
+
+var (
+	errIdempotencyUsed                = errors.New("idempotencyKey already used")
+	errIdempotencyUsedDifferent       = errors.New("idempotencyKey already used with a different request")
+	errIdempotencyIncompatiblePending = errors.New("idempotencyKey already used by an incompatible pending request")
 )
 
 type runtimePreset struct {
@@ -774,7 +781,7 @@ func (s *server) getIdempotencyReservation(ctx context.Context, actorID, key, fi
 		return "", false, "", false, err
 	}
 	if strings.TrimSpace(current.Data[idempotencyReservationHashKey]) != strings.TrimSpace(fingerprint) {
-		return "", false, "", false, fmt.Errorf("idempotencyKey already used with a different request")
+		return "", false, "", false, errIdempotencyUsedDifferent
 	}
 	return strings.TrimSpace(current.Data[idempotencyReservationNameKey]),
 		strings.EqualFold(strings.TrimSpace(current.Data[idempotencyReservationDoneKey]), "true"),
@@ -814,13 +821,13 @@ func (s *server) reserveIdempotentCreateName(ctx context.Context, namespace stri
 			return "", false, "", getErr
 		}
 		if strings.TrimSpace(existing.Data[idempotencyReservationHashKey]) != strings.TrimSpace(state.canonicalFingerprint) {
-			return "", false, "", fmt.Errorf("idempotencyKey already used with a different request")
+			return "", false, "", errIdempotencyUsedDifferent
 		}
 		done := strings.EqualFold(strings.TrimSpace(existing.Data[idempotencyReservationDoneKey]), "true")
 		name := strings.TrimSpace(existing.Data[idempotencyReservationNameKey])
 		storedPayload := strings.TrimSpace(existing.Data[idempotencyReservationBodyKey])
 		if storedPayload == "" {
-			return "", false, "", fmt.Errorf("idempotencyKey already used by an incompatible pending request")
+			return "", false, "", errIdempotencyIncompatiblePending
 		}
 		if done {
 			if name == "" {
@@ -887,13 +894,13 @@ func (s *server) setIdempotencyReservationName(ctx context.Context, actorID, key
 			return err
 		}
 		if strings.TrimSpace(current.Data[idempotencyReservationHashKey]) != strings.TrimSpace(state.canonicalFingerprint) {
-			return fmt.Errorf("idempotencyKey already used with a different request")
+			return errIdempotencyUsedDifferent
 		}
 		storedName := strings.TrimSpace(current.Data[idempotencyReservationNameKey])
 		done := strings.EqualFold(strings.TrimSpace(current.Data[idempotencyReservationDoneKey]), "true")
 		storedPayload := strings.TrimSpace(current.Data[idempotencyReservationBodyKey])
 		if storedPayload == "" {
-			return fmt.Errorf("idempotencyKey already used by an incompatible pending request")
+			return errIdempotencyIncompatiblePending
 		}
 		if done {
 			if storedName == "" {
