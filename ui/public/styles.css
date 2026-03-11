@@ -59,7 +59,7 @@ header p {
   color: #8a1f1f;
 }
 
-.notice[data-kind="info"] {
+.notice[data-type="info"] {
   background: rgba(55, 130, 255, 0.12);
   border-color: rgba(55, 130, 255, 0.3);
   color: #1c3f8a;
@@ -90,7 +90,7 @@ header p {
   pointer-events: auto;
 }
 
-.toast[data-kind="info"] {
+.toast[data-type="info"] {
   border-color: rgba(88, 138, 255, 0.34);
 }
 

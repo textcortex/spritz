@@ -105,7 +105,7 @@ function buildHistoryToolCallUpdate(item) {
     title: `${toolName}`,
     status: "completed",
     rawInput,
-    kind: toolName,
+    type: toolName,
   };
 }
 

@@ -30,7 +30,7 @@ var spritzNameAdjectives = []string{
 	"good",
 	"grand",
 	"keen",
-	"kind",
+	"bright",
 	"lucky",
 	"marine",
 	"mellow",

@@ -90,7 +90,7 @@ test('ACP render adapter keeps commands out of transcript and upserts tool cards
 
   assert.equal(transcript.messages.length, 1);
   const toolCard = transcript.messages[0];
-  assert.equal(toolCard.kind, 'tool');
+  assert.equal(toolCard.type, 'tool');
   assert.equal(toolCard.title, 'Search workspace');
   assert.equal(toolCard.status, 'completed');
   assert.equal(toolCard.blocks.some((block) => block.type === 'details' && block.title === 'Input'), true);
@@ -147,7 +147,7 @@ test('ACP render adapter drops HTML error pages from assistant text updates', ()
   });
 
   assert.equal(transcript.messages.length, 0);
-  assert.equal(result?.toast?.kind, 'error');
+  assert.equal(result?.toast?.type, 'error');
   assert.match(result?.toast?.message || '', /502/i);
   assert.equal((result?.toast?.message || '').includes('<!DOCTYPE html>'), false);
 });
@@ -156,7 +156,7 @@ test('ACP render adapter sanitizes raw HTML error pages at render time', () => {
   const ACPRender = loadRenderModule();
 
   const node = ACPRender.renderMessage({
-    kind: 'assistant',
+    type: 'assistant',
     blocks: [
       {
         type: 'text',
@@ -198,10 +198,10 @@ test('ACP render adapter treats bootstrap replay chunks as historical messages',
   );
 
   assert.equal(transcript.messages.length, 2);
-  assert.equal(transcript.messages[0].kind, 'user');
+  assert.equal(transcript.messages[0].type, 'user');
   assert.equal(transcript.messages[0].streaming, false);
   assert.equal(transcript.messages[0].blocks[0].text, 'Earlier user message');
-  assert.equal(transcript.messages[1].kind, 'assistant');
+  assert.equal(transcript.messages[1].type, 'assistant');
   assert.equal(transcript.messages[1].streaming, false);
   assert.equal(transcript.messages[1].blocks[0].text, 'Earlier assistant message');
 });

@@ -578,7 +578,7 @@ Every create request should be auditable.
 Audit records should include:
 
 - actor principal id,
-- actor principal kind,
+- actor principal type,
 - owner id,
 - preset id,
 - namespace,
@@ -600,12 +600,12 @@ Expiry-driven deletion should also be auditable, including:
 
 ## Service Principal Representation
 
-Spritz should treat service principals as a first-class principal kind, not just
+Spritz should treat service principals as a first-class principal type, not just
 as "non-admin bearer callers".
 
 The long-term principal model should include:
 
-- `kind`: `human | service | admin`
+- `type`: `human | service | admin`
 - `subject`
 - `issuer`
 - `scopes`

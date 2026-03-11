@@ -130,15 +130,15 @@
     return htmlError?.text || raw;
   }
 
-  function showACPToast(page, message, kind = 'error') {
+  function showACPToast(page, message, type = 'error') {
     const normalized = normalizeACPToastMessage(message);
     if (!normalized) return;
     if (typeof page.deps.showToast === 'function') {
-      page.deps.showToast(normalized, kind);
+      page.deps.showToast(normalized, type);
       return;
     }
     if (typeof page.deps.showNotice === 'function') {
-      page.deps.showNotice(normalized, kind);
+      page.deps.showNotice(normalized, type);
     }
   }
 
@@ -293,9 +293,9 @@
     return page.transcript.messages.length > 0;
   }
 
-  function reportACPError(page, err, fallback, kind = 'error') {
+  function reportACPError(page, err, fallback, type = 'error') {
     if (isBenignACPError(err)) return;
-    showACPToast(page, err?.message || fallback, kind);
+    showACPToast(page, err?.message || fallback, type);
   }
 
   function getAgentTitle(agent) {
@@ -691,7 +691,7 @@
       historical: !page.bootstrapComplete,
     });
     if (result?.toast?.message) {
-      showACPToast(page, result.toast.message, result.toast.kind || 'error');
+      showACPToast(page, result.toast.message, result.toast.type || 'error');
     }
     if (result?.conversationTitle) {
       patchSelectedConversation(page, { title: result.conversationTitle }).catch(() => {});
