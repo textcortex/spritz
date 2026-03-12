@@ -8,7 +8,7 @@ metadata:
   name: spritz-api
   namespace: {{ .Values.api.namespace }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.api.replicaCount }}
   selector:
     matchLabels:
       app.kubernetes.io/name: spritz-api
@@ -27,6 +27,14 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ .Values.api.serviceAccountName }}
+      {{- with .Values.api.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: api
           image: {{ .Values.api.image }}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"spritz.sh/operator/sharedmounts"
 )
 
 func TestUploadRevisionSetsContentLength(t *testing.T) {
@@ -151,6 +154,59 @@ func TestLatestRejectsInvalidPayload(t *testing.T) {
 	_, _, err := client.latest(context.Background(), "owner", "mount")
 	if err == nil {
 		t.Fatal("expected error for invalid latest payload")
+	}
+}
+
+func TestRunInitRetriesTransientLatestTimeout(t *testing.T) {
+	originalRetryWindow := initRetryWindow
+	originalRetryBackoff := initRetryBackoff
+	originalLatestTTL := initLatestRequestTTL
+	originalApplyTTL := initApplyRequestTTL
+	t.Cleanup(func() {
+		initRetryWindow = originalRetryWindow
+		initRetryBackoff = originalRetryBackoff
+		initLatestRequestTTL = originalLatestTTL
+		initApplyRequestTTL = originalApplyTTL
+	})
+
+	initRetryWindow = 200 * time.Millisecond
+	initRetryBackoff = 5 * time.Millisecond
+	initLatestRequestTTL = 20 * time.Millisecond
+	initApplyRequestTTL = 50 * time.Millisecond
+
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/latest") {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		attempts++
+		if attempts == 1 {
+			time.Sleep(60 * time.Millisecond)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := &sharedMountClient{
+		baseURL: srv.URL,
+		token:   "token",
+		client:  srv.Client(),
+	}
+
+	state := []*sharedMountState{{
+		spec: sharedmounts.MountSpec{
+			Name:      "config",
+			Scope:     sharedmounts.ScopeOwner,
+			MountPath: t.TempDir(),
+		},
+	}}
+
+	if err := runInit(context.Background(), log.New(io.Discard, "", 0), client, "owner", state); err != nil {
+		t.Fatalf("runInit failed: %v", err)
+	}
+	if attempts < 2 {
+		t.Fatalf("expected init retry after transient timeout, got %d attempt(s)", attempts)
 	}
 }
 

@@ -116,6 +116,7 @@ operator:
         - ALL
 
 api:
+  replicaCount: 1
   image: spritz-api:latest
   imagePullPolicy: IfNotPresent
   rolloutAt: ""
@@ -123,6 +124,11 @@ api:
   serviceAccountName: spritz-api
   defaultAnnotations: ""
   podAnnotations: {}
+  affinity: {}
+  topologySpreadConstraints: []
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
   service:
     port: 8080
   auth:

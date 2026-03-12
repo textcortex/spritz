@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -35,6 +36,17 @@ const (
 	// Applying a remote revision causes local filesystem events. Suppress publishing
 	// briefly after apply so those events are not echoed back as new revisions.
 	publishSuppressAfterApply = 2 * time.Second
+)
+
+var (
+	initRetryWindow         = 2 * time.Minute
+	initRetryBackoff        = 2 * time.Second
+	initLatestRequestTTL    = 15 * time.Second
+	initApplyRequestTTL     = 60 * time.Second
+	sharedMountDialTimeout  = 5 * time.Second
+	sharedMountKeepAlive    = 30 * time.Second
+	sharedMountHeaderTTL    = 30 * time.Second
+	sharedMountIdleConnTTL  = 90 * time.Second
 )
 
 type sharedMountClient struct {
@@ -71,7 +83,19 @@ func main() {
 		token:   token,
 		// Long-polling calls can legitimately hold the connection open.
 		// Prefer per-request timeouts (via context) over a tight global client timeout.
-		client: &http.Client{Timeout: 5 * time.Minute},
+		client: &http.Client{
+			Timeout: 5 * time.Minute,
+			Transport: &http.Transport{
+				Proxy:                 http.ProxyFromEnvironment,
+				DialContext:           (&net.Dialer{Timeout: sharedMountDialTimeout, KeepAlive: sharedMountKeepAlive}).DialContext,
+				ForceAttemptHTTP2:     true,
+				MaxIdleConns:          100,
+				IdleConnTimeout:       sharedMountIdleConnTTL,
+				TLSHandshakeTimeout:   sharedMountDialTimeout,
+				ExpectContinueTimeout: 1 * time.Second,
+				ResponseHeaderTimeout: sharedMountHeaderTTL,
+			},
+		},
 	}
 
 	state := make([]*sharedMountState, 0, len(mounts))
@@ -134,21 +158,97 @@ func runInit(ctx context.Context, logger *log.Logger, client *sharedMountClient,
 		if err := ensureMountPath(state.spec.MountPath); err != nil {
 			return err
 		}
-		manifest, found, err := client.latest(ctx, ownerID, state.spec.Name)
-		if err != nil {
+		if err := runInitMount(ctx, logger, client, ownerID, state); err != nil {
 			return err
 		}
-		if !found {
-			continue
-		}
-		if err := applyRevision(ctx, client, ownerID, state.spec, manifest.Revision); err != nil {
-			return err
-		}
-		state.currentRevision = manifest.Revision
-		state.currentChecksum = manifest.Checksum
 	}
 	logger.Print("init complete")
 	return nil
+}
+
+func runInitMount(ctx context.Context, logger *log.Logger, client *sharedMountClient, ownerID string, state *sharedMountState) error {
+	deadline := time.Now().Add(initRetryWindow)
+	attempt := 0
+	for {
+		attempt++
+		err := runInitMountAttempt(ctx, client, ownerID, state)
+		if err == nil {
+			return nil
+		}
+		if !isRetryableInitError(err) || time.Now().After(deadline) {
+			return err
+		}
+		logger.Printf("init retry for %s attempt=%d after error: %v", state.spec.Name, attempt, err)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(initRetryBackoff):
+		}
+	}
+}
+
+func runInitMountAttempt(ctx context.Context, client *sharedMountClient, ownerID string, state *sharedMountState) error {
+	latestCtx, cancelLatest := context.WithTimeout(ctx, initLatestRequestTTL)
+	defer cancelLatest()
+
+	manifest, found, err := client.latest(latestCtx, ownerID, state.spec.Name)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+
+	applyCtx, cancelApply := context.WithTimeout(ctx, initApplyRequestTTL)
+	defer cancelApply()
+
+	if err := applyRevision(applyCtx, client, ownerID, state.spec, manifest.Revision); err != nil {
+		return err
+	}
+	state.currentRevision = manifest.Revision
+	state.currentChecksum = manifest.Checksum
+	return nil
+}
+
+type remoteHTTPError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *remoteHTTPError) Error() string {
+	return e.Message
+}
+
+func isRetryableInitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		if errors.Is(urlErr.Err, context.DeadlineExceeded) {
+			return true
+		}
+		if errors.As(urlErr.Err, &netErr) && netErr.Timeout() {
+			return true
+		}
+	}
+	var httpErr *remoteHTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.StatusCode == http.StatusTooManyRequests || httpErr.StatusCode >= http.StatusInternalServerError
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "i/o timeout") ||
+		strings.Contains(message, "connection reset by peer") ||
+		strings.Contains(message, "connection refused") ||
+		strings.Contains(message, "no route to host") ||
+		strings.Contains(message, "unexpected eof")
 }
 
 func runSidecar(ctx context.Context, logger *log.Logger, client *sharedMountClient, ownerID string, mounts []*sharedMountState) {
@@ -876,7 +976,10 @@ func (c *sharedMountClient) latest(ctx context.Context, ownerID, mount string) (
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return sharedmounts.LatestManifest{}, false, fmt.Errorf("latest fetch failed: %s", strings.TrimSpace(string(body)))
+		return sharedmounts.LatestManifest{}, false, &remoteHTTPError{
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("latest fetch failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(body))),
+		}
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -985,7 +1088,10 @@ func (c *sharedMountClient) downloadRevision(ctx context.Context, ownerID, mount
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("revision fetch failed: %s", strings.TrimSpace(string(body)))
+		return &remoteHTTPError{
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("revision fetch failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(body))),
+		}
 	}
 	_, err = io.Copy(dest, resp.Body)
 	return err
@@ -1016,7 +1122,10 @@ func (c *sharedMountClient) uploadRevision(ctx context.Context, ownerID, mount, 
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("revision upload failed: %s", strings.TrimSpace(string(body)))
+		return &remoteHTTPError{
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("revision upload failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(body))),
+		}
 	}
 	return nil
 }
@@ -1046,7 +1155,10 @@ func (c *sharedMountClient) updateLatest(ctx context.Context, ownerID, mount str
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("latest update failed: %s", strings.TrimSpace(string(body)))
+		return &remoteHTTPError{
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("latest update failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(body))),
+		}
 	}
 	return nil
 }
