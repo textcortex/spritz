@@ -283,7 +283,6 @@ Properties:
 - The resolver MUST return at most one owner.
 - The resolver MUST NOT perform fuzzy matching by email, name, or handle.
 - The resolver is the source of truth for external-to-owner mappings.
-- Spritz MAY cache results briefly, but the resolver remains authoritative.
 - The resolved owner ID is an internal backend value for Spritz and does not
   need to be exposed to the bot.
 
@@ -327,10 +326,6 @@ Recommended service capabilities:
 
 - `spritz.external_identities.resolve_via_create`
 
-Optional future capability:
-
-- `spritz.external_identities.check`
-
 Rules:
 
 - Resolver namespace MUST be bound to the authenticated service principal.
@@ -339,19 +334,18 @@ Rules:
 - Provider allowlists and tenant allowlists SHOULD be policy-controlled per
   namespace.
 
-## Caching and Consistency
+## V1 Consistency Model
 
 Spritz should treat the external resolver as the source of truth.
 
-Safe default behavior:
+Safe default behavior for v1:
 
 - no durable copy of identity mappings in Spritz core
-- optional short positive cache
-- optional shorter negative cache
-- cache key includes namespace, provider, tenant, and subject
+- no cache required
+- synchronous resolution during create
 
 If a mapping changes in the external system, future creates should follow the
-new resolver answer after cache expiry.
+current resolver answer.
 
 Existing workspaces keep their existing owner. Resolution affects only future
 create operations.
@@ -371,18 +365,6 @@ Provider guidance:
 Spritz core should not attempt to normalize Teams identifiers itself. The Teams
 adapter or authoritative resolver must choose one canonical subject format and
 keep it consistent.
-
-## Optional Future Extension
-
-If a deployment later wants lower latency or fewer synchronous dependencies, it
-may add a signed owner assertion flow on top of this architecture.
-
-That would allow a trusted external resolver to mint a short-lived signed
-assertion that Spritz can verify locally during create.
-
-This is an extension, not part of the stable v1 contract. The stable core
-contract should remain synchronous external resolution through a configured
-resolver.
 
 ## Backward Compatibility
 
@@ -407,10 +389,7 @@ The architecture is complete when Spritz can demonstrate all of these flows:
 3. A forbidden namespace or provider fails with `external_identity_forbidden`.
 4. An ambiguous resolver answer fails with `external_identity_ambiguous`.
 5. A resolver outage fails with `external_identity_resolution_unavailable`.
-6. A positive cache hit still provisions for the same owner.
-7. A mapping change in the external resolver affects future creates after cache
-   expiry.
-8. The bot never sends an internal owner ID during the normal provisioning path.
+6. The bot never sends an internal owner ID during the normal provisioning path.
 
 ## Recommended Sequencing
 
@@ -428,17 +407,18 @@ The architecture is complete when Spritz can demonstrate all of these flows:
 - Add typed create-time error mapping.
 - Keep resolved owner IDs internal to Spritz after resolver lookup.
 
-### Phase 3 - Reliability and observability
+## Potential Future Features
 
-- Add short TTL caching.
-- Add metrics and structured audit logs for resolution attempts.
-- Add timeout, retry, and circuit-breaker policy.
-
-### Phase 4 - Optional assertion-based optimization
-
-- Add signed owner assertions only if synchronous resolution becomes a proven
-  bottleneck.
-- Keep the public `ownerRef` contract unchanged.
+- A separate `spritz.external_identities.check` capability or debug endpoint if
+  deployments later need preflight inspection outside create.
+- A short positive cache if synchronous resolver lookups become a proven
+  performance bottleneck. Avoid negative caching unless there is a demonstrated
+  need.
+- Additional reliability controls such as timeout tuning, retries,
+  circuit-breakers, and richer resolution metrics.
+- A signed owner assertion flow if a deployment later wants Spritz to verify a
+  short-lived resolver-signed identity result locally instead of performing a
+  live resolver call during every create.
 
 ## References
 
