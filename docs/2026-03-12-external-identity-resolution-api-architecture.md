@@ -21,6 +21,10 @@ Spritz stays provider-agnostic and product-agnostic. It accepts a normalized
 external owner reference, derives the caller namespace from authentication, and
 asks a configured resolver which Spritz owner should own the workspace.
 
+The external caller sends only the external platform identity it already has,
+such as a Microsoft Teams user ID. Internal Spritz owner identifiers remain a
+backend concern and do not need to cross the bot boundary.
+
 This architecture extends the external provisioner model defined in
 [2026-03-11-external-provisioner-and-service-principal-architecture.md](2026-03-11-external-provisioner-and-service-principal-architecture.md)
 and the portable auth model defined in
@@ -34,7 +38,7 @@ and the portable auth model defined in
 - Make the public create API stable across Microsoft Teams, Slack, Discord, and
   future providers.
 - Keep ownership resolution narrow, explicit, auditable, and deterministic.
-- Avoid leaking internal owner IDs to external bots when they do not need them.
+- Ensure external bots never need to send or learn internal owner IDs.
 - Support enterprise providers where identity is tenant-scoped.
 
 ## Non-goals
@@ -71,6 +75,14 @@ Spritz treats provider user IDs as opaque strings.
 
 Canonicalization belongs to the provider adapter or external resolver, not to
 Spritz core.
+
+### Bots speak only in external IDs
+
+The bot should send only the provider identity it already knows, such as a
+Teams or Discord user ID plus tenant when required.
+
+It should not collect, store, or forward internal Spritz owner IDs as part of
+the normal provisioning path.
 
 ### Enterprise providers need tenant scope
 
@@ -154,7 +166,8 @@ Components:
 
 Flow:
 
-1. The bot calls `POST /spritzes` with `ownerRef.type=external`.
+1. The bot calls `POST /spritzes` with `ownerRef.type=external` and the normal
+   external user identity it already has.
 2. Spritz authenticates the service principal.
 3. Spritz derives the resolver namespace from that principal.
 4. Spritz validates that the provider and tenant are allowed for that namespace.
@@ -162,6 +175,9 @@ Flow:
 6. The resolver returns either `resolved`, `unresolved`, `forbidden`, or
    `ambiguous`.
 7. Spritz either provisions for the resolved owner or returns a typed error.
+
+The bot never handles the internal owner ID directly. That translation happens
+inside the trusted backend path between Spritz and the resolver.
 
 ## Stable Public API
 
@@ -189,10 +205,13 @@ Rules:
 - If `ownerRef.type=owner`, Spritz uses the explicit owner ID.
 - If `ownerRef.type=external`, Spritz MUST resolve the owner through the
   configured resolver before create.
+- New bot and automation integrations SHOULD use `ownerRef.type=external`.
 - Create MUST NOT require the caller to know the internal owner ID.
 - The caller MUST NOT provide `resolverNamespace` or `issuer` in the request
   body.
 - Spritz MUST use the resolver namespace bound to the authenticated principal.
+- Spritz MUST keep the resolved internal owner ID on the backend side of the
+  create flow.
 
 ## External Resolver Contract
 
@@ -265,6 +284,8 @@ Properties:
 - The resolver MUST NOT perform fuzzy matching by email, name, or handle.
 - The resolver is the source of truth for external-to-owner mappings.
 - Spritz MAY cache results briefly, but the resolver remains authoritative.
+- The resolved owner ID is an internal backend value for Spritz and does not
+  need to be exposed to the bot.
 
 ## Public Error Model
 
@@ -370,7 +391,8 @@ The stable migration path is:
 1. Keep `ownerId` as-is.
 2. Add `ownerRef`.
 3. Add resolver-backed handling for `ownerRef.type=external`.
-4. Keep direct owner-ID creates for existing clients.
+4. Keep direct owner-ID creates only for existing clients that already use them.
+5. Move new bot integrations to external-ID-only create requests.
 
 This avoids a breaking change to current provisioner clients while giving new
 integrations a portable path that does not require manual owner-ID exchange.
@@ -388,6 +410,7 @@ The architecture is complete when Spritz can demonstrate all of these flows:
 6. A positive cache hit still provisions for the same owner.
 7. A mapping change in the external resolver affects future creates after cache
    expiry.
+8. The bot never sends an internal owner ID during the normal provisioning path.
 
 ## Recommended Sequencing
 
@@ -396,12 +419,14 @@ The architecture is complete when Spritz can demonstrate all of these flows:
 - Add `ownerRef` to create requests.
 - Derive resolver namespace from authenticated service principal.
 - Define the internal resolver interface and typed result states.
+- Make external-ID-only bot calls the preferred integration path.
 
 ### Phase 2 - Resolver-backed provisioning
 
 - Implement the HTTP resolver adapter.
 - Add provider and tenant policy validation.
 - Add typed create-time error mapping.
+- Keep resolved owner IDs internal to Spritz after resolver lookup.
 
 ### Phase 3 - Reliability and observability
 
