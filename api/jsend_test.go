@@ -86,3 +86,32 @@ func TestWriteErrorUsesErrorForServerErrors(t *testing.T) {
 		t.Fatalf("expected code %d, got %d", http.StatusInternalServerError, resp.Code)
 	}
 }
+
+func TestWriteJSendFailDataUsesErrorForServerErrors(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	payload := map[string]any{
+		"message": "resolver unavailable",
+		"error":   "external_identity_resolution_unavailable",
+	}
+	if err := writeJSendFailData(c, http.StatusServiceUnavailable, payload); err != nil {
+		t.Fatalf("writeJSendFailData failed: %v", err)
+	}
+
+	var resp jsendResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Status != "error" {
+		t.Fatalf("expected status error, got %q", resp.Status)
+	}
+	if resp.Message != "resolver unavailable" {
+		t.Fatalf("expected message to be propagated, got %q", resp.Message)
+	}
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected code %d, got %d", http.StatusServiceUnavailable, resp.Code)
+	}
+}

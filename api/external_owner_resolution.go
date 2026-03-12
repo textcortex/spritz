@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -149,6 +150,9 @@ func newExternalOwnerConfig() (externalOwnerConfig, error) {
 		if urlValue == "" {
 			return externalOwnerConfig{}, fmt.Errorf("invalid SPRITZ_EXTERNAL_OWNER_POLICIES_JSON: policies[%d].url is required", index)
 		}
+		if _, err := validateExternalOwnerResolverURL(urlValue); err != nil {
+			return externalOwnerConfig{}, fmt.Errorf("invalid SPRITZ_EXTERNAL_OWNER_POLICIES_JSON: policies[%d].url %v", index, err)
+		}
 		allowedProviders := normalizeTokenSet(input.AllowedProviders)
 		if len(allowedProviders) == 0 {
 			return externalOwnerConfig{}, fmt.Errorf("invalid SPRITZ_EXTERNAL_OWNER_POLICIES_JSON: policies[%d].allowedProviders is required", index)
@@ -219,6 +223,20 @@ func resolveExternalOwnerAuthHeader(input externalOwnerPolicyInput) (string, err
 		return value, nil
 	}
 	return "Bearer " + value, nil
+}
+
+func validateExternalOwnerResolverURL(raw string) (*url.URL, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("is invalid: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("must use http or https")
+	}
+	if strings.TrimSpace(parsed.Host) == "" {
+		return nil, fmt.Errorf("must include a host")
+	}
+	return parsed, nil
 }
 
 func normalizeStringSet(values []string) map[string]struct{} {

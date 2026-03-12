@@ -1,6 +1,10 @@
 package main
 
-import "github.com/labstack/echo/v4"
+import (
+	"net/http"
+
+	"github.com/labstack/echo/v4"
+)
 
 type jsendResponse struct {
 	Status  string `json:"status"`
@@ -26,6 +30,14 @@ func writeJSendFail(c echo.Context, status int, message string) error {
 }
 
 func writeJSendFailData(c echo.Context, status int, payload any) error {
+	if status >= 500 {
+		return c.JSON(status, jsendResponse{
+			Status:  "error",
+			Message: jsendErrorMessage(payload, status),
+			Code:    status,
+			Data:    payload,
+		})
+	}
 	return c.JSON(status, jsendResponse{
 		Status: "fail",
 		Data:   payload,
@@ -41,4 +53,21 @@ func writeError(c echo.Context, status int, message string) error {
 		})
 	}
 	return writeJSendFail(c, status, message)
+}
+
+func jsendErrorMessage(payload any, status int) string {
+	if data, ok := payload.(map[string]any); ok {
+		if message, ok := data["message"].(string); ok && message != "" {
+			return message
+		}
+	}
+	if data, ok := payload.(map[string]string); ok {
+		if message, ok := data["message"]; ok && message != "" {
+			return message
+		}
+	}
+	if message := http.StatusText(status); message != "" {
+		return message
+	}
+	return "internal server error"
 }

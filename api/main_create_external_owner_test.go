@@ -543,6 +543,19 @@ func TestNewExternalOwnerConfigRejectsEmptyAuthHeaderEnv(t *testing.T) {
 	}
 }
 
+func TestNewExternalOwnerConfigRejectsMalformedResolverURL(t *testing.T) {
+	t.Setenv("SPRITZ_EXTERNAL_OWNER_SUBJECT_HASH_KEY", "test-external-owner-secret")
+	t.Setenv("SPRITZ_EXTERNAL_OWNER_POLICIES_JSON", `[{"principalId":"zenobot","url":"resolver.example.com/v1/external-owners/resolve","allowedProviders":["discord"]}]`)
+
+	_, err := newExternalOwnerConfig()
+	if err == nil {
+		t.Fatal("expected newExternalOwnerConfig to reject malformed resolver url")
+	}
+	if !strings.Contains(err.Error(), "url must use http or https") {
+		t.Fatalf("expected resolver url validation error, got %v", err)
+	}
+}
+
 func TestCreateRequestFingerprintCanonicalizesEquivalentOwnerInputs(t *testing.T) {
 	directFingerprint, err := createRequestFingerprint(createRequest{
 		OwnerID: "user-123",
