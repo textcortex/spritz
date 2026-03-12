@@ -9,6 +9,7 @@ import {
   buildSmokeToken,
   extractACPText,
   findFreePort,
+  isForbiddenFailure,
   joinACPTextChunks,
   parsePresetList,
   resolveSpzCommand,
@@ -218,10 +219,11 @@ async function startPortForward(namespace, serviceName, targetPort) {
   }
 }
 
-async function connectACP(localPort) {
+async function connectACP(localPort, timeoutSeconds) {
   const socket = new WebSocket(`ws://127.0.0.1:${localPort}/`);
   const pending = new Map();
   const updates = [];
+  const rpcTimeoutMs = Math.max(timeoutSeconds * 1000, 1000);
   socket.addEventListener('message', (event) => {
     const message = JSON.parse(String(event.data));
     if (message.id !== undefined && pending.has(message.id)) {
@@ -249,7 +251,7 @@ async function connectACP(localPort) {
           pending.delete(id);
           reject(new Error(`ACP request ${method} timed out`));
         }
-      }, 30000).unref?.();
+      }, rpcTimeoutMs).unref?.();
     });
   }
 
@@ -267,12 +269,12 @@ function buildPromptText(template, token) {
   return String(template || defaultPromptTemplate).replaceAll('{{token}}', token);
 }
 
-async function promptWorkspace(namespace, name, presetId, promptTemplate) {
+async function promptWorkspace(namespace, name, presetId, promptTemplate, timeoutSeconds) {
   const token = buildSmokeToken(presetId);
   const portForward = await startPortForward(namespace, name, 2529);
   let client;
   try {
-    client = await connectACP(portForward.localPort);
+    client = await connectACP(portForward.localPort, timeoutSeconds);
     const init = await client.rpc('init-1', 'initialize', {
       protocolVersion: 1,
       clientCapabilities: {},
@@ -324,12 +326,12 @@ async function promptWorkspace(namespace, name, presetId, promptTemplate) {
 
 async function ensureProvisionerDeny(spzCommand, env, namespace, createdName) {
   const listResult = await runSpz(spzCommand, ['list', '--namespace', namespace], { env });
-  if (listResult.code === 0) {
-    throw new Error(`service principal list should be denied, but succeeded:\n${listResult.stdout}`);
+  if (listResult.code === 0 || !isForbiddenFailure(listResult)) {
+    throw new Error(`service principal list should fail with forbidden, got:\n${listResult.stderr || listResult.stdout}`);
   }
   const deleteResult = await runSpz(spzCommand, ['delete', createdName, '--namespace', namespace], { env });
-  if (deleteResult.code === 0) {
-    throw new Error(`service principal delete should be denied, but succeeded for ${createdName}`);
+  if (deleteResult.code === 0 || !isForbiddenFailure(deleteResult)) {
+    throw new Error(`service principal delete should fail with forbidden for ${createdName}, got:\n${deleteResult.stderr || deleteResult.stdout}`);
   }
 }
 
@@ -432,6 +434,10 @@ async function main() {
         throw new Error(`idempotent replay failed for ${presetId}: ${JSON.stringify(replayResponse, null, 2)}`);
       }
 
+      if (index === 0) {
+        await ensureProvisionerDeny(spzCommand, env, namespace, workspaceName);
+      }
+
       if (index === 0 && options.presets.length > 1) {
         const mismatchPreset = options.presets.find((value) => value !== presetId);
         if (mismatchPreset) {
@@ -449,11 +455,10 @@ async function main() {
             throw new Error(`unexpected idempotency mismatch output:\n${mismatchOutput}`);
           }
         }
-        await ensureProvisionerDeny(spzCommand, env, namespace, workspaceName);
       }
 
       await waitForWorkspace(namespace, workspaceName, options.timeoutSeconds);
-      const acpResult = await promptWorkspace(namespace, workspaceName, presetId, options.promptTemplate);
+      const acpResult = await promptWorkspace(namespace, workspaceName, presetId, options.promptTemplate, options.timeoutSeconds);
       console.log(JSON.stringify({
         presetId,
         workspaceName,

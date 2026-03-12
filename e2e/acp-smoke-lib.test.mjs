@@ -5,6 +5,7 @@ import {
   buildIdempotencyKey,
   buildSmokeToken,
   extractACPText,
+  isForbiddenFailure,
   joinACPTextChunks,
   parsePresetList,
   resolveSpzCommand,
@@ -103,4 +104,10 @@ test('summarizeWorkspaceFailure reports image pull failures distinctly', () => {
     stage: 'image-pull',
     message: 'image not found',
   });
+});
+
+test('isForbiddenFailure only accepts explicit forbidden command failures', () => {
+  assert.equal(isForbiddenFailure({ code: 1, stderr: 'forbidden', stdout: '' }), true);
+  assert.equal(isForbiddenFailure({ code: 1, stderr: 'internal server error', stdout: '' }), false);
+  assert.equal(isForbiddenFailure({ code: 0, stderr: '', stdout: 'ok' }), false);
 });

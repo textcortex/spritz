@@ -188,6 +188,17 @@ export async function runCommand(command, args, options = {}) {
 }
 
 /**
+ * Determine whether a command failure clearly represents an authorization deny.
+ */
+export function isForbiddenFailure(result) {
+  if (!result || result.code === 0) {
+    return false;
+  }
+  const combined = `${result.stderr || ''}\n${result.stdout || ''}`;
+  return /forbidden/i.test(combined);
+}
+
+/**
  * Find an available localhost port for port-forwarding.
  */
 export async function findFreePort() {
