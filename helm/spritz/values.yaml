@@ -82,6 +82,7 @@ operator:
   imagePullPolicy: IfNotPresent
   rolloutAt: ""
   namespace: spritz-system
+  watchNamespaces: []
   serviceAccountName: spritz-operator
   clusterRoleName: spritz-operator
   clusterRoleBindingName: spritz-operator

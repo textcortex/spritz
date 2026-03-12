@@ -41,6 +41,10 @@ spec:
             - name: SPRITZ_TTL_GRACE_PERIOD
               value: {{ .Values.operator.ttlGracePeriod | quote }}
             {{- end }}
+            {{- if .Values.operator.watchNamespaces }}
+            - name: SPRITZ_OPERATOR_WATCH_NAMESPACES
+              value: {{ join "," .Values.operator.watchNamespaces | quote }}
+            {{- end }}
             {{- if .Values.operator.workspaceSizeLimit }}
             - name: SPRITZ_WORKSPACE_SIZE_LIMIT
               value: {{ .Values.operator.workspaceSizeLimit | quote }}
