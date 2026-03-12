@@ -18,6 +18,7 @@ function makeTempPackageRoot() {
 
 test("resolveAcpCliDependencies extracts the hashed bundles imported by acp-cli", () => {
   const dependencies = resolveAcpCliDependencies(`
+    import { loadConfig } from "./index.js";
     import { h as GATEWAY_CLIENT_NAMES, m as GATEWAY_CLIENT_MODES } from "./message-channel-abc123.js";
     import { p as GatewayClient, t as buildGatewayConnectionDetails } from "./call-def456.js";
     import { t as resolveGatewayConnectionAuth } from "./connection-auth-ghi789.js";
@@ -26,7 +27,39 @@ test("resolveAcpCliDependencies extracts the hashed bundles imported by acp-cli"
   assert.deepEqual(dependencies, {
     callBasename: "call-def456.js",
     connectionAuthBasename: "connection-auth-ghi789.js",
-    messageChannelBasename: "message-channel-abc123.js",
+    gatewayConstantsBasename: "message-channel-abc123.js",
+    loadConfigBasename: "index.js",
+  });
+});
+
+test("resolveAcpCliDependencies supports gateway constant imports in either order", () => {
+  const dependencies = resolveAcpCliDependencies(`
+    import { loadConfig } from "./index.js";
+    import { m as GATEWAY_CLIENT_MODES, h as GATEWAY_CLIENT_NAMES } from "./message-channel-abc123.js";
+    import { p as GatewayClient, t as buildGatewayConnectionDetails } from "./call-def456.js";
+    import { t as resolveGatewayConnectionAuth } from "./connection-auth-ghi789.js";
+  `);
+
+  assert.deepEqual(dependencies, {
+    callBasename: "call-def456.js",
+    connectionAuthBasename: "connection-auth-ghi789.js",
+    gatewayConstantsBasename: "message-channel-abc123.js",
+    loadConfigBasename: "index.js",
+  });
+});
+
+test("resolveAcpCliDependencies supports loadConfig and gateway constants from the same hashed bundle", () => {
+  const dependencies = resolveAcpCliDependencies(`
+    import { Gs as loadConfig, di as GATEWAY_CLIENT_NAMES, ui as GATEWAY_CLIENT_MODES } from "./model-selection-demo.js";
+    import { p as GatewayClient, t as buildGatewayConnectionDetails } from "./call-demo.js";
+    import { t as resolveGatewayConnectionAuth } from "./connection-auth-demo.js";
+  `);
+
+  assert.deepEqual(dependencies, {
+    callBasename: "call-demo.js",
+    connectionAuthBasename: "connection-auth-demo.js",
+    gatewayConstantsBasename: "model-selection-demo.js",
+    loadConfigBasename: "model-selection-demo.js",
   });
 });
 
@@ -85,7 +118,8 @@ test("generateOpenclawAcpCompat writes stable compat modules for the installed p
 
   assert.equal(result.callBasename, "call-demo.js");
   assert.equal(result.connectionAuthBasename, "connection-auth-demo.js");
-  assert.equal(result.messageChannelBasename, "message-channel-demo.js");
+  assert.equal(result.gatewayConstantsBasename, "message-channel-demo.js");
+  assert.equal(result.loadConfigBasename, "index.js");
   assert.equal(path.basename(result.acpCliCompatPath), ACP_CLI_COMPAT_BASENAME);
   assert.equal(path.basename(result.compatPath), ACP_COMPAT_BASENAME);
 
@@ -101,4 +135,67 @@ test("generateOpenclawAcpCompat writes stable compat modules for the installed p
   assert.equal(acpCliCompatModule.AcpGatewayAgent.name, "AcpGatewayAgent");
   assert.equal(typeof acpCliCompatModule.serveAcpGateway, "function");
   assert.equal(typeof acpCliCompatModule.registerAcpCli, "function");
+});
+
+test("generateOpenclawAcpCompat supports hashed config bundles that also export gateway constants", async () => {
+  const packageRoot = makeTempPackageRoot();
+  const distDir = path.join(packageRoot, "dist");
+  fs.mkdirSync(distDir, { recursive: true });
+
+  fs.writeFileSync(
+    path.join(distDir, "model-selection-demo.js"),
+    [
+      'function loadConfig() { return { gateway: { mode: "remote" } }; }',
+      'export const y = { CLI: "cli", CONTROL_UI: "openclaw-control-ui" };',
+      'export const z = { CLI: "cli", WEBCHAT: "webchat" };',
+      'export { loadConfig as x };',
+      "",
+    ].join("\n"),
+  );
+  fs.writeFileSync(
+    path.join(distDir, "call-demo.js"),
+    [
+      'export class GatewayClient {}',
+      'export function buildGatewayConnectionDetails() { return { url: "wss://example.test", urlSource: "remote" }; }',
+      "",
+    ].join("\n"),
+  );
+  fs.writeFileSync(
+    path.join(distDir, "connection-auth-demo.js"),
+    'export async function resolveGatewayConnectionAuth() { return { password: "password" }; }\n',
+  );
+  fs.writeFileSync(
+    path.join(distDir, "acp-cli-demo.js"),
+    [
+      'import { x as loadConfig, y as GATEWAY_CLIENT_NAMES, z as GATEWAY_CLIENT_MODES } from "./model-selection-demo.js";',
+      'import { GatewayClient, buildGatewayConnectionDetails } from "./call-demo.js";',
+      'import { resolveGatewayConnectionAuth } from "./connection-auth-demo.js";',
+      "class AcpGatewayAgent {}",
+      "async function serveAcpGateway() {",
+      "  return {",
+      "    GatewayClient,",
+      "    buildGatewayConnectionDetails,",
+      "    resolveGatewayConnectionAuth,",
+      "    GATEWAY_CLIENT_NAMES,",
+      "    GATEWAY_CLIENT_MODES,",
+      "    loadConfig,",
+      "  };",
+      "}",
+      "function registerAcpCli() {}",
+      "export { registerAcpCli };",
+      "",
+    ].join("\n"),
+  );
+
+  const result = generateOpenclawAcpCompat(packageRoot);
+  const compatModule = await import(pathToFileURL(result.compatPath).href);
+
+  assert.equal(result.loadConfigBasename, "model-selection-demo.js");
+  assert.equal(result.gatewayConstantsBasename, "model-selection-demo.js");
+  assert.equal(compatModule.loadConfig().gateway.mode, "remote");
+  assert.equal(compatModule.GatewayClient.name, "GatewayClient");
+  assert.equal(compatModule.buildGatewayConnectionDetails().url, "wss://example.test");
+  assert.deepEqual(await compatModule.resolveGatewayConnectionAuth(), { password: "password" });
+  assert.equal(compatModule.GATEWAY_CLIENT_NAMES.CONTROL_UI, "openclaw-control-ui");
+  assert.equal(compatModule.GATEWAY_CLIENT_MODES.WEBCHAT, "webchat");
 });

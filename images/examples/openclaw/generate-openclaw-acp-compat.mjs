@@ -15,6 +15,21 @@ function requireMatch(source, pattern, label) {
   return match[1];
 }
 
+function findMatch(source, pattern) {
+  return source.match(pattern)?.[1] ?? null;
+}
+
+function findGatewayConstantsBundle(acpCliSource) {
+  const importMatches = [...acpCliSource.matchAll(/import\s+\{([^}]*)\}\s+from\s+"\.\/([^"]+)"/g)];
+  for (const match of importMatches) {
+    const names = match[1];
+    if (names.includes("GATEWAY_CLIENT_NAMES") && names.includes("GATEWAY_CLIENT_MODES")) {
+      return match[2];
+    }
+  }
+  return null;
+}
+
 function assertReadableFile(filePath, label) {
   if (!fs.existsSync(filePath)) {
     throw new Error(`${label} not found: ${filePath}`);
@@ -56,11 +71,12 @@ export function resolveAcpCliDependencies(acpCliSource) {
       /import\s+\{[^}]*resolveGatewayConnectionAuth[^}]*\}\s+from\s+"\.\/([^"]+)"/,
       "resolveGatewayConnectionAuth bundle",
     ),
-    messageChannelBasename: requireMatch(
-      acpCliSource,
-      /import\s+\{[^}]*GATEWAY_CLIENT_NAMES[^}]*GATEWAY_CLIENT_MODES[^}]*\}\s+from\s+"\.\/([^"]+)"/,
-      "gateway client constants bundle",
-    ),
+    gatewayConstantsBasename:
+      findGatewayConstantsBundle(acpCliSource) ??
+      requireMatch(acpCliSource, /$^/, "gateway client constants bundle"),
+    loadConfigBasename:
+      findMatch(acpCliSource, /import\s+\{[^}]*loadConfig[^}]*\}\s+from\s+"\.\/([^"]+)"/) ??
+      "index.js",
   };
 }
 
@@ -75,10 +91,10 @@ export function buildAcpCliCompatSource(acpCliSource) {
 }
 
 export function buildCompatModuleSource(params) {
-  return `import { loadConfig } from "./index.js";
+  return `import * as configModule from "./${params.loadConfigBasename}";
 import * as callModule from "./${params.callBasename}";
 import * as connectionAuthModule from "./${params.connectionAuthBasename}";
-import * as messageChannelModule from "./${params.messageChannelBasename}";
+import * as gatewayConstantsModule from "./${params.gatewayConstantsBasename}";
 import {
   AcpGatewayAgent,
   registerAcpCli,
@@ -103,6 +119,7 @@ function pickNamedObject(moduleNs, name) {
   throw new Error(\`OpenClaw ACP compat object not found: \${name}\`);
 }
 
+const loadConfig = pickNamedFunction(configModule, "loadConfig");
 const GatewayClient = pickNamedFunction(callModule, "GatewayClient");
 const buildGatewayConnectionDetails = pickNamedFunction(
   callModule,
@@ -112,8 +129,8 @@ const resolveGatewayConnectionAuth = pickNamedFunction(
   connectionAuthModule,
   "resolveGatewayConnectionAuth",
 );
-const GATEWAY_CLIENT_NAMES = pickNamedObject(messageChannelModule, "CONTROL_UI");
-const GATEWAY_CLIENT_MODES = pickNamedObject(messageChannelModule, "WEBCHAT");
+const GATEWAY_CLIENT_NAMES = pickNamedObject(gatewayConstantsModule, "CONTROL_UI");
+const GATEWAY_CLIENT_MODES = pickNamedObject(gatewayConstantsModule, "WEBCHAT");
 
 export {
   AcpGatewayAgent,
@@ -141,13 +158,13 @@ export function generateOpenclawAcpCompat(packageRoot) {
 
   const callPath = path.join(distDir, dependencies.callBasename);
   const connectionAuthPath = path.join(distDir, dependencies.connectionAuthBasename);
-  const messageChannelPath = path.join(distDir, dependencies.messageChannelBasename);
-  const indexPath = path.join(distDir, "index.js");
+  const gatewayConstantsPath = path.join(distDir, dependencies.gatewayConstantsBasename);
+  const loadConfigPath = path.join(distDir, dependencies.loadConfigBasename);
 
   assertReadableFile(callPath, "OpenClaw call bundle");
   assertReadableFile(connectionAuthPath, "OpenClaw connection-auth bundle");
-  assertReadableFile(messageChannelPath, "OpenClaw message-channel bundle");
-  assertReadableFile(indexPath, "OpenClaw dist index");
+  assertReadableFile(gatewayConstantsPath, "OpenClaw gateway-constants bundle");
+  assertReadableFile(loadConfigPath, "OpenClaw loadConfig bundle");
 
   const acpCliCompatPath = path.join(distDir, ACP_CLI_COMPAT_BASENAME);
   const compatPath = path.join(distDir, ACP_COMPAT_BASENAME);
@@ -179,7 +196,8 @@ async function main() {
       acpCliCompatPath: result.acpCliCompatPath,
       callBasename: result.callBasename,
       connectionAuthBasename: result.connectionAuthBasename,
-      messageChannelBasename: result.messageChannelBasename,
+      gatewayConstantsBasename: result.gatewayConstantsBasename,
+      loadConfigBasename: result.loadConfigBasename,
     })}\n`,
   );
 }
