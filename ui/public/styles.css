@@ -498,6 +498,13 @@ button.ghost {
   color: #5d6772;
 }
 
+.acp-pending-card {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(244, 247, 251, 0.94)),
+    white;
+  border-color: rgba(55, 130, 255, 0.18);
+}
+
 .acp-message {
   display: flex;
   flex-direction: column;

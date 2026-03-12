@@ -266,6 +266,162 @@ test('ACP page surfaces real startup errors as toasts', async () => {
   assert.deepEqual(toastMessages, ['Failed to connect to ACP gateway.']);
 });
 
+test('ACP page keeps the requested workspace route and shows provisioning state while chat is unavailable', async () => {
+  const replaceCalls = [];
+  let clientStarts = 0;
+  const window = loadModules(() => ({
+    start: async () => {
+      clientStarts += 1;
+    },
+    isReady: () => false,
+    getConversationId: () => '',
+    getSessionId: () => '',
+    matchesConversation() {
+      return false;
+    },
+    cancelPrompt() {},
+    dispose() {},
+  }));
+  window.location.hash = '#chat/young-lagoon';
+  window.location.replace = (value) => {
+    replaceCalls.push(value);
+  };
+  const shellEl = createElement('main');
+  const createSection = createElement('section');
+  const listSection = createElement('section');
+
+  window.SpritzACPPage.renderACPPage('young-lagoon', '', {
+    activePage: null,
+    apiBaseUrl: '',
+    authBearerTokenParam: 'token',
+    getAuthToken() {
+      return '';
+    },
+    async request(path) {
+      if (path === '/acp/agents') {
+        return {
+          items: [
+            {
+              spritz: {
+                metadata: { name: 'ready-agent' },
+                status: {
+                  url: 'https://example.test/w/ready-agent/',
+                  acp: { state: 'ready', agentInfo: { title: 'Ready Agent', version: '1.0.0' } },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (path === '/spritzes/young-lagoon') {
+        return {
+          metadata: { name: 'young-lagoon' },
+          status: {
+            phase: 'Provisioning',
+            message: 'waiting for deployment',
+            url: 'https://example.test/w/young-lagoon/',
+          },
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    },
+    showNotice() {},
+    clearNotice() {},
+    showToast() {},
+    buildOpenUrl(url) {
+      return url;
+    },
+    cleanupTerminal() {},
+    shellEl,
+    createSection,
+    listSection,
+    setHeaderCopy() {},
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(replaceCalls, []);
+  assert.equal(clientStarts, 0);
+  assert.match(collectText(shellEl), /young-lagoon/i);
+  assert.match(collectText(shellEl), /waiting for deployment|still provisioning/i);
+});
+
+test('ACP page shows a not found state instead of redirecting when the requested workspace is missing', async () => {
+  const replaceCalls = [];
+  let clientStarts = 0;
+  const window = loadModules(() => ({
+    start: async () => {
+      clientStarts += 1;
+    },
+    isReady: () => false,
+    getConversationId: () => '',
+    getSessionId: () => '',
+    matchesConversation() {
+      return false;
+    },
+    cancelPrompt() {},
+    dispose() {},
+  }));
+  window.location.hash = '#chat/missing-box';
+  window.location.replace = (value) => {
+    replaceCalls.push(value);
+  };
+  const shellEl = createElement('main');
+  const createSection = createElement('section');
+  const listSection = createElement('section');
+
+  window.SpritzACPPage.renderACPPage('missing-box', '', {
+    activePage: null,
+    apiBaseUrl: '',
+    authBearerTokenParam: 'token',
+    getAuthToken() {
+      return '';
+    },
+    async request(path) {
+      if (path === '/acp/agents') {
+        return {
+          items: [
+            {
+              spritz: {
+                metadata: { name: 'ready-agent' },
+                status: {
+                  url: 'https://example.test/w/ready-agent/',
+                  acp: { state: 'ready', agentInfo: { title: 'Ready Agent', version: '1.0.0' } },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (path === '/spritzes/missing-box') {
+        const err = new Error('not found');
+        err.status = 404;
+        throw err;
+      }
+      throw new Error(`unexpected path ${path}`);
+    },
+    showNotice() {},
+    clearNotice() {},
+    showToast() {},
+    buildOpenUrl(url) {
+      return url;
+    },
+    cleanupTerminal() {},
+    shellEl,
+    createSection,
+    listSection,
+    setHeaderCopy() {},
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(replaceCalls, []);
+  assert.equal(clientStarts, 0);
+  assert.match(collectText(shellEl), /workspace not found/i);
+});
+
 test('ACP page sanitizes raw HTML bootstrap failures before showing a toast', async () => {
   const toastMessages = [];
   const window = loadModules(({ conversation }) => ({
