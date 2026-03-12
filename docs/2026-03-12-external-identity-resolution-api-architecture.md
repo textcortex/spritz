@@ -114,6 +114,9 @@ messaging or workflow system.
 The namespace bound to the authenticated service principal. It tells Spritz
 which external resolver configuration to use.
 
+In request and policy examples, this should be called `issuer` rather than
+plain `namespace` to avoid confusion with Kubernetes namespaces.
+
 ### External identity resolver
 
 A deployment-owned authoritative system that maps an external owner reference
@@ -138,7 +141,7 @@ or
   "type": "external",
   "provider": "msteams",
   "tenant": "72f988bf-86f1-41af-91ab-2d7cd011db47",
-  "subject": "29:1A2BcD3EfG4HiJ5KlM6NoP"
+  "subject": "6f0f9d4f-9b0e-4d52-8c3a-ef0fd64b9b9f"
 }
 ```
 
@@ -149,11 +152,11 @@ Rules:
 - `subject` MUST be treated as an opaque string.
 - `tenant` MAY be omitted only for providers where the subject is globally
   stable without tenant scope.
-- For `msteams`, `tenant` SHOULD be required by policy.
+- For `msteams`, `tenant` MUST be required.
 - The effective identity key inside Spritz is:
-  `resolverNamespace + provider + tenant + subject`
-- `resolverNamespace` is derived from the authenticated service principal, not
-  from request payload.
+  `issuer + provider + tenant + subject`
+- `issuer` is derived from the authenticated service principal, not from
+  request payload.
 
 ## High-Level Architecture
 
@@ -169,8 +172,8 @@ Flow:
 1. The bot calls `POST /spritzes` with `ownerRef.type=external` and the normal
    external user identity it already has.
 2. Spritz authenticates the service principal.
-3. Spritz derives the resolver namespace from that principal.
-4. Spritz validates that the provider and tenant are allowed for that namespace.
+3. Spritz derives the resolver issuer from that principal.
+4. Spritz validates that the provider and tenant are allowed for that issuer.
 5. Spritz calls the configured external resolver.
 6. The resolver returns either `resolved`, `unresolved`, `forbidden`, or
    `ambiguous`.
@@ -192,7 +195,7 @@ Recommended request:
     "type": "external",
     "provider": "msteams",
     "tenant": "72f988bf-86f1-41af-91ab-2d7cd011db47",
-    "subject": "29:1A2BcD3EfG4HiJ5KlM6NoP"
+    "subject": "6f0f9d4f-9b0e-4d52-8c3a-ef0fd64b9b9f"
   },
   "presetId": "openclaw",
   "idempotencyKey": "msteams-123"
@@ -207,11 +210,12 @@ Rules:
   configured resolver before create.
 - New bot and automation integrations SHOULD use `ownerRef.type=external`.
 - Create MUST NOT require the caller to know the internal owner ID.
-- The caller MUST NOT provide `resolverNamespace` or `issuer` in the request
-  body.
-- Spritz MUST use the resolver namespace bound to the authenticated principal.
+- The caller MUST NOT provide `issuer` in the request body.
+- Spritz MUST use the resolver issuer bound to the authenticated principal.
 - Spritz MUST keep the resolved internal owner ID on the backend side of the
   create flow.
+- `ownerRef.type=external` SHOULD be available only to service principals by
+  default.
 
 ## CLI Shape
 
@@ -234,7 +238,7 @@ Tenant-scoped external identity form:
 ```bash
 spz create --owner-provider msteams \
   --owner-tenant 72f988bf-86f1-41af-91ab-2d7cd011db47 \
-  --owner-subject 29:1A2BcD3EfG4HiJ5KlM6NoP \
+  --owner-subject 6f0f9d4f-9b0e-4d52-8c3a-ef0fd64b9b9f \
   --preset openclaw
 ```
 
@@ -251,7 +255,7 @@ CLI rules:
 
 Spritz core should define an internal resolver interface:
 
-- `ResolveExternalOwner(ctx, namespace, identity) -> result`
+- `ResolveExternalOwner(ctx, issuer, identity) -> result`
 
 Recommended canonical result states:
 
@@ -284,6 +288,7 @@ policy that defines:
 - allowed providers
 - allowed tenants
 - resolver timeout
+- issuer identifier for resolver calls
 
 That policy should be selected from the authenticated service principal
 identity, not from request payload.
@@ -316,6 +321,8 @@ Rules:
   trust mechanism.
 - Resolver authentication is between Spritz and the resolver.
 - The external bot authenticates only to Spritz.
+- The default resolver timeout SHOULD be 5 seconds.
+- Spritz SHOULD perform no automatic retries in v1.
 
 For HTTP-backed deployments, a portable resolver API can look like this:
 
@@ -325,11 +332,11 @@ Request:
 
 ```json
 {
-  "namespace": "support-bot",
+  "issuer": "support-bot",
   "identity": {
     "provider": "msteams",
     "tenant": "72f988bf-86f1-41af-91ab-2d7cd011db47",
-    "subject": "29:1A2BcD3EfG4HiJ5KlM6NoP"
+    "subject": "6f0f9d4f-9b0e-4d52-8c3a-ef0fd64b9b9f"
   },
   "requestId": "req_01j..."
 }
@@ -376,6 +383,30 @@ Properties:
 - The resolved owner ID is an internal backend value for Spritz and does not
   need to be exposed to the bot.
 
+### Audit and persistence
+
+When Spritz creates a workspace from `ownerRef.type=external`, it should record
+enough information for audit without leaking raw external identifiers in common
+resource metadata.
+
+Recommended stored fields:
+
+- issuer
+- provider
+- tenant
+- `subjectHash`
+- actor principal ID
+- resolution timestamp
+
+Rules:
+
+- Spritz SHOULD NOT store raw external `subject` values in Kubernetes labels.
+- Spritz SHOULD NOT store raw external `subject` values in normal annotations.
+- `subjectHash` SHOULD be an HMAC-SHA-256 derived from the external subject and
+  a deployment secret.
+- If raw external subject values are needed for incident response, they should
+  appear only in secured audit logs.
+
 ### Create-time resolver behavior
 
 Resolution should happen during create request normalization, before any create
@@ -390,6 +421,19 @@ Rules:
 - Service-principal create responses SHOULD omit `ownerId` once the owner was
   resolved from an external identity.
 
+Recommended service-principal response shape for `ownerRef.type=external`:
+
+- `spritz`
+- `accessUrl`
+- `chatUrl`
+- `workspaceUrl`
+- Kubernetes namespace for the workspace
+- `presetId`
+- `idempotencyKey`
+- `replayed`
+
+The response SHOULD NOT include the resolved internal owner ID.
+
 ### Idempotency rule
 
 Resolver lookup should happen before a create is finalized, but successful
@@ -397,8 +441,13 @@ creates must still preserve normal Spritz idempotency guarantees.
 
 Rules:
 
+- The idempotency fingerprint for external-owner create requests SHOULD include
+  `issuer + provider + tenant + subject` plus the rest of the normalized
+  create request.
 - Before the first successful create, Spritz may resolve again on retried
   requests with the same idempotency key.
+- Once a request has resolved successfully, Spritz SHOULD persist the resolved
+  owner in the idempotency reservation payload used for that create attempt.
 - After a successful create, retries with the same idempotency key MUST replay
   the same created workspace even if the external mapping later changes.
 - Resolver failure or timeout MUST leave no partially created workspace behind.
@@ -424,7 +473,7 @@ Recommended unresolved example:
   "identity": {
     "provider": "msteams",
     "tenant": "72f988bf-86f1-41af-91ab-2d7cd011db47",
-    "subject": "29:1A2BcD3EfG4HiJ5KlM6NoP"
+    "subject": "6f0f9d4f-9b0e-4d52-8c3a-ef0fd64b9b9f"
   }
 }
 ```
@@ -445,11 +494,11 @@ Recommended service capabilities:
 
 Rules:
 
-- Resolver namespace MUST be bound to the authenticated service principal.
-- A service principal MUST be allowed to resolve only within its own namespace
+- Resolver issuer MUST be bound to the authenticated service principal.
+- A service principal MUST be allowed to resolve only within its own issuer
   unless explicitly granted broader authority.
 - Provider allowlists and tenant allowlists SHOULD be policy-controlled per
-  namespace.
+  issuer.
 - Resolver selection and resolver credentials SHOULD be policy-controlled per
   service principal.
 
@@ -476,14 +525,15 @@ The first concrete provider should be `msteams`.
 Provider guidance:
 
 - `provider` value: `msteams`
-- `tenant` SHOULD be the Microsoft tenant identifier and SHOULD be required by
-  policy
-- `subject` MUST be the stable Teams user identifier chosen by the deployment's
-  Teams integration
+- `tenant` MUST be the Microsoft Entra tenant ID
+- `subject` MUST be the Microsoft Entra user object ID
+- If the bot receives a Teams chat-surface identifier such as a `29:` ID, the
+  integration must translate it to the canonical Entra user object ID before
+  calling Spritz
 
 Spritz core should not attempt to normalize Teams identifiers itself. The Teams
-adapter or authoritative resolver must choose one canonical subject format and
-keep it consistent.
+adapter or authoritative resolver must keep that canonical subject format
+consistent.
 
 ## Backward Compatibility
 
@@ -515,13 +565,15 @@ The architecture is complete when Spritz can demonstrate all of these flows:
    `ownerRef.type=external`.
 9. Retrying a successful create with the same idempotency key replays the same
    workspace even if the resolver mapping later changes.
+10. Microsoft Teams requests use Entra tenant ID plus Entra user object ID as
+    the canonical external identity.
 
 ## Recommended Sequencing
 
 ### Phase 1 - Public API and internal abstraction
 
 - Add `ownerRef` to create requests.
-- Derive resolver namespace from authenticated service principal.
+- Derive resolver issuer from authenticated service principal.
 - Define the internal resolver interface and typed result states.
 - Make external-ID-only bot calls the preferred integration path.
 - Add `spz` flags for external owner input while keeping direct `--owner-id`
