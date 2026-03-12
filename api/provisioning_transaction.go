@@ -14,6 +14,7 @@ import (
 type provisionerCreateError struct {
 	status  int
 	message string
+	data    any
 	err     error
 }
 
@@ -33,6 +34,15 @@ func newProvisionerCreateError(status int, err error) error {
 	}
 }
 
+func newProvisionerCreateErrorWithData(status int, message string, data any, err error) error {
+	return &provisionerCreateError{
+		status:  status,
+		message: message,
+		data:    data,
+		err:     err,
+	}
+}
+
 func newProvisionerForbiddenError() error {
 	return &provisionerCreateError{
 		status:  http.StatusForbidden,
@@ -44,6 +54,9 @@ func newProvisionerForbiddenError() error {
 func writeProvisionerCreateError(c echo.Context, err error) error {
 	var provisionerErr *provisionerCreateError
 	if errors.As(err, &provisionerErr) {
+		if provisionerErr.data != nil {
+			return writeJSendFailData(c, provisionerErr.status, provisionerErr.data)
+		}
 		return writeError(c, provisionerErr.status, provisionerErr.message)
 	}
 	return writeError(c, http.StatusInternalServerError, err.Error())
@@ -65,6 +78,7 @@ type provisionerCreateTransaction struct {
 	provisionerFingerprint  string
 	idempotencyState        provisionerIdempotencyState
 	resolvedFromReservation bool
+	resolvedExternalOwner   *externalOwnerResolution
 	completed               bool
 }
 
@@ -138,6 +152,20 @@ func (tx *provisionerCreateTransaction) prepare() error {
 		return nil
 	}
 
+	owner, resolvedExternalOwner, err := tx.server.resolveCreateOwner(tx.ctx, tx.body, tx.principal)
+	if err != nil {
+		var resolutionErr externalOwnerResolutionError
+		if errors.As(err, &resolutionErr) {
+			return newProvisionerCreateErrorWithData(resolutionErr.status, resolutionErr.message, resolutionErr.responseData(), err)
+		}
+		if errors.Is(err, errForbidden) {
+			return newProvisionerForbiddenError()
+		}
+		return newProvisionerCreateError(http.StatusBadRequest, err)
+	}
+	tx.body.Spec.Owner = owner
+	tx.resolvedExternalOwner = resolvedExternalOwner
+
 	if err := tx.server.validateProvisionerCreate(tx.ctx, tx.principal, tx.namespace, tx.body, tx.requestedImage, tx.requestedRepo, tx.requestedNamespace); err != nil {
 		if errors.Is(err, errForbidden) {
 			return newProvisionerForbiddenError()
@@ -147,7 +175,7 @@ func (tx *provisionerCreateTransaction) prepare() error {
 	if err := resolveCreateLifetimes(&tx.body.Spec, tx.server.provisioners, true); err != nil {
 		return newProvisionerCreateError(http.StatusBadRequest, err)
 	}
-	tx.idempotencyState, err = tx.server.provisionerIdempotencyFingerprints(tx.fingerprintRequest, *tx.body, tx.namespace, tx.normalizedUserConfig)
+	tx.idempotencyState, err = tx.server.provisionerIdempotencyFingerprints(tx.fingerprintRequest, *tx.body, tx.resolvedExternalOwner, tx.namespace, tx.normalizedUserConfig)
 	if err != nil {
 		return newProvisionerCreateError(http.StatusInternalServerError, err)
 	}
@@ -181,6 +209,7 @@ func (tx *provisionerCreateTransaction) restoreStoredPayload(raw string) error {
 	tx.body.Source = payload.Source
 	tx.body.RequestID = payload.RequestID
 	tx.body.Spec = payload.Spec
+	tx.resolvedExternalOwner = payload.ExternalOwner.resolution()
 	return nil
 }
 

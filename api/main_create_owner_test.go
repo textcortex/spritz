@@ -1094,7 +1094,7 @@ func TestCreateSpritzUsesPendingReservationPayloadAfterDefaultPresetChanges(t *t
 	if err != nil {
 		t.Fatalf("createRequestFingerprint failed: %v", err)
 	}
-	resolvedPayload, err := createResolvedProvisionerPayload(requestBody, s.resolvedCreateNamePrefix(requestBody, requestFingerprintBody.NamePrefix))
+	resolvedPayload, err := createResolvedProvisionerPayload(requestBody, s.resolvedCreateNamePrefix(requestBody, requestFingerprintBody.NamePrefix), nil)
 	if err != nil {
 		t.Fatalf("createResolvedProvisionerPayload failed: %v", err)
 	}
@@ -1547,7 +1547,7 @@ func TestCreateSpritzRetriesPendingIdempotencyReservationWithConflictingOccupant
 	if err != nil {
 		t.Fatalf("createRequestFingerprint failed: %v", err)
 	}
-	resolvedPayload, err := createResolvedProvisionerPayload(body, s.resolvedCreateNamePrefix(body, requestFingerprintBody.NamePrefix))
+	resolvedPayload, err := createResolvedProvisionerPayload(body, s.resolvedCreateNamePrefix(body, requestFingerprintBody.NamePrefix), nil)
 	if err != nil {
 		t.Fatalf("createResolvedProvisionerPayload failed: %v", err)
 	}
@@ -1641,7 +1641,7 @@ func TestCreateSpritzReplaysPendingIdempotentCreateBeforeQuotaCheck(t *testing.T
 	if err != nil {
 		t.Fatalf("createRequestFingerprint failed: %v", err)
 	}
-	resolvedPayload, err := createResolvedProvisionerPayload(body, s.resolvedCreateNamePrefix(body, requestFingerprintBody.NamePrefix))
+	resolvedPayload, err := createResolvedProvisionerPayload(body, s.resolvedCreateNamePrefix(body, requestFingerprintBody.NamePrefix), nil)
 	if err != nil {
 		t.Fatalf("createResolvedProvisionerPayload failed: %v", err)
 	}

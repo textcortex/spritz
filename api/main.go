@@ -368,7 +368,7 @@ func (s *server) createSpritz(c echo.Context) error {
 	body = normalized.body
 	namespace := normalized.namespace
 	owner := normalized.owner
-	resolvedExternalOwner := normalized.resolvedExternalOwner
+	var resolvedExternalOwner *externalOwnerResolution
 	userConfigKeys := normalized.userConfigKeys
 	userConfigPayload := normalized.userConfigPayload
 	nameProvided := normalized.nameProvided
@@ -417,6 +417,7 @@ func (s *server) createSpritz(c echo.Context) error {
 			return writeProvisionerCreateError(c, err)
 		}
 		owner = body.Spec.Owner
+		resolvedExternalOwner = provisionerTx.resolvedExternalOwner
 		provisionerFingerprint = provisionerTx.provisionerFingerprint
 		if !nameProvided {
 			if err := buildNameGenerator(body); err != nil {

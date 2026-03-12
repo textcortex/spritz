@@ -53,15 +53,19 @@ func newCreateSpritzAPI(t *testing.T, s *server) *echo.Echo {
 }
 
 func newServiceCreateRequest(body []byte) (*http.Request, *httptest.ResponseRecorder) {
+	return newServiceCreateRequestWithScopes(body,
+		scopeInstancesCreate,
+		scopeInstancesAssignOwner,
+		scopeExternalResolveViaCreate,
+	)
+}
+
+func newServiceCreateRequestWithScopes(body []byte, scopes ...string) (*http.Request, *httptest.ResponseRecorder) {
 	req := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(body))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	req.Header.Set("X-Spritz-User-Id", "zenobot")
 	req.Header.Set("X-Spritz-Principal-Type", "service")
-	req.Header.Set("X-Spritz-Principal-Scopes", strings.Join([]string{
-		scopeInstancesCreate,
-		scopeInstancesAssignOwner,
-		scopeExternalResolveViaCreate,
-	}, ","))
+	req.Header.Set("X-Spritz-Principal-Scopes", strings.Join(scopes, ","))
 	return req, httptest.NewRecorder()
 }
 
@@ -226,6 +230,130 @@ func TestCreateSpritzReplaysExternalOwnerProvisioningAfterResolverMappingChanges
 	}
 	if stored.Spec.Owner.ID != "user-123" {
 		t.Fatalf("expected stored owner to remain the original resolved owner, got %q", stored.Spec.Owner.ID)
+	}
+}
+
+func TestCreateSpritzReplaysExternalOwnerProvisioningWhenResolverBecomesUnavailable(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	resolverCalls := 0
+	configureExternalOwnerTestServer(s, fakeExternalOwnerResolver{
+		resolve: func(_ context.Context, _ externalOwnerPolicy, _ principal, _ ownerRef, _ string) (externalOwnerResolution, error) {
+			resolverCalls++
+			if resolverCalls == 1 {
+				return externalOwnerResolution{
+					Status:  externalOwnerResolved,
+					OwnerID: "user-123",
+				}, nil
+			}
+			return externalOwnerResolution{}, context.DeadlineExceeded
+		},
+	})
+	e := newCreateSpritzAPI(t, s)
+
+	body := []byte(`{"presetId":"openclaw","ownerRef":{"type":"external","provider":"msteams","tenant":"72f988bf-86f1-41af-91ab-2d7cd011db47","subject":"6f0f9d4f-9b0e-4d52-8c3a-ef0fd64b9b9f"},"idempotencyKey":"teams-replay-unavailable"}`)
+
+	req1, rec1 := newServiceCreateRequest(body)
+	e.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusCreated {
+		t.Fatalf("expected first create status 201, got %d: %s", rec1.Code, rec1.Body.String())
+	}
+
+	req2, rec2 := newServiceCreateRequest(body)
+	e.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected replay status 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	if resolverCalls != 1 {
+		t.Fatalf("expected replay to avoid a second resolver call, got %d calls", resolverCalls)
+	}
+}
+
+func TestCreateSpritzRejectsExternalOwnerResolutionWithoutCreateScopes(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	resolverCalls := 0
+	configureExternalOwnerTestServer(s, fakeExternalOwnerResolver{
+		resolve: func(_ context.Context, _ externalOwnerPolicy, _ principal, _ ownerRef, _ string) (externalOwnerResolution, error) {
+			resolverCalls++
+			return externalOwnerResolution{Status: externalOwnerUnresolved}, nil
+		},
+	})
+	e := newCreateSpritzAPI(t, s)
+
+	body := []byte(`{"presetId":"openclaw","ownerRef":{"type":"external","provider":"msteams","tenant":"72f988bf-86f1-41af-91ab-2d7cd011db47","subject":"6f0f9d4f-9b0e-4d52-8c3a-ef0fd64b9b9f"},"idempotencyKey":"teams-no-create-scope"}`)
+
+	req, rec := newServiceCreateRequestWithScopes(body, scopeExternalResolveViaCreate)
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if resolverCalls != 0 {
+		t.Fatalf("expected resolver to be skipped when create scopes are missing, got %d calls", resolverCalls)
+	}
+}
+
+func TestCreateRequestFingerprintCanonicalizesEquivalentOwnerInputs(t *testing.T) {
+	directFingerprint, err := createRequestFingerprint(createRequest{
+		OwnerID: "user-123",
+		Spec: spritzv1.SpritzSpec{
+			Image: "example.com/spritz-openclaw:latest",
+		},
+	}, "spritz-test", "", "", nil)
+	if err != nil {
+		t.Fatalf("createRequestFingerprint failed for direct owner: %v", err)
+	}
+
+	ownerRefFingerprint, err := createRequestFingerprint(createRequest{
+		OwnerRef: &ownerRef{
+			Type: "owner",
+			ID:   "user-123",
+		},
+		Spec: spritzv1.SpritzSpec{
+			Image: "example.com/spritz-openclaw:latest",
+		},
+	}, "spritz-test", "", "", nil)
+	if err != nil {
+		t.Fatalf("createRequestFingerprint failed for ownerRef owner: %v", err)
+	}
+
+	if directFingerprint != ownerRefFingerprint {
+		t.Fatalf("expected equivalent direct and ownerRef owner inputs to share a fingerprint")
+	}
+
+	lowerFingerprint, err := createRequestFingerprint(createRequest{
+		OwnerRef: &ownerRef{
+			Type:     "external",
+			Provider: "msteams",
+			Tenant:   "72f988bf-86f1-41af-91ab-2d7cd011db47",
+			Subject:  "6f0f9d4f-9b0e-4d52-8c3a-ef0fd64b9b9f",
+		},
+		Spec: spritzv1.SpritzSpec{
+			Image: "example.com/spritz-openclaw:latest",
+		},
+	}, "spritz-test", "", "", nil)
+	if err != nil {
+		t.Fatalf("createRequestFingerprint failed for lowercase msteams identity: %v", err)
+	}
+
+	upperFingerprint, err := createRequestFingerprint(createRequest{
+		OwnerRef: &ownerRef{
+			Type:     "external",
+			Provider: "msteams",
+			Tenant:   "72F988BF-86F1-41AF-91AB-2D7CD011DB47",
+			Subject:  "6F0F9D4F-9B0E-4D52-8C3A-EF0FD64B9B9F",
+		},
+		Spec: spritzv1.SpritzSpec{
+			Image: "example.com/spritz-openclaw:latest",
+		},
+	}, "spritz-test", "", "", nil)
+	if err != nil {
+		t.Fatalf("createRequestFingerprint failed for uppercase msteams identity: %v", err)
+	}
+
+	if lowerFingerprint != upperFingerprint {
+		t.Fatalf("expected equivalent msteams UUID casing to share a fingerprint")
 	}
 }
 
