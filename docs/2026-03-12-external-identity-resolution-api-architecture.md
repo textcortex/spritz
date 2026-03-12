@@ -213,6 +213,40 @@ Rules:
 - Spritz MUST keep the resolved internal owner ID on the backend side of the
   create flow.
 
+## CLI Shape
+
+`spz` should support both direct-owner and external-identity create flows.
+
+Direct owner form:
+
+```bash
+spz create --owner-id user-123 --preset openclaw
+```
+
+External identity form:
+
+```bash
+spz create --owner-provider discord --owner-subject 123456789012345678 --preset openclaw
+```
+
+Tenant-scoped external identity form:
+
+```bash
+spz create --owner-provider msteams \
+  --owner-tenant 72f988bf-86f1-41af-91ab-2d7cd011db47 \
+  --owner-subject 29:1A2BcD3EfG4HiJ5KlM6NoP \
+  --preset openclaw
+```
+
+CLI rules:
+
+- `--owner-id` and external owner flags MUST be mutually exclusive.
+- `spz` should build `ownerRef.type=external` when external owner flags are
+  used.
+- `spz` should require `--owner-tenant` for providers that are tenant-scoped by
+  policy.
+- `spz` should keep supporting `--owner-id` for direct internal and admin use.
+
 ## External Resolver Contract
 
 Spritz core should define an internal resolver interface:
@@ -390,6 +424,8 @@ The architecture is complete when Spritz can demonstrate all of these flows:
 4. An ambiguous resolver answer fails with `external_identity_ambiguous`.
 5. A resolver outage fails with `external_identity_resolution_unavailable`.
 6. The bot never sends an internal owner ID during the normal provisioning path.
+7. `spz` accepts either direct owner ID input or external identity input, but
+   rejects requests that try to send both.
 
 ## Recommended Sequencing
 
@@ -399,6 +435,8 @@ The architecture is complete when Spritz can demonstrate all of these flows:
 - Derive resolver namespace from authenticated service principal.
 - Define the internal resolver interface and typed result states.
 - Make external-ID-only bot calls the preferred integration path.
+- Add `spz` flags for external owner input while keeping direct `--owner-id`
+  support.
 
 ### Phase 2 - Resolver-backed provisioning
 
