@@ -64,6 +64,7 @@ type externalOwnerPolicyInput struct {
 	Issuer           string   `json:"issuer,omitempty"`
 	URL              string   `json:"url"`
 	AuthHeader       string   `json:"authHeader,omitempty"`
+	AuthHeaderEnv    string   `json:"authHeaderEnv,omitempty"`
 	AllowedProviders []string `json:"allowedProviders,omitempty"`
 	AllowedTenants   []string `json:"allowedTenants,omitempty"`
 	TenantRequired   []string `json:"tenantRequired,omitempty"`
@@ -152,6 +153,10 @@ func newExternalOwnerConfig() (externalOwnerConfig, error) {
 		if len(allowedProviders) == 0 {
 			return externalOwnerConfig{}, fmt.Errorf("invalid SPRITZ_EXTERNAL_OWNER_POLICIES_JSON: policies[%d].allowedProviders is required", index)
 		}
+		authHeader, err := resolveExternalOwnerAuthHeader(input)
+		if err != nil {
+			return externalOwnerConfig{}, fmt.Errorf("invalid SPRITZ_EXTERNAL_OWNER_POLICIES_JSON: policies[%d].%v", index, err)
+		}
 		timeout := defaultExternalOwnerResolverTimeout
 		if strings.TrimSpace(input.Timeout) != "" {
 			parsed, err := time.ParseDuration(strings.TrimSpace(input.Timeout))
@@ -167,7 +172,7 @@ func newExternalOwnerConfig() (externalOwnerConfig, error) {
 			PrincipalID:      principalID,
 			Issuer:           strings.TrimSpace(input.Issuer),
 			URL:              urlValue,
-			AuthHeader:       strings.TrimSpace(input.AuthHeader),
+			AuthHeader:       authHeader,
 			AllowedProviders: allowedProviders,
 			AllowedTenants:   normalizeTenantSet(input.AllowedTenants),
 			TenantRequired:   normalizeTokenSet(input.TenantRequired),
@@ -195,6 +200,25 @@ func normalizeTokenSet(values []string) map[string]struct{} {
 		out[token] = struct{}{}
 	}
 	return out
+}
+
+func resolveExternalOwnerAuthHeader(input externalOwnerPolicyInput) (string, error) {
+	literal := strings.TrimSpace(input.AuthHeader)
+	envName := strings.TrimSpace(input.AuthHeaderEnv)
+	if literal != "" && envName != "" {
+		return "", fmt.Errorf("only one of authHeader or authHeaderEnv may be set")
+	}
+	if envName == "" {
+		return literal, nil
+	}
+	value := strings.TrimSpace(os.Getenv(envName))
+	if value == "" {
+		return "", fmt.Errorf("authHeaderEnv %q is empty", envName)
+	}
+	if strings.ContainsAny(value, " \t") {
+		return value, nil
+	}
+	return "Bearer " + value, nil
 }
 
 func normalizeStringSet(values []string) map[string]struct{} {

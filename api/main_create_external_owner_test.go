@@ -511,6 +511,38 @@ func TestNewExternalOwnerConfigNormalizesTenantAllowlistUUIDs(t *testing.T) {
 	}
 }
 
+func TestNewExternalOwnerConfigResolvesAuthHeaderFromEnv(t *testing.T) {
+	t.Setenv("SPRITZ_EXTERNAL_OWNER_SUBJECT_HASH_KEY", "test-external-owner-secret")
+	t.Setenv("SPRITZ_INTERNAL_TOKEN", "spritz-internal-token")
+	t.Setenv("SPRITZ_EXTERNAL_OWNER_POLICIES_JSON", `[{"principalId":"zenobot","url":"http://resolver.example.com/v1/external-owners/resolve","authHeaderEnv":"SPRITZ_INTERNAL_TOKEN","allowedProviders":["discord"]}]`)
+
+	config, err := newExternalOwnerConfig()
+	if err != nil {
+		t.Fatalf("newExternalOwnerConfig failed: %v", err)
+	}
+
+	policy, ok := config.policyForPrincipal(principal{ID: "zenobot", Type: principalTypeService})
+	if !ok {
+		t.Fatal("expected policy for principal zenobot")
+	}
+	if policy.AuthHeader != "Bearer spritz-internal-token" {
+		t.Fatalf("expected bearer auth header from env token, got %q", policy.AuthHeader)
+	}
+}
+
+func TestNewExternalOwnerConfigRejectsEmptyAuthHeaderEnv(t *testing.T) {
+	t.Setenv("SPRITZ_EXTERNAL_OWNER_SUBJECT_HASH_KEY", "test-external-owner-secret")
+	t.Setenv("SPRITZ_EXTERNAL_OWNER_POLICIES_JSON", `[{"principalId":"zenobot","url":"http://resolver.example.com/v1/external-owners/resolve","authHeaderEnv":"SPRITZ_INTERNAL_TOKEN","allowedProviders":["discord"]}]`)
+
+	_, err := newExternalOwnerConfig()
+	if err == nil {
+		t.Fatal("expected newExternalOwnerConfig to reject empty authHeaderEnv")
+	}
+	if !strings.Contains(err.Error(), `authHeaderEnv "SPRITZ_INTERNAL_TOKEN" is empty`) {
+		t.Fatalf("expected authHeaderEnv validation error, got %v", err)
+	}
+}
+
 func TestCreateRequestFingerprintCanonicalizesEquivalentOwnerInputs(t *testing.T) {
 	directFingerprint, err := createRequestFingerprint(createRequest{
 		OwnerID: "user-123",
