@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -605,6 +607,65 @@ func TestCreateRequestFingerprintIncludesExternalIssuer(t *testing.T) {
 
 	if firstFingerprint == secondFingerprint {
 		t.Fatalf("expected issuer to affect external owner fingerprint")
+	}
+}
+
+func TestCreateRequestFingerprintPreservesLegacyDirectOwnerShape(t *testing.T) {
+	body := createRequest{
+		OwnerID:  "user-123",
+		PresetID: "openclaw",
+		Spec: spritzv1.SpritzSpec{
+			Image: "example.com/spritz-openclaw:latest",
+		},
+	}
+
+	got, err := createRequestFingerprint(body, "spritz-test", "", "", nil)
+	if err != nil {
+		t.Fatalf("createRequestFingerprint failed: %v", err)
+	}
+
+	specCopy := body.Spec
+	specCopy.Annotations = nil
+	specCopy.Labels = nil
+	legacyPayload := struct {
+		OwnerID    string              `json:"ownerId"`
+		PresetID   string              `json:"presetId,omitempty"`
+		Name       string              `json:"name,omitempty"`
+		NamePrefix string              `json:"namePrefix,omitempty"`
+		Namespace  string              `json:"namespace,omitempty"`
+		Source     string              `json:"source,omitempty"`
+		Spec       spritzv1.SpritzSpec `json:"spec"`
+		UserConfig json.RawMessage     `json:"userConfig,omitempty"`
+	}{
+		OwnerID:   "user-123",
+		PresetID:  "openclaw",
+		Namespace: "spritz-test",
+		Source:    provisionerSource(&body),
+		Spec:      specCopy,
+	}
+	encoded, err := json.Marshal(legacyPayload)
+	if err != nil {
+		t.Fatalf("failed to marshal legacy fingerprint payload: %v", err)
+	}
+	sum := sha256.Sum256(encoded)
+	want := fmt.Sprintf("%x", sum[:])
+	if got != want {
+		t.Fatalf("expected legacy direct-owner fingerprint %q, got %q", want, got)
+	}
+}
+
+func TestNormalizeExternalOwnerRefCanonicalizesUUIDTenantForAllProviders(t *testing.T) {
+	normalized, err := normalizeExternalOwnerRef(ownerRef{
+		Type:     "external",
+		Provider: "slack",
+		Tenant:   "72F988BF-86F1-41AF-91AB-2D7CD011DB47",
+		Subject:  "U123456",
+	})
+	if err != nil {
+		t.Fatalf("normalizeExternalOwnerRef failed: %v", err)
+	}
+	if normalized.Tenant != "72f988bf-86f1-41af-91ab-2d7cd011db47" {
+		t.Fatalf("expected canonical tenant UUID, got %q", normalized.Tenant)
 	}
 }
 

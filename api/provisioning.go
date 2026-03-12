@@ -848,12 +848,13 @@ func createFingerprint(ownerID string, ref *ownerRef, resolvedOwnerID, externalI
 	specCopy := spec
 	specCopy.Annotations = nil
 	specCopy.Labels = nil
-	ownerPayload, err := canonicalOwnerFingerprintPayload(ownerID, ref, resolvedOwnerID, externalIssuer)
+	canonicalOwnerID, ownerPayload, err := canonicalOwnerFingerprintPayload(ownerID, ref, resolvedOwnerID, externalIssuer)
 	if err != nil {
 		return "", err
 	}
 	payload := struct {
-		Owner      any                 `json:"owner"`
+		OwnerID    string              `json:"ownerId,omitempty"`
+		Owner      any                 `json:"owner,omitempty"`
 		PresetID   string              `json:"presetId,omitempty"`
 		Name       string              `json:"name,omitempty"`
 		NamePrefix string              `json:"namePrefix,omitempty"`
@@ -862,6 +863,7 @@ func createFingerprint(ownerID string, ref *ownerRef, resolvedOwnerID, externalI
 		Spec       spritzv1.SpritzSpec `json:"spec"`
 		UserConfig json.RawMessage     `json:"userConfig,omitempty"`
 	}{
+		OwnerID:    canonicalOwnerID,
 		Owner:      ownerPayload,
 		PresetID:   presetID,
 		Name:       name,
@@ -879,38 +881,38 @@ func createFingerprint(ownerID string, ref *ownerRef, resolvedOwnerID, externalI
 	return fmt.Sprintf("%x", sum[:]), nil
 }
 
-func canonicalOwnerFingerprintPayload(ownerID string, ref *ownerRef, resolvedOwnerID, externalIssuer string) (any, error) {
+func canonicalOwnerFingerprintPayload(ownerID string, ref *ownerRef, resolvedOwnerID, externalIssuer string) (string, any, error) {
 	switch {
 	case ref != nil:
 		normalizedType := strings.ToLower(strings.TrimSpace(ref.Type))
 		switch normalizedType {
 		case "owner":
 			if id := strings.TrimSpace(ref.ID); id != "" {
-				return map[string]string{"ownerId": id}, nil
+				return id, nil, nil
 			}
 		case "external":
 			normalized, err := normalizeExternalOwnerRef(*ref)
 			if err != nil {
-				return nil, err
+				return "", nil, err
 			}
 			payload := canonicalOwnerRefPayload(normalized)
 			if issuer := strings.TrimSpace(externalIssuer); issuer != "" {
 				payload["issuer"] = issuer
 			}
-			return payload, nil
+			return "", payload, nil
 		case "":
-			return nil, fmt.Errorf("ownerRef.type is required")
+			return "", nil, fmt.Errorf("ownerRef.type is required")
 		default:
-			return nil, fmt.Errorf("ownerRef.type must be owner or external")
+			return "", nil, fmt.Errorf("ownerRef.type must be owner or external")
 		}
 	case strings.TrimSpace(ownerID) != "":
-		return map[string]string{"ownerId": strings.TrimSpace(ownerID)}, nil
+		return strings.TrimSpace(ownerID), nil, nil
 	}
 
 	if strings.TrimSpace(ownerID) != "" {
-		return map[string]string{"ownerId": strings.TrimSpace(ownerID)}, nil
+		return strings.TrimSpace(ownerID), nil, nil
 	}
-	return map[string]string{"ownerId": strings.TrimSpace(resolvedOwnerID)}, nil
+	return strings.TrimSpace(resolvedOwnerID), nil, nil
 }
 
 func (s *server) externalOwnerIssuerForPrincipal(principal principal) string {

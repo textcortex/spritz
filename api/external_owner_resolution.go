@@ -409,21 +409,24 @@ func normalizeExternalOwnerRef(ref ownerRef) (ownerRef, error) {
 	if normalized.Subject == "" {
 		return normalized, fmt.Errorf("ownerRef.subject is required")
 	}
+	if normalized.Tenant != "" {
+		if tenantID, err := uuid.Parse(normalized.Tenant); err == nil {
+			normalized.Tenant = tenantID.String()
+		}
+	}
 
 	switch normalized.Provider {
 	case "msteams":
 		if normalized.Tenant == "" {
 			return normalized, fmt.Errorf("ownerRef.tenant is required for msteams")
 		}
-		tenantID, err := uuid.Parse(normalized.Tenant)
-		if err != nil {
+		if _, err := uuid.Parse(normalized.Tenant); err != nil {
 			return normalized, fmt.Errorf("ownerRef.tenant must be a valid UUID for msteams")
 		}
 		subjectID, err := uuid.Parse(normalized.Subject)
 		if err != nil {
 			return normalized, fmt.Errorf("ownerRef.subject must be a valid UUID for msteams")
 		}
-		normalized.Tenant = tenantID.String()
 		normalized.Subject = subjectID.String()
 	}
 
