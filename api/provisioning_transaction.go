@@ -115,6 +115,11 @@ func (tx *provisionerCreateTransaction) prepare() error {
 	if err := authorizeServiceAction(tx.principal, scopeInstancesAssignOwner, true); err != nil {
 		return newProvisionerForbiddenError()
 	}
+	if tx.fingerprintRequest.OwnerRef != nil && strings.EqualFold(strings.TrimSpace(tx.fingerprintRequest.OwnerRef.Type), "external") {
+		if err := authorizeServiceAction(tx.principal, scopeExternalResolveViaCreate, true); err != nil {
+			return newProvisionerForbiddenError()
+		}
+	}
 	if strings.TrimSpace(tx.body.IdempotencyKey) == "" {
 		return newProvisionerCreateError(http.StatusBadRequest, errors.New("idempotencyKey is required"))
 	}

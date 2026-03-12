@@ -327,6 +327,34 @@ func TestCreateSpritzRejectsExternalOwnerForAdminCallers(t *testing.T) {
 	}
 }
 
+func TestCreateSpritzReplayRequiresExternalResolveScope(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	configureExternalOwnerTestServer(s, fakeExternalOwnerResolver{
+		resolve: func(_ context.Context, _ externalOwnerPolicy, _ principal, _ ownerRef, _ string) (externalOwnerResolution, error) {
+			return externalOwnerResolution{
+				Status:  externalOwnerResolved,
+				OwnerID: "user-123",
+			}, nil
+		},
+	})
+	e := newCreateSpritzAPI(t, s)
+
+	body := []byte(`{"presetId":"openclaw","ownerRef":{"type":"external","provider":"msteams","tenant":"72f988bf-86f1-41af-91ab-2d7cd011db47","subject":"6f0f9d4f-9b0e-4d52-8c3a-ef0fd64b9b9f"},"idempotencyKey":"teams-scope-bypass"}`)
+
+	req1, rec1 := newServiceCreateRequest(body)
+	e.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusCreated {
+		t.Fatalf("expected first create status 201, got %d: %s", rec1.Code, rec1.Body.String())
+	}
+
+	req2, rec2 := newServiceCreateRequestWithScopes(body, scopeInstancesCreate, scopeInstancesAssignOwner)
+	e.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+}
+
 func TestExternalOwnerResolveRequiresTenantWhenTenantAllowlistIsConfigured(t *testing.T) {
 	config := externalOwnerConfig{
 		subjectHashKey: []byte("test-external-owner-secret"),
@@ -340,6 +368,9 @@ func TestExternalOwnerResolveRequiresTenantWhenTenantAllowlistIsConfigured(t *te
 				},
 				AllowedTenants: map[string]struct{}{
 					"enterprise-1": {},
+				},
+				TenantRequired: map[string]struct{}{
+					"slack": {},
 				},
 			},
 		},
@@ -365,6 +396,49 @@ func TestExternalOwnerResolveRequiresTenantWhenTenantAllowlistIsConfigured(t *te
 	}
 	if resolutionErr.code != "external_identity_forbidden" {
 		t.Fatalf("expected external_identity_forbidden, got %q", resolutionErr.code)
+	}
+}
+
+func TestExternalOwnerResolveAllowsTenantlessProviderWhenTenantIsNotRequired(t *testing.T) {
+	config := externalOwnerConfig{
+		subjectHashKey: []byte("test-external-owner-secret"),
+		policies: map[string]externalOwnerPolicy{
+			"zenobot": {
+				PrincipalID: "zenobot",
+				Issuer:      "zenobot",
+				URL:         "http://resolver.example.com/v1/external-owners/resolve",
+				AllowedProviders: map[string]struct{}{
+					"slack":   {},
+					"msteams": {},
+				},
+				AllowedTenants: map[string]struct{}{
+					"72f988bf-86f1-41af-91ab-2d7cd011db47": {},
+				},
+			},
+		},
+		resolver: fakeExternalOwnerResolver{
+			resolve: func(_ context.Context, _ externalOwnerPolicy, _ principal, ref ownerRef, _ string) (externalOwnerResolution, error) {
+				if ref.Provider != "slack" {
+					t.Fatalf("expected provider slack, got %q", ref.Provider)
+				}
+				return externalOwnerResolution{
+					Status:  externalOwnerResolved,
+					OwnerID: "user-123",
+				}, nil
+			},
+		},
+	}
+
+	resolution, err := config.resolve(context.Background(), principal{ID: "zenobot", Type: principalTypeService}, ownerRef{
+		Type:     "external",
+		Provider: "slack",
+		Subject:  "U123456",
+	}, "")
+	if err != nil {
+		t.Fatalf("expected tenantless slack identity to resolve when tenant is not required, got %v", err)
+	}
+	if resolution.OwnerID != "user-123" {
+		t.Fatalf("expected ownerId user-123, got %q", resolution.OwnerID)
 	}
 }
 

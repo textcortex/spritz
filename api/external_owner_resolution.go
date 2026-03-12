@@ -55,6 +55,7 @@ type externalOwnerPolicy struct {
 	AuthHeader       string
 	AllowedProviders map[string]struct{}
 	AllowedTenants   map[string]struct{}
+	TenantRequired   map[string]struct{}
 	Timeout          time.Duration
 }
 
@@ -65,6 +66,7 @@ type externalOwnerPolicyInput struct {
 	AuthHeader       string   `json:"authHeader,omitempty"`
 	AllowedProviders []string `json:"allowedProviders,omitempty"`
 	AllowedTenants   []string `json:"allowedTenants,omitempty"`
+	TenantRequired   []string `json:"tenantRequired,omitempty"`
 	Timeout          string   `json:"timeout,omitempty"`
 }
 
@@ -168,6 +170,7 @@ func newExternalOwnerConfig() (externalOwnerConfig, error) {
 			AuthHeader:       strings.TrimSpace(input.AuthHeader),
 			AllowedProviders: allowedProviders,
 			AllowedTenants:   normalizeStringSet(input.AllowedTenants),
+			TenantRequired:   normalizeTokenSet(input.TenantRequired),
 			Timeout:          timeout,
 		}
 	}
@@ -248,7 +251,8 @@ func (c externalOwnerConfig) resolve(ctx context.Context, principal principal, r
 		}
 	}
 	if len(policy.AllowedTenants) > 0 {
-		if normalized.Tenant == "" {
+		tenantRequired := policy.requiresTenant(normalized.Provider)
+		if normalized.Tenant == "" && tenantRequired {
 			return externalOwnerResolution{}, externalOwnerResolutionError{
 				status:   http.StatusForbidden,
 				code:     "external_identity_forbidden",
@@ -258,11 +262,22 @@ func (c externalOwnerConfig) resolve(ctx context.Context, principal principal, r
 				subject:  normalized.Subject,
 			}
 		}
-		if _, ok := policy.AllowedTenants[normalized.Tenant]; !ok {
+		if normalized.Tenant != "" {
+			if _, ok := policy.AllowedTenants[normalized.Tenant]; !ok {
+				return externalOwnerResolution{}, externalOwnerResolutionError{
+					status:   http.StatusForbidden,
+					code:     "external_identity_forbidden",
+					message:  "tenant is not allowed for this principal",
+					provider: normalized.Provider,
+					tenant:   normalized.Tenant,
+					subject:  normalized.Subject,
+				}
+			}
+		} else if tenantRequired {
 			return externalOwnerResolution{}, externalOwnerResolutionError{
 				status:   http.StatusForbidden,
 				code:     "external_identity_forbidden",
-				message:  "tenant is not allowed for this principal",
+				message:  "tenant is required for this principal",
 				provider: normalized.Provider,
 				tenant:   normalized.Tenant,
 				subject:  normalized.Subject,
@@ -346,6 +361,14 @@ func (p externalOwnerPolicy) issuer() string {
 		return issuer
 	}
 	return strings.TrimSpace(p.PrincipalID)
+}
+
+func (p externalOwnerPolicy) requiresTenant(provider string) bool {
+	if len(p.TenantRequired) == 0 {
+		return false
+	}
+	_, ok := p.TenantRequired[strings.ToLower(strings.TrimSpace(provider))]
+	return ok
 }
 
 func normalizeExternalOwnerRef(ref ownerRef) (ownerRef, error) {
