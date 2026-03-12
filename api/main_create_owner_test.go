@@ -66,6 +66,15 @@ func TestCreateSpritzOwnerUsesIDAndOmitsEmail(t *testing.T) {
 	if _, exists := owner["email"]; exists {
 		t.Fatalf("expected owner.email to be omitted from response, got %#v", owner["email"])
 	}
+	if data["accessUrl"] != "http://tidal-ember.spritz-test.svc.cluster.local:8080/#chat/tidal-ember" {
+		t.Fatalf("expected accessUrl to prefer chat url, got %#v", data["accessUrl"])
+	}
+	if data["chatUrl"] != "http://tidal-ember.spritz-test.svc.cluster.local:8080/#chat/tidal-ember" {
+		t.Fatalf("expected chatUrl in response, got %#v", data["chatUrl"])
+	}
+	if data["workspaceUrl"] != "http://tidal-ember.spritz-test.svc.cluster.local:8080" {
+		t.Fatalf("expected workspaceUrl in response, got %#v", data["workspaceUrl"])
+	}
 }
 
 func TestCreateSpritzRejectsOwnerIDMismatchForNonAdmin(t *testing.T) {

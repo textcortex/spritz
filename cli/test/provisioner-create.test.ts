@@ -25,7 +25,9 @@ test('create uses bearer auth and provisioner fields for preset-based creation',
       res.end(JSON.stringify({
         status: 'success',
         data: {
-          accessUrl: 'https://console.example.com/w/openclaw-tide-wind/',
+          accessUrl: 'https://console.example.com/#chat/openclaw-tide-wind',
+          chatUrl: 'https://console.example.com/#chat/openclaw-tide-wind',
+          workspaceUrl: 'https://console.example.com/w/openclaw-tide-wind/',
           ownerId: 'user-123',
           presetId: 'openclaw',
         },
@@ -79,7 +81,9 @@ test('create uses bearer auth and provisioner fields for preset-based creation',
   });
 
   const payload = JSON.parse(stdout);
-  assert.equal(payload.accessUrl, 'https://console.example.com/w/openclaw-tide-wind/');
+  assert.equal(payload.accessUrl, 'https://console.example.com/#chat/openclaw-tide-wind');
+  assert.equal(payload.chatUrl, 'https://console.example.com/#chat/openclaw-tide-wind');
+  assert.equal(payload.workspaceUrl, 'https://console.example.com/w/openclaw-tide-wind/');
   assert.equal(payload.ownerId, 'user-123');
   assert.equal(payload.presetId, 'openclaw');
 });
@@ -98,7 +102,9 @@ test('create falls back to local owner identity without bearer auth', async (t) 
       res.end(JSON.stringify({
         status: 'success',
         data: {
-          accessUrl: 'http://localhost:8080/w/claude-code-tender-otter/',
+          accessUrl: 'http://localhost:8080/#chat/claude-code-tender-otter',
+          chatUrl: 'http://localhost:8080/#chat/claude-code-tender-otter',
+          workspaceUrl: 'http://localhost:8080/w/claude-code-tender-otter/',
           ownerId: 'local-user',
         },
       }));
@@ -161,7 +167,9 @@ test('create allows server-side default preset resolution', async (t) => {
       res.end(JSON.stringify({
         status: 'success',
         data: {
-          accessUrl: 'https://console.example.com/w/openclaw-tide-wind/',
+          accessUrl: 'https://console.example.com/#chat/openclaw-tide-wind',
+          chatUrl: 'https://console.example.com/#chat/openclaw-tide-wind',
+          workspaceUrl: 'https://console.example.com/w/openclaw-tide-wind/',
           ownerId: 'user-123',
           presetId: 'openclaw',
         },
@@ -227,7 +235,9 @@ test('create uses active profile api url and bearer token without SPRITZ env var
       res.end(JSON.stringify({
         status: 'success',
         data: {
-          accessUrl: 'https://console.example.com/w/openclaw-profile-smoke/',
+          accessUrl: 'https://console.example.com/#chat/openclaw-profile-smoke',
+          chatUrl: 'https://console.example.com/#chat/openclaw-profile-smoke',
+          workspaceUrl: 'https://console.example.com/w/openclaw-profile-smoke/',
           ownerId: 'user-123',
           presetId: 'openclaw',
         },
@@ -313,7 +323,9 @@ test('create uses active profile api url and bearer token without SPRITZ env var
   });
 
   const payload = JSON.parse(stdout);
-  assert.equal(payload.accessUrl, 'https://console.example.com/w/openclaw-profile-smoke/');
+  assert.equal(payload.accessUrl, 'https://console.example.com/#chat/openclaw-profile-smoke');
+  assert.equal(payload.chatUrl, 'https://console.example.com/#chat/openclaw-profile-smoke');
+  assert.equal(payload.workspaceUrl, 'https://console.example.com/w/openclaw-profile-smoke/');
 });
 
 test('profile show redacts bearer tokens', async () => {

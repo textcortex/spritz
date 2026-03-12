@@ -1,12 +1,16 @@
 package v1
 
-import "fmt"
+import (
+	"fmt"
+	"net/url"
+	"strings"
+)
 
 const defaultWebPort = int32(8080)
 
-// AccessURLForSpritz returns the canonical access URL for a spritz based on its
-// ingress or primary service port configuration.
-func AccessURLForSpritz(spritz *Spritz) string {
+// WorkspaceURLForSpritz returns the canonical workspace URL for a spritz based
+// on its ingress or primary service port configuration.
+func WorkspaceURLForSpritz(spritz *Spritz) string {
 	if spritz == nil {
 		return ""
 	}
@@ -34,6 +38,34 @@ func AccessURLForSpritz(spritz *Spritz) string {
 		servicePort = port.ServicePort
 	}
 	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", spritz.Name, spritz.Namespace, servicePort)
+}
+
+// ChatURLForSpritz returns the canonical agent chat URL for a spritz when the
+// workspace is exposed through a web surface.
+func ChatURLForSpritz(spritz *Spritz) string {
+	workspaceURL := WorkspaceURLForSpritz(spritz)
+	if workspaceURL == "" {
+		return ""
+	}
+	parsed, err := url.Parse(workspaceURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	parsed.Path = "/"
+	parsed.RawPath = "/"
+	parsed.RawQuery = ""
+	parsed.Fragment = fmt.Sprintf("chat/%s", url.PathEscape(strings.TrimSpace(spritz.Name)))
+	return parsed.String()
+}
+
+// AccessURLForSpritz returns the canonical primary access URL for a spritz.
+// Human-facing clients should use the chat URL when available, and otherwise
+// fall back to the workspace URL.
+func AccessURLForSpritz(spritz *Spritz) string {
+	if chatURL := ChatURLForSpritz(spritz); chatURL != "" {
+		return chatURL
+	}
+	return WorkspaceURLForSpritz(spritz)
 }
 
 // IsWebEnabled reports whether the web surface should be exposed for a spritz.

@@ -101,6 +101,8 @@ type provisionerPolicy struct {
 type createSpritzResponse struct {
 	Spritz         *spritzv1.Spritz `json:"spritz"`
 	AccessURL      string           `json:"accessUrl,omitempty"`
+	ChatURL        string           `json:"chatUrl,omitempty"`
+	WorkspaceURL   string           `json:"workspaceUrl,omitempty"`
 	Namespace      string           `json:"namespace,omitempty"`
 	OwnerID        string           `json:"ownerId,omitempty"`
 	ActorID        string           `json:"actorId,omitempty"`
@@ -963,9 +965,13 @@ func summarizeCreateResponse(spritz *spritzv1.Spritz, principal principal, prese
 	}
 	createdAt := spritz.CreationTimestamp.DeepCopy()
 	idleExpiresAt, maxExpiresAt, expiresAt := lifecycleExpiryTimes(spritz, time.Now())
+	workspaceURL := spritzv1.WorkspaceURLForSpritz(spritz)
+	chatURL := spritzv1.ChatURLForSpritz(spritz)
 	return createSpritzResponse{
 		Spritz:         spritz,
 		AccessURL:      spritzv1.AccessURLForSpritz(spritz),
+		ChatURL:        chatURL,
+		WorkspaceURL:   workspaceURL,
 		Namespace:      spritz.Namespace,
 		OwnerID:        spritz.Spec.Owner.ID,
 		ActorID:        principal.ID,
