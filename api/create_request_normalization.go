@@ -94,7 +94,7 @@ func (s *server) normalizeCreateRequest(_ context.Context, principal principal, 
 		return nil, newCreateRequestError(http.StatusBadRequest, err)
 	}
 	if body.OwnerRef != nil && strings.EqualFold(strings.TrimSpace(body.OwnerRef.Type), "external") {
-		if !principalCanUseProvisionerFlow(principal) {
+		if !principal.isService() {
 			return nil, newCreateRequestError(http.StatusForbidden, errForbidden)
 		}
 	} else {

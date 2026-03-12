@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -294,6 +295,79 @@ func TestCreateSpritzRejectsExternalOwnerResolutionWithoutCreateScopes(t *testin
 	}
 }
 
+func TestCreateSpritzRejectsExternalOwnerForAdminCallers(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	resolverCalls := 0
+	configureExternalOwnerTestServer(s, fakeExternalOwnerResolver{
+		resolve: func(_ context.Context, _ externalOwnerPolicy, _ principal, _ ownerRef, _ string) (externalOwnerResolution, error) {
+			resolverCalls++
+			return externalOwnerResolution{
+				Status:  externalOwnerResolved,
+				OwnerID: "user-123",
+			}, nil
+		},
+	})
+	e := newCreateSpritzAPI(t, s)
+
+	body := []byte(`{"presetId":"openclaw","ownerRef":{"type":"external","provider":"msteams","tenant":"72f988bf-86f1-41af-91ab-2d7cd011db47","subject":"6f0f9d4f-9b0e-4d52-8c3a-ef0fd64b9b9f"},"idempotencyKey":"teams-admin"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "admin-1")
+	req.Header.Set("X-Spritz-Principal-Type", "admin")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if resolverCalls != 0 {
+		t.Fatalf("expected resolver to be skipped for admin callers, got %d calls", resolverCalls)
+	}
+}
+
+func TestExternalOwnerResolveRequiresTenantWhenTenantAllowlistIsConfigured(t *testing.T) {
+	config := externalOwnerConfig{
+		subjectHashKey: []byte("test-external-owner-secret"),
+		policies: map[string]externalOwnerPolicy{
+			"zenobot": {
+				PrincipalID: "zenobot",
+				Issuer:      "zenobot",
+				URL:         "http://resolver.example.com/v1/external-owners/resolve",
+				AllowedProviders: map[string]struct{}{
+					"slack": {},
+				},
+				AllowedTenants: map[string]struct{}{
+					"enterprise-1": {},
+				},
+			},
+		},
+		resolver: fakeExternalOwnerResolver{
+			resolve: func(_ context.Context, _ externalOwnerPolicy, _ principal, _ ownerRef, _ string) (externalOwnerResolution, error) {
+				t.Fatal("expected resolver call to be blocked when tenant is missing")
+				return externalOwnerResolution{}, nil
+			},
+		},
+	}
+
+	_, err := config.resolve(context.Background(), principal{ID: "zenobot", Type: principalTypeService}, ownerRef{
+		Type:     "external",
+		Provider: "slack",
+		Subject:  "U123456",
+	}, "")
+	if err == nil {
+		t.Fatal("expected resolve to fail when tenant allowlist is configured but tenant is missing")
+	}
+	var resolutionErr externalOwnerResolutionError
+	if !errors.As(err, &resolutionErr) {
+		t.Fatalf("expected externalOwnerResolutionError, got %T", err)
+	}
+	if resolutionErr.code != "external_identity_forbidden" {
+		t.Fatalf("expected external_identity_forbidden, got %q", resolutionErr.code)
+	}
+}
+
 func TestCreateRequestFingerprintCanonicalizesEquivalentOwnerInputs(t *testing.T) {
 	directFingerprint, err := createRequestFingerprint(createRequest{
 		OwnerID: "user-123",
@@ -370,5 +444,18 @@ func TestNormalizeCreateOwnerSupportsOwnerRefOwner(t *testing.T) {
 	}
 	if body.OwnerID != "user-123" {
 		t.Fatalf("expected body ownerId to be populated from ownerRef, got %q", body.OwnerID)
+	}
+}
+
+func TestNormalizeCreateOwnerRejectsOwnerRefWithoutType(t *testing.T) {
+	body := &createRequest{
+		OwnerRef: &ownerRef{ID: "user-123"},
+	}
+	_, err := normalizeCreateOwnerRequest(body, principal{ID: "user-123", Type: principalTypeHuman}, true)
+	if err == nil {
+		t.Fatal("expected normalizeCreateOwnerRequest to reject ownerRef without type")
+	}
+	if !strings.Contains(err.Error(), "ownerRef.type is required") {
+		t.Fatalf("expected ownerRef.type validation error, got %v", err)
 	}
 }

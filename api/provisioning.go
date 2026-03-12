@@ -220,6 +220,7 @@ func normalizeCreateOwnerRequest(body *createRequest, principal principal, authE
 		ref.ID = strings.TrimSpace(ref.ID)
 		switch ref.Type {
 		case "":
+			return owner, fmt.Errorf("ownerRef.type is required")
 		case "owner":
 			if ref.ID == "" {
 				return owner, fmt.Errorf("ownerRef.id is required when ownerRef.type=owner")
@@ -888,8 +889,7 @@ func canonicalOwnerFingerprintPayload(ownerID string, ref *ownerRef, resolvedOwn
 			}
 			return canonicalOwnerRefPayload(normalized), nil
 		case "":
-			// Fall through to the direct owner path below so empty ownerRef does
-			// not create a distinct fingerprint representation.
+			return nil, fmt.Errorf("ownerRef.type is required")
 		default:
 			return nil, fmt.Errorf("ownerRef.type must be owner or external")
 		}
