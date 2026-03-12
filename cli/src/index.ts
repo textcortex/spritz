@@ -29,6 +29,8 @@ type TerminalSessionInfo = {
   default_session?: string;
 };
 
+type SkillflagModule = typeof import('skillflag');
+
 type TtyContext = {
   ttyPath: string | null;
   ttyState: string | null;
@@ -54,6 +56,16 @@ const ttyWatchdogIntervalMs = 250;
 const ttyRestoreBanner = '\r\n[spz] terminal restored after disconnect\r\n';
 const sttyBinary = process.env.SPRITZ_STTY_BINARY || 'stty';
 const resetBinary = process.env.SPRITZ_RESET_BINARY || 'reset';
+let skillflagModulePromise: Promise<SkillflagModule> | undefined;
+
+function loadSkillflagModule(): Promise<SkillflagModule> {
+  skillflagModulePromise ??= import('skillflag');
+  return skillflagModulePromise;
+}
+
+function shouldMaybeHandleSkillflag(argv: string[]): boolean {
+  return argv.some((token) => token === '--skill' || token.startsWith('--skill='));
+}
 
 /**
  * Build platform-specific stty args that target a specific tty path.
@@ -374,6 +386,7 @@ Usage:
   spritz profile set <name> [--api-url <url>] [--user-id <id>] [--user-email <email>] [--user-teams <csv>] [--namespace <ns>]
   spritz profile use <name>
   spritz profile delete <name>
+  spritz --skill <list|show|export|install> ...
 
 Alias:
   spz (same commands as spritz)
@@ -924,6 +937,15 @@ async function resolveNamespace(): Promise<string | undefined> {
 }
 
 async function main() {
+  if (shouldMaybeHandleSkillflag(process.argv)) {
+    const { findSkillsRoot, maybeHandleSkillflag } = await loadSkillflagModule();
+    await maybeHandleSkillflag(process.argv, {
+      skillsRoot: findSkillsRoot(import.meta.url),
+      includeBundledSkill: false,
+    });
+    return;
+  }
+
   if (!command || command === 'help' || command === '--help') {
     usage();
     return;
