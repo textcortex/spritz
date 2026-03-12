@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   assertSmokeCreateResponse,
@@ -17,6 +19,9 @@ import {
   waitForWebSocketOpen,
 } from './acp-smoke-lib.mjs';
 
+const thisFile = fileURLToPath(import.meta.url);
+const expectedCliDir = path.join(path.dirname(path.dirname(thisFile)), 'cli');
+
 test('resolveSpzCommand prefers explicit binary env override', () => {
   assert.deepEqual(resolveSpzCommand({ SPRITZ_SMOKE_SPZ_BIN: '/tmp/spz' }, { hasSpzOnPath: true }), {
     command: '/tmp/spz',
@@ -27,7 +32,7 @@ test('resolveSpzCommand prefers explicit binary env override', () => {
 test('resolveSpzCommand prefers the checked-out CLI before any global spz on PATH', () => {
   assert.deepEqual(resolveSpzCommand({}, { hasSpzOnPath: true }), {
     command: 'pnpm',
-    args: ['--dir', '/Users/onur/repos/spritz/cli', 'exec', 'tsx', 'src/index.ts'],
+    args: ['--dir', expectedCliDir, 'exec', 'tsx', 'src/index.ts'],
   });
 });
 
@@ -45,6 +50,14 @@ test('parseSmokeArgs requires explicit presets instead of assuming example ids',
 test('parseSmokeArgs normalizes provided preset ids', () => {
   const { values } = parseSmokeArgs(['--owner-id', 'user-123', '--presets', 'OPENCLAW,Claude Code'], {});
   assert.deepEqual(values.presets, ['openclaw', 'claude-code']);
+});
+
+test('parseSmokeArgs prefers the smoke namespace env over the generic namespace env', () => {
+  const { values } = parseSmokeArgs(['--owner-id', 'user-123', '--presets', 'openclaw'], {
+    SPRITZ_NAMESPACE: 'generic-ns',
+    SPRITZ_SMOKE_NAMESPACE: 'smoke-ns',
+  });
+  assert.equal(values.namespace, 'smoke-ns');
 });
 
 test('extractACPText flattens nested content blocks', () => {
@@ -153,6 +166,19 @@ test('runCommand marks timed-out child processes', async () => {
 
   assert.equal(result.timedOut, true);
   assert.equal(result.code, 124);
+});
+
+test('runCommand escalates to SIGKILL when the child ignores SIGTERM', async () => {
+  const started = Date.now();
+  const result = await runCommand(
+    'node',
+    ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+    { timeoutMs: 25 },
+  );
+
+  assert.equal(result.timedOut, true);
+  assert.equal(result.code, 124);
+  assert.ok(Date.now() - started < 2500);
 });
 
 test('waitForWebSocketOpen rejects and closes on handshake timeout', async () => {

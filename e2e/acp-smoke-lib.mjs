@@ -49,7 +49,7 @@ export function parsePresetList(value) {
 export function parseSmokeArgs(argv, env = process.env) {
   const values = {
     ownerId: env.SPRITZ_SMOKE_OWNER_ID || '',
-    namespace: env.SPRITZ_NAMESPACE || env.SPRITZ_SMOKE_NAMESPACE || '',
+    namespace: env.SPRITZ_SMOKE_NAMESPACE || env.SPRITZ_NAMESPACE || '',
     presets: parsePresetList(env.SPRITZ_SMOKE_PRESETS || ''),
     timeoutSeconds: defaultTimeoutSeconds,
     keep: false,
@@ -345,7 +345,7 @@ export async function runCommand(command, args, options = {}) {
         timedOut = true;
         child.kill('SIGTERM');
         setTimeout(() => {
-          if (child.exitCode === null && !child.killed) {
+          if (child.exitCode === null) {
             child.kill('SIGKILL');
           }
         }, 1000).unref?.();
