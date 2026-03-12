@@ -50,6 +50,7 @@ let lastAuthRefreshAt = 0;
 let activeTerminalPoll = null;
 const createFormStateModule = window.SpritzCreateFormState || null;
 const createFormRequestModule = window.SpritzCreateFormRequest || null;
+const presetConfigModule = window.SpritzPresetConfig || null;
 const presetPlaceholder = '__SPRITZ_UI_PRESETS__';
 const ACP_CLIENT_INFO = {
   name: 'spritz-ui',
@@ -342,13 +343,17 @@ function parsePresets(raw) {
       const parsed = JSON.parse(trimmed);
       if (Array.isArray(parsed)) return parsed;
     } catch {
-      return null;
+      console.error('Failed to parse Spritz preset configuration.');
+      return [];
     }
   }
   return null;
 }
 
-const presets = parsePresets(config.presets) ?? defaultPresets;
+const presets =
+  (presetConfigModule?.parsePresets
+    ? presetConfigModule.parsePresets(config.presets, { placeholder: presetPlaceholder, logger: console })
+    : parsePresets(config.presets)) ?? defaultPresets;
 const defaultUserConfigYaml = `sharedMounts:
   - name: config
     mountPath: /home/dev/.config
