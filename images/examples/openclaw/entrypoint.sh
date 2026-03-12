@@ -13,6 +13,7 @@ acp_port="${OPENCLAW_ACP_PORT:-2529}"
 acp_path="${OPENCLAW_ACP_PATH:-/}"
 server_bin="${SPRITZ_OPENCLAW_SERVER_BIN:-/usr/local/bin/spritz-openclaw-acp-server}"
 spritz_entrypoint_bin="${SPRITZ_OPENCLAW_MAIN_ENTRYPOINT:-/usr/local/bin/spritz-entrypoint}"
+auth_store_path="${OPENCLAW_AUTH_PROFILES_PATH:-${config_dir}/agents/main/agent/auth-profiles.json}"
 
 detect_bridge_gateway_host() {
   if [[ -n "${SPRITZ_OPENCLAW_ACP_GATEWAY_HOST:-}" ]]; then
@@ -113,6 +114,77 @@ process.stdout.write(JSON.stringify(headers));
 NODE
 }
 
+seed_env_auth_profiles() {
+  local auth_store_dir
+  auth_store_dir="$(dirname "${auth_store_path}")"
+  mkdir -p "${auth_store_dir}"
+
+  node - "${auth_store_path}" <<'NODE'
+const fs = require("node:fs");
+
+const authStorePath = process.argv[2];
+const env = process.env;
+
+const candidates = [];
+if (typeof env.ANTHROPIC_API_KEY === "string" && env.ANTHROPIC_API_KEY.trim()) {
+  candidates.push({
+    profileId: "anthropic:default",
+    provider: "anthropic",
+    envKey: "ANTHROPIC_API_KEY",
+  });
+}
+
+if (candidates.length === 0) {
+  process.exit(0);
+}
+
+let store = {};
+if (fs.existsSync(authStorePath)) {
+  try {
+    store = JSON.parse(fs.readFileSync(authStorePath, "utf8"));
+  } catch {
+    store = {};
+  }
+}
+if (!store || typeof store !== "object" || Array.isArray(store)) {
+  store = {};
+}
+const profiles = store.profiles && typeof store.profiles === "object" && !Array.isArray(store.profiles)
+  ? { ...store.profiles }
+  : {};
+const lastGood = store.lastGood && typeof store.lastGood === "object" && !Array.isArray(store.lastGood)
+  ? { ...store.lastGood }
+  : {};
+
+for (const candidate of candidates) {
+  profiles[candidate.profileId] = {
+    ...(profiles[candidate.profileId] && typeof profiles[candidate.profileId] === "object"
+      ? profiles[candidate.profileId]
+      : {}),
+    type: "api_key",
+    provider: candidate.provider,
+    keyRef: {
+      source: "env",
+      provider: "default",
+      id: candidate.envKey,
+    },
+  };
+  lastGood[candidate.provider] = candidate.profileId;
+}
+
+const nextStore = {
+  ...store,
+  version: 1,
+  profiles,
+  lastGood,
+};
+
+fs.writeFileSync(authStorePath, `${JSON.stringify(nextStore, null, 2)}\n`, {
+  mode: 0o600,
+});
+NODE
+}
+
 mkdir -p "${config_dir}"
 
 if [[ -n "${OPENCLAW_CONFIG_JSON:-}" ]]; then
@@ -134,6 +206,7 @@ JSON
 fi
 
 chmod 600 "${config_path}" || true
+seed_env_auth_profiles
 
 # Force OpenClaw to use the same file path we prepared above.
 export OPENCLAW_CONFIG_PATH="${config_path}"
