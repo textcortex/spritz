@@ -261,6 +261,62 @@ Recommended canonical result states:
 - `ambiguous`
 - `unavailable`
 
+Recommended internal shape:
+
+```go
+type ExternalOwnerResolver interface {
+    ResolveExternalOwner(ctx context.Context, principal principal, ref ExternalOwnerRef) (ExternalOwnerResolution, error)
+}
+```
+
+The resolver is an internal Spritz dependency. The bot does not call it
+directly.
+
+### Resolver policy binding
+
+Spritz should not let the caller choose which resolver to trust.
+
+Instead, each authenticated service principal should be bound to resolver
+policy that defines:
+
+- resolver endpoint or adapter reference
+- resolver authentication reference
+- allowed providers
+- allowed tenants
+- resolver timeout
+
+That policy should be selected from the authenticated service principal
+identity, not from request payload.
+
+### Resolver transport
+
+The recommended production default is one HTTP adapter inside Spritz that calls
+the deployment's authoritative identity service.
+
+Why this is the right default:
+
+- it keeps the public Spritz API small
+- it avoids duplicating identity state inside Spritz
+- it lets deployments use an existing product API instead of building a second
+  control plane
+- it preserves a strict backend-only trust boundary
+
+### Resolver authentication
+
+Spritz should authenticate to the resolver with its own backend credential.
+
+Recommended order of preference:
+
+1. workload identity or mTLS if the deployment already has it
+2. a dedicated Spritz-to-resolver bearer token
+
+Rules:
+
+- Spritz MUST NOT forward the bot's bearer token to the resolver as the primary
+  trust mechanism.
+- Resolver authentication is between Spritz and the resolver.
+- The external bot authenticates only to Spritz.
+
 For HTTP-backed deployments, a portable resolver API can look like this:
 
 `POST /v1/external-owners/resolve`
@@ -320,6 +376,33 @@ Properties:
 - The resolved owner ID is an internal backend value for Spritz and does not
   need to be exposed to the bot.
 
+### Create-time resolver behavior
+
+Resolution should happen during create request normalization, before any create
+attempt reaches the normal provisioning transaction.
+
+Rules:
+
+- If resolution returns `resolved`, Spritz substitutes the resolved internal
+  owner ID and continues through the normal create path.
+- If resolution returns `unresolved`, `forbidden`, `ambiguous`, or
+  `unavailable`, Spritz MUST fail the create before creating any resource.
+- Service-principal create responses SHOULD omit `ownerId` once the owner was
+  resolved from an external identity.
+
+### Idempotency rule
+
+Resolver lookup should happen before a create is finalized, but successful
+creates must still preserve normal Spritz idempotency guarantees.
+
+Rules:
+
+- Before the first successful create, Spritz may resolve again on retried
+  requests with the same idempotency key.
+- After a successful create, retries with the same idempotency key MUST replay
+  the same created workspace even if the external mapping later changes.
+- Resolver failure or timeout MUST leave no partially created workspace behind.
+
 ## Public Error Model
 
 When create is called with `ownerRef.type=external`, Spritz should return typed
@@ -367,6 +450,8 @@ Rules:
   unless explicitly granted broader authority.
 - Provider allowlists and tenant allowlists SHOULD be policy-controlled per
   namespace.
+- Resolver selection and resolver credentials SHOULD be policy-controlled per
+  service principal.
 
 ## V1 Consistency Model
 
@@ -426,6 +511,10 @@ The architecture is complete when Spritz can demonstrate all of these flows:
 6. The bot never sends an internal owner ID during the normal provisioning path.
 7. `spz` accepts either direct owner ID input or external identity input, but
    rejects requests that try to send both.
+8. Service-principal create responses omit `ownerId` when the request used
+   `ownerRef.type=external`.
+9. Retrying a successful create with the same idempotency key replays the same
+   workspace even if the resolver mapping later changes.
 
 ## Recommended Sequencing
 
@@ -437,10 +526,12 @@ The architecture is complete when Spritz can demonstrate all of these flows:
 - Make external-ID-only bot calls the preferred integration path.
 - Add `spz` flags for external owner input while keeping direct `--owner-id`
   support.
+- Add resolver policy binding to service-principal configuration.
 
 ### Phase 2 - Resolver-backed provisioning
 
 - Implement the HTTP resolver adapter.
+- Add backend-only resolver authentication.
 - Add provider and tenant policy validation.
 - Add typed create-time error mapping.
 - Keep resolved owner IDs internal to Spritz after resolver lookup.
