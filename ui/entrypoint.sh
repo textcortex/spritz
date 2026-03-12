@@ -20,6 +20,8 @@ AUTH_REFRESH_TIMEOUT_MS="${SPRITZ_UI_AUTH_REFRESH_TIMEOUT_MS:-}"
 AUTH_REFRESH_COOLDOWN_MS="${SPRITZ_UI_AUTH_REFRESH_COOLDOWN_MS:-}"
 AUTH_REFRESH_HEADERS="${SPRITZ_UI_AUTH_REFRESH_HEADERS:-}"
 AUTH_PRESETS="${SPRITZ_UI_PRESETS:-}"
+HTML_DIR="${SPRITZ_UI_HTML_DIR:-/usr/share/nginx/html}"
+SKIP_NGINX="${SPRITZ_UI_SKIP_NGINX:-}"
 DEFAULT_REPO_URL="${SPRITZ_UI_DEFAULT_REPO_URL:-}"
 DEFAULT_REPO_DIR="${SPRITZ_UI_DEFAULT_REPO_DIR:-}"
 DEFAULT_REPO_BRANCH="${SPRITZ_UI_DEFAULT_REPO_BRANCH:-}"
@@ -56,7 +58,8 @@ AUTH_REFRESH_TOKEN_STORAGE_KEYS_ESCAPED="$(escape_sed "$AUTH_REFRESH_TOKEN_STORA
 AUTH_REFRESH_TIMEOUT_MS_ESCAPED="$(escape_sed "$AUTH_REFRESH_TIMEOUT_MS")"
 AUTH_REFRESH_COOLDOWN_MS_ESCAPED="$(escape_sed "$AUTH_REFRESH_COOLDOWN_MS")"
 AUTH_REFRESH_HEADERS_ESCAPED="$(escape_sed "$AUTH_REFRESH_HEADERS")"
-AUTH_PRESETS_ESCAPED="$(escape_sed "$AUTH_PRESETS")"
+AUTH_PRESETS_VALUE="${AUTH_PRESETS:-null}"
+AUTH_PRESETS_ESCAPED="$(escape_sed "$AUTH_PRESETS_VALUE")"
 DEFAULT_REPO_URL_ESCAPED="$(escape_sed "$DEFAULT_REPO_URL")"
 DEFAULT_REPO_DIR_ESCAPED="$(escape_sed "$DEFAULT_REPO_DIR")"
 DEFAULT_REPO_BRANCH_ESCAPED="$(escape_sed "$DEFAULT_REPO_BRANCH")"
@@ -64,7 +67,7 @@ HIDE_REPO_INPUTS_ESCAPED="$(escape_sed "$HIDE_REPO_INPUTS")"
 LAUNCH_QUERY_PARAMS_ESCAPED="$(escape_sed "$LAUNCH_QUERY_PARAMS")"
 ASSET_VERSION_ESCAPED="$(escape_sed "$ASSET_VERSION")"
 
-sed "s|__SPRITZ_API_BASE_URL__|${API_BASE_URL_ESCAPED}|g" /usr/share/nginx/html/config.js \
+sed "s|__SPRITZ_API_BASE_URL__|${API_BASE_URL_ESCAPED}|g" "${HTML_DIR}/config.js" \
   | sed "s|__SPRITZ_OWNER_ID__|${OWNER_ID_ESCAPED}|g" \
   | sed "s|__SPRITZ_UI_AUTH_MODE__|${AUTH_MODE_ESCAPED}|g" \
   | sed "s|__SPRITZ_UI_AUTH_TOKEN_STORAGE__|${AUTH_TOKEN_STORAGE_ESCAPED}|g" \
@@ -88,11 +91,15 @@ sed "s|__SPRITZ_API_BASE_URL__|${API_BASE_URL_ESCAPED}|g" /usr/share/nginx/html/
   | sed "s|__SPRITZ_UI_AUTH_REFRESH_TIMEOUT_MS__|${AUTH_REFRESH_TIMEOUT_MS_ESCAPED}|g" \
   | sed "s|__SPRITZ_UI_AUTH_REFRESH_COOLDOWN_MS__|${AUTH_REFRESH_COOLDOWN_MS_ESCAPED}|g" \
   | sed "s|__SPRITZ_UI_AUTH_REFRESH_HEADERS__|${AUTH_REFRESH_HEADERS_ESCAPED}|g" \
-  > /usr/share/nginx/html/config.runtime.js
-mv /usr/share/nginx/html/config.runtime.js /usr/share/nginx/html/config.js
+  > "${HTML_DIR}/config.runtime.js"
+mv "${HTML_DIR}/config.runtime.js" "${HTML_DIR}/config.js"
 
-sed "s|__SPRITZ_UI_ASSET_VERSION__|${ASSET_VERSION_ESCAPED}|g" /usr/share/nginx/html/index.html \
-  > /usr/share/nginx/html/index.runtime.html
-mv /usr/share/nginx/html/index.runtime.html /usr/share/nginx/html/index.html
+sed "s|__SPRITZ_UI_ASSET_VERSION__|${ASSET_VERSION_ESCAPED}|g" "${HTML_DIR}/index.html" \
+  > "${HTML_DIR}/index.runtime.html"
+mv "${HTML_DIR}/index.runtime.html" "${HTML_DIR}/index.html"
+
+if [ "$SKIP_NGINX" = "1" ]; then
+  exit 0
+fi
 
 exec nginx -g 'daemon off;'
