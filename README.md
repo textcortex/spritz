@@ -16,7 +16,7 @@ The backend inside a workspace is pluggable. OpenClaw is one example runtime. An
 
 > Spritz is in active development and should be treated as alpha software. APIs, CRDs, Helm values, and UI details may still change while the deployment model is being hardened.
 
-[Deployment Spec](docs/2026-02-24-simplest-spritz-deployment-spec.md) · [ACP Architecture](docs/2026-03-09-acp-port-and-agent-chat-architecture.md) · [Portable Auth](docs/2026-02-24-portable-authentication-and-account-architecture.md) · [External Provisioners](docs/2026-03-11-external-provisioner-and-service-principal-architecture.md) · [OpenClaw Integration](OPENCLAW.md)
+[Deployment Spec](docs/2026-02-24-simplest-spritz-deployment-spec.md) · [ACP Architecture](docs/2026-03-09-acp-port-and-agent-chat-architecture.md) · [Portable Auth](docs/2026-02-24-portable-authentication-and-account-architecture.md) · [External Provisioners](docs/2026-03-11-external-provisioner-and-service-principal-architecture.md) · [External Identity Links](docs/2026-03-12-external-identity-linking-api-architecture.md) · [OpenClaw Integration](OPENCLAW.md)
 
 ## Vision
 
