@@ -51,6 +51,10 @@
     return data.items || [];
   }
 
+  async function fetchSpritzData(deps, spritzName) {
+    return deps.request(`/spritzes/${encodeURIComponent(spritzName)}`);
+  }
+
   async function listACPConversationsData(deps, spritzName) {
     const query = new URLSearchParams();
     query.set('spritz', spritzName);
@@ -85,6 +89,8 @@
       deps,
       selectedName: name || '',
       selectedConversationId: conversationId || '',
+      selectedSpritz: null,
+      workspaceState: 'empty',
       agents: [],
       selectedAgent: null,
       conversations: [],
@@ -95,11 +101,74 @@
       promptInFlight: false,
       client: null,
       reconnectTimer: null,
+      workspaceRefreshTimer: null,
       destroyed: false,
       bootstrapComplete: false,
       cacheHydratedTranscript: false,
       cacheReplacedByReplay: false,
     };
+  }
+
+  function selectedWorkspace(page) {
+    return page.selectedAgent?.spritz || page.selectedSpritz || null;
+  }
+
+  function isACPReadyWorkspace(spritz) {
+    return String(spritz?.status?.acp?.state || '').trim().toLowerCase() === 'ready';
+  }
+
+  function workspacePhase(spritz) {
+    return String(spritz?.status?.phase || '').trim() || 'Unknown';
+  }
+
+  function workspaceStatusSummary(spritz) {
+    const name = String(spritz?.metadata?.name || '').trim() || 'Workspace';
+    const phase = workspacePhase(spritz);
+    const message = String(spritz?.status?.message || '').trim();
+    if (!spritz) {
+      return {
+        title: 'Workspace not found',
+        copy: 'The requested workspace does not exist or is no longer visible to your account.',
+        status: 'Workspace not found.',
+      };
+    }
+    if (String(phase).toLowerCase() === 'ready' && !isACPReadyWorkspace(spritz)) {
+      return {
+        title: name,
+        copy: message || 'Workspace is ready, but chat services are still starting.',
+        status: 'Preparing chat…',
+      };
+    }
+    if (['failed', 'error'].includes(String(phase).toLowerCase())) {
+      return {
+        title: name,
+        copy: message || 'Workspace failed to start correctly.',
+        status: 'Workspace failed.',
+      };
+    }
+    return {
+      title: name,
+      copy: message || 'Workspace is still provisioning. Chat will unlock automatically once it is ready.',
+      status: 'Provisioning workspace…',
+    };
+  }
+
+  function clearWorkspaceRefresh(page) {
+    if (page.workspaceRefreshTimer) {
+      clearTimeout(page.workspaceRefreshTimer);
+      page.workspaceRefreshTimer = null;
+    }
+  }
+
+  function scheduleWorkspaceRefresh(page) {
+    clearWorkspaceRefresh(page);
+    if (page.destroyed || page.workspaceState === 'ready' || !page.selectedName) return;
+    page.workspaceRefreshTimer = setTimeout(() => {
+      loadACPPage(page);
+    }, 5000);
+    if (typeof page.workspaceRefreshTimer?.unref === 'function') {
+      page.workspaceRefreshTimer.unref();
+    }
   }
 
   function isBenignACPError(err) {
@@ -371,7 +440,20 @@
   function renderAgentPicker(page) {
     if (!page.agentSelectEl) return;
     page.agentSelectEl.innerHTML = '';
+    const selectedName = page.selectedName || page.selectedSpritz?.metadata?.name || '';
+    const selectedReady = page.agents.some((agent) => agent?.spritz?.metadata?.name === selectedName);
+    if (!selectedReady && page.selectedSpritz?.metadata?.name) {
+      const option = document.createElement('option');
+      option.value = page.selectedSpritz.metadata.name;
+      option.textContent = `${page.selectedSpritz.metadata.name} · ${workspacePhase(page.selectedSpritz).toLowerCase()}`;
+      option.selected = true;
+      page.agentSelectEl.appendChild(option);
+    }
     if (!page.agents.length) {
+      if (page.selectedSpritz?.metadata?.name) {
+        page.agentSelectEl.disabled = false;
+        return;
+      }
       const option = document.createElement('option');
       option.value = '';
       option.textContent = 'No ACP-ready workspaces';
@@ -393,6 +475,17 @@
   function renderConversationList(page) {
     if (!page.threadListEl) return;
     page.threadListEl.innerHTML = '';
+    if (page.workspaceState !== 'ready') {
+      const empty = document.createElement('p');
+      empty.className = 'acp-empty acp-empty--sidebar';
+      empty.textContent =
+        page.workspaceState === 'missing'
+          ? 'This workspace is no longer available.'
+          : 'Conversations appear here once chat is ready.';
+      page.threadListEl.appendChild(empty);
+      page.newConversationBtn.disabled = true;
+      return;
+    }
     if (!page.selectedAgent) {
       const empty = document.createElement('p');
       empty.className = 'acp-empty acp-empty--sidebar';
@@ -529,13 +622,32 @@
 
   function renderThread(page) {
     if (!page.threadTitleEl || !page.threadMetaEl || !page.threadStreamEl) return;
-    const openUrl = page.deps.buildOpenUrl(page.selectedAgent?.spritz?.status?.url, page.selectedAgent?.spritz);
+    const currentWorkspace = selectedWorkspace(page);
+    const openUrl = page.deps.buildOpenUrl(currentWorkspace?.status?.url, currentWorkspace);
     page.openBtn.disabled = !openUrl;
-    page.threadTitleEl.textContent = page.selectedConversation?.spec?.title || getAgentTitle(page.selectedAgent);
-    page.threadMetaEl.textContent = buildThreadMeta(page.selectedAgent, page.selectedConversation);
+    page.threadTitleEl.textContent =
+      page.selectedConversation?.spec?.title ||
+      currentWorkspace?.metadata?.name ||
+      getAgentTitle(page.selectedAgent);
+    page.threadMetaEl.textContent =
+      page.workspaceState === 'ready' ? buildThreadMeta(page.selectedAgent, page.selectedConversation) : '';
     page.threadStreamEl.innerHTML = '';
     renderCommandBar(page);
     renderModeBar(page);
+
+    if (page.workspaceState !== 'ready') {
+      const summary = workspaceStatusSummary(currentWorkspace);
+      const card = document.createElement('div');
+      card.className = 'acp-welcome-card acp-pending-card';
+      const heading = document.createElement('strong');
+      heading.textContent = summary.title;
+      const copy = document.createElement('p');
+      copy.textContent = summary.copy;
+      card.append(heading, copy);
+      page.threadStreamEl.appendChild(card);
+      renderPermissionPrompt(page);
+      return;
+    }
 
     if (!page.selectedAgent) {
       const empty = document.createElement('div');
@@ -857,6 +969,14 @@
   }
 
   async function refreshConversations(page) {
+    if (page.workspaceState !== 'ready') {
+      page.conversations = [];
+      page.selectedConversation = null;
+      page.selectedConversationId = '';
+      renderConversationList(page);
+      renderThread(page);
+      return;
+    }
     if (!page.selectedName) {
       page.conversations = [];
       page.selectedConversation = null;
@@ -883,15 +1003,31 @@
 
   async function loadACPPage(page) {
     try {
+      clearWorkspaceRefresh(page);
       clearACPNotice(page);
       setStatus(page, 'Loading workspaces…');
       page.agents = await fetchACPAgentsData(page.deps);
+      page.selectedSpritz = null;
+      page.workspaceState = 'empty';
+      const selectedReadyAgent = page.selectedName
+        ? page.agents.find((item) => item?.spritz?.metadata?.name === page.selectedName) || null
+        : null;
+      if (page.selectedName && !selectedReadyAgent) {
+        try {
+          page.selectedSpritz = await fetchSpritzData(page.deps, page.selectedName);
+        } catch (err) {
+          if (err?.status !== 404) {
+            throw err;
+          }
+        }
+      }
       renderAgentPicker(page);
-      if (!page.agents.length) {
+      if (!page.agents.length && !page.selectedSpritz) {
         page.selectedAgent = null;
         page.conversations = [];
         page.selectedConversation = null;
         page.selectedConversationId = '';
+        page.workspaceState = 'empty';
         resetConversationRuntime(page);
         renderConversationList(page);
         renderThread(page);
@@ -899,16 +1035,39 @@
         return;
       }
 
-      const resolvedName = page.agents.some((item) => item?.spritz?.metadata?.name === page.selectedName)
-        ? page.selectedName
-        : page.agents[0]?.spritz?.metadata?.name;
-      if (!page.selectedName || resolvedName !== page.selectedName) {
+      if (!page.selectedName) {
+        const resolvedName = page.agents[0]?.spritz?.metadata?.name || '';
         window.location.replace(chatPagePath(resolvedName));
         return;
       }
+      if (!selectedReadyAgent && !page.selectedSpritz) {
+        page.selectedAgent = null;
+        page.conversations = [];
+        page.selectedConversation = null;
+        page.selectedConversationId = '';
+        page.workspaceState = 'missing';
+        resetConversationRuntime(page);
+        renderAgentPicker(page);
+        renderConversationList(page);
+        renderThread(page);
+        setStatus(page, 'Workspace not found.');
+        return;
+      }
 
-      page.selectedName = resolvedName;
-      page.selectedAgent = page.agents.find((item) => item?.spritz?.metadata?.name === resolvedName) || null;
+      page.selectedAgent = selectedReadyAgent || (isACPReadyWorkspace(page.selectedSpritz) ? { spritz: page.selectedSpritz } : null);
+      page.workspaceState = page.selectedAgent ? 'ready' : 'pending';
+      if (page.workspaceState !== 'ready') {
+        page.conversations = [];
+        page.selectedConversation = null;
+        page.selectedConversationId = '';
+        resetConversationRuntime(page);
+        renderAgentPicker(page);
+        renderConversationList(page);
+        renderThread(page);
+        setStatus(workspaceStatusSummary(page.selectedSpritz).status);
+        scheduleWorkspaceRefresh(page);
+        return;
+      }
       renderConversationList(page);
       renderThread(page);
       await refreshConversations(page);
@@ -1155,6 +1314,7 @@
 
     page.destroy = function destroy() {
       page.destroyed = true;
+      clearWorkspaceRefresh(page);
       resetConversationRuntime(page);
       if (page.card) {
         page.card.remove();

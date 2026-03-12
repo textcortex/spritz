@@ -921,6 +921,21 @@ function buildOpenUrl(rawUrl, spritz) {
   return url.href;
 }
 
+function describeChatAction(spritz) {
+  const phase = String(spritz?.status?.phase || '').trim().toLowerCase();
+  const acpState = String(spritz?.status?.acp?.state || '').trim().toLowerCase();
+  if (acpState === 'ready') {
+    return { label: 'Chat', title: 'Open agent chat.' };
+  }
+  if (phase === 'ready') {
+    return { label: 'Preparing chat…', title: 'Workspace is ready, but chat services are still starting.' };
+  }
+  if (phase === 'failed' || phase === 'error') {
+    return { label: 'Chat status', title: 'Open the chat page to inspect the current workspace state.' };
+  }
+  return { label: 'Starting…', title: 'Workspace is still provisioning. Open the chat page to watch it come online.' };
+}
+
 function renderList(items) {
   if (!items.length) {
     listEl.innerHTML = '<p>No spritzes yet.</p>';
@@ -966,10 +981,13 @@ function renderList(items) {
       window.location.assign(terminalPagePath(name));
     };
 
-    const acpReady = spritz.status?.acp?.state === 'ready';
-    if (acpReady && spritzName) {
+    if (spritzName) {
+      const chatAction = describeChatAction(spritz);
       const chatBtn = document.createElement('button');
-      chatBtn.textContent = 'Chat';
+      chatBtn.textContent = chatAction.label;
+      if (chatAction.title) {
+        chatBtn.title = chatAction.title;
+      }
       chatBtn.onclick = () => {
         window.location.assign(chatPagePath(spritzName));
       };
