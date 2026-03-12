@@ -45,6 +45,7 @@ Use this for services, bots, and automation.
 
 - env: `SPRITZ_BEARER_TOKEN`
 - flag: `--token`
+- active profile field: `bearerToken`
 
 This is the preferred mode for external provisioners such as bots.
 
@@ -64,6 +65,25 @@ This mode is not the right fit for external automation.
 - `SPRITZ_BEARER_TOKEN`: service-principal bearer token
 - `SPRITZ_CONFIG_DIR`: config directory for profiles
 - `SPRITZ_PROFILE`: active profile name
+
+## Zenobot and other preconfigured bot images
+
+Some bot images ship with `spz` already configured through an active profile.
+
+When you are inside one of those images:
+
+- check `spz profile current`
+- inspect `spz profile show <name>`
+- prefer the active profile over asking for raw `SPRITZ_*` env vars
+
+Expected shape:
+
+- profile name like `zenobot`
+- preconfigured API URL
+- preconfigured bearer token
+- preconfigured namespace when needed
+
+So if `spz profile current` returns a profile, assume Spritz is already configured unless the command itself fails.
 
 ## Service-principal create flow
 
@@ -130,7 +150,7 @@ spz terminal openclaw-tide-wind
 Use profiles:
 
 ```bash
-spz profile set staging --api-url https://console.example.com/api --namespace spritz
+spz profile set staging --api-url https://console.example.com/api --token service-token --namespace spritz
 spz profile use staging
 ```
 

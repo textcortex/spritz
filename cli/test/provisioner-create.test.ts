@@ -212,3 +212,157 @@ test('create allows server-side default preset resolution', async (t) => {
   assert.equal(payload.presetId, 'openclaw');
   assert.equal(payload.ownerId, 'user-123');
 });
+
+test('create uses active profile api url and bearer token without SPRITZ env vars', async (t) => {
+  let requestBody: any = null;
+  let requestHeaders: http.IncomingHttpHeaders | null = null;
+
+  const server = http.createServer((req, res) => {
+    requestHeaders = req.headers;
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+    req.on('end', () => {
+      requestBody = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'success',
+        data: {
+          accessUrl: 'https://console.example.com/w/openclaw-profile-smoke/',
+          ownerId: 'user-123',
+          presetId: 'openclaw',
+        },
+      }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    server.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+
+  const configDir = mkdtempSync(path.join(os.tmpdir(), 'spz-config-'));
+  const profileChild = spawn(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      cliPath,
+      'profile',
+      'set',
+      'zenobot',
+      '--api-url',
+      `http://127.0.0.1:${address.port}/api`,
+      '--token',
+      'profile-token',
+      '--namespace',
+      'spritz-staging',
+    ],
+    {
+      env: {
+        ...process.env,
+        SPRITZ_CONFIG_DIR: configDir,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+  const profileExitCode = await new Promise<number | null>((resolve) => profileChild.on('exit', resolve));
+  assert.equal(profileExitCode, 0, 'profile set should succeed');
+
+  const useChild = spawn(process.execPath, ['--import', 'tsx', cliPath, 'profile', 'use', 'zenobot'], {
+    env: {
+      ...process.env,
+      SPRITZ_CONFIG_DIR: configDir,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const useExitCode = await new Promise<number | null>((resolve) => useChild.on('exit', resolve));
+  assert.equal(useExitCode, 0, 'profile use should succeed');
+
+  const child = spawn(
+    process.execPath,
+    ['--import', 'tsx', cliPath, 'create', '--owner-id', 'user-123', '--preset', 'openclaw', '--idempotency-key', 'profile-request'],
+    {
+      env: {
+        ...process.env,
+        SPRITZ_CONFIG_DIR: configDir,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk) => {
+    stdout += chunk.toString();
+  });
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  const exitCode = await new Promise<number | null>((resolve) => child.on('exit', resolve));
+  assert.equal(exitCode, 0, `spz create should succeed: ${stderr}`);
+
+  assert.equal(requestHeaders?.authorization, 'Bearer profile-token');
+  assert.deepEqual(requestBody, {
+    namespace: 'spritz-staging',
+    presetId: 'openclaw',
+    ownerId: 'user-123',
+    idempotencyKey: 'profile-request',
+    spec: {},
+  });
+
+  const payload = JSON.parse(stdout);
+  assert.equal(payload.accessUrl, 'https://console.example.com/w/openclaw-profile-smoke/');
+});
+
+test('profile show redacts bearer tokens', async () => {
+  const configDir = mkdtempSync(path.join(os.tmpdir(), 'spz-config-'));
+
+  const profileChild = spawn(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      cliPath,
+      'profile',
+      'set',
+      'zenobot',
+      '--api-url',
+      'https://staging.spritz.textcortex.com/api',
+      '--token',
+      'super-secret-token',
+    ],
+    {
+      env: {
+        ...process.env,
+        SPRITZ_CONFIG_DIR: configDir,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+  const profileExitCode = await new Promise<number | null>((resolve) => profileChild.on('exit', resolve));
+  assert.equal(profileExitCode, 0, 'profile set should succeed');
+
+  const showChild = spawn(process.execPath, ['--import', 'tsx', cliPath, 'profile', 'show', 'zenobot'], {
+    env: {
+      ...process.env,
+      SPRITZ_CONFIG_DIR: configDir,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  let stdout = '';
+  let stderr = '';
+  showChild.stdout.on('data', (chunk) => {
+    stdout += chunk.toString();
+  });
+  showChild.stderr.on('data', (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  const exitCode = await new Promise<number | null>((resolve) => showChild.on('exit', resolve));
+  assert.equal(exitCode, 0, `profile show should succeed: ${stderr}`);
+  assert.match(stdout, /Bearer Token: \(set\)/);
+  assert.doesNotMatch(stdout, /super-secret-token/);
+});

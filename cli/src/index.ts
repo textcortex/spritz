@@ -11,6 +11,7 @@ import { terminalHardResetSequence, terminalResetSequence } from './terminal_seq
 
 type ProfileConfig = {
   apiUrl?: string;
+  bearerToken?: string;
   userId?: string;
   userEmail?: string;
   userTeams?: string;
@@ -383,7 +384,7 @@ Usage:
   spritz profile list
   spritz profile current
   spritz profile show [name]
-  spritz profile set <name> [--api-url <url>] [--user-id <id>] [--user-email <email>] [--user-teams <csv>] [--namespace <ns>]
+  spritz profile set <name> [--api-url <url>] [--token <token>] [--user-id <id>] [--user-email <email>] [--user-teams <csv>] [--namespace <ns>]
   spritz profile use <name>
   spritz profile delete <name>
   spritz --skill <list|show|export|install> ...
@@ -565,11 +566,11 @@ function isJSend(payload: any): payload is { status: string; data?: any; message
 }
 
 async function authHeaders(): Promise<Record<string, string>> {
-  const token = argValue('--token') || process.env.SPRITZ_BEARER_TOKEN;
+  const { profile } = await resolveProfile({ allowFlag: true });
+  const token = argValue('--token') || process.env.SPRITZ_BEARER_TOKEN || profile?.bearerToken;
   if (token?.trim()) {
     return { Authorization: `Bearer ${token.trim()}` };
   }
-  const { profile } = await resolveProfile({ allowFlag: true });
   const headers: Record<string, string> = {};
   const userId = process.env.SPRITZ_USER_ID || profile?.userId || process.env.USER;
   const userEmail = process.env.SPRITZ_USER_EMAIL || profile?.userEmail;
@@ -988,6 +989,7 @@ async function main() {
       }
       console.log(`Profile: ${name}`);
       console.log(`API URL: ${profile.apiUrl || '(unset)'}`);
+      console.log(`Bearer Token: ${profile.bearerToken ? '(set)' : '(unset)'}`);
       console.log(`User ID: ${profile.userId || '(unset)'}`);
       console.log(`User Email: ${profile.userEmail || '(unset)'}`);
       console.log(`User Teams: ${profile.userTeams || '(unset)'}`);
@@ -998,6 +1000,7 @@ async function main() {
     if (action === 'set') {
       const name = normalizeProfileName(rest[1] || '');
       const apiUrlInfo = argValueInfo('--api-url');
+      const tokenInfo = argValueInfo('--token');
       const userIdInfo = argValueInfo('--user-id');
       const userEmailInfo = argValueInfo('--user-email');
       const userTeamsInfo = argValueInfo('--user-teams');
@@ -1005,6 +1008,7 @@ async function main() {
 
       const anyFlag =
         apiUrlInfo.present ||
+        tokenInfo.present ||
         userIdInfo.present ||
         userEmailInfo.present ||
         userTeamsInfo.present ||
@@ -1019,6 +1023,10 @@ async function main() {
       if (apiUrlInfo.present) {
         if (!apiUrlInfo.value) throw new Error('--api-url requires a value');
         profile.apiUrl = normalizeProfileValue(apiUrlInfo.value);
+      }
+      if (tokenInfo.present) {
+        if (!tokenInfo.value) throw new Error('--token requires a value');
+        profile.bearerToken = normalizeProfileValue(tokenInfo.value);
       }
       if (userIdInfo.present) {
         if (!userIdInfo.value) throw new Error('--user-id requires a value');
