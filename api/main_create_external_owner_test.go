@@ -491,6 +491,24 @@ func TestExternalOwnerResolveRequiresTenantWithoutAllowlistWhenConfigured(t *tes
 	}
 }
 
+func TestNewExternalOwnerConfigNormalizesTenantAllowlistUUIDs(t *testing.T) {
+	t.Setenv("SPRITZ_EXTERNAL_OWNER_SUBJECT_HASH_KEY", "test-external-owner-secret")
+	t.Setenv("SPRITZ_EXTERNAL_OWNER_POLICIES_JSON", `[{"principalId":"zenobot","url":"http://resolver.example.com/v1/external-owners/resolve","allowedProviders":["msteams"],"allowedTenants":["72F988BF-86F1-41AF-91AB-2D7CD011DB47"]}]`)
+
+	config, err := newExternalOwnerConfig()
+	if err != nil {
+		t.Fatalf("newExternalOwnerConfig failed: %v", err)
+	}
+
+	policy, ok := config.policyForPrincipal(principal{ID: "zenobot", Type: principalTypeService})
+	if !ok {
+		t.Fatal("expected policy for principal zenobot")
+	}
+	if _, ok := policy.AllowedTenants["72f988bf-86f1-41af-91ab-2d7cd011db47"]; !ok {
+		t.Fatalf("expected canonical lowercase tenant UUID in allowlist, got %#v", policy.AllowedTenants)
+	}
+}
+
 func TestCreateRequestFingerprintCanonicalizesEquivalentOwnerInputs(t *testing.T) {
 	directFingerprint, err := createRequestFingerprint(createRequest{
 		OwnerID: "user-123",
@@ -551,6 +569,42 @@ func TestCreateRequestFingerprintCanonicalizesEquivalentOwnerInputs(t *testing.T
 
 	if lowerFingerprint != upperFingerprint {
 		t.Fatalf("expected equivalent msteams UUID casing to share a fingerprint")
+	}
+}
+
+func TestCreateRequestFingerprintIncludesExternalIssuer(t *testing.T) {
+	firstFingerprint, err := createRequestFingerprintWithIssuer(createRequest{
+		OwnerRef: &ownerRef{
+			Type:     "external",
+			Provider: "msteams",
+			Tenant:   "72f988bf-86f1-41af-91ab-2d7cd011db47",
+			Subject:  "6f0f9d4f-9b0e-4d52-8c3a-ef0fd64b9b9f",
+		},
+		Spec: spritzv1.SpritzSpec{
+			Image: "example.com/spritz-openclaw:latest",
+		},
+	}, "issuer-a", "spritz-test", "", "", nil)
+	if err != nil {
+		t.Fatalf("createRequestFingerprintWithIssuer failed for issuer-a: %v", err)
+	}
+
+	secondFingerprint, err := createRequestFingerprintWithIssuer(createRequest{
+		OwnerRef: &ownerRef{
+			Type:     "external",
+			Provider: "msteams",
+			Tenant:   "72f988bf-86f1-41af-91ab-2d7cd011db47",
+			Subject:  "6f0f9d4f-9b0e-4d52-8c3a-ef0fd64b9b9f",
+		},
+		Spec: spritzv1.SpritzSpec{
+			Image: "example.com/spritz-openclaw:latest",
+		},
+	}, "issuer-b", "spritz-test", "", "", nil)
+	if err != nil {
+		t.Fatalf("createRequestFingerprintWithIssuer failed for issuer-b: %v", err)
+	}
+
+	if firstFingerprint == secondFingerprint {
+		t.Fatalf("expected issuer to affect external owner fingerprint")
 	}
 }
 

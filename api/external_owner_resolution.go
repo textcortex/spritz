@@ -169,7 +169,7 @@ func newExternalOwnerConfig() (externalOwnerConfig, error) {
 			URL:              urlValue,
 			AuthHeader:       strings.TrimSpace(input.AuthHeader),
 			AllowedProviders: allowedProviders,
-			AllowedTenants:   normalizeStringSet(input.AllowedTenants),
+			AllowedTenants:   normalizeTenantSet(input.AllowedTenants),
 			TenantRequired:   normalizeTokenSet(input.TenantRequired),
 			Timeout:          timeout,
 		}
@@ -206,6 +206,24 @@ func normalizeStringSet(values []string) map[string]struct{} {
 		token := strings.TrimSpace(value)
 		if token == "" {
 			continue
+		}
+		out[token] = struct{}{}
+	}
+	return out
+}
+
+func normalizeTenantSet(values []string) map[string]struct{} {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		token := strings.TrimSpace(value)
+		if token == "" {
+			continue
+		}
+		if parsed, err := uuid.Parse(token); err == nil {
+			token = parsed.String()
 		}
 		out[token] = struct{}{}
 	}

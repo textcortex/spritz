@@ -123,12 +123,13 @@ func (tx *provisionerCreateTransaction) prepare() error {
 	if strings.TrimSpace(tx.body.IdempotencyKey) == "" {
 		return newProvisionerCreateError(http.StatusBadRequest, errors.New("idempotencyKey is required"))
 	}
+	externalIssuer := tx.server.externalOwnerIssuerForPrincipal(tx.principal)
 	canonicalName := strings.TrimSpace(tx.fingerprintRequest.Name)
 	canonicalNamePrefix := ""
 	if canonicalName == "" {
 		canonicalNamePrefix = strings.TrimSpace(tx.fingerprintRequest.NamePrefix)
 	}
-	fingerprint, err := createRequestFingerprint(tx.fingerprintRequest, tx.namespace, canonicalName, canonicalNamePrefix, tx.normalizedUserConfig)
+	fingerprint, err := createRequestFingerprintWithIssuer(tx.fingerprintRequest, externalIssuer, tx.namespace, canonicalName, canonicalNamePrefix, tx.normalizedUserConfig)
 	if err != nil {
 		return err
 	}
@@ -180,7 +181,7 @@ func (tx *provisionerCreateTransaction) prepare() error {
 	if err := resolveCreateLifetimes(&tx.body.Spec, tx.server.provisioners, true); err != nil {
 		return newProvisionerCreateError(http.StatusBadRequest, err)
 	}
-	tx.idempotencyState, err = tx.server.provisionerIdempotencyFingerprints(tx.fingerprintRequest, *tx.body, tx.resolvedExternalOwner, tx.namespace, tx.normalizedUserConfig)
+	tx.idempotencyState, err = tx.server.provisionerIdempotencyFingerprints(tx.fingerprintRequest, *tx.body, tx.resolvedExternalOwner, externalIssuer, tx.namespace, tx.normalizedUserConfig)
 	if err != nil {
 		return newProvisionerCreateError(http.StatusInternalServerError, err)
 	}

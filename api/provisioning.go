@@ -506,10 +506,15 @@ func (s *server) enforceProvisionerQuotas(ctx context.Context, namespace string,
 }
 
 func createRequestFingerprint(body createRequest, namespace, name, namePrefix string, userConfig json.RawMessage) (string, error) {
+	return createRequestFingerprintWithIssuer(body, "", namespace, name, namePrefix, userConfig)
+}
+
+func createRequestFingerprintWithIssuer(body createRequest, externalIssuer, namespace, name, namePrefix string, userConfig json.RawMessage) (string, error) {
 	return createFingerprint(
 		body.OwnerID,
 		body.OwnerRef,
 		body.Spec.Owner.ID,
+		externalIssuer,
 		sanitizeSpritzNameToken(body.PresetID),
 		strings.TrimSpace(name),
 		sanitizeSpritzNameToken(namePrefix),
@@ -690,6 +695,7 @@ func (s *server) resolvedCreateFingerprint(body createRequest, namespace, explic
 		body.OwnerID,
 		body.OwnerRef,
 		body.Spec.Owner.ID,
+		"",
 		sanitizeSpritzNameToken(body.PresetID),
 		strings.TrimSpace(body.Name),
 		sanitizeSpritzNameToken(namePrefix),
@@ -700,13 +706,13 @@ func (s *server) resolvedCreateFingerprint(body createRequest, namespace, explic
 	)
 }
 
-func (s *server) provisionerIdempotencyFingerprints(requestBody, resolvedBody createRequest, resolvedExternalOwner *externalOwnerResolution, namespace string, userConfig json.RawMessage) (provisionerIdempotencyState, error) {
+func (s *server) provisionerIdempotencyFingerprints(requestBody, resolvedBody createRequest, resolvedExternalOwner *externalOwnerResolution, externalIssuer, namespace string, userConfig json.RawMessage) (provisionerIdempotencyState, error) {
 	canonicalName := strings.TrimSpace(requestBody.Name)
 	canonicalNamePrefix := ""
 	if canonicalName == "" {
 		canonicalNamePrefix = strings.TrimSpace(requestBody.NamePrefix)
 	}
-	canonicalFingerprint, err := createRequestFingerprint(requestBody, namespace, canonicalName, canonicalNamePrefix, userConfig)
+	canonicalFingerprint, err := createRequestFingerprintWithIssuer(requestBody, externalIssuer, namespace, canonicalName, canonicalNamePrefix, userConfig)
 	if err != nil {
 		return provisionerIdempotencyState{}, err
 	}
@@ -838,11 +844,11 @@ func hashLabelValue(prefix, value string) string {
 	return fmt.Sprintf("%s-%x", prefix, sum[:12])
 }
 
-func createFingerprint(ownerID string, ref *ownerRef, resolvedOwnerID, presetID, name, namePrefix, namespace, source string, spec spritzv1.SpritzSpec, userConfig json.RawMessage) (string, error) {
+func createFingerprint(ownerID string, ref *ownerRef, resolvedOwnerID, externalIssuer, presetID, name, namePrefix, namespace, source string, spec spritzv1.SpritzSpec, userConfig json.RawMessage) (string, error) {
 	specCopy := spec
 	specCopy.Annotations = nil
 	specCopy.Labels = nil
-	ownerPayload, err := canonicalOwnerFingerprintPayload(ownerID, ref, resolvedOwnerID)
+	ownerPayload, err := canonicalOwnerFingerprintPayload(ownerID, ref, resolvedOwnerID, externalIssuer)
 	if err != nil {
 		return "", err
 	}
@@ -873,7 +879,7 @@ func createFingerprint(ownerID string, ref *ownerRef, resolvedOwnerID, presetID,
 	return fmt.Sprintf("%x", sum[:]), nil
 }
 
-func canonicalOwnerFingerprintPayload(ownerID string, ref *ownerRef, resolvedOwnerID string) (any, error) {
+func canonicalOwnerFingerprintPayload(ownerID string, ref *ownerRef, resolvedOwnerID, externalIssuer string) (any, error) {
 	switch {
 	case ref != nil:
 		normalizedType := strings.ToLower(strings.TrimSpace(ref.Type))
@@ -887,7 +893,11 @@ func canonicalOwnerFingerprintPayload(ownerID string, ref *ownerRef, resolvedOwn
 			if err != nil {
 				return nil, err
 			}
-			return canonicalOwnerRefPayload(normalized), nil
+			payload := canonicalOwnerRefPayload(normalized)
+			if issuer := strings.TrimSpace(externalIssuer); issuer != "" {
+				payload["issuer"] = issuer
+			}
+			return payload, nil
 		case "":
 			return nil, fmt.Errorf("ownerRef.type is required")
 		default:
@@ -901,6 +911,13 @@ func canonicalOwnerFingerprintPayload(ownerID string, ref *ownerRef, resolvedOwn
 		return map[string]string{"ownerId": strings.TrimSpace(ownerID)}, nil
 	}
 	return map[string]string{"ownerId": strings.TrimSpace(resolvedOwnerID)}, nil
+}
+
+func (s *server) externalOwnerIssuerForPrincipal(principal principal) string {
+	if policy, ok := s.externalOwners.policyForPrincipal(principal); ok {
+		return policy.issuer()
+	}
+	return strings.TrimSpace(principal.ID)
 }
 
 func canonicalOwnerRefPayload(ref ownerRef) map[string]string {
