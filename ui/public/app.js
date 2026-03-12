@@ -41,7 +41,6 @@ let activeTerminalSession = null;
 let activeTerminalName = '';
 let activeACPPage = null;
 let presetController = null;
-let activePresetEnv = null;
 let activePreset = null;
 const authRedirectStorageKey = 'spritz-auth-redirected';
 let authRefreshInFlight = null;
@@ -432,30 +431,6 @@ function restoreCreateFormState() {
   if (!createFormStateModule) return false;
   const state = createFormStateModule.readCreateFormState(getCreateFormStorage());
   return applyPersistedCreateFormState(state);
-}
-
-function normalizePresetEnv(env) {
-  if (!env) return null;
-  if (Array.isArray(env)) {
-    return env
-      .map((item) => {
-        if (!item || typeof item !== 'object') return null;
-        const name = String(item.name || '').trim();
-        if (!name) return null;
-        const value = item.value === undefined ? '' : String(item.value);
-        return { name, value };
-      })
-      .filter(Boolean);
-  }
-  if (typeof env === 'object') {
-    return Object.entries(env)
-      .map(([name, value]) => ({
-        name,
-        value: value === undefined ? '' : String(value),
-      }))
-      .filter((item) => item.name.trim() !== '');
-  }
-  return null;
 }
 
 function applyUserConfigDefaults() {
@@ -1414,10 +1389,6 @@ function setupPresets() {
     presets,
     hideRepoInputs,
     applyRepoDefaults,
-    normalizePresetEnv,
-    setActivePresetEnv(env) {
-      activePresetEnv = env;
-    },
     setActivePreset(preset) {
       activePreset = preset;
     },
@@ -1478,42 +1449,61 @@ if (form && refreshBtn) {
     const data = new FormData(form);
     const name = data.get('name');
     const image = data.get('image');
-    const rawName = (name || '').toString().trim();
     const imageValue = (image || '').toString().trim();
-
-    const payload = {
-      namespace: data.get('namespace') || undefined,
-      spec: {
-        image: imageValue,
-      },
-    };
-    if (rawName) {
-      payload.name = rawName;
-    } else {
-      const namePrefix = resolveRequestedNamePrefix(imageValue);
-      if (namePrefix) {
-        payload.namePrefix = namePrefix;
-      }
-    }
-
-    if (config.ownerId) {
-      payload.spec.owner = { id: config.ownerId };
-    }
 
     const repo = data.get('repo');
     const branch = data.get('branch');
     const ttl = data.get('ttl');
     const userConfigRaw = data.get('user_config');
-    const { repoUrl, repoBranch } = resolveCreateRepoSelection(repo, branch);
-    if (repoUrl) {
-      payload.spec.repo = { url: repoUrl };
-      if (repoBranch) payload.spec.repo.branch = repoBranch;
-      if (defaultRepoDir) payload.spec.repo.dir = defaultRepoDir;
-    }
-    if (ttl) payload.spec.ttl = ttl;
-    if (activePresetEnv && activePresetEnv.length > 0) {
-      payload.spec.env = activePresetEnv;
-    }
+    const payload =
+      typeof createFormRequestModule?.buildCreatePayload === 'function'
+        ? createFormRequestModule.buildCreatePayload({
+            name,
+            imageValue,
+            namespace: data.get('namespace') || undefined,
+            ownerId: config.ownerId || '',
+            activePreset,
+            repoValue: repo,
+            branchValue: branch,
+            defaultRepoUrl,
+            defaultRepoBranch,
+            defaultRepoDir,
+            ttlValue: ttl,
+          })
+        : (() => {
+            const fallbackPayload = {
+              namespace: data.get('namespace') || undefined,
+              spec: {
+                image: imageValue,
+              },
+            };
+            const rawName = (name || '').toString().trim();
+            if (rawName) {
+              fallbackPayload.name = rawName;
+            } else {
+              const namePrefix = resolveRequestedNamePrefix(imageValue);
+              if (namePrefix) {
+                fallbackPayload.namePrefix = namePrefix;
+              }
+            }
+            if (config.ownerId) {
+              fallbackPayload.spec.owner = { id: config.ownerId };
+            }
+            const { repoUrl, repoBranch } = resolveCreateRepoSelection({
+              activePreset,
+              repoValue: repo,
+              branchValue: branch,
+              defaultRepoUrl,
+              defaultRepoBranch,
+            });
+            if (repoUrl) {
+              fallbackPayload.spec.repo = { url: repoUrl };
+              if (repoBranch) fallbackPayload.spec.repo.branch = repoBranch;
+              if (defaultRepoDir) fallbackPayload.spec.repo.dir = defaultRepoDir;
+            }
+            if (ttl) fallbackPayload.spec.ttl = ttl;
+            return fallbackPayload;
+          })();
     if (userConfigRaw) {
       try {
         const userConfig = parseUserConfigInput(userConfigRaw);

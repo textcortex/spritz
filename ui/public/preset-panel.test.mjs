@@ -151,7 +151,6 @@ test('setupPresetPanel injects the preset selector and updates image fields', as
   const { setupPresetPanel } = require('./preset-panel.js');
 
   const { document, form, imageInput, repoInput, branchInput, ttlInput } = buildFormFixture();
-  let activeEnv = null;
   let activePreset = null;
   let repoDefaultsApplied = 0;
   const presets = [
@@ -183,12 +182,6 @@ test('setupPresetPanel injects the preset selector and updates image fields', as
     applyRepoDefaults() {
       repoDefaultsApplied += 1;
     },
-    normalizePresetEnv(env) {
-      return env;
-    },
-    setActivePresetEnv(env) {
-      activeEnv = env;
-    },
     setActivePreset(preset) {
       activePreset = preset;
     },
@@ -203,7 +196,6 @@ test('setupPresetPanel injects the preset selector and updates image fields', as
   assert.equal(repoInput.value, 'https://example.com/a.git');
   assert.equal(branchInput.value, 'main');
   assert.equal(ttlInput.value, '8h');
-  assert.deepEqual(activeEnv, [{ name: 'FOO', value: 'bar' }]);
   assert.equal(activePreset?.name, 'Starter Devbox');
   assert.equal(form.querySelector('.preset-help').textContent, 'Starter image');
 
@@ -214,14 +206,12 @@ test('setupPresetPanel injects the preset selector and updates image fields', as
   assert.equal(repoInput.value, 'https://example.com/b.git');
   assert.equal(branchInput.value, 'staging');
   assert.equal(ttlInput.value, '12h');
-  assert.deepEqual(activeEnv, [{ name: 'BAZ', value: 'qux' }]);
   assert.equal(activePreset?.name, 'OpenClaw Devbox');
   assert.equal(form.querySelector('.preset-help').textContent, 'OpenClaw image');
 
   controller.reset();
   assert.equal(presetSelect.value, '');
   assert.equal(form.querySelector('.preset-help').textContent, '');
-  assert.equal(activeEnv, null);
   assert.equal(activePreset, null);
 });
 
@@ -256,10 +246,6 @@ test('setupPresetPanel restores a saved preset selection and falls back to custo
     presets,
     hideRepoInputs: false,
     applyRepoDefaults() {},
-    normalizePresetEnv() {
-      return null;
-    },
-    setActivePresetEnv() {},
     setActivePreset(preset) {
       activePreset = preset;
     },
@@ -304,10 +290,6 @@ test('setupPresetPanel clears hidden repo defaults when a preset explicitly owns
     presets,
     hideRepoInputs: true,
     applyRepoDefaults() {},
-    normalizePresetEnv(env) {
-      return env;
-    },
-    setActivePresetEnv() {},
     setActivePreset() {},
   });
 
