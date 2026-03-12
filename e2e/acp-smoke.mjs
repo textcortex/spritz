@@ -17,6 +17,7 @@ import {
   resolveWebSocketConstructor,
   runCommand,
   summarizeWorkspaceFailure,
+  waitForWebSocketOpen,
 } from './acp-smoke-lib.mjs';
 
 const defaultPromptTemplate = 'Reply with the exact token {{token}} and nothing else.';
@@ -37,11 +38,6 @@ function printUsage(code) {
   ];
   console.error(lines.join('\n'));
   process.exit(code);
-}
-
-async function hasCommandOnPath(command) {
-  const result = await runCommand('sh', ['-lc', `command -v ${command} >/dev/null 2>&1`]);
-  return result.code === 0;
 }
 
 function buildSpzEnvironment(namespace) {
@@ -68,8 +64,11 @@ function parseJSONOutput(result, context) {
   }
 }
 
-async function kubectlJSON(args) {
-  const result = await runCommand('kubectl', args);
+async function kubectlJSON(args, options = {}) {
+  const result = await runCommand('kubectl', args, { timeoutMs: options.timeoutMs });
+  if (result.timedOut) {
+    throw new Error(`kubectl ${args.join(' ')} timed out after ${options.timeoutMs}ms`);
+  }
   if (result.code !== 0) {
     throw new Error(`kubectl ${args.join(' ')} failed:\n${result.stderr || result.stdout}`);
   }
@@ -85,8 +84,21 @@ async function waitForWorkspace(namespace, name, timeoutSeconds) {
   let lastFailure = { stage: 'create', message: 'workspace not observed yet' };
 
   while (Date.now() < deadline) {
-    const spritz = await kubectlJSON(['-n', namespace, 'get', 'spritz', name, '-o', 'json']);
-    const podList = await kubectlJSON(['-n', namespace, 'get', 'pods', '-l', `spritz.sh/name=${name}`, '-o', 'json']);
+    const remainingMs = Math.max(deadline - Date.now(), 1000);
+    const kubectlTimeoutMs = Math.min(remainingMs, defaultReadyPollSeconds * 1000);
+    let spritz;
+    let podList;
+    try {
+      spritz = await kubectlJSON(['-n', namespace, 'get', 'spritz', name, '-o', 'json'], { timeoutMs: kubectlTimeoutMs });
+      podList = await kubectlJSON(['-n', namespace, 'get', 'pods', '-l', `spritz.sh/name=${name}`, '-o', 'json'], { timeoutMs: kubectlTimeoutMs });
+    } catch (error) {
+      lastFailure = {
+        stage: 'readiness',
+        message: error.message || 'kubectl polling failed',
+      };
+      await new Promise((resolve) => setTimeout(resolve, defaultReadyPollSeconds * 1000));
+      continue;
+    }
     if (spritz?.status?.phase === 'Ready' && spritz?.status?.acp?.state === 'ready') {
       return { spritz, podList };
     }
@@ -168,12 +180,7 @@ async function connectACP(localPort, timeoutSeconds) {
       updates.push(message.params.update);
     }
   });
-  await new Promise((resolve, reject) => {
-    socket.addEventListener('open', resolve, { once: true });
-    socket.addEventListener('error', (event) => reject(new Error(`ACP websocket failed: ${event.message || 'unknown error'}`)), {
-      once: true,
-    }, { once: true });
-  });
+  await waitForWebSocketOpen(socket, Math.max(timeoutSeconds * 1000, 1000));
 
   async function rpc(id, method, params) {
     return new Promise((resolve, reject) => {
@@ -319,8 +326,7 @@ async function main() {
     printUsage(0);
   }
   const options = parsed.values;
-  const hasSpzOnPath = await hasCommandOnPath('spz');
-  const spzCommand = resolveSpzCommand(process.env, { hasSpzOnPath });
+  const spzCommand = resolveSpzCommand(process.env);
   const env = buildSpzEnvironment(options.namespace);
   const createdWorkspaces = [];
 

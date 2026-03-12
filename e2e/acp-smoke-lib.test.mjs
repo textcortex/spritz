@@ -12,7 +12,9 @@ import {
   parsePresetList,
   resolveWebSocketConstructor,
   resolveSpzCommand,
+  runCommand,
   summarizeWorkspaceFailure,
+  waitForWebSocketOpen,
 } from './acp-smoke-lib.mjs';
 
 test('resolveSpzCommand prefers explicit binary env override', () => {
@@ -22,10 +24,10 @@ test('resolveSpzCommand prefers explicit binary env override', () => {
   });
 });
 
-test('resolveSpzCommand prefers spz on path before pnpm fallback', () => {
+test('resolveSpzCommand prefers the checked-out CLI before any global spz on PATH', () => {
   assert.deepEqual(resolveSpzCommand({}, { hasSpzOnPath: true }), {
-    command: 'spz',
-    args: [],
+    command: 'pnpm',
+    args: ['--dir', '/Users/onur/repos/spritz/cli', 'exec', 'tsx', 'src/index.ts'],
   });
 });
 
@@ -144,4 +146,37 @@ test('isForbiddenFailure only accepts explicit forbidden command failures', () =
   assert.equal(isForbiddenFailure({ code: 1, stderr: 'forbidden', stdout: '' }), true);
   assert.equal(isForbiddenFailure({ code: 1, stderr: 'internal server error', stdout: '' }), false);
   assert.equal(isForbiddenFailure({ code: 0, stderr: '', stdout: 'ok' }), false);
+});
+
+test('runCommand marks timed-out child processes', async () => {
+  const result = await runCommand('node', ['-e', 'setTimeout(() => {}, 1000)'], { timeoutMs: 25 });
+
+  assert.equal(result.timedOut, true);
+  assert.equal(result.code, 124);
+});
+
+test('waitForWebSocketOpen rejects and closes on handshake timeout', async () => {
+  let closeCount = 0;
+  const socket = new EventTarget();
+  socket.close = () => {
+    closeCount += 1;
+  };
+  socket.terminate = () => {
+    closeCount += 1;
+  };
+
+  await assert.rejects(
+    () => waitForWebSocketOpen(socket, 10),
+    /ACP websocket handshake timed out/,
+  );
+  assert.equal(closeCount > 0, true);
+});
+
+test('waitForWebSocketOpen resolves when the socket opens', async () => {
+  const socket = new EventTarget();
+  socket.close = () => {};
+  socket.terminate = () => {};
+  const openPromise = waitForWebSocketOpen(socket, 100);
+  setTimeout(() => socket.dispatchEvent(new Event('open')), 0);
+  await openPromise;
 });

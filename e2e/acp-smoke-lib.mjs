@@ -27,9 +27,6 @@ export function resolveSpzCommand(env = process.env, options = {}) {
   if (explicitBin) {
     return { command: explicitBin, args: [] };
   }
-  if (options.hasSpzOnPath) {
-    return { command: 'spz', args: [] };
-  }
   return {
     command: 'pnpm',
     args: ['--dir', path.join(rootDir, 'cli'), 'exec', 'tsx', 'src/index.ts'],
@@ -178,6 +175,52 @@ export function resolveWebSocketConstructor() {
 }
 
 /**
+ * Wait for the initial ACP WebSocket handshake to complete within a bounded timeout.
+ */
+export async function waitForWebSocketOpen(socket, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer = null;
+
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      socket.removeEventListener?.('open', handleOpen);
+      socket.removeEventListener?.('error', handleError);
+    };
+
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      try {
+        socket.close?.();
+      } catch {}
+      try {
+        socket.terminate?.();
+      } catch {}
+      reject(error);
+    };
+
+    const handleOpen = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+
+    const handleError = (event) => {
+      fail(new Error(`ACP websocket failed: ${event?.message || 'unknown error'}`));
+    };
+
+    socket.addEventListener('open', handleOpen, { once: true });
+    socket.addEventListener('error', handleError, { once: true });
+    timer = setTimeout(() => {
+      fail(new Error('ACP websocket handshake timed out'));
+    }, Math.max(timeoutMs, 1000));
+  });
+}
+
+/**
  * Validate the service-principal create response contract and return the created workspace name.
  */
 export function assertSmokeCreateResponse(response, ownerId, presetId) {
@@ -289,15 +332,30 @@ export async function runCommand(command, args, options = {}) {
     });
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+    let killTimer = null;
     child.stdout.on('data', (chunk) => {
       stdout += String(chunk);
     });
     child.stderr.on('data', (chunk) => {
       stderr += String(chunk);
     });
+    if (Number.isFinite(options.timeoutMs) && options.timeoutMs > 0) {
+      killTimer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGTERM');
+        setTimeout(() => {
+          if (child.exitCode === null && !child.killed) {
+            child.kill('SIGKILL');
+          }
+        }, 1000).unref?.();
+      }, options.timeoutMs);
+      killTimer.unref?.();
+    }
     child.on('error', reject);
     child.on('close', (code, signal) => {
-      resolve({ code: code ?? 1, signal, stdout, stderr });
+      if (killTimer) clearTimeout(killTimer);
+      resolve({ code: timedOut ? 124 : (code ?? 1), signal, stdout, stderr, timedOut });
     });
   });
 }
