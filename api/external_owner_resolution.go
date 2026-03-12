@@ -250,18 +250,18 @@ func (c externalOwnerConfig) resolve(ctx context.Context, principal principal, r
 			subject:  normalized.Subject,
 		}
 	}
-	if len(policy.AllowedTenants) > 0 {
-		tenantRequired := policy.requiresTenant(normalized.Provider)
-		if normalized.Tenant == "" && tenantRequired {
-			return externalOwnerResolution{}, externalOwnerResolutionError{
-				status:   http.StatusForbidden,
-				code:     "external_identity_forbidden",
-				message:  "tenant is required for this principal",
-				provider: normalized.Provider,
-				tenant:   normalized.Tenant,
-				subject:  normalized.Subject,
-			}
+	tenantRequired := policy.requiresTenant(normalized.Provider)
+	if normalized.Tenant == "" && tenantRequired {
+		return externalOwnerResolution{}, externalOwnerResolutionError{
+			status:   http.StatusForbidden,
+			code:     "external_identity_forbidden",
+			message:  "tenant is required for this principal",
+			provider: normalized.Provider,
+			tenant:   normalized.Tenant,
+			subject:  normalized.Subject,
 		}
+	}
+	if len(policy.AllowedTenants) > 0 {
 		if normalized.Tenant != "" {
 			if _, ok := policy.AllowedTenants[normalized.Tenant]; !ok {
 				return externalOwnerResolution{}, externalOwnerResolutionError{

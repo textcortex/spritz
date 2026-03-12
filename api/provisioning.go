@@ -1159,6 +1159,9 @@ func summarizeCreateResponse(spritz *spritzv1.Spritz, principal principal, prese
 	if principal.isService() && hasExternalOwnerAnnotations(annotations) {
 		ownerID = ""
 		responseSpritz.Spec.Owner.ID = ""
+		if responseSpritz.Labels != nil {
+			delete(responseSpritz.Labels, ownerLabelKey)
+		}
 	}
 	if principal.isService() {
 		if storedPresetID := strings.TrimSpace(annotations[presetIDAnnotationKey]); storedPresetID != "" {

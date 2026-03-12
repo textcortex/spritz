@@ -120,6 +120,10 @@ func TestCreateSpritzResolvesExternalOwnerForProvisioner(t *testing.T) {
 	if owner["id"] != "" {
 		t.Fatalf("expected nested owner.id to be redacted, got %#v", owner["id"])
 	}
+	labels := spritzData["metadata"].(map[string]any)["labels"].(map[string]any)
+	if _, exists := labels[ownerLabelKey]; exists {
+		t.Fatalf("expected owner label to be omitted for external owner create response")
+	}
 	annotations := spritzData["metadata"].(map[string]any)["annotations"].(map[string]any)
 	if annotations[externalOwnerIssuerAnnotationKey] != "zenobot" {
 		t.Fatalf("expected external issuer annotation, got %#v", annotations[externalOwnerIssuerAnnotationKey])
@@ -223,6 +227,10 @@ func TestCreateSpritzReplaysExternalOwnerProvisioningAfterResolverMappingChanges
 	}
 	if _, exists := replayPayload["data"].(map[string]any)["ownerId"]; exists {
 		t.Fatalf("expected replayed external-owner response to omit ownerId")
+	}
+	replayedLabels := replayPayload["data"].(map[string]any)["spritz"].(map[string]any)["metadata"].(map[string]any)["labels"].(map[string]any)
+	if _, exists := replayedLabels[ownerLabelKey]; exists {
+		t.Fatalf("expected replayed external-owner response to omit owner label")
 	}
 
 	stored := &spritzv1.Spritz{}
@@ -439,6 +447,47 @@ func TestExternalOwnerResolveAllowsTenantlessProviderWhenTenantIsNotRequired(t *
 	}
 	if resolution.OwnerID != "user-123" {
 		t.Fatalf("expected ownerId user-123, got %q", resolution.OwnerID)
+	}
+}
+
+func TestExternalOwnerResolveRequiresTenantWithoutAllowlistWhenConfigured(t *testing.T) {
+	config := externalOwnerConfig{
+		subjectHashKey: []byte("test-external-owner-secret"),
+		policies: map[string]externalOwnerPolicy{
+			"zenobot": {
+				PrincipalID: "zenobot",
+				Issuer:      "zenobot",
+				URL:         "http://resolver.example.com/v1/external-owners/resolve",
+				AllowedProviders: map[string]struct{}{
+					"slack": {},
+				},
+				TenantRequired: map[string]struct{}{
+					"slack": {},
+				},
+			},
+		},
+		resolver: fakeExternalOwnerResolver{
+			resolve: func(_ context.Context, _ externalOwnerPolicy, _ principal, _ ownerRef, _ string) (externalOwnerResolution, error) {
+				t.Fatal("expected resolver call to be blocked when tenant is required but missing")
+				return externalOwnerResolution{}, nil
+			},
+		},
+	}
+
+	_, err := config.resolve(context.Background(), principal{ID: "zenobot", Type: principalTypeService}, ownerRef{
+		Type:     "external",
+		Provider: "slack",
+		Subject:  "U123456",
+	}, "")
+	if err == nil {
+		t.Fatal("expected resolve to fail when tenant is required but missing")
+	}
+	var resolutionErr externalOwnerResolutionError
+	if !errors.As(err, &resolutionErr) {
+		t.Fatalf("expected externalOwnerResolutionError, got %T", err)
+	}
+	if resolutionErr.code != "external_identity_forbidden" {
+		t.Fatalf("expected external_identity_forbidden, got %q", resolutionErr.code)
 	}
 }
 
