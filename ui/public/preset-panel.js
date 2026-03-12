@@ -68,10 +68,8 @@
     const applyPreset = (preset) => {
       if (!preset) return;
       imageInput.value = preset.image || '';
-      if (!hideRepoInputs) {
-        if (repoInput && preset.repoUrl !== undefined) repoInput.value = preset.repoUrl || '';
-        if (branchInput && preset.branch !== undefined) branchInput.value = preset.branch || '';
-      }
+      if (repoInput && preset.repoUrl !== undefined) repoInput.value = preset.repoUrl || '';
+      if (branchInput && preset.branch !== undefined) branchInput.value = preset.branch || '';
       if (ttlInput && preset.ttl !== undefined) ttlInput.value = preset.ttl || '';
       help.textContent = preset.description || '';
       setActivePresetEnv(typeof normalizePresetEnv === 'function' ? normalizePresetEnv(preset.env) : null);

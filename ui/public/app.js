@@ -49,6 +49,7 @@ let authRefreshAttemptId = 0;
 let lastAuthRefreshAt = 0;
 let activeTerminalPoll = null;
 const createFormStateModule = window.SpritzCreateFormState || null;
+const createFormRequestModule = window.SpritzCreateFormRequest || null;
 const presetPlaceholder = '__SPRITZ_UI_PRESETS__';
 const ACP_CLIENT_INFO = {
   name: 'spritz-ui',
@@ -57,7 +58,7 @@ const ACP_CLIENT_INFO = {
 };
 const defaultPresets = [
   {
-    name: 'Starter Devbox',
+    name: 'Starter (minimal)',
     image: 'spritz-starter:latest',
     description: 'Minimal starter image built from images/examples/base.',
     repoUrl: '',
@@ -65,9 +66,25 @@ const defaultPresets = [
     ttl: '',
   },
   {
-    name: 'OpenClaw Devbox',
+    name: 'Devbox (agents)',
+    image: 'spritz-devbox:latest',
+    description: 'Devbox image with coding agents preinstalled.',
+    repoUrl: '',
+    branch: '',
+    ttl: '',
+  },
+  {
+    name: 'OpenClaw',
     image: 'spritz-openclaw:latest',
-    description: 'Starter devbox with OpenClaw preinstalled.',
+    description: 'OpenClaw example image.',
+    repoUrl: '',
+    branch: '',
+    ttl: '',
+  },
+  {
+    name: 'Claude Code',
+    image: 'spritz-claude-code:latest',
+    description: 'Claude Code example image.',
     repoUrl: '',
     branch: '',
     ttl: '',
@@ -386,6 +403,24 @@ function applyPersistedCreateFormState(state) {
   if (namespaceInput) namespaceInput.value = fields.namespace || '';
   if (userConfigInput) userConfigInput.value = fields.userConfig || '';
   return true;
+}
+
+function resolveCreateRepoSelection(repoValue, branchValue) {
+  if (createFormRequestModule && typeof createFormRequestModule.resolveRepoSelection === 'function') {
+    return createFormRequestModule.resolveRepoSelection({
+      activePreset,
+      repoValue,
+      branchValue,
+      defaultRepoUrl,
+      defaultRepoBranch,
+    });
+  }
+  const normalizedRepoValue = String(repoValue || '').trim();
+  const normalizedBranchValue = String(branchValue || '').trim();
+  return {
+    repoUrl: normalizedRepoValue || defaultRepoUrl,
+    repoBranch: normalizedBranchValue || defaultRepoBranch,
+  };
 }
 
 function restoreCreateFormState() {
@@ -1464,8 +1499,7 @@ if (form && refreshBtn) {
     const branch = data.get('branch');
     const ttl = data.get('ttl');
     const userConfigRaw = data.get('user_config');
-    const repoUrl = (repo || defaultRepoUrl || '').toString().trim();
-    const repoBranch = (branch || defaultRepoBranch || '').toString().trim();
+    const { repoUrl, repoBranch } = resolveCreateRepoSelection(repo, branch);
     if (repoUrl) {
       payload.spec.repo = { url: repoUrl };
       if (repoBranch) payload.spec.repo.branch = repoBranch;

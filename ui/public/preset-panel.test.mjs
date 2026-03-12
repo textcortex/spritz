@@ -280,3 +280,38 @@ test('setupPresetPanel restores a saved preset selection and falls back to custo
   assert.equal(document.getElementById('preset-select').value, '');
   assert.equal(activePreset, null);
 });
+
+test('setupPresetPanel clears hidden repo defaults when a preset explicitly owns blank repo fields', async () => {
+  const require = createRequire(import.meta.url);
+  const { setupPresetPanel } = require('./preset-panel.js');
+
+  const { document, form, imageInput, repoInput, branchInput } = buildFormFixture();
+  repoInput.value = 'https://github.com/example/private.git';
+  branchInput.value = 'staging';
+  const presets = [
+    {
+      name: 'OpenClaw',
+      image: 'spritz-openclaw:latest',
+      description: 'OpenClaw image',
+      repoUrl: '',
+      branch: '',
+    },
+  ];
+
+  setupPresetPanel({
+    document,
+    form,
+    presets,
+    hideRepoInputs: true,
+    applyRepoDefaults() {},
+    normalizePresetEnv(env) {
+      return env;
+    },
+    setActivePresetEnv() {},
+    setActivePreset() {},
+  });
+
+  assert.equal(imageInput.value, 'spritz-openclaw:latest');
+  assert.equal(repoInput.value, '');
+  assert.equal(branchInput.value, '');
+});
