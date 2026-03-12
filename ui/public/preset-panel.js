@@ -12,8 +12,6 @@
       presets,
       hideRepoInputs,
       applyRepoDefaults,
-      normalizePresetEnv,
-      setActivePresetEnv,
       setActivePreset,
     } = options || {};
 
@@ -72,14 +70,12 @@
       if (branchInput && preset.branch !== undefined) branchInput.value = preset.branch || '';
       if (ttlInput && preset.ttl !== undefined) ttlInput.value = preset.ttl || '';
       help.textContent = preset.description || '';
-      setActivePresetEnv(typeof normalizePresetEnv === 'function' ? normalizePresetEnv(preset.env) : null);
       if (typeof setActivePreset === 'function') setActivePreset(preset);
     };
 
     const reset = () => {
       select.value = '';
       help.textContent = '';
-      setActivePresetEnv(null);
       if (typeof setActivePreset === 'function') setActivePreset(null);
     };
 

@@ -44,3 +44,69 @@ test('resolveRepoSelection preserves explicit blank repo settings owned by the p
     },
   );
 });
+
+test('buildCreatePayload uses presetId and does not serialize preset env overrides', async () => {
+  const require = createRequire(import.meta.url);
+  const { buildCreatePayload } = require('./create-form-request.js');
+
+  const payload = buildCreatePayload({
+    name: '',
+    imageValue: 'registry.example/spritz-claude-code@sha256:abc',
+    namespace: 'spritz-production',
+    ownerId: 'user-123',
+    activePreset: {
+      id: 'claude-code',
+      name: 'Claude Code',
+      image: 'registry.example/spritz-claude-code@sha256:abc',
+      namePrefix: 'claude-code',
+      env: [
+        {
+          name: 'ANTHROPIC_API_KEY',
+          valueFrom: {
+            secretKeyRef: {
+              name: 'spritz-claude-code-anthropic',
+              key: 'api-key',
+            },
+          },
+        },
+      ],
+    },
+    repoValue: '',
+    branchValue: '',
+    defaultRepoUrl: '',
+    defaultRepoBranch: '',
+    defaultRepoDir: '',
+    ttlValue: '',
+  });
+
+  assert.equal(payload.presetId, 'claude-code');
+  assert.equal(payload.namePrefix, 'claude-code');
+  assert.deepEqual(payload.spec.owner, { id: 'user-123' });
+  assert.equal(payload.spec.image, undefined);
+  assert.equal(payload.spec.env, undefined);
+});
+
+test('buildCreatePayload falls back to explicit image when preset is no longer aligned', async () => {
+  const require = createRequire(import.meta.url);
+  const { buildCreatePayload } = require('./create-form-request.js');
+
+  const payload = buildCreatePayload({
+    name: '',
+    imageValue: 'registry.example/custom-image:latest',
+    activePreset: {
+      id: 'claude-code',
+      name: 'Claude Code',
+      image: 'registry.example/spritz-claude-code@sha256:abc',
+      namePrefix: 'claude-code',
+    },
+    repoValue: '',
+    branchValue: '',
+    defaultRepoUrl: '',
+    defaultRepoBranch: '',
+    defaultRepoDir: '',
+    ttlValue: '',
+  });
+
+  assert.equal(payload.presetId, undefined);
+  assert.equal(payload.spec.image, 'registry.example/custom-image:latest');
+});
