@@ -2,12 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  assertSmokeCreateResponse,
   buildIdempotencyKey,
   buildSmokeToken,
   extractACPText,
   isForbiddenFailure,
   joinACPTextChunks,
+  parseSmokeArgs,
   parsePresetList,
+  resolveWebSocketConstructor,
   resolveSpzCommand,
   summarizeWorkspaceFailure,
 } from './acp-smoke-lib.mjs';
@@ -27,7 +30,19 @@ test('resolveSpzCommand prefers spz on path before pnpm fallback', () => {
 });
 
 test('parsePresetList normalizes comma-delimited values', () => {
-  assert.deepEqual(parsePresetList(' openclaw, claude-code ,, '), ['openclaw', 'claude-code']);
+  assert.deepEqual(parsePresetList(' OPENCLAW, Claude Code ,, '), ['openclaw', 'claude-code']);
+});
+
+test('parseSmokeArgs requires explicit presets instead of assuming example ids', () => {
+  assert.throws(
+    () => parseSmokeArgs(['--owner-id', 'user-123'], {}),
+    /--presets is required/,
+  );
+});
+
+test('parseSmokeArgs normalizes provided preset ids', () => {
+  const { values } = parseSmokeArgs(['--owner-id', 'user-123', '--presets', 'OPENCLAW,Claude Code'], {});
+  assert.deepEqual(values.presets, ['openclaw', 'claude-code']);
 });
 
 test('extractACPText flattens nested content blocks', () => {
@@ -44,6 +59,25 @@ test('joinACPTextChunks preserves chunked tokens without inserted separators', (
 test('buildIdempotencyKey and smoke token normalize preset names', () => {
   assert.equal(buildIdempotencyKey('spritz smoke', 'claude-code'), 'spritz-smoke-claude-code');
   assert.equal(buildSmokeToken('openclaw'), 'spritz-smoke-openclaw');
+});
+
+test('resolveWebSocketConstructor returns a usable client constructor', () => {
+  const WebSocketCtor = resolveWebSocketConstructor();
+  assert.equal(typeof WebSocketCtor, 'function');
+});
+
+test('assertSmokeCreateResponse accepts canonicalized preset ids from the API', () => {
+  const workspaceName = assertSmokeCreateResponse({
+    spritz: { metadata: { name: 'openclaw-calm-ridge' } },
+    ownerId: 'user-123',
+    actorType: 'service',
+    presetId: 'openclaw',
+    chatUrl: 'https://example.com/#chat/openclaw-calm-ridge',
+    workspaceUrl: 'https://example.com/w/openclaw-calm-ridge/',
+    accessUrl: 'https://example.com/#chat/openclaw-calm-ridge',
+  }, 'user-123', 'OPENCLAW');
+
+  assert.equal(workspaceName, 'openclaw-calm-ridge');
 });
 
 test('summarizeWorkspaceFailure prioritizes shared mount init failures', () => {

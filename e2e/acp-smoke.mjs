@@ -5,90 +5,22 @@ import { spawn } from 'node:child_process';
 import net from 'node:net';
 
 import {
+  assertSmokeCreateResponse,
   buildIdempotencyKey,
   buildSmokeToken,
   extractACPText,
   findFreePort,
   isForbiddenFailure,
   joinACPTextChunks,
-  parsePresetList,
+  parseSmokeArgs,
   resolveSpzCommand,
+  resolveWebSocketConstructor,
   runCommand,
   summarizeWorkspaceFailure,
 } from './acp-smoke-lib.mjs';
 
 const defaultPromptTemplate = 'Reply with the exact token {{token}} and nothing else.';
-const defaultPresets = ['openclaw', 'claude-code'];
-const defaultTimeoutSeconds = 300;
 const defaultReadyPollSeconds = 5;
-const defaultNamespace = process.env.SPRITZ_NAMESPACE || process.env.SPRITZ_SMOKE_NAMESPACE || '';
-
-function parseArgs(argv) {
-  const values = {
-    ownerId: process.env.SPRITZ_SMOKE_OWNER_ID || '',
-    namespace: defaultNamespace,
-    presets: [...defaultPresets],
-    timeoutSeconds: defaultTimeoutSeconds,
-    keep: false,
-    promptTemplate: process.env.SPRITZ_SMOKE_PROMPT || defaultPromptTemplate,
-    idempotencyPrefix: process.env.SPRITZ_SMOKE_IDEMPOTENCY_PREFIX || `spritz-smoke-${Date.now()}`,
-  };
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    const next = argv[index + 1];
-    if (arg === '--owner-id' && next) {
-      values.ownerId = next;
-      index += 1;
-      continue;
-    }
-    if (arg === '--namespace' && next) {
-      values.namespace = next;
-      index += 1;
-      continue;
-    }
-    if (arg === '--presets' && next) {
-      values.presets = parsePresetList(next);
-      index += 1;
-      continue;
-    }
-    if (arg === '--timeout-seconds' && next) {
-      values.timeoutSeconds = Number.parseInt(next, 10);
-      index += 1;
-      continue;
-    }
-    if (arg === '--prompt' && next) {
-      values.promptTemplate = next;
-      index += 1;
-      continue;
-    }
-    if (arg === '--idempotency-prefix' && next) {
-      values.idempotencyPrefix = next;
-      index += 1;
-      continue;
-    }
-    if (arg === '--keep') {
-      values.keep = true;
-      continue;
-    }
-    if (arg === '--help') {
-      printUsage(0);
-    }
-    throw new Error(`unknown argument: ${arg}`);
-  }
-
-  if (!values.ownerId.trim()) {
-    throw new Error('--owner-id is required');
-  }
-  if (!values.presets.length) {
-    throw new Error('at least one preset is required');
-  }
-  if (!Number.isFinite(values.timeoutSeconds) || values.timeoutSeconds <= 0) {
-    throw new Error('--timeout-seconds must be a positive integer');
-  }
-
-  return values;
-}
 
 function printUsage(code) {
   const lines = [
@@ -96,7 +28,7 @@ function printUsage(code) {
     '',
     'Options:',
     '  --namespace <ns>         Override the target namespace (defaults to spz profile or env)',
-    '  --presets <a,b>          Comma-separated preset ids to test (default: openclaw,claude-code)',
+    '  --presets <a,b>          Comma-separated preset ids to test (required; no built-in defaults)',
     '  --timeout-seconds <n>    Timeout per workspace readiness/prompt cycle (default: 300)',
     '  --prompt <template>      Prompt template, use {{token}} placeholder for the expected token',
     '  --idempotency-prefix <s> Prefix used to derive idempotency keys for smoke creates',
@@ -220,6 +152,7 @@ async function startPortForward(namespace, serviceName, targetPort) {
 }
 
 async function connectACP(localPort, timeoutSeconds) {
+  const WebSocket = resolveWebSocketConstructor();
   const socket = new WebSocket(`ws://127.0.0.1:${localPort}/`);
   const pending = new Map();
   const updates = [];
@@ -239,7 +172,7 @@ async function connectACP(localPort, timeoutSeconds) {
     socket.addEventListener('open', resolve, { once: true });
     socket.addEventListener('error', (event) => reject(new Error(`ACP websocket failed: ${event.message || 'unknown error'}`)), {
       once: true,
-    });
+    }, { once: true });
   });
 
   async function rpc(id, method, params) {
@@ -373,26 +306,6 @@ async function createWorkspaceMismatch(spzCommand, env, options) {
   return runSpz(spzCommand, args, { env });
 }
 
-function assertCreateResponse(response, ownerId, presetId) {
-  const spritzName = response?.spritz?.metadata?.name;
-  if (!spritzName) {
-    throw new Error(`create response missing spritz metadata.name: ${JSON.stringify(response, null, 2)}`);
-  }
-  if (response.ownerId !== ownerId) {
-    throw new Error(`expected ownerId ${ownerId}, got ${response.ownerId || '<empty>'}`);
-  }
-  if (response.actorType !== 'service') {
-    throw new Error(`expected actorType service, got ${response.actorType || '<empty>'}`);
-  }
-  if (!response.chatUrl || !response.workspaceUrl || !response.accessUrl) {
-    throw new Error(`create response missing canonical URLs: ${JSON.stringify(response, null, 2)}`);
-  }
-  if (response.presetId !== presetId) {
-    throw new Error(`expected presetId ${presetId}, got ${response.presetId || '<empty>'}`);
-  }
-  return spritzName;
-}
-
 async function cleanupWorkspace(namespace, name) {
   const result = await runCommand('kubectl', ['-n', namespace, 'delete', 'spritz', name, '--ignore-not-found=true', '--wait=false']);
   if (result.code !== 0) {
@@ -401,7 +314,11 @@ async function cleanupWorkspace(namespace, name) {
 }
 
 async function main() {
-  const options = parseArgs(process.argv.slice(2));
+  const parsed = parseSmokeArgs(process.argv.slice(2));
+  if (parsed.help) {
+    printUsage(0);
+  }
+  const options = parsed.values;
   const hasSpzOnPath = await hasCommandOnPath('spz');
   const spzCommand = resolveSpzCommand(process.env, { hasSpzOnPath });
   const env = buildSpzEnvironment(options.namespace);
@@ -417,7 +334,7 @@ async function main() {
         namespace: options.namespace,
         idempotencyKey,
       });
-      const workspaceName = assertCreateResponse(createResponse, options.ownerId, presetId);
+      const workspaceName = assertSmokeCreateResponse(createResponse, options.ownerId, presetId);
       const namespace = createResponse.namespace || options.namespace;
       if (!namespace) {
         throw new Error(`create response for ${workspaceName} did not include a namespace and no namespace was configured`);

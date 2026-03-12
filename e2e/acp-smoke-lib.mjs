@@ -1,10 +1,23 @@
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const thisFile = fileURLToPath(import.meta.url);
 const rootDir = path.resolve(path.dirname(thisFile), '..');
+const cliRequire = createRequire(new URL('../cli/package.json', import.meta.url));
+
+const defaultPromptTemplate = 'Reply with the exact token {{token}} and nothing else.';
+const defaultTimeoutSeconds = 300;
+
+function normalizePresetID(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
 
 /**
  * Resolve the command used to invoke the local spz CLI.
@@ -29,8 +42,78 @@ export function resolveSpzCommand(env = process.env, options = {}) {
 export function parsePresetList(value) {
   return String(value || '')
     .split(',')
-    .map((item) => item.trim())
+    .map((item) => normalizePresetID(item))
     .filter(Boolean);
+}
+
+/**
+ * Parse and validate CLI arguments for the ACP smoke runner.
+ */
+export function parseSmokeArgs(argv, env = process.env) {
+  const values = {
+    ownerId: env.SPRITZ_SMOKE_OWNER_ID || '',
+    namespace: env.SPRITZ_NAMESPACE || env.SPRITZ_SMOKE_NAMESPACE || '',
+    presets: parsePresetList(env.SPRITZ_SMOKE_PRESETS || ''),
+    timeoutSeconds: defaultTimeoutSeconds,
+    keep: false,
+    promptTemplate: env.SPRITZ_SMOKE_PROMPT || defaultPromptTemplate,
+    idempotencyPrefix: env.SPRITZ_SMOKE_IDEMPOTENCY_PREFIX || `spritz-smoke-${Date.now()}`,
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    const next = argv[index + 1];
+    if (arg === '--owner-id' && next) {
+      values.ownerId = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--namespace' && next) {
+      values.namespace = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--presets' && next) {
+      values.presets = parsePresetList(next);
+      index += 1;
+      continue;
+    }
+    if (arg === '--timeout-seconds' && next) {
+      values.timeoutSeconds = Number.parseInt(next, 10);
+      index += 1;
+      continue;
+    }
+    if (arg === '--prompt' && next) {
+      values.promptTemplate = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--idempotency-prefix' && next) {
+      values.idempotencyPrefix = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--keep') {
+      values.keep = true;
+      continue;
+    }
+    if (arg === '--help') {
+      return { values, help: true };
+    }
+    throw new Error(`unknown argument: ${arg}`);
+  }
+
+  if (!values.ownerId.trim()) {
+    throw new Error('--owner-id is required');
+  }
+  if (!values.presets.length) {
+    throw new Error('--presets is required');
+  }
+  if (!Number.isFinite(values.timeoutSeconds) || values.timeoutSeconds <= 0) {
+    throw new Error('--timeout-seconds must be a positive integer');
+  }
+
+  return { values, help: false };
 }
 
 /**
@@ -83,7 +166,39 @@ export function joinACPTextChunks(values) {
  * Build a deterministic smoke prompt token for a preset run.
  */
 export function buildSmokeToken(presetId) {
-  return `spritz-smoke-${String(presetId || 'workspace').replace(/[^a-zA-Z0-9-]+/g, '-')}`;
+  return `spritz-smoke-${normalizePresetID(presetId) || 'workspace'}`;
+}
+
+/**
+ * Load a Node-compatible WebSocket client constructor from the CLI dependency set.
+ */
+export function resolveWebSocketConstructor() {
+  const wsModule = cliRequire('ws');
+  return wsModule.WebSocket || wsModule.default || wsModule;
+}
+
+/**
+ * Validate the service-principal create response contract and return the created workspace name.
+ */
+export function assertSmokeCreateResponse(response, ownerId, presetId) {
+  const spritzName = response?.spritz?.metadata?.name;
+  if (!spritzName) {
+    throw new Error(`create response missing spritz metadata.name: ${JSON.stringify(response, null, 2)}`);
+  }
+  if (response.ownerId !== ownerId) {
+    throw new Error(`expected ownerId ${ownerId}, got ${response.ownerId || '<empty>'}`);
+  }
+  if (response.actorType !== 'service') {
+    throw new Error(`expected actorType service, got ${response.actorType || '<empty>'}`);
+  }
+  if (!response.chatUrl || !response.workspaceUrl || !response.accessUrl) {
+    throw new Error(`create response missing canonical URLs: ${JSON.stringify(response, null, 2)}`);
+  }
+  const expectedPresetID = normalizePresetID(presetId);
+  if (response.presetId !== expectedPresetID) {
+    throw new Error(`expected presetId ${expectedPresetID || '<empty>'}, got ${response.presetId || '<empty>'}`);
+  }
+  return spritzName;
 }
 
 /**
