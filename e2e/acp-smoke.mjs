@@ -6,6 +6,7 @@ import net from 'node:net';
 
 import {
   assertSmokeCreateResponse,
+  buildSmokeSpzEnvironment,
   buildIdempotencyKey,
   buildSmokeToken,
   extractACPText,
@@ -13,6 +14,7 @@ import {
   isForbiddenFailure,
   joinACPTextChunks,
   parseSmokeArgs,
+  resolveACPEndpoint,
   resolveSpzCommand,
   resolveWebSocketConstructor,
   runCommand,
@@ -35,17 +37,13 @@ function printUsage(code) {
     '  --idempotency-prefix <s> Prefix used to derive idempotency keys for smoke creates',
     '  --keep                   Keep created workspaces instead of deleting them',
     '  --help                   Show this message',
+    '',
+    'Environment:',
+    '  SPRITZ_SMOKE_API_URL       Required API base for the service-principal smoke client',
+    '  SPRITZ_SMOKE_BEARER_TOKEN  Required bearer token for the service-principal smoke client',
   ];
   console.error(lines.join('\n'));
   process.exit(code);
-}
-
-function buildSpzEnvironment(namespace) {
-  const env = { ...process.env };
-  if (process.env.SPRITZ_SMOKE_API_URL) env.SPRITZ_API_URL = process.env.SPRITZ_SMOKE_API_URL;
-  if (process.env.SPRITZ_SMOKE_BEARER_TOKEN) env.SPRITZ_BEARER_TOKEN = process.env.SPRITZ_SMOKE_BEARER_TOKEN;
-  if (namespace) env.SPRITZ_NAMESPACE = namespace;
-  return env;
 }
 
 async function runSpz(spzCommand, subcommandArgs, options = {}) {
@@ -163,9 +161,9 @@ async function startPortForward(namespace, serviceName, targetPort) {
   }
 }
 
-async function connectACP(localPort, timeoutSeconds) {
+async function connectACP(localPort, acpPath, timeoutSeconds) {
   const WebSocket = resolveWebSocketConstructor();
-  const socket = new WebSocket(`ws://127.0.0.1:${localPort}/`);
+  const socket = new WebSocket(`ws://127.0.0.1:${localPort}${acpPath}`);
   const pending = new Map();
   const updates = [];
   const rpcTimeoutMs = Math.max(timeoutSeconds * 1000, 1000);
@@ -209,12 +207,12 @@ function buildPromptText(template, token) {
   return String(template || defaultPromptTemplate).replaceAll('{{token}}', token);
 }
 
-async function promptWorkspace(namespace, name, presetId, promptTemplate, timeoutSeconds) {
+async function promptWorkspace(namespace, name, presetId, promptTemplate, timeoutSeconds, endpoint) {
   const token = buildSmokeToken(presetId);
-  const portForward = await startPortForward(namespace, name, 2529);
+  const portForward = await startPortForward(namespace, name, endpoint.port);
   let client;
   try {
-    client = await connectACP(portForward.localPort, timeoutSeconds);
+    client = await connectACP(portForward.localPort, endpoint.path, timeoutSeconds);
     const init = await client.rpc('init-1', 'initialize', {
       protocolVersion: 1,
       clientCapabilities: {},
@@ -327,7 +325,11 @@ async function main() {
   }
   const options = parsed.values;
   const spzCommand = resolveSpzCommand(process.env);
-  const env = buildSpzEnvironment(options.namespace);
+  const env = buildSmokeSpzEnvironment(process.env, {
+    apiUrl: options.apiUrl,
+    bearerToken: options.bearerToken,
+    namespace: options.namespace,
+  });
   const createdWorkspaces = [];
 
   try {
@@ -380,14 +382,23 @@ async function main() {
         }
       }
 
-      await waitForWorkspace(namespace, workspaceName, options.timeoutSeconds);
-      const acpResult = await promptWorkspace(namespace, workspaceName, presetId, options.promptTemplate, options.timeoutSeconds);
+      const workspaceState = await waitForWorkspace(namespace, workspaceName, options.timeoutSeconds);
+      const acpEndpoint = resolveACPEndpoint(workspaceState.spritz);
+      const acpResult = await promptWorkspace(
+        namespace,
+        workspaceName,
+        presetId,
+        options.promptTemplate,
+        options.timeoutSeconds,
+        acpEndpoint,
+      );
       console.log(JSON.stringify({
         presetId,
         workspaceName,
         namespace,
         chatUrl: createResponse.chatUrl,
         workspaceUrl: createResponse.workspaceUrl,
+        acpEndpoint,
         stopReason: acpResult.stopReason,
         assistantText: acpResult.assistantText,
       }, null, 2));

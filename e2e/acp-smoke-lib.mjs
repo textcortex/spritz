@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,6 +11,8 @@ const cliRequire = createRequire(new URL('../cli/package.json', import.meta.url)
 
 const defaultPromptTemplate = 'Reply with the exact token {{token}} and nothing else.';
 const defaultTimeoutSeconds = 300;
+const defaultACPPort = 2529;
+const defaultACPPath = '/';
 
 function normalizePresetID(value) {
   return String(value || '')
@@ -50,6 +53,8 @@ export function parseSmokeArgs(argv, env = process.env) {
   const values = {
     ownerId: env.SPRITZ_SMOKE_OWNER_ID || '',
     namespace: env.SPRITZ_SMOKE_NAMESPACE || env.SPRITZ_NAMESPACE || '',
+    apiUrl: env.SPRITZ_SMOKE_API_URL || '',
+    bearerToken: env.SPRITZ_SMOKE_BEARER_TOKEN || '',
     presets: parsePresetList(env.SPRITZ_SMOKE_PRESETS || ''),
     timeoutSeconds: defaultTimeoutSeconds,
     keep: false,
@@ -103,6 +108,12 @@ export function parseSmokeArgs(argv, env = process.env) {
   if (!values.ownerId.trim()) {
     throw new Error('--owner-id is required');
   }
+  if (!String(values.apiUrl).trim()) {
+    throw new Error('SPRITZ_SMOKE_API_URL is required');
+  }
+  if (!String(values.bearerToken).trim()) {
+    throw new Error('SPRITZ_SMOKE_BEARER_TOKEN is required');
+  }
   if (!values.presets.length) {
     throw new Error('--presets is required');
   }
@@ -111,6 +122,43 @@ export function parseSmokeArgs(argv, env = process.env) {
   }
 
   return { values, help: false };
+}
+
+/**
+ * Build an isolated spz environment that cannot inherit ambient auth or profile state.
+ */
+export function buildSmokeSpzEnvironment(baseEnv = process.env, options = {}) {
+  const env = { ...baseEnv };
+  const keysToClear = [
+    'SPRITZ_API_URL',
+    'SPRITZ_BEARER_TOKEN',
+    'SPRITZ_PROFILE',
+    'SPRITZ_OWNER_ID',
+    'SPRITZ_USER_ID',
+    'SPRITZ_USER_EMAIL',
+    'SPRITZ_USER_TEAMS',
+    'SPRITZ_NAMESPACE',
+    'SPRITZ_CONFIG_DIR',
+  ];
+  for (const key of keysToClear) {
+    delete env[key];
+  }
+  const apiUrl = String(options.apiUrl || '').trim();
+  const bearerToken = String(options.bearerToken || '').trim();
+  if (!apiUrl) {
+    throw new Error('smoke environment requires an explicit apiUrl');
+  }
+  if (!bearerToken) {
+    throw new Error('smoke environment requires an explicit bearerToken');
+  }
+  env.SPRITZ_API_URL = apiUrl;
+  env.SPRITZ_BEARER_TOKEN = bearerToken;
+  if (String(options.namespace || '').trim()) {
+    env.SPRITZ_NAMESPACE = String(options.namespace).trim();
+  }
+  env.SPRITZ_CONFIG_DIR = String(options.configDir || '').trim()
+    || path.join(os.tmpdir(), `spritz-smoke-config-${process.pid}-${Date.now()}`);
+  return env;
 }
 
 /**
@@ -164,6 +212,18 @@ export function joinACPTextChunks(values) {
  */
 export function buildSmokeToken(presetId) {
   return `spritz-smoke-${normalizePresetID(presetId) || 'workspace'}`;
+}
+
+/**
+ * Resolve the ACP endpoint advertised by a ready spritz, falling back to the reserved defaults.
+ */
+export function resolveACPEndpoint(spritz) {
+  const endpoint = spritz?.status?.acp?.endpoint || {};
+  const parsedPort = Number.parseInt(String(endpoint.port ?? ''), 10);
+  const port = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : defaultACPPort;
+  const rawPath = String(endpoint.path || defaultACPPath).trim();
+  const pathValue = rawPath ? (rawPath.startsWith('/') ? rawPath : `/${rawPath}`) : defaultACPPath;
+  return { port, path: pathValue };
 }
 
 /**

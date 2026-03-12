@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   assertSmokeCreateResponse,
+  buildSmokeSpzEnvironment,
   buildIdempotencyKey,
   buildSmokeToken,
   extractACPText,
@@ -12,6 +13,7 @@ import {
   joinACPTextChunks,
   parseSmokeArgs,
   parsePresetList,
+  resolveACPEndpoint,
   resolveWebSocketConstructor,
   resolveSpzCommand,
   runCommand,
@@ -42,22 +44,67 @@ test('parsePresetList normalizes comma-delimited values', () => {
 
 test('parseSmokeArgs requires explicit presets instead of assuming example ids', () => {
   assert.throws(
-    () => parseSmokeArgs(['--owner-id', 'user-123'], {}),
+    () => parseSmokeArgs(['--owner-id', 'user-123'], { SPRITZ_SMOKE_API_URL: 'https://example.com/api', SPRITZ_SMOKE_BEARER_TOKEN: 'token' }),
     /--presets is required/,
   );
 });
 
 test('parseSmokeArgs normalizes provided preset ids', () => {
-  const { values } = parseSmokeArgs(['--owner-id', 'user-123', '--presets', 'OPENCLAW,Claude Code'], {});
+  const { values } = parseSmokeArgs(
+    ['--owner-id', 'user-123', '--presets', 'OPENCLAW,Claude Code'],
+    { SPRITZ_SMOKE_API_URL: 'https://example.com/api', SPRITZ_SMOKE_BEARER_TOKEN: 'token' },
+  );
   assert.deepEqual(values.presets, ['openclaw', 'claude-code']);
 });
 
 test('parseSmokeArgs prefers the smoke namespace env over the generic namespace env', () => {
   const { values } = parseSmokeArgs(['--owner-id', 'user-123', '--presets', 'openclaw'], {
+    SPRITZ_SMOKE_API_URL: 'https://example.com/api',
+    SPRITZ_SMOKE_BEARER_TOKEN: 'token',
     SPRITZ_NAMESPACE: 'generic-ns',
     SPRITZ_SMOKE_NAMESPACE: 'smoke-ns',
   });
   assert.equal(values.namespace, 'smoke-ns');
+});
+
+test('parseSmokeArgs requires an explicit smoke api url and bearer token', () => {
+  assert.throws(
+    () => parseSmokeArgs(['--owner-id', 'user-123', '--presets', 'openclaw'], {}),
+    /SPRITZ_SMOKE_API_URL is required/,
+  );
+  assert.throws(
+    () => parseSmokeArgs(
+      ['--owner-id', 'user-123', '--presets', 'openclaw'],
+      { SPRITZ_SMOKE_API_URL: 'https://example.com/api' },
+    ),
+    /SPRITZ_SMOKE_BEARER_TOKEN is required/,
+  );
+});
+
+test('buildSmokeSpzEnvironment strips ambient spritz auth and profile state', () => {
+  const env = buildSmokeSpzEnvironment(
+    {
+      PATH: process.env.PATH,
+      SPRITZ_API_URL: 'http://ambient/api',
+      SPRITZ_BEARER_TOKEN: 'ambient-token',
+      SPRITZ_PROFILE: 'ambient-profile',
+      SPRITZ_NAMESPACE: 'ambient-ns',
+      SPRITZ_USER_ID: 'ambient-user',
+    },
+    {
+      apiUrl: 'https://smoke.example.com/api',
+      bearerToken: 'smoke-token',
+      namespace: 'smoke-ns',
+      configDir: '/tmp/smoke-config',
+    },
+  );
+
+  assert.equal(env.SPRITZ_API_URL, 'https://smoke.example.com/api');
+  assert.equal(env.SPRITZ_BEARER_TOKEN, 'smoke-token');
+  assert.equal(env.SPRITZ_NAMESPACE, 'smoke-ns');
+  assert.equal(env.SPRITZ_CONFIG_DIR, '/tmp/smoke-config');
+  assert.equal(env.SPRITZ_PROFILE, undefined);
+  assert.equal(env.SPRITZ_USER_ID, undefined);
 });
 
 test('extractACPText flattens nested content blocks', () => {
@@ -74,6 +121,23 @@ test('joinACPTextChunks preserves chunked tokens without inserted separators', (
 test('buildIdempotencyKey and smoke token normalize preset names', () => {
   assert.equal(buildIdempotencyKey('spritz smoke', 'claude-code'), 'spritz-smoke-claude-code');
   assert.equal(buildSmokeToken('openclaw'), 'spritz-smoke-openclaw');
+});
+
+test('resolveACPEndpoint prefers discovered ACP port/path and normalizes the path', () => {
+  assert.deepEqual(
+    resolveACPEndpoint({
+      status: {
+        acp: {
+          endpoint: {
+            port: 9421,
+            path: 'rpc',
+          },
+        },
+      },
+    }),
+    { port: 9421, path: '/rpc' },
+  );
+  assert.deepEqual(resolveACPEndpoint({}), { port: 2529, path: '/' });
 });
 
 test('resolveWebSocketConstructor returns a usable client constructor', () => {
