@@ -88,6 +88,132 @@ test('create uses bearer auth and provisioner fields for preset-based creation',
   assert.equal(payload.presetId, 'openclaw');
 });
 
+test('create sends external owner identity when requested', async (t) => {
+  let requestBody: any = null;
+  let requestHeaders: http.IncomingHttpHeaders | null = null;
+
+  const server = http.createServer((req, res) => {
+    requestHeaders = req.headers;
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+    req.on('end', () => {
+      requestBody = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'success',
+        data: {
+          accessUrl: 'https://console.example.com/#chat/openclaw-tide-wind',
+          chatUrl: 'https://console.example.com/#chat/openclaw-tide-wind',
+          workspaceUrl: 'https://console.example.com/w/openclaw-tide-wind/',
+          presetId: 'openclaw',
+        },
+      }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    server.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+
+  const child = spawn(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      cliPath,
+      'create',
+      '--preset',
+      'openclaw',
+      '--owner-provider',
+      'msteams',
+      '--owner-tenant',
+      '72f988bf-86f1-41af-91ab-2d7cd011db47',
+      '--owner-subject',
+      '6f0f9d4f-9b0e-4d52-8c3a-ef0fd64b9b9f',
+      '--idempotency-key',
+      'teams-123',
+    ],
+    {
+      env: {
+        ...process.env,
+        SPRITZ_API_URL: `http://127.0.0.1:${address.port}/api`,
+        SPRITZ_BEARER_TOKEN: 'service-token',
+        SPRITZ_CONFIG_DIR: mkdtempSync(path.join(os.tmpdir(), 'spz-config-')),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk) => {
+    stdout += chunk.toString();
+  });
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  const exitCode = await new Promise<number | null>((resolve) => child.on('exit', resolve));
+  assert.equal(exitCode, 0, `spz create should succeed: ${stderr}`);
+
+  assert.equal(requestHeaders?.authorization, 'Bearer service-token');
+  assert.deepEqual(requestBody, {
+    presetId: 'openclaw',
+    ownerRef: {
+      type: 'external',
+      provider: 'msteams',
+      tenant: '72f988bf-86f1-41af-91ab-2d7cd011db47',
+      subject: '6f0f9d4f-9b0e-4d52-8c3a-ef0fd64b9b9f',
+    },
+    idempotencyKey: 'teams-123',
+    spec: {},
+  });
+
+  const payload = JSON.parse(stdout);
+  assert.equal(payload.presetId, 'openclaw');
+  assert.equal(payload.ownerId, undefined);
+});
+
+test('create rejects mixed owner-id and external owner flags', async () => {
+  const child = spawn(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      cliPath,
+      'create',
+      '--preset',
+      'openclaw',
+      '--owner-id',
+      'user-123',
+      '--owner-provider',
+      'discord',
+      '--owner-subject',
+      '123456789012345678',
+    ],
+    {
+      env: {
+        ...process.env,
+        SPRITZ_API_URL: 'http://127.0.0.1:9/api',
+        SPRITZ_BEARER_TOKEN: 'service-token',
+        SPRITZ_CONFIG_DIR: mkdtempSync(path.join(os.tmpdir(), 'spz-config-')),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+
+  let stderr = '';
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  const exitCode = await new Promise<number | null>((resolve) => child.on('exit', resolve));
+  assert.notEqual(exitCode, 0, 'spz create should fail for conflicting owner inputs');
+  assert.match(stderr, /mutually exclusive/);
+});
+
 test('create falls back to local owner identity without bearer auth', async (t) => {
   let requestBody: any = null;
   let requestHeaders: http.IncomingHttpHeaders | null = null;

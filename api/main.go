@@ -45,6 +45,7 @@ type server struct {
 	acp                  acpConfig
 	presets              presetCatalog
 	provisioners         provisionerPolicy
+	externalOwners       externalOwnerConfig
 	defaultMetadata      map[string]string
 	sharedMounts         sharedMountsConfig
 	sharedMountsStore    *sharedMountsStore
@@ -106,6 +107,11 @@ func main() {
 		os.Exit(1)
 	}
 	provisioners := newProvisionerPolicy()
+	externalOwners, err := newExternalOwnerConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid external owner config: %v\n", err)
+		os.Exit(1)
+	}
 	sshDefaults := newSSHDefaults()
 	sshGateway, err := newSSHGatewayConfig()
 	if err != nil {
@@ -155,6 +161,7 @@ func main() {
 		acp:               acp,
 		presets:           presets,
 		provisioners:      provisioners,
+		externalOwners:    externalOwners,
 		defaultMetadata:   defaultAnnotations,
 		sharedMounts:      sharedMounts,
 		sharedMountsStore: sharedStore,
@@ -249,6 +256,7 @@ type createRequest struct {
 	Namespace      string              `json:"namespace,omitempty"`
 	PresetID       string              `json:"presetId,omitempty"`
 	OwnerID        string              `json:"ownerId,omitempty"`
+	OwnerRef       *ownerRef           `json:"ownerRef,omitempty"`
 	IdleTTL        string              `json:"idleTtl,omitempty"`
 	TTL            string              `json:"ttl,omitempty"`
 	IdempotencyKey string              `json:"idempotencyKey,omitempty"`
@@ -360,6 +368,7 @@ func (s *server) createSpritz(c echo.Context) error {
 	body = normalized.body
 	namespace := normalized.namespace
 	owner := normalized.owner
+	resolvedExternalOwner := normalized.resolvedExternalOwner
 	userConfigKeys := normalized.userConfigKeys
 	userConfigPayload := normalized.userConfigPayload
 	nameProvided := normalized.nameProvided
@@ -463,6 +472,18 @@ func (s *server) createSpritz(c echo.Context) error {
 		annotations = mergeStringMap(annotations, map[string]string{
 			presetIDAnnotationKey: body.PresetID,
 		})
+	}
+	if resolvedExternalOwner != nil {
+		externalOwnerAnnotations := map[string]string{
+			externalOwnerIssuerAnnotationKey:      resolvedExternalOwner.Issuer,
+			externalOwnerProviderAnnotationKey:    resolvedExternalOwner.Provider,
+			externalOwnerSubjectHashAnnotationKey: resolvedExternalOwner.SubjectHash,
+			externalOwnerResolvedAtAnnotationKey:  resolvedExternalOwner.ResolvedAt.Format(time.RFC3339),
+		}
+		if strings.TrimSpace(resolvedExternalOwner.Tenant) != "" {
+			externalOwnerAnnotations[externalOwnerTenantAnnotationKey] = resolvedExternalOwner.Tenant
+		}
+		annotations = mergeStringMap(annotations, externalOwnerAnnotations)
 	}
 
 	applySSHDefaults(&body.Spec, s.sshDefaults, namespace)

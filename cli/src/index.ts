@@ -375,7 +375,7 @@ function usage() {
 
 Usage:
   spritz list [--namespace <ns>]
-  spritz create [name] [--preset <id>] [--image <image>] [--repo <url>] [--branch <branch>] [--owner-id <id>] [--idle-ttl <duration>] [--ttl <duration>] [--idempotency-key <id>] [--source <source>] [--request-id <id>] [--name-prefix <prefix>] [--namespace <ns>]
+  spritz create [name] [--preset <id>] [--image <image>] [--repo <url>] [--branch <branch>] [--owner-id <id> | --owner-provider <provider> --owner-subject <subject> [--owner-tenant <tenant>]] [--idle-ttl <duration>] [--ttl <duration>] [--idempotency-key <id>] [--source <source>] [--request-id <id>] [--name-prefix <prefix>] [--namespace <ns>]
   spritz suggest-name [--preset <id>] [--image <image>] [--name-prefix <prefix>] [--namespace <ns>]
   spritz delete <name> [--namespace <ns>]
   spritz open <name> [--namespace <ns>]
@@ -1110,7 +1110,28 @@ async function main() {
     const repo = argValue('--repo');
     const branch = argValue('--branch');
     const token = argValue('--token') || process.env.SPRITZ_BEARER_TOKEN;
-    const ownerId = argValue('--owner-id') || (token?.trim() ? process.env.SPRITZ_OWNER_ID : await resolveDefaultOwnerId());
+    const ownerProvider = argValue('--owner-provider')?.trim().toLowerCase();
+    const ownerTenant = argValue('--owner-tenant')?.trim();
+    const ownerSubject = argValue('--owner-subject')?.trim();
+    const explicitOwnerId = argValue('--owner-id')?.trim();
+    const usingExternalOwner = Boolean(ownerProvider || ownerTenant || ownerSubject);
+    if (explicitOwnerId && usingExternalOwner) {
+      throw new Error('--owner-id and external owner flags are mutually exclusive');
+    }
+    if (usingExternalOwner) {
+      if (!ownerProvider) {
+        throw new Error('--owner-provider is required when using external owner flags');
+      }
+      if (!ownerSubject) {
+        throw new Error('--owner-subject is required when using external owner flags');
+      }
+      if (ownerProvider === 'msteams' && !ownerTenant) {
+        throw new Error('--owner-tenant is required for msteams');
+      }
+    }
+    const ownerId = usingExternalOwner
+      ? undefined
+      : explicitOwnerId || (token?.trim() ? process.env.SPRITZ_OWNER_ID : await resolveDefaultOwnerId());
     const idleTtl = argValue('--idle-ttl');
     const ttl = argValue('--ttl');
     const idempotencyKey = argValue('--idempotency-key');
@@ -1126,6 +1147,14 @@ async function main() {
     if (namePrefix) body.namePrefix = namePrefix;
     if (presetId) body.presetId = presetId;
     if (ownerId) body.ownerId = ownerId;
+    if (usingExternalOwner) {
+      body.ownerRef = {
+        type: 'external',
+        provider: ownerProvider,
+        subject: ownerSubject,
+      };
+      if (ownerTenant) body.ownerRef.tenant = ownerTenant;
+    }
     if (idleTtl) body.idleTtl = idleTtl;
     if (ttl) body.ttl = ttl;
     if (idempotencyKey) body.idempotencyKey = idempotencyKey;

@@ -25,6 +25,13 @@ func writeJSendFail(c echo.Context, status int, message string) error {
 	})
 }
 
+func writeJSendFailData(c echo.Context, status int, payload any) error {
+	return c.JSON(status, jsendResponse{
+		Status: "fail",
+		Data:   payload,
+	})
+}
+
 func writeError(c echo.Context, status int, message string) error {
 	if status >= 500 {
 		return c.JSON(status, jsendResponse{

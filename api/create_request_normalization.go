@@ -15,6 +15,7 @@ import (
 type createRequestError struct {
 	status  int
 	message string
+	data    any
 	err     error
 }
 
@@ -34,30 +35,43 @@ func newCreateRequestError(status int, err error) error {
 	}
 }
 
+func newCreateRequestErrorWithData(status int, message string, data any, err error) error {
+	return &createRequestError{
+		status:  status,
+		message: message,
+		data:    data,
+		err:     err,
+	}
+}
+
 func writeCreateRequestError(c echo.Context, err error) error {
 	var requestErr *createRequestError
 	if errors.As(err, &requestErr) {
+		if requestErr.data != nil {
+			return writeJSendFailData(c, requestErr.status, requestErr.data)
+		}
 		return writeError(c, requestErr.status, requestErr.message)
 	}
 	return writeError(c, http.StatusInternalServerError, err.Error())
 }
 
 type normalizedCreateRequest struct {
-	body                 createRequest
-	fingerprintRequest   createRequest
-	namespace            string
-	owner                spritzv1.SpritzOwner
-	userConfigKeys       map[string]json.RawMessage
-	userConfigPayload    userConfigPayload
-	normalizedUserConfig json.RawMessage
-	requestedImage       bool
-	requestedRepo        bool
-	requestedNamespace   bool
-	nameProvided         bool
-	requestedNamePrefix  string
+	body                  createRequest
+	fingerprintRequest    createRequest
+	namespace             string
+	owner                 spritzv1.SpritzOwner
+	resolvedExternalOwner *externalOwnerResolution
+	userConfigKeys        map[string]json.RawMessage
+	userConfigPayload     userConfigPayload
+	normalizedUserConfig  json.RawMessage
+	requestedImage        bool
+	requestedRepo         bool
+	requestedNamespace    bool
+	nameProvided          bool
+	requestedNamePrefix   string
 }
 
-func (s *server) normalizeCreateRequest(_ context.Context, principal principal, body createRequest) (*normalizedCreateRequest, error) {
+func (s *server) normalizeCreateRequest(ctx context.Context, principal principal, body createRequest) (*normalizedCreateRequest, error) {
 	body.Name = strings.TrimSpace(body.Name)
 	body.NamePrefix = strings.TrimSpace(body.NamePrefix)
 	applyTopLevelCreateFields(&body)
@@ -73,12 +87,22 @@ func (s *server) normalizeCreateRequest(_ context.Context, principal principal, 
 	}
 	requestedNamespace := s.namespaceOverrideRequested(body.Namespace, namespace)
 
-	owner, err := normalizeCreateOwner(&body, principal, s.auth.enabled())
+	owner, resolvedExternalOwner, err := s.resolveCreateOwner(ctx, &body, principal)
 	if err != nil {
+		var resolutionErr externalOwnerResolutionError
+		if errors.As(err, &resolutionErr) {
+			return nil, newCreateRequestErrorWithData(resolutionErr.status, resolutionErr.message, resolutionErr.responseData(), err)
+		}
+		if errors.Is(err, errForbidden) {
+			return nil, newCreateRequestError(http.StatusForbidden, err)
+		}
 		return nil, newCreateRequestError(http.StatusBadRequest, err)
 	}
 	body.Spec.Owner = owner
 	fingerprintRequest := body
+	if resolvedExternalOwner != nil {
+		fingerprintRequest.Spec.Owner = spritzv1.SpritzOwner{}
+	}
 
 	requestedImage := strings.TrimSpace(body.Spec.Image) != ""
 	requestedRepo := body.Spec.Repo != nil || len(body.Spec.Repos) > 0
@@ -121,18 +145,19 @@ func (s *server) normalizeCreateRequest(_ context.Context, principal principal, 
 	}
 
 	return &normalizedCreateRequest{
-		body:                 body,
-		fingerprintRequest:   fingerprintRequest,
-		namespace:            namespace,
-		owner:                owner,
-		userConfigKeys:       userConfigKeys,
-		userConfigPayload:    userConfigPayload,
-		normalizedUserConfig: normalizedUserConfig,
-		requestedImage:       requestedImage,
-		requestedRepo:        requestedRepo,
-		requestedNamespace:   requestedNamespace,
-		nameProvided:         body.Name != "",
-		requestedNamePrefix:  strings.TrimSpace(fingerprintRequest.NamePrefix),
+		body:                  body,
+		fingerprintRequest:    fingerprintRequest,
+		namespace:             namespace,
+		owner:                 owner,
+		resolvedExternalOwner: resolvedExternalOwner,
+		userConfigKeys:        userConfigKeys,
+		userConfigPayload:     userConfigPayload,
+		normalizedUserConfig:  normalizedUserConfig,
+		requestedImage:        requestedImage,
+		requestedRepo:         requestedRepo,
+		requestedNamespace:    requestedNamespace,
+		nameProvided:          body.Name != "",
+		requestedNamePrefix:   strings.TrimSpace(fingerprintRequest.NamePrefix),
 	}, nil
 }
 
