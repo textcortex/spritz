@@ -416,7 +416,8 @@ Examples:
 
 ```bash
 spz create \
-  --owner-id user-123 \
+  --owner-provider discord \
+  --owner-subject 123456789012345678 \
   --preset openclaw \
   --idle-ttl 24h \
   --ttl 168h \
@@ -430,10 +431,16 @@ spz suggest-name --preset openclaw --json
 
 The CLI should also support:
 
+- `--owner-id` for direct internal/admin creates when the caller already knows
+  the canonical internal owner ID
+- `--owner-provider` and `--owner-subject` for external platform identities
 - `--api-url`
 - `--token`
 - `--namespace` when allowed by policy
 - `--repo` and `--branch` only if the provisioner policy permits them
+
+For chat-platform-triggered creates, external platform user IDs must not be
+sent through `--owner-id`.
 
 The CLI should not construct canonical URLs or infer authorization semantics on
 its own.

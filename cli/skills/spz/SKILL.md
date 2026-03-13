@@ -87,11 +87,15 @@ So if `spz profile current` returns a profile, assume Spritz is already configur
 
 ## Service-principal create flow
 
-For external provisioners, the normal command is:
+For bots and other external provisioners, prefer external owner resolution when
+you only know the user's platform identity.
+
+Example for a Discord-triggered create:
 
 ```bash
 spz create \
-  --owner-id user-123 \
+  --owner-provider discord \
+  --owner-subject 123456789012345678 \
   --preset openclaw \
   --idle-ttl 24h \
   --ttl 168h \
@@ -103,7 +107,11 @@ spz create \
 
 Rules:
 
-- `owner-id` is the human who should own the workspace
+- for Discord, Slack, Teams, and similar platform-triggered creates, pass the
+  external platform user through `--owner-provider` and `--owner-subject`
+- never pass a Discord, Slack, or Teams user ID through `--owner-id`
+- use `--owner-id` only when you already have the canonical internal Spritz
+  owner ID and intend a direct internal/admin create
 - the service principal is only the actor
 - the same `idempotency-key` and same request should replay the same workspace
 - the same `idempotency-key` with a different request should fail with conflict
@@ -111,7 +119,13 @@ Rules:
 
 ## Common commands
 
-Create from a preset:
+Create from a preset for an external platform user:
+
+```bash
+spz create --preset openclaw --owner-provider discord --owner-subject 123456789012345678 --idle-ttl 24h --ttl 168h --idempotency-key req-123 --json
+```
+
+Create from a preset for a known internal owner:
 
 ```bash
 spz create --preset openclaw --owner-id user-123 --idle-ttl 24h --ttl 168h --idempotency-key req-123 --json
@@ -158,6 +172,8 @@ spz profile use staging
 
 - prefer `--preset` over `--image` when a preset exists
 - prefer bearer-token auth for bots
+- for chat-platform-triggered creates, prefer external owner flags over direct
+  `--owner-id`
 - treat the create response as the source of truth for the access URL
 - do not construct workspace URLs yourself
 - use idempotency keys for any retried or externally triggered create operation
