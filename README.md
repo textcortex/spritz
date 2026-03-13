@@ -10,7 +10,7 @@
 
 Spritz is a self-hosted control plane for spawning isolated agent workspaces on Kubernetes.
 
-You deploy Spritz on your own cluster, package one or more agent runtimes as presets, and let humans or gateway automations spawn fresh agents on demand. Each spawned agent runs in its own workspace workload, is owned by a specific user, and is exposed through a consistent web UI, API, and ACP gateway.
+You deploy Spritz on your own cluster, package one or more agent runtimes as presets, and let humans or gateway automations spawn fresh agents on demand. Each spawned agent runs in its own workspace workload, is owned by a specific user, and is exposed through a consistent UI, API, and ACP gateway.
 
 Spritz is built to stay runtime-agnostic. [OpenClaw](https://docs.openclaw.ai/) is one example runtime in this repository, but Spritz is not tied to OpenClaw. Any agent that speaks the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/get-started/introduction) on the Spritz runtime contract can run behind it, whether that is OpenClaw, Claude Code, a Codex-based runtime, or a custom internal agent image.
 
@@ -27,7 +27,7 @@ The model is simple:
 - the gateway bot or automation is just the requester
 - the actual agent runs in a separate Spritz workspace
 - the workspace is owned by the human user it was created for
-- the human opens it through the Spritz web app and talks to the agent there
+- the human opens it through a Spritz client surface and talks to the agent there
 
 That makes Spritz useful for:
 
@@ -48,9 +48,9 @@ A typical flow looks like this:
 3. A human asks a gateway bot or internal automation to spawn an agent for a task.
 4. The gateway bot calls Spritz to create the workspace for that user.
 5. Spritz provisions the workspace, binds it to the resolved owner, and returns canonical open URLs.
-6. The user opens the Spritz web app and works with the spawned agent.
+6. The user opens a Spritz client surface and works with the spawned agent.
 
-Today the built-in interactive surface is the Spritz web UI. A deployment can front Spritz with a bot on Discord, Slack, Teams, or another messaging platform, but Spritz itself remains the control plane and web client rather than a chat-platform-specific product.
+Today the built-in interactive surface is the Spritz web UI. That UI is one first-party client, not the only intended interface. Over time, Spritz is meant to sit behind adapters that embed the same workspace flow into chat products such as Discord, Slack, Teams, or other messaging surfaces. Those adapters are planned future work; today the web UI is the shipped interactive client.
 
 ## Why Spritz exists
 
@@ -110,7 +110,7 @@ Spritz currently provides:
 - browser terminal access routed through `spritz-api`
 - optional shared mounts for owner-scoped state sharing between disposable workspaces
 
-That means a gateway bot can create a workspace for a human user, but the bot does not need to become that user and does not automatically inherit post-create access to the workspace.
+That means a gateway bot can create a workspace for a human user, but the bot does not need to become that user and does not automatically inherit post-create access to the workspace. The built-in UI is the current first-party client for opening and using those workspaces, while chat-native adapters are expected to layer on top later.
 
 ## Gateway bots and external owner resolution
 
