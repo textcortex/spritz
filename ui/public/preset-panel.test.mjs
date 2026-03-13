@@ -1,6 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import { uiDistPath } from '../test-paths.mjs';
+
+function loadPresetPanelModule() {
+  const context = {
+    console,
+    globalThis: {},
+    module: { exports: {} },
+  };
+  context.globalThis = context;
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(uiDistPath('preset-panel.js'), 'utf8'), context, {
+    filename: uiDistPath('preset-panel.js'),
+  });
+  return context.module.exports;
+}
 
 class FakeElement {
   constructor(tagName, ownerDocument) {
@@ -147,8 +163,7 @@ function buildFormFixture() {
 }
 
 test('setupPresetPanel injects the preset selector and updates image fields', async () => {
-  const require = createRequire(import.meta.url);
-  const { setupPresetPanel } = require('./preset-panel.js');
+  const { setupPresetPanel } = loadPresetPanelModule();
 
   const { document, form, imageInput, repoInput, branchInput, ttlInput } = buildFormFixture();
   let activePreset = null;
@@ -216,8 +231,7 @@ test('setupPresetPanel injects the preset selector and updates image fields', as
 });
 
 test('setupPresetPanel restores a saved preset selection and falls back to custom', async () => {
-  const require = createRequire(import.meta.url);
-  const { setupPresetPanel } = require('./preset-panel.js');
+  const { setupPresetPanel } = loadPresetPanelModule();
 
   const { document, form, imageInput, repoInput, branchInput, ttlInput } = buildFormFixture();
   let activePreset = null;
@@ -268,8 +282,7 @@ test('setupPresetPanel restores a saved preset selection and falls back to custo
 });
 
 test('setupPresetPanel clears hidden repo defaults when a preset explicitly owns blank repo fields', async () => {
-  const require = createRequire(import.meta.url);
-  const { setupPresetPanel } = require('./preset-panel.js');
+  const { setupPresetPanel } = loadPresetPanelModule();
 
   const { document, form, imageInput, repoInput, branchInput } = buildFormFixture();
   repoInput.value = 'https://github.com/example/private.git';

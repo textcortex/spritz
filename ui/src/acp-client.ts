@@ -79,7 +79,7 @@
     }
 
     function requestRPC(method, params) {
-      return new Promise((resolve, reject) => {
+      return new Promise<any>((resolve, reject) => {
         const id = nextId++;
         pending.set(String(id), { resolve, reject, method });
         try {
@@ -199,7 +199,7 @@
       if (typeof onReadyChange === 'function') {
         onReadyChange(false);
       }
-      return new Promise((resolve, reject) => {
+      return new Promise<void>((resolve, reject) => {
         ws = new WebSocket(wsUrl);
         ws.onopen = async () => {
           try {

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { uiPublicPath } from '../test-paths.mjs';
+import { uiDistPath } from '../test-paths.mjs';
 
 function createStorage() {
   const values = new Map();
@@ -152,7 +152,7 @@ test('chat hash route initializes without throwing', () => {
   });
   context.globalThis = context.window;
 
-  const script = fs.readFileSync(uiPublicPath('app.js'), 'utf8');
+  const script = fs.readFileSync(uiDistPath('app.js'), 'utf8');
   assert.doesNotThrow(() => {
     vm.runInContext(script, context, { filename: 'app.js' });
   });

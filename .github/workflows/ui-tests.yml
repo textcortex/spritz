@@ -19,13 +19,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: Install UI dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: ui
+
+      - name: Build UI
+        run: pnpm build
+        working-directory: ui
+
+      - name: Typecheck UI
+        run: pnpm typecheck
+        working-directory: ui
 
       - name: Run UI tests
-        run: node --test ui/entrypoint.test.mjs ui/nginx-config.test.mjs ui/public/*.test.mjs
+        run: pnpm test
+        working-directory: ui
 
       - name: Check entrypoint shell syntax
         run: bash -n ui/entrypoint.sh

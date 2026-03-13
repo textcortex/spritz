@@ -7,6 +7,13 @@
   const PRE_CUTOVER_ACP_TRANSCRIPT_CACHE_PREFIX = 'spritz:acp:transcript:';
   const PRE_CUTOVER_ACP_TRANSCRIPT_CACHE_INDEX_KEY = 'spritz:acp:transcript:index';
 
+  type ACPPage = any;
+  type ACPConversationBootstrapOptions = {
+    forceBootstrap?: boolean;
+    allowRepairRetry?: boolean;
+    allowAutoRebind?: boolean;
+  };
+
   function chatPagePath(name = '', conversationId = '') {
     if (!name) return '#chat';
     if (!conversationId) return `#chat/${encodeURIComponent(name)}`;
@@ -791,7 +798,10 @@
     return response;
   }
 
-  function conversationNeedsBootstrap(conversation, options = {}) {
+  function conversationNeedsBootstrap(
+    conversation,
+    options: ACPConversationBootstrapOptions = {},
+  ) {
     if (options.forceBootstrap) return true;
     const sessionId = String(conversation?.spec?.sessionId || '').trim();
     if (!sessionId) return true;
@@ -842,7 +852,10 @@
     setStatus(page, 'Disconnected. Reconnecting…');
   }
 
-  async function connectSelectedConversation(page, options = {}) {
+  async function connectSelectedConversation(
+    page,
+    options: ACPConversationBootstrapOptions = {},
+  ) {
     if (!page.selectedAgent || !page.selectedConversation) {
       resetConversationRuntime(page);
       renderThread(page);
@@ -1064,7 +1077,7 @@
         renderAgentPicker(page);
         renderConversationList(page);
         renderThread(page);
-        setStatus(workspaceStatusSummary(page.selectedSpritz).status);
+        setStatus(page, workspaceStatusSummary(page.selectedSpritz).status);
         scheduleWorkspaceRefresh(page);
         return;
       }
@@ -1093,7 +1106,7 @@
     if (deps.shellEl?.dataset) deps.shellEl.dataset.view = 'chat';
     deps.setHeaderCopy('Spritz', 'Agent chat');
 
-    const page = createACPPageState(name, conversationId, deps);
+    const page: ACPPage = createACPPageState(name, conversationId, deps);
 
     const shell = document.createElement('section');
     shell.className = 'card acp-shell';

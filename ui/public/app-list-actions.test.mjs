@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { uiPublicPath } from '../test-paths.mjs';
+import { uiDistPath } from '../test-paths.mjs';
 
 function createStorage() {
   const values = new Map();
@@ -175,7 +175,7 @@ test('spritz list shows a transitional chat action while workspace chat is still
   });
   context.globalThis = context.window;
 
-  const script = fs.readFileSync(uiPublicPath('app.js'), 'utf8');
+  const script = fs.readFileSync(uiDistPath('app.js'), 'utf8');
   vm.runInContext(script, context, { filename: 'app.js' });
 
   await new Promise((resolve) => setTimeout(resolve, 0));

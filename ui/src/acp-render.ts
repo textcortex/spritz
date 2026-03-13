@@ -414,7 +414,13 @@
       .replace(/\b\w/g, (match) => match.toUpperCase());
   }
 
-  function applySessionUpdate(transcript, update, options = {}) {
+  function applySessionUpdate(
+    transcript,
+    update,
+    options: {
+      historical?: boolean;
+    } = {},
+  ) {
     const type = update?.sessionUpdate || 'unknown';
     const historical = Boolean(options.historical);
     if (type === 'user_message_chunk') {

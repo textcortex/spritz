@@ -27,16 +27,16 @@ const launchQueryParamsPlaceholder = '__SPRITZ_UI_LAUNCH_QUERY_PARAMS__';
 const launchConfig = config.launch || {};
 const launchQueryParams = parseTemplateMap(launchConfig.queryParams);
 const authReturnToPlaceholder = '__SPRITZ_RETURN_TO__';
-const noticeEl = document.getElementById('notice');
-const toastRegionEl = document.getElementById('toast-region');
-const listEl = document.getElementById('list');
-const refreshBtn = document.getElementById('refresh');
-const form = document.getElementById('create-form');
-const randomNameBtn = document.getElementById('name-random');
-const shellEl = document.querySelector('.shell');
-const headerEl = shellEl?.querySelector('header');
-const createSection = form?.closest('section');
-const listSection = listEl?.closest('section');
+const noticeEl = document.getElementById('notice') as HTMLElement | null;
+const toastRegionEl = document.getElementById('toast-region') as HTMLElement | null;
+const listEl = document.getElementById('list') as HTMLElement | null;
+const refreshBtn = document.getElementById('refresh') as HTMLButtonElement | null;
+const form = document.getElementById('create-form') as HTMLFormElement | null;
+const randomNameBtn = document.getElementById('name-random') as HTMLButtonElement | null;
+const shellEl = document.querySelector('.shell') as HTMLElement | null;
+const headerEl = shellEl?.querySelector('header') as HTMLElement | null;
+const createSection = form?.closest('section') as HTMLElement | null;
+const listSection = listEl?.closest('section') as HTMLElement | null;
 let activeTerminalSession = null;
 let activeTerminalName = '';
 let activeACPPage = null;
@@ -90,6 +90,14 @@ const defaultPresets = [
     ttl: '',
   },
 ];
+
+type CreateFormField = HTMLInputElement | HTMLTextAreaElement;
+type RequestOptions = RequestInit & {
+  __authRefreshAttemptId?: number;
+};
+type ToastOptions = {
+  durationMs?: number;
+};
 
 function parseBoolean(value, fallback) {
   if (value === undefined || value === null || value === '') return fallback;
@@ -365,9 +373,13 @@ function getCreateFormStorage() {
   return window.localStorage || null;
 }
 
-function getCreateFormField(name) {
+function getCreateFormField(name): CreateFormField | null {
   if (!form) return null;
-  return form.querySelector(`input[name="${name}"]`) || form.querySelector(`textarea[name="${name}"]`) || null;
+  return (
+    form.querySelector<HTMLInputElement>(`input[name="${name}"]`) ||
+    form.querySelector<HTMLTextAreaElement>(`textarea[name="${name}"]`) ||
+    null
+  );
 }
 
 function buildCreateFormStateSnapshot() {
@@ -409,7 +421,9 @@ function applyPersistedCreateFormState(state) {
   return true;
 }
 
-function resolveCreateRepoSelection(repoValue, branchValue) {
+function resolveCreateRepoSelection(options) {
+  const repoValue = options?.repoValue;
+  const branchValue = options?.branchValue;
   if (createFormRequestModule && typeof createFormRequestModule.resolveRepoSelection === 'function') {
     return createFormRequestModule.resolveRepoSelection({
       activePreset,
@@ -435,7 +449,7 @@ function restoreCreateFormState() {
 
 function applyUserConfigDefaults() {
   if (!form) return;
-  const textarea = form.querySelector('textarea[name="user_config"]');
+  const textarea = form.querySelector<HTMLTextAreaElement>('textarea[name="user_config"]');
   if (!textarea) return;
   if (!textarea.value.trim()) {
     textarea.value = defaultUserConfigYaml;
@@ -444,7 +458,7 @@ function applyUserConfigDefaults() {
 
 function applyNameDefaults() {
   if (!form) return;
-  const input = form.querySelector('input[name="name"]');
+  const input = form.querySelector<HTMLInputElement>('input[name="name"]');
   if (!input) return;
   if (!input.placeholder) {
     input.placeholder = 'Leave blank to auto-generate.';
@@ -453,8 +467,8 @@ function applyNameDefaults() {
 
 function applyRepoDefaults() {
   if (!form) return;
-  const repoInput = form.querySelector('input[name="repo"]');
-  const branchInput = form.querySelector('input[name="branch"]');
+  const repoInput = form.querySelector<HTMLInputElement>('input[name="repo"]');
+  const branchInput = form.querySelector<HTMLInputElement>('input[name="branch"]');
   if (!repoInput || !branchInput) return;
 
   if (hideRepoInputs) {
@@ -495,7 +509,7 @@ function clearNotice() {
   showNotice('');
 }
 
-function showToast(message, type = 'error', options = {}) {
+function showToast(message, type = 'error', options: ToastOptions = {}) {
   if (!toastRegionEl || !message) return;
   const toast = document.createElement('div');
   toast.className = 'toast';
@@ -781,7 +795,7 @@ async function readResponse(res) {
   }
 }
 
-async function request(path, options = {}) {
+async function request(path, options: RequestOptions = {}) {
   const headers = new Headers(options.headers || {});
   const token = getAuthToken();
   if (token) {
@@ -851,13 +865,13 @@ async function suggestSpritzName() {
   if (!form) {
     throw new Error('Create form unavailable.');
   }
-  const imageInput = form.querySelector('input[name="image"]');
-  const namespaceInput = form.querySelector('input[name="namespace"]');
+  const imageInput = form.querySelector<HTMLInputElement>('input[name="image"]');
+  const namespaceInput = form.querySelector<HTMLInputElement>('input[name="namespace"]');
   const image = String(imageInput?.value || '').trim();
   if (!image) {
     throw new Error('Image is required before generating a name.');
   }
-  const payload = { image };
+  const payload: any = { image };
   const namespace = String(namespaceInput?.value || '').trim();
   if (namespace) {
     payload.namespace = namespace;
@@ -1193,7 +1207,7 @@ function assetUrl(path) {
 }
 
 function loadStylesheet(href) {
-  return new Promise((resolve, reject) => {
+  return new Promise<void>((resolve, reject) => {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
     link.href = href;
@@ -1204,7 +1218,7 @@ function loadStylesheet(href) {
 }
 
 function loadScript(src) {
-  return new Promise((resolve, reject) => {
+  return new Promise<void>((resolve, reject) => {
     const script = document.createElement('script');
     script.src = src;
     script.onload = () => resolve();
@@ -1430,7 +1444,7 @@ if (form && refreshBtn) {
 
   if (randomNameBtn) {
     randomNameBtn.addEventListener('click', async () => {
-      const input = form.querySelector('input[name="name"]');
+      const input = form.querySelector<HTMLInputElement>('input[name="name"]');
       if (!input) return;
       randomNameBtn.disabled = true;
       try {
@@ -1446,7 +1460,7 @@ if (form && refreshBtn) {
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const data = new FormData(form);
+    const data = new FormData(form as HTMLFormElement);
     const name = data.get('name');
     const image = data.get('image');
     const imageValue = (image || '').toString().trim();
@@ -1471,7 +1485,7 @@ if (form && refreshBtn) {
             ttlValue: ttl,
           })
         : (() => {
-            const fallbackPayload = {
+            const fallbackPayload: any = {
               namespace: data.get('namespace') || undefined,
               spec: {
                 image: imageValue,

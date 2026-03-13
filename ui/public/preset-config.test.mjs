@@ -1,10 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-import { uiPublicPath } from '../test-paths.mjs';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import { uiDistPath } from '../test-paths.mjs';
 
-const require = createRequire(import.meta.url);
-const { parsePresets } = require(uiPublicPath('preset-config.js'));
+function loadPresetConfigModule() {
+  const context = {
+    console,
+    globalThis: {},
+    module: { exports: {} },
+  };
+  context.globalThis = context;
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(uiDistPath('preset-config.js'), 'utf8'), context, {
+    filename: uiDistPath('preset-config.js'),
+  });
+  return context.module.exports;
+}
+
+const { parsePresets } = loadPresetConfigModule();
+
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
 
 test('parsePresets returns raw arrays directly', () => {
   const presets = [{ name: 'OpenClaw', image: 'example/openclaw' }];
@@ -20,6 +38,6 @@ test('parsePresets fails closed for malformed values', () => {
   const parsed = parsePresets('[{"name":"OpenClaw","image":"broken"}', {
     logger: { error: (...args) => errors.push(args) },
   });
-  assert.deepEqual(parsed, []);
+  assert.deepEqual(plain(parsed), []);
   assert.equal(errors.length, 1);
 });

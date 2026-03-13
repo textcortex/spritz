@@ -1,6 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import { uiDistPath } from '../test-paths.mjs';
+
+function loadCreateFormStateModule() {
+  const context = {
+    console,
+    globalThis: {},
+    module: { exports: {} },
+  };
+  context.globalThis = context;
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(uiDistPath('create-form-state.js'), 'utf8'), context, {
+    filename: uiDistPath('create-form-state.js'),
+  });
+  return context.module.exports;
+}
+
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
 
 function createStorage(seed = {}) {
   const values = new Map(Object.entries(seed).map(([key, value]) => [key, String(value)]));
@@ -21,8 +41,7 @@ function createStorage(seed = {}) {
 }
 
 test('buildCreateFormState keeps preset selection only when image still matches', async () => {
-  const require = createRequire(import.meta.url);
-  const { buildCreateFormState } = require('./create-form-state.js');
+  const { buildCreateFormState } = loadCreateFormStateModule();
 
   const state = buildCreateFormState({
     activePreset: {
@@ -37,18 +56,17 @@ test('buildCreateFormState keeps preset selection only when image still matches'
     userConfig: 'sharedMounts: []',
   });
 
-  assert.deepEqual(state.selection, { mode: 'custom' });
+  assert.deepEqual(plain(state.selection), { mode: 'custom' });
   assert.equal(state.fields.image, 'custom-image:latest');
 });
 
 test('writeCreateFormState stores reusable form state without a name field', async () => {
-  const require = createRequire(import.meta.url);
   const {
     CREATE_FORM_STORAGE_KEY,
     buildCreateFormState,
     readCreateFormState,
     writeCreateFormState,
-  } = require('./create-form-state.js');
+  } = loadCreateFormStateModule();
 
   const storage = createStorage();
   const input = buildCreateFormState({

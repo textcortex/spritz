@@ -13,6 +13,13 @@ export function uiPath(...parts) {
 /**
  * Resolve a path relative to the ui/public/ directory.
  */
-export function uiPublicPath(...parts) {
+export function uiSourcePublicPath(...parts) {
   return path.join(uiDir, 'public', ...parts);
+}
+
+/**
+ * Resolve a path relative to the ui/dist/ directory.
+ */
+export function uiDistPath(...parts) {
+  return path.join(uiDir, 'dist', ...parts);
 }

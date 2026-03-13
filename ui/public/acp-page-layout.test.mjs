@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { uiPublicPath } from '../test-paths.mjs';
+import { uiDistPath } from '../test-paths.mjs';
 
 function createElement(tagName) {
   return {
@@ -76,9 +76,9 @@ function loadModules() {
   window.window = window;
   const context = vm.createContext({ window, document, console, setTimeout, clearTimeout });
   context.globalThis = context.window;
-  const renderScript = fs.readFileSync(uiPublicPath('acp-render.js'), 'utf8');
+  const renderScript = fs.readFileSync(uiDistPath('acp-render.js'), 'utf8');
   vm.runInContext(renderScript, context, { filename: 'acp-render.js' });
-  const pageScript = fs.readFileSync(uiPublicPath('acp-page.js'), 'utf8');
+  const pageScript = fs.readFileSync(uiDistPath('acp-page.js'), 'utf8');
   vm.runInContext(pageScript, context, { filename: 'acp-page.js' });
   return { window, document };
 }

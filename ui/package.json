@@ -1,0 +1,15 @@
+{
+  "name": "@spritz/ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsdown && node scripts/copy-static.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test entrypoint.test.mjs nginx-config.test.mjs public/*.test.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "tsdown": "^0.16.6",
+    "typescript": "^5.9.2"
+  }
+}

@@ -60,7 +60,7 @@
     const presetMatchesImage =
       !!activePreset && imageValue !== '' && String(activePreset.image || '').trim() === imageValue;
 
-    const payload = {
+    const payload: any = {
       namespace: namespace || undefined,
       spec: {},
     };
