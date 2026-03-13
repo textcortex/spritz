@@ -214,6 +214,98 @@ test('create rejects mixed owner-id and external owner flags', async () => {
   assert.match(stderr, /mutually exclusive/);
 });
 
+test('create explains unresolved external owners with connect-account guidance', async (t) => {
+  const server = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+    req.on('end', () => {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'fail',
+        data: {
+          message: 'external identity is unresolved',
+          error: 'external_identity_unresolved',
+          identity: {
+            provider: 'discord',
+            subject: '123456789012345678',
+          },
+        },
+      }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    server.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+
+  const child = spawn(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      cliPath,
+      'create',
+      '--preset',
+      'openclaw',
+      '--owner-provider',
+      'discord',
+      '--owner-subject',
+      '123456789012345678',
+    ],
+    {
+      env: {
+        ...process.env,
+        SPRITZ_API_URL: `http://127.0.0.1:${address.port}/api`,
+        SPRITZ_BEARER_TOKEN: 'service-token',
+        SPRITZ_CONFIG_DIR: mkdtempSync(path.join(os.tmpdir(), 'spz-config-')),
+        AUDIENCE: 'agent',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+
+  let stderr = '';
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  const exitCode = await new Promise<number | null>((resolve) => child.on('exit', resolve));
+  assert.notEqual(exitCode, 0, 'spz create should fail for unresolved external owner');
+  assert.match(stderr, /could not be resolved to a Spritz owner/i);
+  assert.match(stderr, /connect their account/i);
+  assert.match(stderr, /--owner-provider and --owner-subject/i);
+});
+
+test('create without owner input guides agent callers toward external owner flags', async () => {
+  const child = spawn(
+    process.execPath,
+    ['--import', 'tsx', cliPath, 'create', '--preset', 'openclaw'],
+    {
+      env: {
+        ...process.env,
+        SPRITZ_API_URL: 'http://127.0.0.1:9/api',
+        SPRITZ_BEARER_TOKEN: 'service-token',
+        SPRITZ_CONFIG_DIR: mkdtempSync(path.join(os.tmpdir(), 'spz-config-')),
+        AUDIENCE: 'agent',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+
+  let stderr = '';
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  const exitCode = await new Promise<number | null>((resolve) => child.on('exit', resolve));
+  assert.notEqual(exitCode, 0, 'spz create should fail when no owner input is provided');
+  assert.match(stderr, /owner input is required/i);
+  assert.match(stderr, /platform-native user ID with --owner-provider and --owner-subject/i);
+  assert.match(stderr, /ask for clarification/i);
+});
+
 test('create falls back to local owner identity without bearer auth', async (t) => {
   let requestBody: any = null;
   let requestHeaders: http.IncomingHttpHeaders | null = null;

@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import path from 'node:path';
 import test from 'node:test';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const cliPath = path.join(__dirname, '..', 'src', 'index.ts');
 
-async function runCli(args: string[]) {
+async function runCli(args: string[], env: NodeJS.ProcessEnv = process.env) {
   const child = spawn(process.execPath, ['--import', 'tsx', cliPath, ...args], {
-    env: process.env,
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -28,20 +28,19 @@ async function runCli(args: string[]) {
   return { code, stdout, stderr };
 }
 
-test('skillflag list exposes the bundled spz skill', async () => {
-  const result = await runCli(['--skill', 'list']);
+test('create help defaults to human audience', async () => {
+  const result = await runCli(['create', '--help'], { ...process.env, AUDIENCE: '' });
   assert.equal(result.code, 0, result.stderr);
-  assert.match(result.stdout, /(^|\n)spz(\t|$)/);
+  assert.match(result.stdout, /AUDIENCE \(current: human\)/);
+  assert.match(result.stdout, /Use --owner-provider and --owner-subject when you only know a platform-native\s+user ID/i);
 });
 
-test('skillflag show returns the bundled spz skill body', async () => {
-  const result = await runCli(['--skill', 'show', 'spz']);
+test('create help for agent audience prefers external owner guidance', async () => {
+  const result = await runCli(['create', '--help'], { ...process.env, AUDIENCE: 'agent' });
   assert.equal(result.code, 0, result.stderr);
-  assert.match(result.stdout, /# spz/);
-  assert.match(result.stdout, /service-principal create flow/i);
-  assert.match(result.stdout, /AUDIENCE.*human.*agent/i);
-  assert.match(result.stdout, /--owner-provider discord/i);
-  assert.match(result.stdout, /never pass a Discord, Slack, or Teams user ID through `--owner-id`/i);
+  assert.match(result.stdout, /AUDIENCE \(current: agent\)/);
+  assert.match(result.stdout, /use the platform-native user ID with --owner-provider and --owner-subject/i);
+  assert.match(result.stdout, /Never pass a messaging-platform user ID through --owner-id/i);
   assert.match(result.stdout, /connect their account/i);
   assert.match(result.stdout, /ask for\s+clarification instead of guessing/i);
 });

@@ -31,6 +31,7 @@ type TerminalSessionInfo = {
 };
 
 type SkillflagModule = typeof import('skillflag');
+type Audience = 'human' | 'agent';
 
 type TtyContext = {
   ttyPath: string | null;
@@ -58,6 +59,20 @@ const ttyRestoreBanner = '\r\n[spz] terminal restored after disconnect\r\n';
 const sttyBinary = process.env.SPRITZ_STTY_BINARY || 'stty';
 const resetBinary = process.env.SPRITZ_RESET_BINARY || 'reset';
 let skillflagModulePromise: Promise<SkillflagModule> | undefined;
+
+class SpritzRequestError extends Error {
+  statusCode: number;
+  code?: string;
+  data?: any;
+
+  constructor(message: string, options: { statusCode: number; code?: string; data?: any }) {
+    super(message);
+    this.name = 'SpritzRequestError';
+    this.statusCode = options.statusCode;
+    this.code = options.code;
+    this.data = options.data;
+  }
+}
 
 function loadSkillflagModule(): Promise<SkillflagModule> {
   skillflagModulePromise ??= import('skillflag');
@@ -370,12 +385,50 @@ function startTtyWatchdog(context: TtyContext): (() => void) | null {
   };
 }
 
-function usage() {
+function resolveAudience(value = process.env.AUDIENCE): Audience {
+  return value?.trim().toLowerCase() === 'agent' ? 'agent' : 'human';
+}
+
+function createUsage(audience = resolveAudience()) {
+  const ownerNotes = audience === 'agent'
+    ? `Ownership guidance:
+  - If the request came from Discord, Slack, Teams, or another messaging platform,
+    use the platform-native user ID with --owner-provider and --owner-subject.
+  - Never pass a messaging-platform user ID through --owner-id.
+  - If provider, subject, preset, or tenant context is unclear, ask for
+    clarification instead of guessing.
+  - If external owner resolution fails, tell the caller the user needs to
+    connect their account, then retry with the same platform user ID.
+`
+    : `Ownership guidance:
+  - Use --owner-provider and --owner-subject when you only know a platform-native
+    user ID such as a Discord, Slack, or Teams user.
+  - Use --owner-id only when you already know the canonical internal Spritz owner ID.
+  - If provider, subject, preset, or tenant context is unclear, clarify it before
+    running the create command.
+`;
+
+  console.log(`Spritz create
+
+Usage:
+  spritz create [name] [--preset <id>] [--image <image>] [--repo <url>] [--branch <branch>] [--owner-provider <provider> --owner-subject <subject> [--owner-tenant <tenant>] | --owner-id <id>] [--idle-ttl <duration>] [--ttl <duration>] [--idempotency-key <id>] [--source <source>] [--request-id <id>] [--name-prefix <prefix>] [--namespace <ns>]
+
+Environment:
+  AUDIENCE (current: ${audience})
+
+Examples:
+  spritz create --preset claude-code --owner-provider discord --owner-subject 123456789012345678 --source discord --request-id discord-123 --idempotency-key discord-123 --json
+  spritz create --preset openclaw --owner-id user-123 --idempotency-key req-123 --json
+
+${ownerNotes}`);
+}
+
+function usage(audience = resolveAudience()) {
   console.log(`Spritz CLI
 
 Usage:
   spritz list [--namespace <ns>]
-  spritz create [name] [--preset <id>] [--image <image>] [--repo <url>] [--branch <branch>] [--owner-id <id> | --owner-provider <provider> --owner-subject <subject> [--owner-tenant <tenant>]] [--idle-ttl <duration>] [--ttl <duration>] [--idempotency-key <id>] [--source <source>] [--request-id <id>] [--name-prefix <prefix>] [--namespace <ns>]
+  spritz create [name] [--preset <id>] [--image <image>] [--repo <url>] [--branch <branch>] [--owner-provider <provider> --owner-subject <subject> [--owner-tenant <tenant>] | --owner-id <id>] [--idle-ttl <duration>] [--ttl <duration>] [--idempotency-key <id>] [--source <source>] [--request-id <id>] [--name-prefix <prefix>] [--namespace <ns>]
   spritz suggest-name [--preset <id>] [--image <image>] [--name-prefix <prefix>] [--namespace <ns>]
   spritz delete <name> [--namespace <ns>]
   spritz open <name> [--namespace <ns>]
@@ -399,10 +452,42 @@ Environment:
   SPRITZ_API_HEADER_ID, SPRITZ_API_HEADER_EMAIL, SPRITZ_API_HEADER_TEAMS
   SPRITZ_TERMINAL_TRANSPORT (default: ${terminalTransportDefault})
   SPRITZ_PROFILE, SPRITZ_CONFIG_DIR
+  AUDIENCE (default: human, current: ${audience})
 
 Notes:
+  ${audience === 'agent'
+    ? 'If a request originated from a messaging app, prefer --owner-provider and --owner-subject with the platform-native user ID.'
+    : 'Use `spritz create --help` for detailed owner guidance and examples.'}
   When ZMX sessions are enabled, detach with Ctrl+\\ and reconnect later.
 `);
+}
+
+function missingOwnerInputMessage(audience = resolveAudience()): string {
+  if (audience === 'agent') {
+    return [
+      'owner input is required.',
+      'If this request came from a messaging app, use the platform-native user ID with --owner-provider and --owner-subject.',
+      'Do not ask for or pass a messaging-platform user ID as --owner-id.',
+      'If the provider, subject, preset, or tenant is unclear, ask for clarification before retrying.',
+    ].join(' ');
+  }
+  return [
+    'owner input is required.',
+    'Use --owner-provider and --owner-subject when you only know a messaging-platform user ID.',
+    'Use --owner-id only when you already know the canonical internal Spritz owner ID.',
+  ].join(' ');
+}
+
+function unresolvedExternalOwnerMessage(error: SpritzRequestError, audience = resolveAudience()): string {
+  const provider = typeof error.data?.identity?.provider === 'string' ? error.data.identity.provider : 'external';
+  const lines = [
+    `The ${provider} account could not be resolved to a Spritz owner.`,
+    'Ask the user to connect their account in the product or integration that owns this identity mapping, then retry the create request.',
+  ];
+  if (audience === 'agent') {
+    lines.push('Keep using the platform-native user ID with --owner-provider and --owner-subject.');
+  }
+  return lines.join('\n');
 }
 
 function argValue(flag: string): string | undefined {
@@ -617,12 +702,16 @@ async function request(path: string, init?: RequestInit) {
   }
   const jsend = isJSend(data) ? data : null;
   if (!res.ok || (res.ok && jsend && jsend.status !== 'success')) {
+    const errorCode =
+      (jsend && typeof jsend.data?.error === 'string' ? jsend.data.error : undefined) ||
+      undefined;
+    const errorData = jsend?.data;
     const message =
       (jsend && (jsend.message || jsend.data?.message || jsend.data?.error)) ||
       text ||
       res.statusText ||
       'Request failed';
-    throw new Error(message);
+    throw new SpritzRequestError(message, { statusCode: res.status, code: errorCode, data: errorData });
   }
   if (res.status === 204) return null;
   if (jsend) return jsend.data ?? null;
@@ -948,7 +1037,16 @@ async function main() {
   }
 
   if (!command || command === 'help' || command === '--help') {
+    if (command === 'help' && rest[0] === 'create') {
+      createUsage();
+      return;
+    }
     usage();
+    return;
+  }
+
+  if (command === 'create' && hasFlag('--help')) {
+    createUsage();
     return;
   }
 
@@ -1132,6 +1230,9 @@ async function main() {
     const ownerId = usingExternalOwner
       ? undefined
       : explicitOwnerId || (token?.trim() ? process.env.SPRITZ_OWNER_ID : await resolveDefaultOwnerId());
+    if (!usingExternalOwner && !ownerId) {
+      throw new Error(missingOwnerInputMessage());
+    }
     const idleTtl = argValue('--idle-ttl');
     const ttl = argValue('--ttl');
     const idempotencyKey = argValue('--idempotency-key');
@@ -1167,11 +1268,19 @@ async function main() {
       if (branch) body.spec.repo.branch = branch;
     }
 
-    const data = await request('/spritzes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    let data: any;
+    try {
+      data = await request('/spritzes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      if (error instanceof SpritzRequestError && error.code === 'external_identity_unresolved') {
+        throw new Error(unresolvedExternalOwnerMessage(error));
+      }
+      throw error;
+    }
 
     console.log(JSON.stringify(data, null, 2));
     return;

@@ -65,6 +65,29 @@ This mode is not the right fit for external automation.
 - `SPRITZ_BEARER_TOKEN`: service-principal bearer token
 - `SPRITZ_CONFIG_DIR`: config directory for profiles
 - `SPRITZ_PROFILE`: active profile name
+- `AUDIENCE`: guidance audience for help and examples: `human` or `agent`
+  (default `human`)
+
+## Audience guidance
+
+`AUDIENCE` changes the human-readable guidance, not the API contract.
+
+- `AUDIENCE=human`: balanced help for direct-owner and external-owner use
+- `AUDIENCE=agent`: prefer external-owner guidance, especially for messaging
+  platform integrations
+
+For `AUDIENCE=agent`:
+
+- do not ask the end user for an internal owner ID by default
+- if the request comes from Discord, Slack, Teams, or a similar messaging
+  platform, use the platform-native user ID from that platform as the external
+  subject
+- for those flows, use `--owner-provider` and `--owner-subject`
+- never pass a messaging-platform user ID through `--owner-id`
+- if provider, subject, preset, or tenant context is unclear, ask for
+  clarification instead of guessing
+- if external owner resolution fails, tell the caller the user needs to connect
+  their account in the product or integration that owns the mapping
 
 ## Zenobot and other preconfigured bot images
 
@@ -110,6 +133,8 @@ Rules:
 - for Discord, Slack, Teams, and similar platform-triggered creates, pass the
   external platform user through `--owner-provider` and `--owner-subject`
 - never pass a Discord, Slack, or Teams user ID through `--owner-id`
+- do not ask for or depend on an internal owner ID unless it is already known
+  from a trusted internal context
 - use `--owner-id` only when you already have the canonical internal Spritz
   owner ID and intend a direct internal/admin create
 - the service principal is only the actor
@@ -129,6 +154,14 @@ Create from a preset for a known internal owner:
 
 ```bash
 spz create --preset openclaw --owner-id user-123 --idle-ttl 24h --ttl 168h --idempotency-key req-123 --json
+```
+
+If external owner resolution fails, explain it like this:
+
+```text
+The external account could not be resolved to a Spritz owner.
+Ask the user to connect their account in the product or integration that owns
+this identity mapping, then retry the create request.
 ```
 
 Create from an explicit image:
@@ -174,6 +207,9 @@ spz profile use staging
 - prefer bearer-token auth for bots
 - for chat-platform-triggered creates, prefer external owner flags over direct
   `--owner-id`
+- do not assume the caller already knows an internal owner ID
+- if the required provider, subject, tenant, or preset is unclear, ask for the
+  missing detail instead of guessing
 - treat the create response as the source of truth for the access URL
 - do not construct workspace URLs yourself
 - use idempotency keys for any retried or externally triggered create operation
