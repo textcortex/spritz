@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { uiPublicPath } from '../test-paths.mjs';
 
 function createElement(tagName) {
   return {
@@ -50,7 +51,7 @@ function loadRenderModule() {
   window.window = window;
   const context = vm.createContext({ window, document, console });
   context.globalThis = context.window;
-  const script = fs.readFileSync('/Users/onur/repos/spritz/ui/public/acp-render.js', 'utf8');
+  const script = fs.readFileSync(uiPublicPath('acp-render.js'), 'utf8');
   vm.runInContext(script, context, { filename: 'acp-render.js' });
   return window.SpritzACPRender;
 }

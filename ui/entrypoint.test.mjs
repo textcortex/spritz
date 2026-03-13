@@ -4,14 +4,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
+import { uiPath, uiPublicPath } from './test-paths.mjs';
 import { execFileSync } from 'node:child_process';
 
 function renderConfig(env = {}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spritz-ui-'));
-  fs.copyFileSync('/Users/onur/repos/spritz/ui/public/config.js', path.join(tmpDir, 'config.js'));
-  fs.copyFileSync('/Users/onur/repos/spritz/ui/public/index.html', path.join(tmpDir, 'index.html'));
+  fs.copyFileSync(uiPublicPath('config.js'), path.join(tmpDir, 'config.js'));
+  fs.copyFileSync(uiPublicPath('index.html'), path.join(tmpDir, 'index.html'));
 
-  execFileSync('/bin/sh', ['/Users/onur/repos/spritz/ui/entrypoint.sh'], {
+  execFileSync('/bin/sh', [uiPath('entrypoint.sh')], {
     env: {
       ...process.env,
       SPRITZ_UI_HTML_DIR: tmpDir,

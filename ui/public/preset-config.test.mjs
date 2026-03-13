@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { uiPublicPath } from '../test-paths.mjs';
 
 const require = createRequire(import.meta.url);
-const { parsePresets } = require('/Users/onur/repos/spritz/ui/public/preset-config.js');
+const { parsePresets } = require(uiPublicPath('preset-config.js'));
 
 test('parsePresets returns raw arrays directly', () => {
   const presets = [{ name: 'OpenClaw', image: 'example/openclaw' }];

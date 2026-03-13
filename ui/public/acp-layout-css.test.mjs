@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { uiPublicPath } from '../test-paths.mjs';
 
-const styles = fs.readFileSync('/Users/onur/repos/spritz/ui/public/styles.css', 'utf8');
+const styles = fs.readFileSync(uiPublicPath('styles.css'), 'utf8');
 
 function getRule(selector) {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

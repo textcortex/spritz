@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { uiPublicPath } from '../test-paths.mjs';
 
 function loadACPClientModule() {
   const sockets = [];
@@ -57,7 +58,7 @@ function loadACPClientModule() {
   });
   context.globalThis = context.window;
 
-  vm.runInContext(fs.readFileSync('/Users/onur/repos/spritz/ui/public/acp-client.js', 'utf8'), context, {
+  vm.runInContext(fs.readFileSync(uiPublicPath('acp-client.js'), 'utf8'), context, {
     filename: 'acp-client.js',
   });
 
