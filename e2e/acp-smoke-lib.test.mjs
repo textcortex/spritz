@@ -17,7 +17,6 @@ import {
   resolveWebSocketConstructor,
   resolveSpzCommand,
   runCommand,
-  summarizeWorkspaceFailure,
   waitForWebSocketOpen,
 } from './acp-smoke-lib.mjs';
 
@@ -157,66 +156,6 @@ test('assertSmokeCreateResponse accepts canonicalized preset ids from the API', 
   }, 'user-123', 'OPENCLAW');
 
   assert.equal(workspaceName, 'openclaw-calm-ridge');
-});
-
-test('summarizeWorkspaceFailure prioritizes shared mount init failures', () => {
-  const result = summarizeWorkspaceFailure({
-    spritz: { status: { phase: 'Provisioning', message: 'waiting for deployment' } },
-    podList: {
-      items: [
-        {
-          status: {
-            initContainerStatuses: [
-              {
-                name: 'shared-mounts-init',
-                state: {
-                  waiting: {
-                    reason: 'CrashLoopBackOff',
-                    message: 'timed out talking to spritz-api',
-                  },
-                },
-              },
-            ],
-          },
-        },
-      ],
-    },
-  });
-
-  assert.deepEqual(result, {
-    stage: 'shared-mount-init',
-    message: 'timed out talking to spritz-api',
-  });
-});
-
-test('summarizeWorkspaceFailure reports image pull failures distinctly', () => {
-  const result = summarizeWorkspaceFailure({
-    spritz: { status: { phase: 'Provisioning', message: 'waiting for deployment' } },
-    podList: {
-      items: [
-        {
-          status: {
-            containerStatuses: [
-              {
-                name: 'spritz',
-                state: {
-                  waiting: {
-                    reason: 'ImagePullBackOff',
-                    message: 'image not found',
-                  },
-                },
-              },
-            ],
-          },
-        },
-      ],
-    },
-  });
-
-  assert.deepEqual(result, {
-    stage: 'image-pull',
-    message: 'image not found',
-  });
 });
 
 test('isForbiddenFailure only accepts explicit forbidden command failures', () => {
