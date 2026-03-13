@@ -1,0 +1,28 @@
+name: e2e-unit-tests
+
+on:
+  pull_request:
+    paths:
+      - "e2e/**"
+      - ".github/workflows/e2e-unit-tests.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "e2e/**"
+      - ".github/workflows/e2e-unit-tests.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run e2e unit tests
+        run: node --test e2e/*.test.mjs

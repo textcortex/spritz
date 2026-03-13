@@ -1,0 +1,46 @@
+name: go-tests
+
+on:
+  pull_request:
+    paths:
+      - "api/**"
+      - "operator/**"
+      - "integrations/github-app/**"
+      - ".github/workflows/go-tests.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "api/**"
+      - "operator/**"
+      - "integrations/github-app/**"
+      - ".github/workflows/go-tests.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            working-directory: api
+          - name: operator
+            working-directory: operator
+          - name: integrations-github-app
+            working-directory: integrations/github-app
+    defaults:
+      run:
+        working-directory: ${{ matrix.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.working-directory }}/go.mod
+          cache-dependency-path: ${{ matrix.working-directory }}/go.sum
+
+      - name: Test
+        run: go test ./...

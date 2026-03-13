@@ -1,0 +1,31 @@
+name: ui-tests
+
+on:
+  pull_request:
+    paths:
+      - "ui/**"
+      - ".github/workflows/ui-tests.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "ui/**"
+      - ".github/workflows/ui-tests.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run UI tests
+        run: node --test ui/entrypoint.test.mjs ui/nginx-config.test.mjs ui/public/*.test.mjs
+
+      - name: Check entrypoint shell syntax
+        run: bash -n ui/entrypoint.sh
