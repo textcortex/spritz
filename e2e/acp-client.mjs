@@ -103,7 +103,7 @@ export async function connectACPWebSocket(url, timeoutSeconds, options = {}) {
         }
         pending.delete(id);
         reject(new Error(`ACP request ${method} timed out`));
-      }, rpcTimeoutMs).unref?.();
+      }, rpcTimeoutMs);
     });
   }
 
