@@ -32,6 +32,13 @@ type TerminalSessionInfo = {
 
 type SkillflagModule = typeof import('skillflag');
 type Audience = 'human' | 'agent';
+type AudienceGuidance = {
+  audience: Audience;
+  usageNote: string;
+  createOwnershipGuidance: string[];
+  missingOwnerInputGuidance: string[];
+  unresolvedExternalOwnerGuidance: (provider: string) => string[];
+};
 
 type TtyContext = {
   ttyPath: string | null;
@@ -389,24 +396,58 @@ function resolveAudience(value = process.env.AUDIENCE): Audience {
   return value?.trim().toLowerCase() === 'agent' ? 'agent' : 'human';
 }
 
-function createUsage(audience = resolveAudience()) {
-  const ownerNotes = audience === 'agent'
-    ? `Ownership guidance:
-  - If the request came from Discord, Slack, Teams, or another messaging platform,
-    use the platform-native user ID with --owner-provider and --owner-subject.
-  - Never pass a messaging-platform user ID through --owner-id.
-  - If provider, subject, preset, or tenant context is unclear, ask for
-    clarification instead of guessing.
-  - If external owner resolution fails, tell the caller the user needs to
-    connect their account, then retry with the same platform user ID.
-`
-    : `Ownership guidance:
-  - Use --owner-provider and --owner-subject when you only know a platform-native
-    user ID such as a Discord, Slack, or Teams user.
-  - Use --owner-id only when you already know the canonical internal Spritz owner ID.
-  - If provider, subject, preset, or tenant context is unclear, clarify it before
-    running the create command.
-`;
+const audienceGuidanceByAudience: Record<Audience, AudienceGuidance> = {
+  human: {
+    audience: 'human',
+    usageNote: 'Use `spritz create --help` for detailed owner guidance and examples.',
+    createOwnershipGuidance: [
+      'Use --owner-provider and --owner-subject when you only know a platform-native user ID such as a Discord, Slack, or Teams user.',
+      'Use --owner-id only when you already know the canonical internal Spritz owner ID.',
+      'If provider, subject, preset, or tenant context is unclear, clarify it before running the create command.',
+    ],
+    missingOwnerInputGuidance: [
+      'owner input is required.',
+      'Use --owner-provider and --owner-subject when you only know a messaging-platform user ID.',
+      'Use --owner-id only when you already know the canonical internal Spritz owner ID.',
+    ],
+    unresolvedExternalOwnerGuidance: (provider: string) => [
+      `The ${provider} account could not be resolved to a Spritz owner.`,
+      'Ask the user to connect their account in the product or integration that owns this identity mapping, then retry the create request.',
+    ],
+  },
+  agent: {
+    audience: 'agent',
+    usageNote: 'If a request originated from a messaging app, prefer --owner-provider and --owner-subject with the platform-native user ID.',
+    createOwnershipGuidance: [
+      'If the request came from Discord, Slack, Teams, or another messaging platform, use the platform-native user ID with --owner-provider and --owner-subject.',
+      'Never pass a messaging-platform user ID through --owner-id.',
+      'If provider, subject, preset, or tenant context is unclear, ask for clarification instead of guessing.',
+      'If external owner resolution fails, tell the caller the user needs to connect their account, then retry with the same platform user ID.',
+    ],
+    missingOwnerInputGuidance: [
+      'owner input is required.',
+      'If this request came from a messaging app, use the platform-native user ID with --owner-provider and --owner-subject.',
+      'Do not ask for or pass a messaging-platform user ID as --owner-id.',
+      'If the provider, subject, preset, or tenant is unclear, ask for clarification before retrying.',
+    ],
+    unresolvedExternalOwnerGuidance: (provider: string) => [
+      `The ${provider} account could not be resolved to a Spritz owner.`,
+      'Ask the user to connect their account in the product or integration that owns this identity mapping, then retry the create request.',
+      'Keep using the platform-native user ID with --owner-provider and --owner-subject.',
+    ],
+  },
+};
+
+function guidanceForAudience(value = process.env.AUDIENCE): AudienceGuidance {
+  return audienceGuidanceByAudience[resolveAudience(value)];
+}
+
+function renderBullets(lines: string[]): string {
+  return lines.map((line) => `  - ${line}`).join('\n');
+}
+
+function createUsage(guidance = guidanceForAudience()) {
+  const ownerNotes = `Ownership guidance:\n${renderBullets(guidance.createOwnershipGuidance)}\n`;
 
   console.log(`Spritz create
 
@@ -414,7 +455,7 @@ Usage:
   spritz create [name] [--preset <id>] [--image <image>] [--repo <url>] [--branch <branch>] [--owner-provider <provider> --owner-subject <subject> [--owner-tenant <tenant>] | --owner-id <id>] [--idle-ttl <duration>] [--ttl <duration>] [--idempotency-key <id>] [--source <source>] [--request-id <id>] [--name-prefix <prefix>] [--namespace <ns>]
 
 Environment:
-  AUDIENCE (current: ${audience})
+  AUDIENCE (current: ${guidance.audience})
 
 Examples:
   spritz create --preset claude-code --owner-provider discord --owner-subject 123456789012345678 --source discord --request-id discord-123 --idempotency-key discord-123 --json
@@ -423,7 +464,7 @@ Examples:
 ${ownerNotes}`);
 }
 
-function usage(audience = resolveAudience()) {
+function usage(guidance = guidanceForAudience()) {
   console.log(`Spritz CLI
 
 Usage:
@@ -452,42 +493,21 @@ Environment:
   SPRITZ_API_HEADER_ID, SPRITZ_API_HEADER_EMAIL, SPRITZ_API_HEADER_TEAMS
   SPRITZ_TERMINAL_TRANSPORT (default: ${terminalTransportDefault})
   SPRITZ_PROFILE, SPRITZ_CONFIG_DIR
-  AUDIENCE (default: human, current: ${audience})
+  AUDIENCE (default: human, current: ${guidance.audience})
 
 Notes:
-  ${audience === 'agent'
-    ? 'If a request originated from a messaging app, prefer --owner-provider and --owner-subject with the platform-native user ID.'
-    : 'Use `spritz create --help` for detailed owner guidance and examples.'}
+  ${guidance.usageNote}
   When ZMX sessions are enabled, detach with Ctrl+\\ and reconnect later.
 `);
 }
 
-function missingOwnerInputMessage(audience = resolveAudience()): string {
-  if (audience === 'agent') {
-    return [
-      'owner input is required.',
-      'If this request came from a messaging app, use the platform-native user ID with --owner-provider and --owner-subject.',
-      'Do not ask for or pass a messaging-platform user ID as --owner-id.',
-      'If the provider, subject, preset, or tenant is unclear, ask for clarification before retrying.',
-    ].join(' ');
-  }
-  return [
-    'owner input is required.',
-    'Use --owner-provider and --owner-subject when you only know a messaging-platform user ID.',
-    'Use --owner-id only when you already know the canonical internal Spritz owner ID.',
-  ].join(' ');
+function missingOwnerInputMessage(guidance = guidanceForAudience()): string {
+  return guidance.missingOwnerInputGuidance.join(' ');
 }
 
-function unresolvedExternalOwnerMessage(error: SpritzRequestError, audience = resolveAudience()): string {
+function unresolvedExternalOwnerMessage(error: SpritzRequestError, guidance = guidanceForAudience()): string {
   const provider = typeof error.data?.identity?.provider === 'string' ? error.data.identity.provider : 'external';
-  const lines = [
-    `The ${provider} account could not be resolved to a Spritz owner.`,
-    'Ask the user to connect their account in the product or integration that owns this identity mapping, then retry the create request.',
-  ];
-  if (audience === 'agent') {
-    lines.push('Keep using the platform-native user ID with --owner-provider and --owner-subject.');
-  }
-  return lines.join('\n');
+  return guidance.unresolvedExternalOwnerGuidance(provider).join('\n');
 }
 
 function argValue(flag: string): string | undefined {
@@ -1027,6 +1047,7 @@ async function resolveNamespace(): Promise<string | undefined> {
 }
 
 async function main() {
+  const guidance = guidanceForAudience();
   if (shouldMaybeHandleSkillflag(process.argv)) {
     const { findSkillsRoot, maybeHandleSkillflag } = await loadSkillflagModule();
     await maybeHandleSkillflag(process.argv, {
@@ -1038,15 +1059,15 @@ async function main() {
 
   if (!command || command === 'help' || command === '--help') {
     if (command === 'help' && rest[0] === 'create') {
-      createUsage();
+      createUsage(guidance);
       return;
     }
-    usage();
+    usage(guidance);
     return;
   }
 
   if (command === 'create' && hasFlag('--help')) {
-    createUsage();
+    createUsage(guidance);
     return;
   }
 
@@ -1231,7 +1252,7 @@ async function main() {
       ? undefined
       : explicitOwnerId || (token?.trim() ? process.env.SPRITZ_OWNER_ID : await resolveDefaultOwnerId());
     if (!usingExternalOwner && !ownerId) {
-      throw new Error(missingOwnerInputMessage());
+      throw new Error(missingOwnerInputMessage(guidance));
     }
     const idleTtl = argValue('--idle-ttl');
     const ttl = argValue('--ttl');
@@ -1277,7 +1298,7 @@ async function main() {
       });
     } catch (error) {
       if (error instanceof SpritzRequestError && error.code === 'external_identity_unresolved') {
-        throw new Error(unresolvedExternalOwnerMessage(error));
+        throw new Error(unresolvedExternalOwnerMessage(error, guidance));
       }
       throw error;
     }

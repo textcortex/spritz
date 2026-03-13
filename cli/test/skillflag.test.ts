@@ -39,7 +39,6 @@ test('skillflag show returns the bundled spz skill body', async () => {
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /# spz/);
   assert.match(result.stdout, /service-principal create flow/i);
-  assert.match(result.stdout, /AUDIENCE.*human.*agent/i);
   assert.match(result.stdout, /--owner-provider discord/i);
   assert.match(result.stdout, /never pass a Discord, Slack, or Teams user ID through `--owner-id`/i);
   assert.match(result.stdout, /connect their account/i);

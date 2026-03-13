@@ -65,29 +65,6 @@ This mode is not the right fit for external automation.
 - `SPRITZ_BEARER_TOKEN`: service-principal bearer token
 - `SPRITZ_CONFIG_DIR`: config directory for profiles
 - `SPRITZ_PROFILE`: active profile name
-- `AUDIENCE`: guidance audience for help and examples: `human` or `agent`
-  (default `human`)
-
-## Audience guidance
-
-`AUDIENCE` changes the human-readable guidance, not the API contract.
-
-- `AUDIENCE=human`: balanced help for direct-owner and external-owner use
-- `AUDIENCE=agent`: prefer external-owner guidance, especially for messaging
-  platform integrations
-
-For `AUDIENCE=agent`:
-
-- do not ask the end user for an internal owner ID by default
-- if the request comes from Discord, Slack, Teams, or a similar messaging
-  platform, use the platform-native user ID from that platform as the external
-  subject
-- for those flows, use `--owner-provider` and `--owner-subject`
-- never pass a messaging-platform user ID through `--owner-id`
-- if provider, subject, preset, or tenant context is unclear, ask for
-  clarification instead of guessing
-- if external owner resolution fails, tell the caller the user needs to connect
-  their account in the product or integration that owns the mapping
 
 ## Zenobot and other preconfigured bot images
 
@@ -137,6 +114,8 @@ Rules:
   from a trusted internal context
 - use `--owner-id` only when you already have the canonical internal Spritz
   owner ID and intend a direct internal/admin create
+- if provider, subject, preset, or tenant context is unclear, ask for
+  clarification instead of guessing
 - the service principal is only the actor
 - the same `idempotency-key` and same request should replay the same workspace
 - the same `idempotency-key` with a different request should fail with conflict

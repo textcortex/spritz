@@ -25,7 +25,6 @@ guidance safer for bots, messaging agents, and service-principal automation.
 
 - `spz --help`
 - subcommand help such as `spz create --help`
-- bundled skill text shipped with the CLI
 - human-readable examples and remediation hints
 
 `AUDIENCE` must not change:
@@ -51,8 +50,8 @@ Rules:
 
 ## Agent Audience Rules
 
-When `AUDIENCE=agent`, the CLI help and bundled skill must guide the caller to
-use external-owner resolution by default.
+When `AUDIENCE=agent`, the CLI help and printed remediation must guide the
+caller to use external-owner resolution by default.
 
 Agent guidance must state:
 
@@ -123,9 +122,8 @@ default fallback.
 
 ## Clarification Behavior
 
-When the required create inputs are not clear, the bundled skill and
-human-readable guidance should tell the caller to ask for clarification instead
-of guessing.
+When the required create inputs are not clear, the CLI guidance should tell the
+caller to ask for clarification instead of guessing.
 
 Examples of unclear input:
 
@@ -142,24 +140,28 @@ Preferred behavior:
 
 ## Skill and Help Requirements
 
-The bundled `spz` skill and agent-facing help must:
+The bundled `spz` skill must stay generic and correct:
 
-- document `AUDIENCE=agent`
 - present external-owner create flows first for platform integrations
-- tell agents to use the platform-native user ID from the incoming platform
 - explain unresolved-owner remediation as “connect the account”
-- tell agents to ask for clarification when provider, subject, or preset is
+- tell callers to ask for clarification when provider, subject, or preset is
   unclear
+
+The CLI help and printed remediation must be audience-aware:
+
+- `AUDIENCE=human` prints balanced direct-owner and external-owner guidance
+- `AUDIENCE=agent` prints messaging-platform-first ownership guidance
+- the modality switch must live in code, not in duplicated static skill text
 
 ## Validation
 
 Validation for this contract should include:
 
-- a bundled-skill test that asserts `AUDIENCE=agent` guidance is present
 - a bundled-skill test that asserts messaging-platform flows use
   `--owner-provider` and `--owner-subject`
 - a bundled-skill test that asserts unresolved external owners are explained as
   “connect the account”
+- CLI help tests for `AUDIENCE=human` and `AUDIENCE=agent`
 
 ## References
 
