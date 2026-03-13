@@ -140,8 +140,15 @@ test('resolveACPEndpoint prefers discovered ACP port/path and normalizes the pat
 });
 
 test('resolveWebSocketConstructor returns a usable client constructor', () => {
-  const WebSocketCtor = resolveWebSocketConstructor();
+  class FakeWebSocket {}
+  const WebSocketCtor = resolveWebSocketConstructor({
+    globalObject: {},
+    requireFn() {
+      return { WebSocket: FakeWebSocket };
+    },
+  });
   assert.equal(typeof WebSocketCtor, 'function');
+  assert.equal(WebSocketCtor, FakeWebSocket);
 });
 
 test('assertSmokeCreateResponse accepts canonicalized preset ids from the API', () => {
