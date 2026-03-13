@@ -43,4 +43,6 @@ test('create help for agent audience prefers external owner guidance', async () 
   assert.match(result.stdout, /Never pass a messaging-platform user ID through --owner-id/i);
   assert.match(result.stdout, /connect their account/i);
   assert.match(result.stdout, /ask for\s+clarification instead of guessing/i);
+  assert.match(result.stdout, /tag the person who requested the workspace/i);
+  assert.match(result.stdout, /what was created and how to open it/i);
 });

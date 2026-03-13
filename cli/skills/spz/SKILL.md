@@ -189,6 +189,9 @@ spz profile use staging
 - do not assume the caller already knows an internal owner ID
 - if the required provider, subject, tenant, or preset is unclear, ask for the
   missing detail instead of guessing
+- when reporting a successful create back in a messaging app, tag the person
+  who requested it and include what was created plus the returned URLs for
+  opening it
 - treat the create response as the source of truth for the access URL
 - do not construct workspace URLs yourself
 - use idempotency keys for any retried or externally triggered create operation

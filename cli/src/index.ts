@@ -36,6 +36,7 @@ type AudienceGuidance = {
   audience: Audience;
   usageNote: string;
   createOwnershipGuidance: string[];
+  reportingGuidance: string[];
   missingOwnerInputGuidance: string[];
   unresolvedExternalOwnerGuidance: (provider: string) => string[];
 };
@@ -405,6 +406,9 @@ const audienceGuidanceByAudience: Record<Audience, AudienceGuidance> = {
       'Use --owner-id only when you already know the canonical internal Spritz owner ID.',
       'If provider, subject, preset, or tenant context is unclear, clarify it before running the create command.',
     ],
+    reportingGuidance: [
+      'After create succeeds, use the returned workspace name and URLs as the source of truth when reporting the result back to the caller.',
+    ],
     missingOwnerInputGuidance: [
       'owner input is required.',
       'Use --owner-provider and --owner-subject when you only know a messaging-platform user ID.',
@@ -423,6 +427,11 @@ const audienceGuidanceByAudience: Record<Audience, AudienceGuidance> = {
       'Never pass a messaging-platform user ID through --owner-id.',
       'If provider, subject, preset, or tenant context is unclear, ask for clarification instead of guessing.',
       'If external owner resolution fails, tell the caller the user needs to connect their account, then retry with the same platform user ID.',
+    ],
+    reportingGuidance: [
+      'When replying in a messaging app, tag the person who requested the workspace.',
+      'Say what was created and how to open it, using the returned workspace name and URLs from the create response.',
+      'Do not construct workspace URLs yourself.',
     ],
     missingOwnerInputGuidance: [
       'owner input is required.',
@@ -448,6 +457,7 @@ function renderBullets(lines: string[]): string {
 
 function createUsage(guidance = guidanceForAudience()) {
   const ownerNotes = `Ownership guidance:\n${renderBullets(guidance.createOwnershipGuidance)}\n`;
+  const reportingNotes = `Reporting guidance:\n${renderBullets(guidance.reportingGuidance)}\n`;
 
   console.log(`Spritz create
 
@@ -461,7 +471,8 @@ Examples:
   spritz create --preset claude-code --owner-provider discord --owner-subject 123456789012345678 --source discord --request-id discord-123 --idempotency-key discord-123 --json
   spritz create --preset openclaw --owner-id user-123 --idempotency-key req-123 --json
 
-${ownerNotes}`);
+${ownerNotes}
+${reportingNotes}`);
 }
 
 function usage(guidance = guidanceForAudience()) {
