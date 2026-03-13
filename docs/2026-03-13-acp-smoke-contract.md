@@ -29,13 +29,13 @@ The harness currently targets example ACP-capable presets such as:
 
 The runner lives in:
 
-- `/Users/onur/repos/spritz/e2e/acp-smoke.mjs`
+- `e2e/acp-smoke.mjs`
 
 Supporting owners live in:
 
-- `/Users/onur/repos/spritz/e2e/acp-smoke-lib.mjs`
-- `/Users/onur/repos/spritz/e2e/acp-client.mjs`
-- `/Users/onur/repos/spritz/e2e/workspace-waiter.mjs`
+- `e2e/acp-smoke-lib.mjs`
+- `e2e/acp-client.mjs`
+- `e2e/workspace-waiter.mjs`
 
 ## Required Inputs
 
@@ -113,7 +113,7 @@ Example shape:
 ```bash
 SPRITZ_SMOKE_API_URL=http://127.0.0.1:18083/api \
 SPRITZ_SMOKE_BEARER_TOKEN=example-token \
-node /Users/onur/repos/spritz/e2e/acp-smoke.mjs \
+node e2e/acp-smoke.mjs \
   --owner-id example-owner-id \
   --namespace example-namespace \
   --presets openclaw,claude-code
@@ -174,20 +174,20 @@ If any future change needs to alter one of these rules, update this document and
 At minimum, changes to the smoke harness should run:
 
 ```bash
-node --test /Users/onur/repos/spritz/e2e/acp-smoke-lib.test.mjs \
-  /Users/onur/repos/spritz/e2e/acp-client.test.mjs \
-  /Users/onur/repos/spritz/e2e/workspace-waiter.test.mjs
+node --test e2e/acp-smoke-lib.test.mjs \
+  e2e/acp-client.test.mjs \
+  e2e/workspace-waiter.test.mjs
 
-node --check /Users/onur/repos/spritz/e2e/acp-smoke-lib.mjs \
-  /Users/onur/repos/spritz/e2e/acp-client.mjs \
-  /Users/onur/repos/spritz/e2e/workspace-waiter.mjs \
-  /Users/onur/repos/spritz/e2e/acp-smoke.mjs
+node --check e2e/acp-smoke-lib.mjs \
+  e2e/acp-client.mjs \
+  e2e/workspace-waiter.mjs \
+  e2e/acp-smoke.mjs
 ```
 
 For behavior changes, rerun at least one real smoke against a live cluster after the refactor.
 
 ## References
 
-- `/Users/onur/repos/spritz/docs/2026-03-09-acp-port-and-agent-chat-architecture.md`
-- `/Users/onur/repos/spritz/docs/2026-03-10-acp-conversation-storage-and-replay-model.md`
-- `/Users/onur/repos/spritz/docs/2026-03-11-external-provisioner-and-service-principal-architecture.md`
+- `docs/2026-03-09-acp-port-and-agent-chat-architecture.md`
+- `docs/2026-03-10-acp-conversation-storage-and-replay-model.md`
+- `docs/2026-03-11-external-provisioner-and-service-principal-architecture.md`
