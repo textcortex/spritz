@@ -110,8 +110,12 @@ Rules:
 - for Discord, Slack, Teams, and similar platform-triggered creates, pass the
   external platform user through `--owner-provider` and `--owner-subject`
 - never pass a Discord, Slack, or Teams user ID through `--owner-id`
+- do not ask for or depend on an internal owner ID unless it is already known
+  from a trusted internal context
 - use `--owner-id` only when you already have the canonical internal Spritz
   owner ID and intend a direct internal/admin create
+- if provider, subject, preset, or tenant context is unclear, ask for
+  clarification instead of guessing
 - the service principal is only the actor
 - the same `idempotency-key` and same request should replay the same workspace
 - the same `idempotency-key` with a different request should fail with conflict
@@ -129,6 +133,14 @@ Create from a preset for a known internal owner:
 
 ```bash
 spz create --preset openclaw --owner-id user-123 --idle-ttl 24h --ttl 168h --idempotency-key req-123 --json
+```
+
+If external owner resolution fails, explain it like this:
+
+```text
+The external account could not be resolved to a Spritz owner.
+Ask the user to connect their account in the product or integration that owns
+this identity mapping, then retry the create request.
 ```
 
 Create from an explicit image:
@@ -174,6 +186,12 @@ spz profile use staging
 - prefer bearer-token auth for bots
 - for chat-platform-triggered creates, prefer external owner flags over direct
   `--owner-id`
+- do not assume the caller already knows an internal owner ID
+- if the required provider, subject, tenant, or preset is unclear, ask for the
+  missing detail instead of guessing
+- when reporting a successful create back in a messaging app, tag the person
+  who requested it and include what was created plus the returned URLs for
+  opening it
 - treat the create response as the source of truth for the access URL
 - do not construct workspace URLs yourself
 - use idempotency keys for any retried or externally triggered create operation
