@@ -1,6 +1,6 @@
 ---
 name: spz
-description: Use the spz CLI to provision, inspect, and access Spritz workspaces, including service-principal create flows, preset-based provisioning, canonical access URLs, and ACP-ready workspace operations.
+description: Use the spz CLI to spawn, provision, inspect, and access Spritz workspaces, including service-principal create flows, preset-based provisioning, canonical access URLs, and ACP-ready workspace operations.
 ---
 
 # spz
@@ -11,6 +11,7 @@ Use this skill when you need to interact with a Spritz control plane through the
 
 Typical cases:
 
+- spawn a new agent workspace from a preset such as `openclaw` or `claude-code`
 - create a new workspace from a preset such as `openclaw` or `claude-code`
 - create a workspace on behalf of a user with a service-principal bearer token
 - suggest a DNS-safe random name for a workspace
@@ -21,6 +22,8 @@ Typical cases:
 ## What Spritz is
 
 Spritz is a control plane for agent workspaces.
+
+In user-facing agent language, `spawn` means `create a Spritz workspace for an agent`.
 
 Core model:
 
