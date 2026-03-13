@@ -5,42 +5,157 @@
 </p>
 
 <p align="center">
-  <strong>Programmable open-source agent orchestrator</strong>
+  <strong>Open-source Kubernetes orchestrator for disposable agent workspaces</strong>
 </p>
 
-Spritz is a Kubernetes-native control plane for creating, exposing, discovering, and talking to agent workloads.
+Spritz is a self-hosted control plane for spawning isolated agent workspaces on Kubernetes.
 
-It is built around one simple idea: the agent runtime is the workload, and Spritz is the orchestrator around it. Spritz provisions the workload, gives it a consistent runtime shape, discovers whether it speaks ACP, and exposes a single UI and API for operators and clients to use it.
+You deploy Spritz on your own cluster, package one or more agent runtimes as presets, and let humans or gateway automations spawn fresh agents on demand. Each spawned agent runs in its own workspace workload, is owned by a specific user, and is exposed through a consistent web UI, API, and ACP gateway.
 
-The backend inside a workspace is pluggable. OpenClaw is one example runtime. Any workload that exposes ACP on the Spritz contract can participate.
+Spritz is built to stay runtime-agnostic. [OpenClaw](https://docs.openclaw.ai/) is one example runtime in this repository, but Spritz is not tied to OpenClaw. Any agent that speaks the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/get-started/introduction) on the Spritz runtime contract can run behind it, whether that is OpenClaw, Claude Code, a Codex-based runtime, or a custom internal agent image.
 
 > Spritz is in active development and should be treated as alpha software. APIs, CRDs, Helm values, and UI details may still change while the deployment model is being hardened.
 
-[Deployment Spec](docs/2026-02-24-simplest-spritz-deployment-spec.md) · [ACP Architecture](docs/2026-03-09-acp-port-and-agent-chat-architecture.md) · [Portable Auth](docs/2026-02-24-portable-authentication-and-account-architecture.md) · [External Provisioners](docs/2026-03-11-external-provisioner-and-service-principal-architecture.md) · [External Identity Resolution](docs/2026-03-12-external-identity-resolution-api-architecture.md) · [OpenClaw Integration](OPENCLAW.md)
+[Quick Start](#quick-start) · [What It Feels Like](#what-it-feels-like) · [Architecture](#architecture) · [Deployment Spec](docs/2026-02-24-simplest-spritz-deployment-spec.md) · [ACP Architecture](docs/2026-03-09-acp-port-and-agent-chat-architecture.md) · [External Provisioners](docs/2026-03-11-external-provisioner-and-service-principal-architecture.md) · [External Identity Resolution](docs/2026-03-12-external-identity-resolution-api-architecture.md) · [Spawn Vocabulary](docs/2026-03-13-spawn-language-for-agent-workspaces.md) · [OpenClaw Integration](OPENCLAW.md)
 
-## Vision
+## What Spritz is for
 
-Spritz is meant to be:
+Spritz is for teams that want to run many user-owned agents on shared Kubernetes infrastructure without turning the gateway bot into the runtime.
 
-- a programmable open-source orchestrator for agent workloads
-- straightforward to deploy with one Helm chart and one host
-- ACP-native, so backends can be discovered and reached through one contract
-- backend-agnostic, so the workload can be OpenClaw or any other ACP-speaking runtime
-- useful both as an operator UI and as a control plane that other ACP clients can sit behind
+The model is simple:
 
-The long-term goal is not "a special OpenClaw console." The goal is a general control plane for ACP-capable agents running in Kubernetes.
+- the gateway bot or automation is just the requester
+- the actual agent runs in a separate Spritz workspace
+- the workspace is owned by the human user it was created for
+- the human opens it through the Spritz web app and talks to the agent there
 
-## What Spritz does
+That makes Spritz useful for:
 
-Today Spritz provides:
+- disposable per-task agent workspaces
+- internal gateway bots on Discord, Slack, Teams, or other messaging surfaces
+- self-managed enterprise deployments on private infrastructure
+- high-concurrency setups where many users may run multiple agents at once
+- agent fleets that need consistent access, auth, ownership, and lifecycle rules
 
-- a Kubernetes operator that reconciles `Spritz` resources into running workloads
-- a Spritz API that owns auth, workspace access, ACP metadata, and ACP gatewaying
-- a Spritz UI for creating workloads, opening them, and testing ACP-capable agents
-- a Helm chart for the simplest standalone deployment model
-- a standard workspace home at `/home/dev`
-- ACP discovery written into `Spritz.status.acp`
-- a built-in ACP conversation surface for talking to ready agents through Spritz
+## What it feels like
+
+In user-facing language, `spawn` means `create a fresh agent workspace`.
+
+A typical flow looks like this:
+
+1. A company deploys Spritz on its own Kubernetes cluster with the Helm chart.
+2. The company defines presets for the agent runtimes it wants to offer, such as OpenClaw, Claude Code, or a custom ACP-capable image.
+3. A human asks a gateway bot or internal automation to spawn an agent for a task.
+4. The gateway bot calls Spritz to create the workspace for that user.
+5. Spritz provisions the workspace, binds it to the resolved owner, and returns canonical open URLs.
+6. The user opens the Spritz web app and works with the spawned agent.
+
+Today the built-in interactive surface is the Spritz web UI. A deployment can front Spritz with a bot on Discord, Slack, Teams, or another messaging platform, but Spritz itself remains the control plane and web client rather than a chat-platform-specific product.
+
+## Why Spritz exists
+
+Most agent demos run one agent in one process for one operator. That breaks down quickly once you want:
+
+- many users
+- many tasks
+- many agents
+- isolated runtimes
+- self-managed infrastructure
+
+Spritz treats the agent runtime as a workload and puts a reusable control plane around it:
+
+- provisioning
+- ownership
+- access URLs
+- ACP discovery
+- terminal access
+- chat access
+- TTLs and lifecycle
+- gateway-bot-friendly create flows
+
+The result is a system where each spawned agent can be disposable and isolated, while the cluster-level experience still feels coherent.
+
+## What can run on Spritz
+
+Spritz is not an OpenClaw console. It is a control plane for ACP-capable agents.
+
+A runtime fits Spritz if it can expose ACP on the current Spritz contract:
+
+- port `2529`
+- WebSocket transport
+- path `/`
+- successful ACP `initialize`
+
+That can be:
+
+- the example [OpenClaw](https://docs.openclaw.ai/) runtime in this repo
+- the example Claude Code runtime in this repo
+- a custom internal image
+- a wrapper or adapter around another agent runtime
+
+The important boundary is the protocol, not the brand of the agent.
+
+## Current capabilities
+
+Spritz currently provides:
+
+- a Kubernetes operator that reconciles `Spritz` resources into running workspaces
+- a Spritz API that owns auth, workspace access, ACP metadata, and ACP proxying
+- a built-in web UI for creating workspaces, opening them, and chatting with ACP-capable agents
+- a CLI and service-principal-friendly create flow for external provisioners
+- preset-based workspace creation with canonical URLs in the create response
+- external owner resolution for gateway bots that know a platform user ID but not an internal owner ID
+- owner-bound workspaces where the creator and the later user do not need to be the same principal
+- ACP readiness discovery written into `Spritz.status.acp`
+- browser terminal access routed through `spritz-api`
+- optional shared mounts for owner-scoped state sharing between disposable workspaces
+
+That means a gateway bot can create a workspace for a human user, but the bot does not need to become that user and does not automatically inherit post-create access to the workspace.
+
+## Gateway bots and external owner resolution
+
+One of Spritz's core use cases is the gateway-agent pattern.
+
+For example, a deployment can run a bot on Discord, Slack, Teams, or another messaging platform. That bot can ask Spritz to spawn a workspace using the platform-native user identifier it already has. Spritz then resolves the true workspace owner through a deployment-owned resolver and creates the workspace for that owner.
+
+In practice, this gives you a clean separation:
+
+- the messaging bot knows the platform user ID
+- Spritz owns workspace creation, access, and lifecycle
+- the deployment decides how platform identities resolve to real owners
+- the created workspace remains owned by the human user, not by the bot
+
+This is the long-term stable path for chat-triggered agent spawns.
+
+## Architecture
+
+```text
+Human or gateway bot
+         |
+         v
++------------------------+
+|      Spritz API/UI     |
+| auth, create, URLs,    |
+| ACP gateway, terminal  |
++-----------+------------+
+            |
+            v
++------------------------+
+|    Spritz operator     |
+| reconcile, status,     |
+| readiness, lifecycle   |
++-----------+------------+
+            |
+            v
++------------------------+
+|   Agent workspace      |
+| OpenClaw, Claude Code, |
+| or any ACP runtime     |
+| on ws://:2529/         |
++------------------------+
+```
+
+The workload is the agent runtime. Spritz is the orchestration layer around it.
 
 ## Core model
 
@@ -49,68 +164,32 @@ Today Spritz provides:
 The default install path is intentionally simple:
 
 - one Helm release
-- one public hostname
+- one public host
 - one ingress surface
 - `/` -> `spritz-ui`
 - `/api` -> `spritz-api`
-- `/oauth2` -> auth gateway when OIDC forward-auth is enabled
+- `/oauth2` -> auth gateway when forward-auth is enabled
 
-That keeps the default deployment understandable and avoids path-mounting tricks, split frontend hosting, or provider-specific edge logic.
+This keeps the default deployment understandable and portable.
+
+### Workspace model
+
+A workspace is the actual running environment for one spawned agent. In Kubernetes terms, that is a `Spritz` resource reconciled into a deployment and related services.
+
+The user-facing verb can be `spawn`, but the stored resource remains a workspace.
 
 ### ACP model
 
-Spritz reserves one internal ACP endpoint for each workload:
+Spritz reserves one internal ACP endpoint per workspace:
 
-- port: `2529`
-- transport: WebSocket
-- path: `/`
-- protocol: ACP JSON-RPC
+- port `2529`
+- transport `WebSocket`
+- path `/`
+- protocol `ACP JSON-RPC`
 
-If something inside the workload listens there and answers ACP `initialize`, Spritz treats that workload as ACP-capable.
+If a workload answers there successfully, Spritz treats it as ACP-capable and exposes it through the Spritz API and UI.
 
-The operator owns discovery. The browser never connects directly to workload ACP ports; ACP traffic always flows through `spritz-api`.
-
-### Backend model
-
-Spritz itself must stay backend-agnostic.
-
-A workload participates in the ACP control plane if it:
-
-- listens on `2529`
-- speaks ACP over WebSocket
-- returns a valid ACP `initialize` response
-- supports the ACP session methods required by the client flow
-
-OpenClaw is currently the main example backend in this repo, but it is not the protocol owner and it is not the only intended runtime.
-
-## How it works
-
-```text
-Browser or ACP client
-        |
-        v
-+-----------------------+
-|     Spritz UI/API     |
-| auth, ACP gatewaying, |
-| metadata, open flow   |
-+-----------+-----------+
-            |
-            v
-+-----------------------+
-|    Spritz operator    |
-| provisioning, status, |
-| ACP discovery         |
-+-----------+-----------+
-            |
-            v
-+-----------------------+
-|   Spritz workload     |
-| OpenClaw or any ACP   |
-| backend on ws://:2529 |
-+-----------------------+
-```
-
-The UI is the built-in operator client. The API is the stable control-plane surface. The workload can be swapped as long as it honors the ACP contract.
+The browser never needs direct access to the workload ACP port. ACP traffic flows through `spritz-api`.
 
 ## Quick start
 
@@ -126,61 +205,42 @@ helm upgrade --install spritz ./helm/spritz \
   --set global.host=spritz.example.com
 ```
 
-For an authenticated install, enable the in-cluster auth gateway and provide OIDC values. The example values file lives at:
-
-- `helm/spritz/examples/portable-oidc-auth.values.yaml`
+For an authenticated install, enable the in-cluster auth gateway and provide OIDC values with [helm/spritz/examples/portable-oidc-auth.values.yaml](helm/spritz/examples/portable-oidc-auth.values.yaml).
 
 After install:
 
 1. open the configured host
-2. create a workload from the UI
-3. open the workload directly or talk to it through the ACP chat surface if it exposes ACP on `2529`
-
-## What exists today
-
-Current Spritz includes:
-
-- standalone-host deployment defaults in the Helm chart
-- optional in-cluster OIDC auth gateway packaging
-- workspace creation and access through the UI and API
-- browser terminal access routed through `spritz-api`
-- ACP discovery, readiness reporting, and API proxying
-- conversation metadata stored as Kubernetes resources
-- an OpenClaw example image and runtime wrapper for ACP-backed workloads
-
-## What is still moving
-
-Spritz is usable for development and system testing, but it is still alpha. The main surfaces still being hardened are:
-
-- Helm defaults and install ergonomics
-- auth packaging and default identity flows
-- ACP UI behavior and conversation lifecycle details
-- preset/workload packaging for different runtimes
-- operational hardening for larger-scale deployments
+2. create a workspace from the UI or API
+3. open the workspace directly or use the built-in ACP chat surface if the runtime exposes ACP on `2529`
 
 ## Design constraints
 
 Spritz is intended to remain portable and standalone:
 
-- no TextCortex-specific infrastructure inside the Spritz codebase
-- no hard dependency on a single edge provider or auth vendor
-- no backend-specific ACP logic in the Spritz control plane
+- no organization-specific infrastructure inside the Spritz codebase
+- no hard dependency on one auth vendor, messaging platform, or edge provider
 - no assumption that OpenClaw is the only supported runtime
-- no transcript storage in Kubernetes resources
+- no requirement that gateway bots know internal owner IDs
+- no backend-specific ACP logic in the core control plane beyond the protocol contract
 
 ## Repository map
 
 - `operator/`: Kubernetes reconciliation and workload lifecycle
-- `api/`: authenticated API and ACP gateway
+- `api/`: authenticated API, provisioning logic, and ACP gateway
 - `ui/`: built-in web UI
+- `cli/`: `spz` CLI and bundled Spritz skill
 - `helm/spritz/`: standalone deployment chart
-- `images/examples/openclaw/`: OpenClaw example runtime and ACP adapter
+- `images/examples/openclaw/`: OpenClaw example runtime and ACP wrapper
+- `images/examples/claude-code/`: Claude Code example runtime and ACP wrapper
 - `docs/`: architecture and deployment documents
 
 ## Key docs
 
-- `docs/2026-02-24-simplest-spritz-deployment-spec.md`
-- `docs/2026-02-24-portable-authentication-and-account-architecture.md`
-- `docs/2026-03-09-acp-port-and-agent-chat-architecture.md`
-- `docs/2026-03-11-external-provisioner-and-service-principal-architecture.md`
-- `OPENCLAW.md`
+- [Simplest Spritz Deployment Spec](docs/2026-02-24-simplest-spritz-deployment-spec.md)
+- [Portable Authentication and Account Architecture](docs/2026-02-24-portable-authentication-and-account-architecture.md)
+- [ACP Port and Agent Chat Architecture](docs/2026-03-09-acp-port-and-agent-chat-architecture.md)
+- [External Provisioner and Service Principal Architecture](docs/2026-03-11-external-provisioner-and-service-principal-architecture.md)
+- [External Identity Resolution API Architecture](docs/2026-03-12-external-identity-resolution-api-architecture.md)
+- [Spawn Language for Agent Workspaces](docs/2026-03-13-spawn-language-for-agent-workspaces.md)
+- [OpenClaw Integration](OPENCLAW.md)
+
