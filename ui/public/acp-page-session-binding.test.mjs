@@ -200,7 +200,7 @@ test('ACP page rebinds the selected conversation before sending on a stale clien
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   const composer = walk(shellEl, (node) => node.tagName === 'textarea');
-  const sendButton = walk(shellEl, (node) => node.tagName === 'button' && node.textContent === 'Send');
+  const sendButton = walk(shellEl, (node) => node.tagName === 'button' && (node.textContent === 'Send' || node.className === 'acp-composer-send'));
 
   assert.ok(composer);
   assert.ok(sendButton);
@@ -327,7 +327,7 @@ test('ACP page repairs a missing session by bootstrapping once and reconnecting'
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   const composer = walk(shellEl, (node) => node.tagName === 'textarea');
-  const sendButton = walk(shellEl, (node) => node.tagName === 'button' && node.textContent === 'Send');
+  const sendButton = walk(shellEl, (node) => node.tagName === 'button' && (node.textContent === 'Send' || node.className === 'acp-composer-send'));
 
   assert.ok(composer);
   assert.ok(sendButton);

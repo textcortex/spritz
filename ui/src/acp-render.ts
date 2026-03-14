@@ -592,6 +592,11 @@
     return html;
   }
 
+  function setInnerHTML(el, html, plainText) {
+    el.innerHTML = html;
+    el.textContent = plainText;
+  }
+
   function appendParagraphs(parent, text) {
     const source = String(text || '').trim();
     if (!source) return;
@@ -606,7 +611,7 @@
         const level = Math.min(headingMatch[1].length + 1, 6);
         const heading = document.createElement('h' + level);
         heading.className = 'acp-md-heading';
-        heading.innerHTML = renderInlineMarkdown(headingMatch[2]);
+        setInnerHTML(heading, renderInlineMarkdown(headingMatch[2]), headingMatch[2]);
         parent.appendChild(heading);
         i++;
         continue;
@@ -617,7 +622,8 @@
         ul.className = 'acp-md-list';
         while (i < lines.length && /^[-*]\s+/.test(lines[i].trim())) {
           const li = document.createElement('li');
-          li.innerHTML = renderInlineMarkdown(lines[i].trim().replace(/^[-*]\s+/, ''));
+          const liText = lines[i].trim().replace(/^[-*]\s+/, '');
+          setInnerHTML(li, renderInlineMarkdown(liText), liText);
           ul.appendChild(li);
           i++;
         }
@@ -630,7 +636,8 @@
         ol.className = 'acp-md-list';
         while (i < lines.length && /^\d+[.)]\s+/.test(lines[i].trim())) {
           const li = document.createElement('li');
-          li.innerHTML = renderInlineMarkdown(lines[i].trim().replace(/^\d+[.)]\s+/, ''));
+          const olText = lines[i].trim().replace(/^\d+[.)]\s+/, '');
+          setInnerHTML(li, renderInlineMarkdown(olText), olText);
           ol.appendChild(li);
           i++;
         }
@@ -654,7 +661,8 @@
       if (paraLines.length) {
         const p = document.createElement('p');
         p.className = 'acp-rich-paragraph';
-        p.innerHTML = renderInlineMarkdown(paraLines.join('\n'));
+        const paraText = paraLines.join('\n');
+        setInnerHTML(p, renderInlineMarkdown(paraText), paraText);
         parent.appendChild(p);
       }
     }

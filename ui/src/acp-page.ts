@@ -575,6 +575,14 @@
       tag.className = 'acp-command-pill';
       tag.textContent = item.label;
       if (item.title) tag.title = item.title;
+      tag.style.cursor = 'pointer';
+      tag.addEventListener('click', () => {
+        if (page.composerEl) {
+          page.composerEl.value = item.label + ' ';
+          page.composerEl.focus();
+          page.composerEl.dispatchEvent(new Event('input'));
+        }
+      });
       page.commandBarEl.appendChild(tag);
     });
   }
@@ -677,7 +685,11 @@
     if (!isTerminal) {
       page.statusEl.appendChild(createGridLoader());
     }
-    page.statusEl.appendChild(document.createTextNode(text));
+    if (typeof document.createTextNode === 'function') {
+      page.statusEl.appendChild(document.createTextNode(text));
+    } else {
+      page.statusEl.textContent = (page.statusEl.textContent || '') + text;
+    }
   }
 
   function selectedConversationClientMatches(page) {
@@ -1125,11 +1137,13 @@
     const newConversationButton = document.createElement('button');
     newConversationButton.type = 'button';
     newConversationButton.className = 'acp-new-chat-item';
+    newConversationButton.dataset.tooltip = 'New chat';
     newConversationButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>New chat</span>';
 
     const backLink = document.createElement('a');
     backLink.href = '#create';
     backLink.className = 'acp-new-chat-item acp-back-link';
+    backLink.dataset.tooltip = 'Spritzes';
     backLink.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg><span>Spritzes</span>';
 
     const refreshButton = document.createElement('button');
@@ -1142,6 +1156,42 @@
     const agentSelect = document.createElement('select');
     agentSelect.className = 'acp-agent-select';
 
+    const collapseIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><polyline points="14 9 11 12 14 15"/></svg>';
+    const expandIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><polyline points="13 9 16 12 13 15"/></svg>';
+
+    const toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'acp-nav-icon acp-sidebar-toggle';
+    toggleBtn.dataset.tooltip = 'Collapse sidebar';
+    toggleBtn.dataset.tooltipPos = 'right';
+    toggleBtn.innerHTML = collapseIcon;
+
+    const isCollapsed = typeof localStorage !== 'undefined' && localStorage.getItem('spritz:sidebar-collapsed') === 'true';
+    if (isCollapsed) {
+      shell.dataset.collapsed = 'true';
+      toggleBtn.innerHTML = expandIcon;
+      toggleBtn.dataset.tooltip = 'Expand sidebar';
+    }
+
+    toggleBtn.addEventListener('click', () => {
+      const collapsed = shell.dataset.collapsed === 'true';
+      if (collapsed) {
+        delete shell.dataset.collapsed;
+        toggleBtn.innerHTML = collapseIcon;
+        toggleBtn.dataset.tooltip = 'Collapse sidebar';
+        try { localStorage.setItem('spritz:sidebar-collapsed', 'false'); } catch {}
+      } else {
+        shell.dataset.collapsed = 'true';
+        toggleBtn.innerHTML = expandIcon;
+        toggleBtn.dataset.tooltip = 'Expand sidebar';
+        try { localStorage.setItem('spritz:sidebar-collapsed', 'true'); } catch {}
+      }
+    });
+
+    const selectRow = document.createElement('div');
+    selectRow.className = 'acp-sidebar-select-row';
+    selectRow.append(agentSelect, toggleBtn);
+
     const threadList = document.createElement('div');
     threadList.className = 'acp-thread-list';
 
@@ -1149,7 +1199,7 @@
     sidebarActions.className = 'acp-sidebar-actions';
     sidebarActions.append(newConversationButton, backLink);
 
-    sidebarTop.append(agentSelect, sidebarActions);
+    sidebarTop.append(selectRow, sidebarActions);
     sidebar.append(sidebarTop, threadList);
 
     const main = document.createElement('section');
@@ -1174,9 +1224,30 @@
     openButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
     headerActions.append(refreshButton, openButton);
 
+    const mobileMenuBtn = document.createElement('button');
+    mobileMenuBtn.type = 'button';
+    mobileMenuBtn.className = 'acp-nav-icon acp-mobile-menu';
+    mobileMenuBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>';
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'acp-sidebar-backdrop';
+
+    mobileMenuBtn.addEventListener('click', () => {
+      shell.dataset.mobileOpen = 'true';
+    });
+    backdrop.addEventListener('click', () => {
+      delete shell.dataset.mobileOpen;
+    });
+
+    shell.appendChild(backdrop);
+
+    threadList.addEventListener('click', () => {
+      delete shell.dataset.mobileOpen;
+    });
+
     const headerTop = document.createElement('div');
     headerTop.className = 'acp-main-header-top';
-    headerTop.append(headerCopy, headerActions);
+    headerTop.append(mobileMenuBtn, headerCopy, headerActions);
 
     const commandBar = document.createElement('div');
     commandBar.className = 'acp-command-bar';
@@ -1286,6 +1357,10 @@
     });
 
     sendButton.addEventListener('click', async () => {
+      if (page.promptInFlight) {
+        page.client?.cancelPrompt();
+        return;
+      }
       const text = composerInput.value.trim();
       if (!text || !page.client || !page.selectedConversation) return;
       const rebound = await ensureSelectedConversationClient(page);
@@ -1318,10 +1393,6 @@
         syncComposer(page);
         renderThread(page);
       }
-    });
-
-    cancelButton.addEventListener('click', () => {
-      page.client?.cancelPrompt();
     });
 
     function autoResizeComposer() {
