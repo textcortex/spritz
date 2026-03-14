@@ -148,8 +148,67 @@ form {
 }
 
 @media (max-width: 540px) {
+  .shell {
+    padding: 24px 16px;
+    gap: 16px;
+  }
+
+  .card {
+    padding: 20px;
+    border-radius: 16px;
+  }
+
+  .page-title {
+    font-size: 20px;
+  }
+
+  .page-subtitle {
+    margin-top: -10px;
+    font-size: 13px;
+  }
+
+  form {
+    gap: 18px;
+  }
+
   .form-row {
     flex-direction: column;
+    gap: 18px;
+  }
+
+  .name-field {
+    gap: 0;
+  }
+
+  .name-field input {
+    border-radius: 10px 0 0 10px;
+    min-width: 0;
+  }
+
+  .name-field .ghost {
+    border-radius: 0 10px 10px 0;
+    white-space: nowrap;
+  }
+
+  .spritz-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 14px 0;
+  }
+
+  .actions {
+    flex-wrap: wrap;
+  }
+
+  .list-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  form > button[type="submit"] {
+    align-self: stretch;
+    justify-content: center;
   }
 }
 
@@ -429,7 +488,8 @@ button.loading svg {
 .spritz-item {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  gap:16px;
+  align-items: start;
   padding: 16px 0;
   border-bottom: 1px solid #e5e5e5;
 }
