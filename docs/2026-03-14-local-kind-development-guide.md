@@ -177,7 +177,58 @@ kubectl create secret generic anthropic-api-key \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-## 8. Create the local Helm values file
+## 8. Configure shared mounts
+
+Shared mounts let workspaces persist and sync files (such as `~/.config`) across
+disposable workspace restarts for the same owner. The syncer sidecar uses rclone
+for storage. For local kind, we use the `local` filesystem type inside the API pod.
+
+### Generate a shared bearer token
+
+The operator and API authenticate syncer traffic with a shared token:
+
+```bash
+SHARED_TOKEN=$(openssl rand -hex 32)
+```
+
+### Create secrets in both namespaces
+
+The token must exist in `spritz-system` (for the API) and `spritz` (for the
+syncer sidecar running inside workspace pods):
+
+```bash
+kubectl create secret generic spritz-shared-mounts-token \
+  -n spritz-system \
+  --from-literal=token="$SHARED_TOKEN" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl create secret generic spritz-shared-mounts-token \
+  -n spritz \
+  --from-literal=token="$SHARED_TOKEN" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl create secret generic spritz-api-shared-mounts-token \
+  -n spritz-system \
+  --from-literal=token="$SHARED_TOKEN" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+### Create the rclone config secret
+
+For local kind, a `local` rclone remote stores data inside the API pod at
+`/tmp/spritz-shared`:
+
+```bash
+cat <<'EOF' | kubectl create secret generic spritz-rclone-config \
+  -n spritz-system \
+  --from-file=rclone.conf=/dev/stdin \
+  --dry-run=client -o yaml | kubectl apply -f -
+[local]
+type = local
+EOF
+```
+
+## 9. Create the local Helm values file
 
 Create `local-kind.values.yaml`:
 
@@ -204,7 +255,41 @@ ui:
               name: anthropic-api-key
               key: ANTHROPIC_API_KEY
 
+operator:
+  sharedMounts:
+    enabled: true
+    mounts:
+      - name: config
+        mountPath: /home/dev/.config
+        scope: owner
+        mode: snapshot
+        syncMode: poll
+    apiUrl: http://spritz-api.spritz-system:8080
+    tokenSecret:
+      name: spritz-shared-mounts-token
+      key: token
+    syncerImage: spritz-api:latest
+    syncerImagePullPolicy: IfNotPresent
+
 api:
+  sharedMounts:
+    enabled: true
+    mounts:
+      - name: config
+        mountPath: /home/dev/.config
+        scope: owner
+        mode: snapshot
+        syncMode: poll
+    prefix: spritz-shared
+    rclone:
+      remote: local
+      bucket: /tmp/spritz-shared
+      configSecret:
+        name: spritz-rclone-config
+        key: rclone.conf
+    internalTokenSecret:
+      name: spritz-api-shared-mounts-token
+      key: token
   provisioners:
     allowCustomImage: true
   defaultIngress:
@@ -220,8 +305,12 @@ Important local choices:
 - `ui.ownerId: local-user` gives workspaces an owner in auth-disabled local mode
 - `ui.presets` injects the Anthropic key via a Kubernetes secret
 - `defaultIngress` gives each workspace a browser route
+- `operator.sharedMounts` and `api.sharedMounts` enable owner-scoped config
+  persistence using the local filesystem via rclone
+- `syncerImage: spritz-api:latest` reuses the API image which bundles the
+  `spritz-shared-syncer` binary
 
-## 9. Install Spritz
+## 10. Install Spritz
 
 ```bash
 helm upgrade --install spritz ./helm/spritz \
@@ -242,7 +331,7 @@ You want:
 - `spritz-ui` running
 - `spritz-operator` running
 
-## 10. Make the hostname resolve locally
+## 11. Make the hostname resolve locally
 
 Map the host used in `global.host` to `127.0.0.1`:
 
@@ -258,7 +347,7 @@ curl -I http://console.example.com
 
 It should return `HTTP/1.1 200 OK`.
 
-## 11. Open the UI
+## 12. Open the UI
 
 Open:
 
@@ -268,7 +357,7 @@ http://console.example.com
 
 This local guide intentionally uses `http`, not `https`.
 
-## 12. Create a workspace
+## 13. Create a workspace
 
 In the UI:
 
@@ -347,14 +436,23 @@ ui:
 
 ### `shared mounts requested but operator is not configured`
 
-This usually means the browser form still contains saved `userConfig` with
-`sharedMounts`.
+The workspace spec includes shared mounts but the operator does not have the
+shared mount backend configured. Follow step 8 to create the required secrets
+and add the `operator.sharedMounts` and `api.sharedMounts` sections to your
+Helm values file, then upgrade the release.
 
-Fix it by:
+### `Init:CreateContainerConfigError` — secret not found in workspace namespace
 
-- clearing the `User config` field in the UI
+The syncer init container runs inside the workspace pod in the `spritz`
+namespace. The token secret must exist in both `spritz-system` (for the API)
+and `spritz` (for workspace pods):
 
-Then recreate the workspace.
+```bash
+kubectl create secret generic spritz-shared-mounts-token \
+  -n spritz \
+  --from-literal=token="$SHARED_TOKEN" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
 
 ### Workspace is stuck at `waiting for deployment`
 
