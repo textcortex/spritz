@@ -1090,7 +1090,14 @@ function renderList(items) {
       deleteBtn.textContent = 'Deleting…';
       try {
         await request(`/spritzes/${spritz.metadata?.name}`, { method: 'DELETE' });
-        await fetchSpritzes();
+        item.remove();
+        if (!listEl.children.length) {
+          renderList([]);
+        }
+        showNotice('Environment deleted.', 'info');
+        window.setTimeout(() => {
+          fetchSpritzes().catch(() => {});
+        }, 250);
       } catch (err) {
         showNotice(err.message || 'Failed to delete environment.');
         deleteBtn.disabled = false;
