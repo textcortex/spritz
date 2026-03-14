@@ -575,17 +575,89 @@
     return fragment;
   }
 
+  function escapeHtml(str) {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function renderInlineMarkdown(text) {
+    let html = escapeHtml(text);
+    // inline code
+    html = html.replace(/`([^`]+)`/g, '<code class="acp-inline-code">$1</code>');
+    // bold
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    // italic
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    // links [text](url)
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    return html;
+  }
+
   function appendParagraphs(parent, text) {
-    const chunks = String(text || '')
-      .split(/\n{2,}/)
-      .map((part) => part.trim())
-      .filter(Boolean);
-    chunks.forEach((chunk) => {
-      const paragraph = document.createElement('p');
-      paragraph.className = 'acp-rich-paragraph';
-      paragraph.textContent = chunk;
-      parent.appendChild(paragraph);
-    });
+    const source = String(text || '').trim();
+    if (!source) return;
+    const lines = source.split('\n');
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i].trim();
+      if (!line) { i++; continue; }
+      // headings
+      const headingMatch = line.match(/^(#{1,4})\s+(.+)/);
+      if (headingMatch) {
+        const level = Math.min(headingMatch[1].length + 1, 6);
+        const heading = document.createElement('h' + level);
+        heading.className = 'acp-md-heading';
+        heading.innerHTML = renderInlineMarkdown(headingMatch[2]);
+        parent.appendChild(heading);
+        i++;
+        continue;
+      }
+      // unordered list
+      if (/^[-*]\s+/.test(line)) {
+        const ul = document.createElement('ul');
+        ul.className = 'acp-md-list';
+        while (i < lines.length && /^[-*]\s+/.test(lines[i].trim())) {
+          const li = document.createElement('li');
+          li.innerHTML = renderInlineMarkdown(lines[i].trim().replace(/^[-*]\s+/, ''));
+          ul.appendChild(li);
+          i++;
+        }
+        parent.appendChild(ul);
+        continue;
+      }
+      // ordered list
+      if (/^\d+[.)]\s+/.test(line)) {
+        const ol = document.createElement('ol');
+        ol.className = 'acp-md-list';
+        while (i < lines.length && /^\d+[.)]\s+/.test(lines[i].trim())) {
+          const li = document.createElement('li');
+          li.innerHTML = renderInlineMarkdown(lines[i].trim().replace(/^\d+[.)]\s+/, ''));
+          ol.appendChild(li);
+          i++;
+        }
+        parent.appendChild(ol);
+        continue;
+      }
+      // horizontal rule
+      if (/^[-*_]{3,}\s*$/.test(line)) {
+        parent.appendChild(document.createElement('hr'));
+        i++;
+        continue;
+      }
+      // regular paragraph — collect consecutive non-empty, non-special lines
+      const paraLines = [];
+      while (i < lines.length) {
+        const l = lines[i].trim();
+        if (!l || /^#{1,4}\s/.test(l) || /^[-*]\s+/.test(l) || /^\d+[.)]\s+/.test(l) || /^[-*_]{3,}\s*$/.test(l)) break;
+        paraLines.push(l);
+        i++;
+      }
+      if (paraLines.length) {
+        const p = document.createElement('p');
+        p.className = 'acp-rich-paragraph';
+        p.innerHTML = renderInlineMarkdown(paraLines.join('\n'));
+        parent.appendChild(p);
+      }
+    }
   }
 
   function renderBlock(block) {

@@ -35,8 +35,8 @@ const form = document.getElementById('create-form') as HTMLFormElement | null;
 const randomNameBtn = document.getElementById('name-random') as HTMLButtonElement | null;
 const shellEl = document.querySelector('.shell') as HTMLElement | null;
 const headerEl = shellEl?.querySelector('header') as HTMLElement | null;
-const createSection = form?.closest('section') as HTMLElement | null;
-const listSection = listEl?.closest('section') as HTMLElement | null;
+const createSection = document.getElementById('create-section') as HTMLElement | null;
+const listSection = document.getElementById('list-section') as HTMLElement | null;
 let activeTerminalSession = null;
 let activeTerminalName = '';
 let activeACPPage = null;
@@ -982,7 +982,7 @@ function describeChatAction(spritz) {
 
 function renderList(items) {
   if (!items.length) {
-    listEl.innerHTML = '<div class="list-empty"><p>No environments yet</p><p>Create one above to get started.</p></div>';
+    listEl.innerHTML = '<div class="list-empty"><p>No Spritzes yet</p><p>Create one above to get started.</p></div>';
     return;
   }
   listEl.innerHTML = '';
@@ -1008,7 +1008,15 @@ function renderList(items) {
     openBtn.textContent = 'Open';
     openBtn.onclick = () => {
       const url = buildOpenUrl(spritz.status?.url, spritz);
-      if (url) window.open(url, '_blank');
+      if (!url) return;
+      try {
+        const parsed = new URL(url, window.location.href);
+        if (parsed.hostname === window.location.hostname && parsed.hash) {
+          window.location.hash = parsed.hash;
+          return;
+        }
+      } catch { /* fall through to window.open */ }
+      window.open(url, '_blank');
     };
 
     const terminalBtn = document.createElement('button');
@@ -1094,12 +1102,12 @@ function renderList(items) {
         if (!listEl.children.length) {
           renderList([]);
         }
-        showNotice('Environment deleted.', 'info');
+        showNotice('Spritz deleted.', 'info');
         window.setTimeout(() => {
           fetchSpritzes().catch(() => {});
         }, 250);
       } catch (err) {
-        showNotice(err.message || 'Failed to delete environment.');
+        showNotice(err.message || 'Failed to delete Spritz.');
         deleteBtn.disabled = false;
         deleteBtn.innerHTML = deleteBtnHtml;
       }
@@ -1442,7 +1450,7 @@ function showCreatePage() {
   if (activeACPPage) cleanupACP();
   if (createSection) createSection.hidden = false;
   if (listSection) listSection.hidden = false;
-  setHeaderCopy('Spritz', 'Ephemeral dev environments, managed by API.');
+  setHeaderCopy('Spritz', 'Ephemeral dev Spritzes, managed by API.');
   if (form && refreshBtn) {
     applyNameDefaults();
     applyRepoDefaults();
@@ -1598,7 +1606,7 @@ if (form && refreshBtn) {
       await fetchSpritzes();
       showNotice('');
     } catch (err) {
-      showNotice(err.message || 'Failed to create environment.');
+      showNotice(err.message || 'Failed to create Spritz.');
     } finally {
       if (submitBtn) {
         submitBtn.disabled = false;

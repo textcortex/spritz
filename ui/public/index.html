@@ -12,7 +12,7 @@
         <div class="header-top">
           <div>
             <h1>Spritz</h1>
-            <p>Ephemeral dev environments, managed by API.</p>
+            <p>Ephemeral dev Spritzes, managed by API.</p>
           </div>
           <a class="header-link" href="#create">Create</a>
         </div>
@@ -20,8 +20,9 @@
       <div id="notice" class="notice" hidden></div>
       <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
 
-      <h2 class="page-title">Create environment</h2>
-      <p class="page-subtitle">Spin up an ephemeral development environment managed by API.</p>
+      <section id="create-section">
+      <h2 class="page-title">Create Spritz</h2>
+      <p class="page-subtitle">Spin up an ephemeral dev Spritz managed by API.</p>
 
       <section class="card">
         <form id="create-form">
@@ -86,16 +87,19 @@ ttl: 8h"
             </div>
           </div>
 
-          <button type="submit"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg> Create environment</button>
+          <button type="submit"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg> Create Spritz</button>
         </form>
       </section>
+      </section>
 
+      <section id="list-section">
       <div class="list-header">
-        <h2 class="page-title">Active environments</h2>
+        <h2 class="page-title">Active Spritzes</h2>
         <button class="ghost icon-btn" id="refresh"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Refresh</button>
       </div>
       <section class="card" id="list-card">
         <div id="list"></div>
+      </section>
       </section>
     </main>
 

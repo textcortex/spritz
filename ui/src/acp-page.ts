@@ -485,11 +485,10 @@
     if (page.workspaceState !== 'ready') {
       const empty = document.createElement('p');
       empty.className = 'acp-empty acp-empty--sidebar';
-      empty.textContent =
-        page.workspaceState === 'missing'
-          ? 'This workspace is no longer available.'
-          : 'Conversations appear here once chat is ready.';
-      page.threadListEl.appendChild(empty);
+      if (page.workspaceState === 'missing') {
+        empty.textContent = 'This workspace is no longer available.';
+        page.threadListEl.appendChild(empty);
+      }
       page.newConversationBtn.disabled = true;
       return;
     }
@@ -503,10 +502,6 @@
     }
     page.newConversationBtn.disabled = false;
     if (!page.conversations.length) {
-      const empty = document.createElement('p');
-      empty.className = 'acp-empty acp-empty--sidebar';
-      empty.textContent = 'No conversations yet. Start one from the button above.';
-      page.threadListEl.appendChild(empty);
       return;
     }
 
@@ -520,35 +515,10 @@
         window.location.assign(chatPagePath(page.selectedName, id));
       };
 
-      const avatar = document.createElement('div');
-      avatar.className = 'acp-thread-avatar';
-      avatar.textContent = getAgentAvatarLabel(page.selectedAgent).slice(0, 2).toUpperCase();
-
-      const body = document.createElement('div');
-      body.className = 'acp-thread-item-body';
-      const top = document.createElement('div');
-      top.className = 'acp-thread-item-top';
-      const title = document.createElement('strong');
+      const title = document.createElement('span');
       title.className = 'acp-thread-item-title';
       title.textContent = conversation.spec?.title || 'New conversation';
-      const time = document.createElement('span');
-      time.className = 'acp-thread-item-time';
-      time.textContent = formatRelativeTime(getConversationUpdatedAt(conversation));
-      top.append(title, time);
-
-      const preview = document.createElement('p');
-      preview.className = 'acp-thread-item-preview';
-      preview.textContent =
-        page.previewByConversationId.get(id) ||
-        buildThreadMeta(page.selectedAgent, conversation) ||
-        'Ready to chat';
-
-      const meta = document.createElement('p');
-      meta.className = 'acp-thread-item-meta';
-      meta.textContent = buildThreadMeta(page.selectedAgent, conversation);
-
-      body.append(top, preview, meta);
-      button.append(avatar, body);
+      button.append(title);
       page.threadListEl.appendChild(button);
     });
   }
@@ -666,10 +636,6 @@
     }
 
     if (!page.selectedConversation) {
-      const empty = document.createElement('div');
-      empty.className = 'acp-empty';
-      empty.textContent = 'Choose a conversation or start a new one.';
-      page.threadStreamEl.appendChild(empty);
       renderPermissionPrompt(page);
       return;
     }
@@ -692,9 +658,26 @@
     renderPermissionPrompt(page);
   }
 
+  function createGridLoader() {
+    const loader = document.createElement('span');
+    loader.className = 'grid-loader';
+    for (let i = 0; i < 9; i++) {
+      loader.appendChild(document.createElement('span'));
+    }
+    return loader;
+  }
+
+  const TERMINAL_STATUSES = ['connected', 'completed', 'disconnected', 'no acp-ready workspaces'];
+
   function setStatus(page, text) {
     if (!page.statusEl) return;
-    page.statusEl.textContent = text || '';
+    page.statusEl.innerHTML = '';
+    if (!text) return;
+    const isTerminal = TERMINAL_STATUSES.some((s) => text.toLowerCase().startsWith(s));
+    if (!isTerminal) {
+      page.statusEl.appendChild(createGridLoader());
+    }
+    page.statusEl.appendChild(document.createTextNode(text));
   }
 
   function selectedConversationClientMatches(page) {
@@ -719,6 +702,9 @@
     return selectedConversationClientMatches(page);
   }
 
+  const SEND_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
+  const STOP_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+
   function syncComposer(page) {
     const disabled =
       !page.client ||
@@ -726,8 +712,17 @@
       !page.selectedConversation ||
       !selectedConversationClientMatches(page);
     if (page.composerEl) page.composerEl.disabled = disabled || page.promptInFlight;
-    if (page.sendBtn) page.sendBtn.disabled = disabled || page.promptInFlight;
-    if (page.cancelBtn) page.cancelBtn.disabled = !page.promptInFlight;
+    if (page.sendBtn) {
+      if (page.promptInFlight) {
+        page.sendBtn.innerHTML = STOP_ICON;
+        page.sendBtn.dataset.tooltip = 'Stop';
+        page.sendBtn.disabled = false;
+      } else {
+        page.sendBtn.innerHTML = SEND_ICON;
+        page.sendBtn.dataset.tooltip = 'Send';
+        page.sendBtn.disabled = disabled;
+      }
+    }
   }
 
   async function patchSelectedConversation(page, payload) {
@@ -976,8 +971,6 @@
     renderThread(page);
     if (page.selectedConversation) {
       await connectSelectedConversation(page);
-    } else {
-      setStatus(page, 'Choose or create a conversation.');
     }
   }
 
@@ -1001,13 +994,26 @@
     page.conversations = await listACPConversationsData(page.deps, page.selectedName);
     hydrateCachedConversationPreviews(page);
     const routeConversationId = conversationIdFromHash(window.location.hash || '');
-    const resolvedConversationId =
+    let resolvedConversationId =
       page.conversations.find((item) => item.metadata?.name === routeConversationId)?.metadata?.name ||
       page.selectedConversationId ||
       page.conversations[0]?.metadata?.name ||
       '';
+    if (!resolvedConversationId && page.selectedName) {
+      try {
+        const conversation = await createACPConversationData(page.deps, page.selectedName);
+        page.conversations = [conversation, ...page.conversations];
+        resolvedConversationId = conversation.metadata?.name || '';
+      } catch {
+        // fall through to empty state
+      }
+    }
     renderConversationList(page);
     if (routeConversationId && resolvedConversationId !== routeConversationId) {
+      window.location.replace(chatPagePath(page.selectedName, resolvedConversationId));
+      return;
+    }
+    if (resolvedConversationId && resolvedConversationId !== routeConversationId) {
       window.location.replace(chatPagePath(page.selectedName, resolvedConversationId));
       return;
     }
@@ -1109,44 +1115,41 @@
     const page: ACPPage = createACPPageState(name, conversationId, deps);
 
     const shell = document.createElement('section');
-    shell.className = 'card acp-shell';
+    shell.className = 'acp-shell';
 
     const sidebar = document.createElement('aside');
     sidebar.className = 'acp-sidebar';
     const sidebarTop = document.createElement('div');
     sidebarTop.className = 'acp-sidebar-top';
 
-    const nav = document.createElement('div');
-    nav.className = 'acp-sidebar-nav';
+    const newConversationButton = document.createElement('button');
+    newConversationButton.type = 'button';
+    newConversationButton.className = 'acp-new-chat-item';
+    newConversationButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>New chat</span>';
+
     const backLink = document.createElement('a');
     backLink.href = '#create';
-    backLink.className = 'header-link';
-    backLink.textContent = 'Create';
+    backLink.className = 'acp-new-chat-item acp-back-link';
+    backLink.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg><span>Spritzes</span>';
+
     const refreshButton = document.createElement('button');
     refreshButton.type = 'button';
-    refreshButton.className = 'ghost';
-    refreshButton.textContent = 'Refresh';
-    nav.append(backLink, refreshButton);
-
-    const titleGroup = document.createElement('div');
-    titleGroup.className = 'acp-sidebar-title';
-    const title = document.createElement('h2');
-    title.textContent = 'Agent chat';
-    const subtitle = document.createElement('p');
-    subtitle.textContent = 'Talk to ACP-ready workspaces through Spritz.';
-    titleGroup.append(title, subtitle);
+    refreshButton.className = 'acp-nav-icon';
+    refreshButton.dataset.tooltip = 'Refresh';
+    refreshButton.dataset.tooltipPos = 'bottom';
+    refreshButton.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>';
 
     const agentSelect = document.createElement('select');
     agentSelect.className = 'acp-agent-select';
 
-    const newConversationButton = document.createElement('button');
-    newConversationButton.type = 'button';
-    newConversationButton.textContent = 'New conversation';
-
     const threadList = document.createElement('div');
     threadList.className = 'acp-thread-list';
 
-    sidebarTop.append(nav, titleGroup, agentSelect, newConversationButton);
+    const sidebarActions = document.createElement('div');
+    sidebarActions.className = 'acp-sidebar-actions';
+    sidebarActions.append(newConversationButton, backLink);
+
+    sidebarTop.append(agentSelect, sidebarActions);
     sidebar.append(sidebarTop, threadList);
 
     const main = document.createElement('section');
@@ -1165,8 +1168,11 @@
     headerActions.className = 'acp-main-actions';
     const openButton = document.createElement('button');
     openButton.type = 'button';
-    openButton.textContent = 'Open workspace';
-    headerActions.append(openButton);
+    openButton.className = 'acp-nav-icon';
+    openButton.dataset.tooltip = 'Open workspace';
+    openButton.dataset.tooltipPos = 'bottom';
+    openButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+    headerActions.append(refreshButton, openButton);
 
     const headerTop = document.createElement('div');
     headerTop.className = 'acp-main-header-top';
@@ -1212,19 +1218,19 @@
     composer.className = 'acp-composer';
     const composerInput = document.createElement('textarea');
     composerInput.placeholder = 'Message the agent…';
-    const composerActions = document.createElement('div');
-    composerActions.className = 'acp-composer-actions';
+    composerInput.rows = 1;
     const sendButton = document.createElement('button');
     sendButton.type = 'button';
-    sendButton.textContent = 'Send';
-    const cancelButton = document.createElement('button');
-    cancelButton.type = 'button';
-    cancelButton.className = 'ghost';
-    cancelButton.textContent = 'Cancel turn';
-    composerActions.append(sendButton, cancelButton);
+    sendButton.className = 'acp-composer-send';
+    sendButton.dataset.tooltip = 'Send';
+    sendButton.innerHTML = SEND_ICON;
+    const cancelButton = sendButton;
+    const composerActions = document.createElement('div');
+    composerActions.className = 'acp-composer-actions';
+    composerActions.append(sendButton);
     composer.append(composerInput, composerActions);
 
-    footerInner.append(permissionBox, statusRow, composer);
+    footerInner.append(permissionBox, composer, statusRow);
     footer.appendChild(footerInner);
 
     main.append(header, body, footer);
@@ -1317,6 +1323,12 @@
     cancelButton.addEventListener('click', () => {
       page.client?.cancelPrompt();
     });
+
+    function autoResizeComposer() {
+      composerInput.style.height = 'auto';
+      composerInput.style.height = Math.min(composerInput.scrollHeight, 180) + 'px';
+    }
+    composerInput.addEventListener('input', autoResizeComposer);
 
     composerInput.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && !event.shiftKey) {
