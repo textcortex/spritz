@@ -1,10 +1,15 @@
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+
+html {
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
 
 :root {
   color-scheme: light;
-  font-family: "Space Grotesk", "IBM Plex Sans", system-ui, sans-serif;
-  background: radial-gradient(circle at top left, #fdf4e3 0%, #f8f7f3 35%, #eef0f3 100%);
-  color: #1f2a33;
+  font-family: "Inter", system-ui, sans-serif;
+  background: #ffffff;
+  color: #000000;
 }
 
 body {
@@ -44,9 +49,9 @@ header p {
   justify-content: center;
   padding: 10px 16px;
   border-radius: 999px;
-  background: rgba(46, 58, 70, 0.08);
-  border: 1px solid rgba(46, 58, 70, 0.14);
-  color: #2e3a46;
+  background: rgba(0, 0, 0, 0.06);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  color: #000000;
   text-decoration: none;
   white-space: nowrap;
 }
@@ -84,9 +89,9 @@ header p {
   padding: 14px 16px;
   border-radius: 16px;
   border: 1px solid rgba(255, 90, 90, 0.28);
-  background: rgba(29, 37, 46, 0.94);
-  color: #f5f7fa;
-  box-shadow: 0 18px 40px rgba(12, 18, 28, 0.24);
+  background: rgba(0, 0, 0, 0.92);
+  color: #ffffff;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.2);
   pointer-events: auto;
 }
 
@@ -103,37 +108,130 @@ header p {
   padding: 0;
   border: none;
   background: transparent;
-  color: rgba(245, 247, 250, 0.84);
+  color: rgba(255, 255, 255, 0.84);
   font: inherit;
   cursor: pointer;
 }
 
 .card {
-  background: white;
+  background: #ffffff;
   border-radius: 20px;
-  padding: 24px;
-  box-shadow: 0 18px 40px rgba(12, 18, 28, 0.08);
+  padding: 32px;
+  border: 1px solid #e5e5e5;
 }
 
 form {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.page-title {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.page-subtitle {
+  margin: -16px 0 0;
+  opacity: 0.6;
+  font-size: 15px;
+}
+
+.form-row {
+  display: flex;
+  gap: 24px;
+}
+
+.form-row > label {
+  flex: 1;
+}
+
+@media (max-width: 540px) {
+  .form-row {
+    flex-direction: column;
+  }
+}
+
+.advanced-config {
+  border-top: 1px solid #e5e5e5;
+  padding-top: 24px;
+}
+
+.advanced-config-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #000000;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.advanced-config-toggle::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.25s ease;
+}
+
+.advanced-config.open .advanced-config-toggle::before {
+  transform: rotate(45deg);
+}
+
+.advanced-config-body {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 16px;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s ease;
+}
+
+.advanced-config.open .advanced-config-body {
+  grid-template-rows: 1fr;
+}
+
+.advanced-config-inner {
+  overflow: hidden;
+  padding-top: 0;
+}
+
+.advanced-config-inner::before {
+  content: '';
+  display: block;
+  height: 16px;
 }
 
 .preset-panel {
-  grid-column: 1 / -1;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  padding-bottom: 4px;
 }
 
 .preset-panel select {
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-radius: 10px;
-  border: 1px solid #d7dbe0;
+  border: 1px solid #e5e5e5;
   font-size: 14px;
+  font-weight: 400;
   background: white;
+  transition: border-color 0.15s ease;
+}
+
+.preset-panel select:hover {
+  border-color: #cccccc;
+}
+
+.preset-panel select:focus-visible {
+  outline: none;
+  border-color: #000000;
 }
 
 .preset-help {
@@ -144,90 +242,293 @@ form {
 label {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   font-size: 14px;
+  font-weight: 500;
 }
 
 input {
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-radius: 10px;
-  border: 1px solid #d7dbe0;
+  border: 1px solid #e5e5e5;
   font-size: 14px;
+  font-weight: 400;
+  transition: border-color 0.15s ease;
+}
+
+input:hover {
+  border-color: #cccccc;
+}
+
+input:focus-visible {
+  outline: none;
+  border-color: #000000;
+}
+
+input::placeholder {
+  color: #999999;
 }
 
 .name-field {
   display: flex;
-  gap: 8px;
+  gap: 4px;
   align-items: center;
 }
 
 .name-field input {
   flex: 1;
+  border-radius: 10px 4px 4px 10px;
+}
+
+.name-field .ghost {
+  border-radius: 4px 10px 10px 4px;
 }
 
 textarea {
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-radius: 10px;
-  border: 1px solid #d7dbe0;
+  border: 1px solid #e5e5e5;
   font-size: 13px;
   font-family: "SFMono-Regular", "JetBrains Mono", "Menlo", monospace;
   resize: vertical;
   min-height: 140px;
+  transition: border-color 0.15s ease;
+}
+
+textarea:hover {
+  border-color: #cccccc;
+}
+
+textarea:focus-visible {
+  outline: none;
+  border-color: #000000;
+}
+
+textarea::placeholder {
+  color: #999999;
 }
 
 small.hint {
   font-size: 12px;
-  opacity: 0.7;
-}
-
-.span-all {
-  grid-column: 1 / -1;
+  font-weight: 400;
+  opacity: 0.6;
 }
 
 button {
-  padding: 10px 16px;
+  padding: 16px 22px;
   border: none;
   border-radius: 999px;
-  background: #2e3a46;
+  background: #000000;
   color: white;
   cursor: pointer;
+  font-size: 14px;
+  font-weight: 400;
+  transition: opacity 0.15s ease;
+}
+
+button:hover {
+  opacity: 0.8;
+}
+
+button:active {
+  opacity: 0.7;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+form > button[type="submit"] {
+  align-self: flex-start;
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#name-random{
+  padding:12px 20px;
 }
 
 button.ghost {
   background: white;
-  border: 1px solid #d7dbe0;
-  color: #2e3a46;
+  border: 1px solid #e5e5e5;
+  color: #000000;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+button.ghost:hover {
+  border-color: #cccccc;
+  background: #fafafa;
+  opacity: 1;
+}
+
+button.ghost:active {
+  background: #f5f5f5;
+  opacity: 1;
 }
 
 .list-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+}
+
+.list-header .ghost {
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.icon-btn svg {
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+button.loading {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+button.loading svg {
+  animation: spin 0.8s linear infinite;
 }
 
 #list {
-  display: grid;
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.list-empty {
+  padding: 32px 0;
+  text-align: center;
+}
+
+.list-empty p {
+  margin: 0;
+  font-size: 14px;
+  opacity: 0.4;
+}
+
+.list-empty p:first-child {
+  font-weight: 500;
+  opacity: 0.6;
+  margin-bottom: 4px;
 }
 
 .spritz-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border: 1px solid #e5e8ec;
-  padding: 12px 16px;
-  border-radius: 12px;
+  padding: 16px 0;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.spritz-item:last-child {
+  border-bottom: none;
+}
+
+.spritz-item strong {
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .spritz-item small {
   display: block;
-  opacity: 0.6;
+  opacity: 0.5;
+  font-size: 13px;
+  margin-top: 2px;
 }
 
 .actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.actions button {
+  padding: 8px 14px;
+  font-size: 13px;
+  background: white;
+  border: 1px solid #e5e5e5;
+  color: #000000;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.actions button:hover {
+  border-color: #cccccc;
+  background: #fafafa;
+  opacity: 1;
+}
+
+.actions button:active {
+  background: #f5f5f5;
+  opacity: 1;
+}
+
+.actions button.destructive {
+  color: #dc2626;
+  border-color: rgba(220, 38, 38, 0.25);
+}
+
+.actions button.destructive:hover {
+  background: rgba(220, 38, 38, 0.06);
+  border-color: rgba(220, 38, 38, 0.4);
+}
+
+.actions button.destructive:active {
+  background: rgba(220, 38, 38, 0.1);
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton-line {
+  height: 14px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease infinite;
+}
+
+.skeleton-name {
+  width: 120px;
+  margin-bottom: 6px;
+}
+
+.skeleton-meta {
+  width: 200px;
+  height: 12px;
+}
+
+.skeleton-info {
+  flex: 1;
+}
+
+.skeleton-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.skeleton-btn {
+  width: 64px;
+  height: 32px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease infinite;
 }
 
 .terminal-card {
@@ -270,7 +571,7 @@ button.ghost {
 .acp-sidebar {
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #e5e8ec;
+  border-right: 1px solid #e5e5e5;
   background: rgba(247, 247, 248, 0.96);
   min-height: 0;
   overflow: hidden;
@@ -281,7 +582,7 @@ button.ghost {
   flex-direction: column;
   gap: 16px;
   padding: 20px;
-  border-bottom: 1px solid #e5e8ec;
+  border-bottom: 1px solid #e5e5e5;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(247, 247, 248, 0.94));
   flex-shrink: 0;
 }
@@ -314,9 +615,9 @@ button.ghost {
   width: 100%;
   padding: 12px 14px;
   border-radius: 16px;
-  border: 1px solid #d7dbe0;
+  border: 1px solid #e5e5e5;
   background: white;
-  color: #1f2a33;
+  color: #000000;
   font: inherit;
 }
 
@@ -358,7 +659,7 @@ button.ghost {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: #2e3a46;
+  background: #000000;
   color: white;
   font-size: 13px;
   font-weight: 600;
@@ -540,7 +841,7 @@ button.ghost {
 }
 
 .acp-message--user .acp-bubble {
-  background: #2e3a46;
+  background: #000000;
   color: white;
   border-color: transparent;
   border-bottom-right-radius: 10px;
@@ -766,7 +1067,7 @@ button.ghost {
 
 .terminal-back {
   font-size: 14px;
-  color: #2e3a46;
+  color: #000000;
   text-decoration: none;
 }
 
@@ -807,7 +1108,7 @@ button.ghost {
   .acp-sidebar {
     min-height: 0;
     border-right: 0;
-    border-bottom: 1px solid #e5e8ec;
+    border-bottom: 1px solid #e5e5e5;
   }
 
   .acp-main {

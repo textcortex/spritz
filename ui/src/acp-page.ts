@@ -1119,9 +1119,9 @@
     const nav = document.createElement('div');
     nav.className = 'acp-sidebar-nav';
     const backLink = document.createElement('a');
-    backLink.href = '/';
+    backLink.href = '#create';
     backLink.className = 'header-link';
-    backLink.textContent = 'Back';
+    backLink.textContent = 'Create';
     const refreshButton = document.createElement('button');
     refreshButton.type = 'button';
     refreshButton.className = 'ghost';
