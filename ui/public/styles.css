@@ -1477,18 +1477,144 @@ h5.acp-md-heading { font-size: 14px; }
   margin: 12px 0;
 }
 
+/* ── FlowToken animation keyframes ── */
+@keyframes ft-fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Streaming fade-in: applied by morphdom callbacks to new/updated DOM nodes */
+.ft-animate {
+  animation: ft-fadeIn 0.3s ease-in-out both;
+}
+
+/* Inline elements stay inline; block elements keep their natural display */
+span.ft-animate,
+strong.ft-animate,
+em.ft-animate,
+del.ft-animate,
+a.ft-animate,
+code.ft-animate:not(pre code) {
+  display: inline;
+}
+
+/* Block elements: smooth fade without breaking layout */
+h1.ft-animate, h2.ft-animate, h3.ft-animate, h4.ft-animate, h5.ft-animate, h6.ft-animate,
+p.ft-animate,
+blockquote.ft-animate,
+hr.ft-animate {
+  display: block;
+}
+
+ul.ft-animate, ol.ft-animate {
+  display: block;
+}
+
+li.ft-animate {
+  display: list-item;
+}
+
+table.ft-animate {
+  display: table;
+}
+
+thead.ft-animate { display: table-header-group; }
+tbody.ft-animate { display: table-row-group; }
+tr.ft-animate { display: table-row; }
+th.ft-animate, td.ft-animate { display: table-cell; }
+
+div.ft-animate {
+  display: block;
+}
+
+pre.ft-animate {
+  display: block;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ft-animate {
+    animation: none !important;
+  }
+}
+
+/* ── Code block wrapper ── */
+.acp-code-wrapper {
+  position: relative;
+}
+
+/* ── Table (GFM) ── */
+.acp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 8px 0;
+}
+
+.acp-table th,
+.acp-table td {
+  padding: 8px 12px;
+  border: 1px solid #e5e5e5;
+  text-align: left;
+}
+
+.acp-table th {
+  font-weight: 600;
+  background: #fafafa;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.acp-table tbody tr:hover {
+  background: #fafafa;
+}
+
+/* ── Blockquote ── */
+.acp-blockquote {
+  margin: 8px 0;
+  padding: 8px 16px;
+  border-left: 3px solid #e5e5e5;
+  color: #666666;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.acp-blockquote p {
+  margin: 0;
+}
+
+/* ── Strikethrough ── */
+.acp-block--text del {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
 .acp-code-block,
 .acp-details-body {
   margin: 0;
   padding: 14px 16px;
   border-radius: 10px;
-  background: #101827;
-  color: #f8fafc;
+  background: #f6f8fa;
+  color: #24292f;
   overflow: auto;
   font-size: 12px;
   line-height: 1.55;
   font-family: "SFMono-Regular", "JetBrains Mono", "Menlo", monospace;
 }
+
+/* Shiki: layout + gray bg, token colors come from shiki inline styles */
+.acp-code-wrapper pre.shiki {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 10px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.55;
+  font-family: "SFMono-Regular", "JetBrains Mono", "Menlo", monospace;
+  background-color: #f6f8fa !important;
+}
+
 
 .acp-details {
   display: flex;
