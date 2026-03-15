@@ -114,6 +114,7 @@
       bootstrapComplete: false,
       cacheHydratedTranscript: false,
       cacheReplacedByReplay: false,
+      _savedThinkingDone: null,
     };
   }
 
@@ -422,9 +423,7 @@
     if (getAgentVersion(agent)) {
       parts.push(`v${getAgentVersion(agent)}`);
     }
-    if (conversation?.spec?.sessionId) {
-      parts.push(`session ${conversation.spec.sessionId}`);
-    }
+
     return parts.join(' · ');
   }
 
@@ -819,11 +818,11 @@
       getAgentTitle(page.selectedAgent);
     page.threadMetaEl.textContent =
       page.workspaceState === 'ready' ? buildThreadMeta(page.selectedAgent, page.selectedConversation) : '';
-    page.threadStreamEl.innerHTML = '';
     renderCommandBar(page);
     renderModeBar(page);
 
     if (page.workspaceState !== 'ready') {
+      page.threadStreamEl.innerHTML = '';
       const summary = workspaceStatusSummary(currentWorkspace);
       const card = document.createElement('div');
       card.className = 'acp-welcome-card acp-pending-card';
@@ -844,6 +843,7 @@
     }
 
     if (!page.transcript.messages.length) {
+      page.threadStreamEl.innerHTML = '';
       const intro = document.createElement('div');
       intro.className = 'acp-welcome-card';
       const heading = document.createElement('strong');
@@ -853,12 +853,122 @@
       intro.append(heading, copy);
       page.threadStreamEl.appendChild(intro);
     } else {
-      page.transcript.messages.forEach((message) => {
-        page.threadStreamEl.appendChild(ACPRender.renderMessage(message));
-      });
+      // Incremental rendering: only re-render streaming/new messages.
+      // The thinking block lives in the DOM alongside message nodes.
+      // We skip it during index-based diffing to avoid detaching it
+      // (which would restart CSS/SMIL animations every render cycle).
+      const messages = page.transcript.messages;
+      const thinkingInsertIdx = page.transcript.thinkingInsertIndex ?? messages.length;
+      let domIdx = 0;
+
+      for (let mi = 0; mi < messages.length; mi++) {
+        // Skip over the thinking block if it occupies this DOM slot
+        let domNode = page.threadStreamEl.children[domIdx] as HTMLElement | undefined;
+        if (domNode && domNode.classList.contains('acp-thinking')) {
+          domIdx++;
+          domNode = page.threadStreamEl.children[domIdx] as HTMLElement | undefined;
+        }
+
+        const msg = messages[mi];
+        if (domNode && msg._el === domNode && !msg.streaming) {
+          domIdx++;
+          continue;
+        }
+        if (msg.streaming && msg._el === domNode && ACPRender.appendStreamingChunk(msg)) {
+          domIdx++;
+          continue;
+        }
+        const rendered = ACPRender.renderMessage(msg);
+        msg._el = rendered;
+        if (domNode) {
+          page.threadStreamEl.replaceChild(rendered, domNode);
+        } else {
+          page.threadStreamEl.appendChild(rendered);
+        }
+        domIdx++;
+      }
+
+      // Remove extra DOM nodes (except the thinking block)
+      const children = page.threadStreamEl.children;
+      for (let i = children.length - 1; i >= 0; i--) {
+        const child = children[i] as HTMLElement;
+        if (child.classList.contains('acp-thinking')) continue;
+        // Count non-thinking children up to this point
+        let msgCount = 0;
+        for (let j = 0; j <= i; j++) {
+          if (!(children[j] as HTMLElement).classList.contains('acp-thinking')) msgCount++;
+        }
+        if (msgCount > messages.length) {
+          page.threadStreamEl.removeChild(child);
+        }
+      }
+
+      // Update the thinking block (insert, move, or remove)
+      const thinkingBlock = ACPRender.renderThinkingBlock(page.transcript);
+      const existingThinking = page.threadStreamEl.querySelector('.acp-thinking');
+      if (thinkingBlock) {
+        // Calculate the correct DOM index accounting for the thinking block itself
+        let targetDomIdx = thinkingInsertIdx;
+        // Find the refNode: the message element at thinkingInsertIdx
+        let refCount = 0;
+        let refNode: HTMLElement | null = null;
+        for (let i = 0; i < page.threadStreamEl.children.length; i++) {
+          const child = page.threadStreamEl.children[i] as HTMLElement;
+          if (child.classList.contains('acp-thinking')) continue;
+          if (refCount === thinkingInsertIdx) {
+            refNode = child;
+            break;
+          }
+          refCount++;
+        }
+
+        if (existingThinking === thinkingBlock) {
+          // Same element — check if it needs to move
+          const currentNext = thinkingBlock.nextElementSibling as HTMLElement | null;
+          if (refNode && currentNext !== refNode) {
+            page.threadStreamEl.insertBefore(thinkingBlock, refNode);
+          } else if (!refNode && page.threadStreamEl.lastChild !== thinkingBlock) {
+            page.threadStreamEl.appendChild(thinkingBlock);
+          }
+          // Otherwise it's already in the right spot — do nothing
+        } else {
+          // New element (first render or after clearThinkingBlock)
+          if (existingThinking) existingThinking.remove();
+          if (refNode) {
+            page.threadStreamEl.insertBefore(thinkingBlock, refNode);
+          } else {
+            page.threadStreamEl.appendChild(thinkingBlock);
+          }
+        }
+      } else if (existingThinking) {
+        existingThinking.remove();
+      }
     }
-    page.threadBodyEl.scrollTop = page.threadBodyEl.scrollHeight;
+    // Smart auto-scroll: only scroll if user hasn't scrolled away
+    if (!_userScrolledAway) {
+      _programmaticScroll = true;
+      page.threadBodyEl.scrollTo({ top: page.threadBodyEl.scrollHeight, behavior: 'smooth' });
+      // Reset flag after scroll events have fired
+      requestAnimationFrame(() => { _programmaticScroll = false; });
+    }
     renderPermissionPrompt(page);
+  }
+
+  // Track whether user has manually scrolled away from bottom
+  let _userScrolledAway = false;
+  let _scrollListenerAttached = false;
+  let _programmaticScroll = false;
+
+  function attachScrollListener(el: HTMLElement) {
+    if (_scrollListenerAttached) return;
+    _scrollListenerAttached = true;
+    el.addEventListener('scroll', () => {
+      // Ignore scroll events triggered by our own scrollTo calls
+      if (_programmaticScroll) return;
+      // User is "at bottom" if within 80px of the end
+      var atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      _userScrolledAway = !atBottom;
+    }, { passive: true });
   }
 
   function createGridLoader() {
@@ -1010,6 +1120,16 @@
     return String(conversation?.status?.bindingState || '').trim().toLowerCase() !== 'active';
   }
 
+  let _pendingRenderFrame: number | null = null;
+
+  function scheduleRender(page) {
+    if (_pendingRenderFrame) return;
+    _pendingRenderFrame = requestAnimationFrame(() => {
+      _pendingRenderFrame = null;
+      renderThread(page);
+    });
+  }
+
   function applyACPUpdate(page, update) {
     const result = ACPRender.applySessionUpdate(page.transcript, update, {
       historical: !page.bootstrapComplete,
@@ -1023,11 +1143,12 @@
     updateConversationPreview(page);
     writeCachedConversationRecord(page);
     renderConversationList(page);
-    renderThread(page);
+    scheduleRender(page);
   }
 
   function resetConversationRuntime(page) {
     page.transcript = ACPRender.createTranscript();
+    ACPRender.clearThinkingBlock();
     page.permissionQueue = [];
     page.promptInFlight = false;
     if (page.client) {
@@ -1106,7 +1227,13 @@
           !page.cacheReplacedByReplay &&
           ACPRender.isTranscriptBearingUpdate(update)
         ) {
+          // Preserve thinking_done messages from the cached transcript so
+          // they survive reconnection even if replay doesn't include tool_call events.
+          const savedThinkingDone = page.transcript.messages.filter(
+            (m) => m?.type === 'thinking_done',
+          );
           page.transcript = ACPRender.createTranscript();
+          page._savedThinkingDone = savedThinkingDone;
           page.cacheReplacedByReplay = true;
         }
         applyACPUpdate(page, update);
@@ -1119,6 +1246,7 @@
         page.promptInFlight = value;
         if (!value) {
           ACPRender.finalizeStreaming(page.transcript);
+          ACPRender.clearThinkingBlock();
           updateConversationPreview(page);
           writeCachedConversationRecord(page);
           renderConversationList(page);
@@ -1163,6 +1291,39 @@
       renderThread(page);
     }
     page.bootstrapComplete = true;
+    // Bake any remaining thinking chunks from the last replayed turn
+    ACPRender.finalizeHistoricalThinking(page.transcript);
+    // Restore thinking_done messages that were preserved from cache but
+    // not reconstructed during replay (e.g. if tool_call events were not replayed).
+    if (Array.isArray(page._savedThinkingDone) && page._savedThinkingDone.length > 0) {
+      const replayHasThinkingDone = page.transcript.messages.some(
+        (m) => m?.type === 'thinking_done',
+      );
+      if (!replayHasThinkingDone) {
+        // Re-inject saved thinking_done messages at appropriate positions.
+        // Find each user message boundary and insert before the assistant response.
+        const saved = page._savedThinkingDone;
+        let savedIdx = 0;
+        let userCount = 0;
+        for (let i = 0; i < page.transcript.messages.length && savedIdx < saved.length; i++) {
+          const msg = page.transcript.messages[i];
+          if (msg?.type === 'user') userCount++;
+          // Insert thinking_done after user message, before assistant response
+          if (msg?.type === 'assistant' && userCount > savedIdx) {
+            page.transcript.messages.splice(i, 0, saved[savedIdx]);
+            savedIdx++;
+            i++; // skip past the inserted message
+          }
+        }
+        // Append any remaining at the end
+        while (savedIdx < saved.length) {
+          page.transcript.messages.push(saved[savedIdx]);
+          savedIdx++;
+        }
+      }
+      delete page._savedThinkingDone;
+    }
+    renderThread(page);
     writeCachedConversationRecord(page);
     clearACPNotice(page);
     if (page.composerEl?.focus) page.composerEl.focus();
@@ -1511,6 +1672,7 @@
     page.threadMetaEl = threadMeta;
     page.commandBarEl = commandBar;
     page.threadBodyEl = body;
+    attachScrollListener(body);
     page.threadStreamEl = stream;
     page.permissionEl = permissionBox;
     page.permissionTextEl = permissionText;
@@ -1563,6 +1725,7 @@
       }
       composerInput.value = '';
       if (composerInput.focus) composerInput.focus();
+      _userScrolledAway = false; // resume auto-scroll on new message
       ACPRender.applySessionUpdate(page.transcript, {
         sessionUpdate: 'user_message_chunk',
         content: { type: 'text', text },
@@ -1578,7 +1741,7 @@
       setStatus(page, 'Waiting for agent…');
       try {
         const result = await page.client.sendPrompt(text);
-        setStatus(page, result?.stopReason ? `Completed · ${result.stopReason}` : 'Completed');
+        setStatus(page, 'Completed');
       } catch (err) {
         reportACPError(page, err, 'Failed to send ACP prompt.');
       } finally {
