@@ -7,27 +7,53 @@ import { pathToFileURL } from "node:url";
 export const ACP_CLI_COMPAT_BASENAME = "spritz-acp-cli-compat.js";
 export const ACP_COMPAT_BASENAME = "spritz-acp-compat.js";
 
-function requireMatch(source, pattern, label) {
-  const match = source.match(pattern);
-  if (!match?.[1]) {
-    throw new Error(`Failed to resolve ${label} from the installed OpenClaw ACP bundle.`);
-  }
-  return match[1];
+function parseNamedImports(source) {
+  return [...source.matchAll(/import\s+\{([\s\S]*?)\}\s+from\s+["']\.\/([^"']+)["']/g)].map(
+    (match) => ({
+      basename: match[2],
+      specifiers: match[1]
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .map((part) => {
+          const aliasMatch = part.match(/^(.+?)\s+as\s+([A-Za-z_$][\w$]*)$/);
+          if (aliasMatch) {
+            return {
+              imported: aliasMatch[1].trim(),
+              local: aliasMatch[2].trim(),
+            };
+          }
+          return {
+            imported: part,
+            local: part,
+          };
+        }),
+    }),
+  );
 }
 
-function findMatch(source, pattern) {
-  return source.match(pattern)?.[1] ?? null;
-}
-
-function findGatewayConstantsBundle(acpCliSource) {
-  const importMatches = [...acpCliSource.matchAll(/import\s+\{([^}]*)\}\s+from\s+"\.\/([^"]+)"/g)];
-  for (const match of importMatches) {
-    const names = match[1];
-    if (names.includes("GATEWAY_CLIENT_NAMES") && names.includes("GATEWAY_CLIENT_MODES")) {
-      return match[2];
+function findImportBasename(namedImports, predicate) {
+  for (const entry of namedImports) {
+    const locals = new Set(entry.specifiers.map((specifier) => specifier.local));
+    if (predicate(locals)) {
+      return entry.basename;
     }
   }
   return null;
+}
+
+function requireImportBasename(namedImports, localNames, label) {
+  const basename = findImportBasename(namedImports, (locals) =>
+    localNames.every((localName) => locals.has(localName)),
+  );
+  if (!basename) {
+    throw new Error(`Failed to resolve ${label} from the installed OpenClaw ACP bundle.`);
+  }
+  return basename;
+}
+
+function findImportBasenameByLocalName(namedImports, localName) {
+  return findImportBasename(namedImports, (locals) => locals.has(localName));
 }
 
 function assertReadableFile(filePath, label) {
@@ -60,23 +86,24 @@ export function selectAcpCliBundle(distDir) {
 }
 
 export function resolveAcpCliDependencies(acpCliSource) {
+  const namedImports = parseNamedImports(acpCliSource);
   return {
-    callBasename: requireMatch(
-      acpCliSource,
-      /import\s+\{[^}]*GatewayClient[^}]*buildGatewayConnectionDetails[^}]*\}\s+from\s+"\.\/([^"]+)"/,
+    callBasename: requireImportBasename(
+      namedImports,
+      ["GatewayClient", "buildGatewayConnectionDetails"],
       "GatewayClient/buildGatewayConnectionDetails bundle",
     ),
-    connectionAuthBasename: requireMatch(
-      acpCliSource,
-      /import\s+\{[^}]*resolveGatewayConnectionAuth[^}]*\}\s+from\s+"\.\/([^"]+)"/,
+    connectionAuthBasename: requireImportBasename(
+      namedImports,
+      ["resolveGatewayConnectionAuth"],
       "resolveGatewayConnectionAuth bundle",
     ),
-    gatewayConstantsBasename:
-      findGatewayConstantsBundle(acpCliSource) ??
-      requireMatch(acpCliSource, /$^/, "gateway client constants bundle"),
-    loadConfigBasename:
-      findMatch(acpCliSource, /import\s+\{[^}]*loadConfig[^}]*\}\s+from\s+"\.\/([^"]+)"/) ??
-      "index.js",
+    gatewayConstantsBasename: requireImportBasename(
+      namedImports,
+      ["GATEWAY_CLIENT_NAMES", "GATEWAY_CLIENT_MODES"],
+      "gateway client constants bundle",
+    ),
+    loadConfigBasename: findImportBasenameByLocalName(namedImports, "loadConfig") ?? "index.js",
   };
 }
 

@@ -63,6 +63,19 @@ test("resolveAcpCliDependencies supports loadConfig and gateway constants from t
   });
 });
 
+test("resolveAcpCliDependencies supports the current published OpenClaw ACP import layout", () => {
+  const dependencies = resolveAcpCliDependencies(`
+    import { Cm as GATEWAY_CLIENT_MODES, Eg as isKnownCoreToolId, Es as buildGatewayConnectionDetails, Wt as resolveGatewayConnectionAuth, u_ as loadConfig, uv as VERSION, wm as GATEWAY_CLIENT_NAMES, zs as GatewayClient, zv as listThinkingLevels } from "./reply-demo.js";
+  `);
+
+  assert.deepEqual(dependencies, {
+    callBasename: "reply-demo.js",
+    connectionAuthBasename: "reply-demo.js",
+    gatewayConstantsBasename: "reply-demo.js",
+    loadConfigBasename: "reply-demo.js",
+  });
+});
+
 test("generateOpenclawAcpCompat writes stable compat modules for the installed package", async () => {
   const packageRoot = makeTempPackageRoot();
   const distDir = path.join(packageRoot, "dist");
