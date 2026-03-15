@@ -19,6 +19,16 @@ function createStorage(seed = {}) {
   };
 }
 
+function createClassList() {
+  const classes = new Set();
+  return {
+    add(c) { classes.add(c); },
+    remove(c) { classes.delete(c); },
+    contains(c) { return classes.has(c); },
+    toggle(c) { if (classes.has(c)) { classes.delete(c); return false; } classes.add(c); return true; },
+  };
+}
+
 function createElement(tagName) {
   let innerHTML = '';
   return {
@@ -31,11 +41,24 @@ function createElement(tagName) {
     children: [],
     dataset: {},
     style: {},
+    classList: createClassList(),
     append(...items) {
       this.children.push(...items);
     },
     appendChild(item) {
       this.children.push(item);
+      return item;
+    },
+    removeChild(item) {
+      const idx = this.children.indexOf(item);
+      if (idx >= 0) this.children.splice(idx, 1);
+      return item;
+    },
+    get firstChild() {
+      return this.children[0] || null;
+    },
+    get lastChild() {
+      return this.children[this.children.length - 1] || null;
     },
     remove() {
       this.removed = true;
@@ -47,8 +70,20 @@ function createElement(tagName) {
     querySelector() {
       return null;
     },
+    querySelectorAll() {
+      return [];
+    },
     contains() {
       return false;
+    },
+    scrollTo() {},
+    scrollHeight: 0,
+    scrollTop: 0,
+    clientHeight: 0,
+    replaceChild(newChild, oldChild) {
+      const idx = this.children.indexOf(oldChild);
+      if (idx >= 0) this.children[idx] = newChild;
+      return oldChild;
     },
     get innerHTML() {
       return innerHTML;
@@ -63,8 +98,9 @@ function createElement(tagName) {
 function collectText(node) {
   if (!node) return '';
   const own = typeof node.textContent === 'string' ? node.textContent : '';
+  const html = typeof node.innerHTML === 'string' ? node.innerHTML.replace(/<[^>]*>/g, ' ') : '';
   const childText = Array.isArray(node.children) ? node.children.map((child) => collectText(child)).join(' ') : '';
-  return `${own} ${childText}`.replace(/\s+/g, ' ').trim();
+  return `${own} ${html} ${childText}`.replace(/\s+/g, ' ').trim();
 }
 
 const CURRENT_CACHE_KEY = 'spritz:acp:thread:conv-1';
@@ -73,7 +109,11 @@ const PRE_CUTOVER_CACHE_KEY = 'spritz:acp:transcript:conv-1';
 const PRE_CUTOVER_CACHE_INDEX_KEY = 'spritz:acp:transcript:index';
 
 function loadModules(storageSeed = {}, createACPClient = null) {
-  const document = { createElement };
+  const document = {
+    createElement,
+    createDocumentFragment() { return createElement('fragment'); },
+    createTextNode(text) { return { textContent: text }; },
+  };
   const window = {
     document,
     location: {
@@ -109,7 +149,8 @@ function loadModules(storageSeed = {}, createACPClient = null) {
     },
   };
   window.window = window;
-  const context = vm.createContext({ window, document, console, setTimeout, clearTimeout, URL, URLSearchParams });
+  const requestAnimationFrame = (fn) => setTimeout(fn, 0);
+  const context = vm.createContext({ window, document, console, setTimeout, clearTimeout, URL, URLSearchParams, requestAnimationFrame });
   context.globalThis = context.window;
   vm.runInContext(fs.readFileSync(uiDistPath('acp-render.js'), 'utf8'), context, {
     filename: 'acp-render.js',

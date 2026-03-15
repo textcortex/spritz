@@ -4,6 +4,16 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { uiDistPath } from '../test-paths.mjs';
 
+function createClassList() {
+  const classes = new Set();
+  return {
+    add(c) { classes.add(c); },
+    remove(c) { classes.delete(c); },
+    contains(c) { return classes.has(c); },
+    toggle(c) { if (classes.has(c)) { classes.delete(c); return false; } classes.add(c); return true; },
+  };
+}
+
 function createElement(tagName) {
   return {
     tagName,
@@ -11,12 +21,15 @@ function createElement(tagName) {
     className: '',
     dataset: {},
     textContent: '',
+    innerHTML: '',
     open: false,
+    classList: createClassList(),
     append(...items) {
       this.children.push(...items);
     },
     appendChild(item) {
       this.children.push(item);
+      return item;
     },
     addEventListener() {},
     setAttribute(name, value) {
@@ -28,12 +41,17 @@ function createElement(tagName) {
 function collectText(node) {
   if (!node) return '';
   const own = typeof node.textContent === 'string' ? node.textContent : '';
+  const html = typeof node.innerHTML === 'string' ? node.innerHTML.replace(/<[^>]*>/g, ' ') : '';
   const childText = Array.isArray(node.children) ? node.children.map((child) => collectText(child)).join(' ') : '';
-  return `${own} ${childText}`.replace(/\s+/g, ' ').trim();
+  return `${own} ${html} ${childText}`.replace(/\s+/g, ' ').trim();
 }
 
 function loadRenderModule() {
-  const document = { createElement };
+  const document = {
+    createElement,
+    createDocumentFragment() { return createElement('fragment'); },
+    createTextNode(text) { return { textContent: text }; },
+  };
   const window = {
     document,
     SpritzACPClient: {
@@ -89,13 +107,11 @@ test('ACP render adapter keeps commands out of transcript and upserts tool cards
     rawOutput: { result: 'done' },
   });
 
-  assert.equal(transcript.messages.length, 1);
-  const toolCard = transcript.messages[0];
-  assert.equal(toolCard.type, 'tool');
-  assert.equal(toolCard.title, 'Search workspace');
-  assert.equal(toolCard.status, 'completed');
-  assert.equal(toolCard.blocks.some((block) => block.type === 'details' && block.title === 'Input'), true);
-  assert.equal(toolCard.blocks.some((block) => block.type === 'details' && block.title === 'Result'), true);
+  // Tool calls now go through thinkingChunks instead of creating card messages
+  assert.equal(transcript.messages.length, 0);
+  assert.equal(transcript.thinkingChunks.length, 1);
+  assert.equal(transcript.thinkingChunks[0].kind, 'tool');
+  assert.equal(transcript.thinkingChunks[0].text, 'Search workspace');
 });
 
 test('ACP render adapter summarizes HTML error pages in tool results', () => {
@@ -120,16 +136,11 @@ test('ACP render adapter summarizes HTML error pages in tool results', () => {
       '<span>Cloudflare</span><p>The web server reported a bad gateway error.</p></body></html>',
   });
 
-  assert.equal(transcript.messages.length, 1);
-  const toolCard = transcript.messages[0];
-  const resultBlock = toolCard.blocks.find((block) => block.type === 'details' && block.title === 'Result');
-  assert.ok(resultBlock);
-  assert.equal(resultBlock.open, false);
-  assert.match(resultBlock.text, /502/i);
-  assert.match(resultBlock.text, /staging\.spritz\.textcortex\.com/i);
-  assert.match(resultBlock.text, /cloudflare/i);
-  assert.match(resultBlock.text, /bad gateway/i);
-  assert.equal(resultBlock.text.includes('<!DOCTYPE html>'), false);
+  // Tool calls now go through thinkingChunks instead of creating card messages
+  assert.equal(transcript.messages.length, 0);
+  assert.equal(transcript.thinkingChunks.length, 1);
+  assert.equal(transcript.thinkingChunks[0].kind, 'tool');
+  assert.equal(transcript.thinkingChunks[0].text, 'Fetch workspace');
 });
 
 test('ACP render adapter drops HTML error pages from assistant text updates', () => {

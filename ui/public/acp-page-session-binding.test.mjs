@@ -4,6 +4,16 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { uiDistPath } from '../test-paths.mjs';
 
+function createClassList() {
+  const classes = new Set();
+  return {
+    add(c) { classes.add(c); },
+    remove(c) { classes.delete(c); },
+    contains(c) { return classes.has(c); },
+    toggle(c) { if (classes.has(c)) { classes.delete(c); return false; } classes.add(c); return true; },
+  };
+}
+
 function createElement(tagName) {
   const listeners = new Map();
   return {
@@ -16,11 +26,24 @@ function createElement(tagName) {
     children: [],
     dataset: {},
     style: {},
+    classList: createClassList(),
     append(...items) {
       this.children.push(...items);
     },
     appendChild(item) {
       this.children.push(item);
+      return item;
+    },
+    removeChild(item) {
+      const idx = this.children.indexOf(item);
+      if (idx >= 0) this.children.splice(idx, 1);
+      return item;
+    },
+    get firstChild() {
+      return this.children[0] || null;
+    },
+    get lastChild() {
+      return this.children[this.children.length - 1] || null;
     },
     remove() {
       this.removed = true;
@@ -34,8 +57,20 @@ function createElement(tagName) {
     querySelector() {
       return null;
     },
+    querySelectorAll() {
+      return [];
+    },
     contains() {
       return false;
+    },
+    scrollTo() {},
+    scrollHeight: 0,
+    scrollTop: 0,
+    clientHeight: 0,
+    replaceChild(newChild, oldChild) {
+      const idx = this.children.indexOf(oldChild);
+      if (idx >= 0) this.children[idx] = newChild;
+      return oldChild;
     },
     click() {
       if (this.disabled) return;
@@ -60,7 +95,11 @@ function walk(node, predicate) {
 }
 
 function loadModules(createACPClient) {
-  const document = { createElement };
+  const document = {
+    createElement,
+    createDocumentFragment() { return createElement('fragment'); },
+    createTextNode(text) { return { textContent: text }; },
+  };
   const window = {
     document,
     location: {
@@ -80,7 +119,8 @@ function loadModules(createACPClient) {
     },
   };
   window.window = window;
-  const context = vm.createContext({ window, document, console, setTimeout, clearTimeout, URL, URLSearchParams });
+  const requestAnimationFrame = (fn) => setTimeout(fn, 0);
+  const context = vm.createContext({ window, document, console, setTimeout, clearTimeout, URL, URLSearchParams, requestAnimationFrame });
   context.globalThis = context.window;
   vm.runInContext(fs.readFileSync(uiDistPath('acp-render.js'), 'utf8'), context, {
     filename: 'acp-render.js',
