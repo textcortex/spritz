@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "tsdown && node scripts/copy-static.mjs",
+    "dev": "node scripts/dev-server.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --test entrypoint.test.mjs nginx-config.test.mjs public/*.test.mjs"
   },

@@ -121,7 +121,7 @@ test('spritz list shows a transitional chat action while workspace chat is still
       },
     },
     location: {
-      hash: '',
+      hash: '#create',
       pathname: '/',
       search: '',
       origin: 'http://example.test',

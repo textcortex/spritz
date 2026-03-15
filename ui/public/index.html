@@ -8,55 +8,69 @@
   </head>
   <body>
     <main class="shell">
-      <header>
+      <!-- <header>
         <div class="header-top">
           <div>
             <h1>Spritz</h1>
-            <p>Ephemeral dev environments, managed by API.</p>
+            <p>Ephemeral dev Spritzes, managed by API.</p>
           </div>
-          <a class="header-link" href="#chat">Agent chat</a>
+          <a class="header-link" href="#create">Create</a>
         </div>
-      </header>
+      </header> -->
       <div id="notice" class="notice" hidden></div>
       <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
 
+      <section id="create-section">
+      <h2 class="page-title">Create Spritz</h2>
+      <p class="page-subtitle">Spin up an ephemeral dev Spritz managed by API.</p>
+
       <section class="card">
-        <h2>Create</h2>
         <form id="create-form">
-          <label>
-            Name
-            <div class="name-field">
-              <input name="name" />
-              <button type="button" class="ghost" id="name-random">Random</button>
-            </div>
-          </label>
-          <label>
-            Image
-            <input name="image" required />
-          </label>
-          <label>
-            Repo URL
-            <input name="repo" />
-          </label>
-          <label>
-            Branch
-            <input name="branch" />
-          </label>
-          <label>
-            TTL (e.g. 8h)
-            <input name="ttl" />
-          </label>
-          <label>
-            Namespace
-            <input name="namespace" />
-          </label>
-          <label class="span-all">
-            User config (YAML/JSON)
-            <textarea
-              name="user_config"
-              rows="10"
-              spellcheck="false"
-              placeholder="sharedMounts:
+          <div class="form-row">
+            <label>
+              Name
+              <div class="name-field">
+                <input name="name" placeholder="Auto-generated" />
+                <button type="button" class="ghost" id="name-random">Random</button>
+              </div>
+            </label>
+            <label>
+              Image
+              <input name="image" required placeholder="spritz-starter:latest" />
+            </label>
+          </div>
+          <div class="form-row">
+            <label>
+              Repository URL
+              <input name="repo" placeholder="https://github.com/..." />
+            </label>
+            <label>
+              Branch
+              <input name="branch" placeholder="main" />
+            </label>
+          </div>
+          <div class="form-row">
+            <label>
+              TTL
+              <input name="ttl" placeholder="8h" />
+            </label>
+            <label>
+              Namespace
+              <input name="namespace" placeholder="default" />
+            </label>
+          </div>
+
+          <div class="advanced-config">
+            <button type="button" class="advanced-config-toggle">Advanced configuration</button>
+            <div class="advanced-config-body">
+              <div class="advanced-config-inner">
+                <label>
+                  User config (YAML/JSON)
+                  <textarea
+                    name="user_config"
+                    rows="10"
+                    spellcheck="false"
+                    placeholder="sharedMounts:
   - name: config
     mountPath: /home/dev/.config
     scope: owner
@@ -64,21 +78,28 @@
     syncMode: poll
     pollSeconds: 30
 ttl: 8h"
-            ></textarea>
-            <small class="hint">
-              Optional. Provide a user config subset (shared mounts, ttl, repo, env, resources). JSON is accepted and is valid YAML.
-            </small>
-          </label>
-          <button type="submit">Create spritz</button>
+                  ></textarea>
+                  <small class="hint">
+                    Provide shared mounts, ttl, repo, env, or resources. JSON is also accepted.
+                  </small>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <button type="submit"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg> Create Spritz</button>
         </form>
       </section>
+      </section>
 
-      <section class="card">
-        <div class="list-header">
-          <h2>Active spritzes</h2>
-          <button id="refresh">Refresh</button>
-        </div>
+      <section id="list-section">
+      <div class="list-header">
+        <h2 class="page-title">Active Spritzes</h2>
+        <button class="ghost icon-btn" id="refresh"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Refresh</button>
+      </div>
+      <section class="card" id="list-card">
         <div id="list"></div>
+      </section>
       </section>
     </main>
 

@@ -35,8 +35,8 @@ const form = document.getElementById('create-form') as HTMLFormElement | null;
 const randomNameBtn = document.getElementById('name-random') as HTMLButtonElement | null;
 const shellEl = document.querySelector('.shell') as HTMLElement | null;
 const headerEl = shellEl?.querySelector('header') as HTMLElement | null;
-const createSection = form?.closest('section') as HTMLElement | null;
-const listSection = listEl?.closest('section') as HTMLElement | null;
+const createSection = document.getElementById('create-section') as HTMLElement | null;
+const listSection = document.getElementById('list-section') as HTMLElement | null;
 let activeTerminalSession = null;
 let activeTerminalName = '';
 let activeACPPage = null;
@@ -888,7 +888,22 @@ async function suggestSpritzName() {
   return String(data?.name || '').trim();
 }
 
+function renderSkeletons(count = 3) {
+  if (!listEl) return;
+  listEl.innerHTML = '';
+  for (let i = 0; i < count; i++) {
+    const item = document.createElement('div');
+    item.className = 'spritz-item skeleton-item';
+    item.innerHTML =
+      '<div class="skeleton-info"><div class="skeleton-line skeleton-name"></div><div class="skeleton-line skeleton-meta"></div></div>' +
+      '<div class="skeleton-actions"><div class="skeleton-btn"></div><div class="skeleton-btn"></div><div class="skeleton-btn"></div></div>';
+    listEl.appendChild(item);
+  }
+}
+
 async function fetchSpritzes() {
+  const wasEmpty = listEl && !listEl.children.length;
+  if (wasEmpty) renderSkeletons();
   try {
     const data = await request('/spritzes');
     renderList(data.items || []);
@@ -967,7 +982,7 @@ function describeChatAction(spritz) {
 
 function renderList(items) {
   if (!items.length) {
-    listEl.innerHTML = '<p>No spritzes yet.</p>';
+    listEl.innerHTML = '<div class="list-empty"><p>No Spritzes yet</p><p>Create one above to get started.</p></div>';
     return;
   }
   listEl.innerHTML = '';
@@ -993,7 +1008,15 @@ function renderList(items) {
     openBtn.textContent = 'Open';
     openBtn.onclick = () => {
       const url = buildOpenUrl(spritz.status?.url, spritz);
-      if (url) window.open(url, '_blank');
+      if (!url) return;
+      try {
+        const parsed = new URL(url, window.location.href);
+        if (parsed.hostname === window.location.hostname && parsed.hash) {
+          window.location.hash = parsed.hash;
+          return;
+        }
+      } catch { /* fall through to window.open */ }
+      window.open(url, '_blank');
     };
 
     const terminalBtn = document.createElement('button');
@@ -1067,13 +1090,26 @@ function renderList(items) {
     }
 
     const deleteBtn = document.createElement('button');
-    deleteBtn.textContent = 'Delete';
+    deleteBtn.className = 'destructive icon-btn';
+    deleteBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Delete';
     deleteBtn.onclick = async () => {
+      const deleteBtnHtml = deleteBtn.innerHTML;
+      deleteBtn.disabled = true;
+      deleteBtn.textContent = 'Deleting…';
       try {
         await request(`/spritzes/${spritz.metadata?.name}`, { method: 'DELETE' });
-        await fetchSpritzes();
+        item.remove();
+        if (!listEl.children.length) {
+          renderList([]);
+        }
+        showNotice('Spritz deleted.', 'info');
+        window.setTimeout(() => {
+          fetchSpritzes().catch(() => {});
+        }, 250);
       } catch (err) {
-        showNotice(err.message || 'Failed to delete spritz.');
+        showNotice(err.message || 'Failed to delete Spritz.');
+        deleteBtn.disabled = false;
+        deleteBtn.innerHTML = deleteBtnHtml;
       }
     };
 
@@ -1382,6 +1418,8 @@ function renderACPPage(name) {
       createSection,
       listSection,
       setHeaderCopy,
+      presets,
+      ownerId: config.ownerId || '',
     },
   );
 }
@@ -1409,9 +1447,25 @@ function setupPresets() {
   });
 }
 
+function showCreatePage() {
+  if (activeTerminalName) cleanupTerminal();
+  if (activeACPPage) cleanupACP();
+  if (createSection) createSection.hidden = false;
+  if (listSection) listSection.hidden = false;
+  setHeaderCopy('Spritz', 'Ephemeral dev Spritzes, managed by API.');
+  if (form && refreshBtn) {
+    applyNameDefaults();
+    applyRepoDefaults();
+    applyUserConfigDefaults();
+    setupPresets();
+    restoreCreateFormState();
+    fetchSpritzes();
+  }
+}
+
 function handleRoute() {
   const chatName = chatNameFromPath();
-  if (window.location.hash === '#chat' || chatName) {
+  if (chatName) {
     renderACPPage(chatName);
     return;
   }
@@ -1419,21 +1473,24 @@ function handleRoute() {
   if (terminalName) {
     cleanupACP();
     renderTerminalPage(terminalName);
+    return;
+  }
+  if (window.location.hash === '#create') {
+    showCreatePage();
   } else {
-    if (activeTerminalName) cleanupTerminal();
-    if (activeACPPage) cleanupACP();
-    setHeaderCopy('Spritz', 'Ephemeral dev environments, managed by API.');
-    if (form && refreshBtn) {
-      applyNameDefaults();
-      applyRepoDefaults();
-      applyUserConfigDefaults();
-      setupPresets();
-      restoreCreateFormState();
-      fetchSpritzes();
-    }
+    // Default: show conversation page (handles '', '#', '#chat')
+    renderACPPage('');
   }
 }
 window.addEventListener('hashchange', handleRoute);
+
+const advancedToggle = document.querySelector('.advanced-config-toggle');
+if (advancedToggle) {
+  advancedToggle.addEventListener('click', () => {
+    const section = advancedToggle.closest('.advanced-config');
+    if (section) section.classList.toggle('open');
+  });
+}
 
 if (form && refreshBtn) {
   const persistCreateFormStateFromEvent = () => {
@@ -1530,6 +1587,12 @@ if (form && refreshBtn) {
       }
     }
 
+    const submitBtn = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+    const submitBtnHtml = submitBtn ? submitBtn.innerHTML : '';
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Creating…';
+    }
     try {
       await request('/spritzes', {
         method: 'POST',
@@ -1545,11 +1608,25 @@ if (form && refreshBtn) {
       await fetchSpritzes();
       showNotice('');
     } catch (err) {
-      showNotice(err.message || 'Failed to create spritz.');
+      showNotice(err.message || 'Failed to create Spritz.');
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = submitBtnHtml;
+      }
     }
   });
 
-  refreshBtn.addEventListener('click', fetchSpritzes);
+  refreshBtn.addEventListener('click', async () => {
+    refreshBtn.disabled = true;
+    refreshBtn.classList.add('loading');
+    try {
+      await fetchSpritzes();
+    } finally {
+      refreshBtn.disabled = false;
+      refreshBtn.classList.remove('loading');
+    }
+  });
 }
 
 clearAuthRedirectFlag();
