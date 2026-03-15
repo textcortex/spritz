@@ -535,6 +535,30 @@
       });
       return null;
     }
+    if (type === 'agent_thought_chunk') {
+      const text = extractACPText(update.content);
+      if (!text) return null;
+      const last = transcript.messages[transcript.messages.length - 1];
+      if (last && last.type === 'thinking') {
+        const textBlock = last.blocks.find((block) => block.type === 'text');
+        if (textBlock) {
+          textBlock.text += text;
+        } else {
+          last.blocks.push({ type: 'text', text });
+        }
+      } else {
+        pushMessage(transcript, {
+          type: 'thinking',
+          title: 'Thinking',
+          tone: 'muted',
+          blocks: [{ type: 'text', text }],
+        });
+      }
+      return null;
+    }
+    // Silently ignore noisy internal updates
+    const silentTypes = ['heartbeat', 'ping', 'pong', 'ack'];
+    if (silentTypes.includes(type)) return null;
     pushMessage(transcript, {
       type: 'system',
       title: humanizeUpdateType(type),
@@ -729,6 +753,26 @@
   }
 
   function renderMessage(message) {
+    if (message.type === 'thinking') {
+      const article = document.createElement('article');
+      article.className = 'acp-message acp-message--thinking';
+      article.dataset.type = 'thinking';
+      const details = document.createElement('details');
+      details.className = 'acp-thinking-block';
+      const summary = document.createElement('summary');
+      summary.className = 'acp-thinking-summary';
+      summary.textContent = 'Thinking…';
+      const content = document.createElement('div');
+      content.className = 'acp-thinking-content';
+      const textBlock = message.blocks.find((b) => b.type === 'text');
+      if (textBlock) {
+        content.appendChild(renderRichText(textBlock.text || ''));
+      }
+      details.append(summary, content);
+      article.appendChild(details);
+      return article;
+    }
+
     const article = document.createElement('article');
     article.className = `acp-message acp-message--${message.type}`;
     article.dataset.type = message.type;

@@ -101,6 +101,7 @@
       agents: [],
       selectedAgent: null,
       conversations: [],
+      agentConversations: {},
       selectedConversation: null,
       transcript: ACPRender.createTranscript(),
       permissionQueue: [],
@@ -482,44 +483,82 @@
   function renderConversationList(page) {
     if (!page.threadListEl) return;
     page.threadListEl.innerHTML = '';
-    if (page.workspaceState !== 'ready') {
-      const empty = document.createElement('p');
-      empty.className = 'acp-empty acp-empty--sidebar';
-      if (page.workspaceState === 'missing') {
-        empty.textContent = 'This workspace is no longer available.';
-        page.threadListEl.appendChild(empty);
+
+    if (!page.agents || !page.agents.length) {
+      return;
+    }
+
+    const agentConvos = page.agentConversations || {};
+
+    page.agents.forEach((agent) => {
+      const spritzName = agent?.spritz?.metadata?.name || '';
+      if (!spritzName) return;
+
+      const group = document.createElement('div');
+      group.className = 'acp-agent-group';
+
+      const header = document.createElement('button');
+      header.type = 'button';
+      header.className = 'acp-agent-header';
+      if (spritzName === page.selectedName) {
+        header.dataset.active = 'true';
       }
-      page.newConversationBtn.disabled = true;
-      return;
-    }
-    if (!page.selectedAgent) {
-      const empty = document.createElement('p');
-      empty.className = 'acp-empty acp-empty--sidebar';
-      empty.textContent = 'Choose an ACP-ready workspace to load conversations.';
-      page.threadListEl.appendChild(empty);
-      page.newConversationBtn.disabled = true;
-      return;
-    }
-    page.newConversationBtn.disabled = false;
-    if (!page.conversations.length) {
-      return;
-    }
 
-    page.conversations.forEach((conversation) => {
-      const id = conversation.metadata?.name || '';
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'acp-thread-item';
-      button.dataset.active = String(id === page.selectedConversationId);
-      button.onclick = () => {
-        window.location.assign(chatPagePath(page.selectedName, id));
-      };
+      const headerLabel = document.createElement('span');
+      headerLabel.className = 'acp-agent-header-label';
+      headerLabel.textContent = getAgentTitle(agent);
 
-      const title = document.createElement('span');
-      title.className = 'acp-thread-item-title';
-      title.textContent = conversation.spec?.title || 'New conversation';
-      button.append(title);
-      page.threadListEl.appendChild(button);
+      const chevron = document.createElement('span');
+      chevron.className = 'acp-agent-chevron';
+
+      const addBtn = document.createElement('button');
+      addBtn.type = 'button';
+      addBtn.className = 'acp-agent-add-btn';
+      addBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+      addBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          const conversation = await createACPConversationData(page.deps, spritzName);
+          window.location.assign(chatPagePath(spritzName, conversation.metadata?.name || ''));
+        } catch (err) {
+          reportACPError(page, err, 'Failed to create conversation.');
+        }
+      });
+
+      header.append(headerLabel, chevron, addBtn);
+
+      const convos = agentConvos[spritzName] || [];
+      const convoList = document.createElement('div');
+      convoList.className = 'acp-agent-convos';
+
+      // Expand this agent group if it's the selected one or has no selection yet
+      const isExpanded = spritzName === page.selectedName || !page.selectedName;
+      group.dataset.expanded = String(isExpanded);
+
+      header.addEventListener('click', () => {
+        const expanded = group.dataset.expanded === 'true';
+        group.dataset.expanded = String(!expanded);
+      });
+
+      convos.forEach((conversation) => {
+        const id = conversation.metadata?.name || '';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'acp-thread-item';
+        button.dataset.active = String(id === page.selectedConversationId && spritzName === page.selectedName);
+        button.onclick = () => {
+          window.location.assign(chatPagePath(spritzName, id));
+        };
+
+        const title = document.createElement('span');
+        title.className = 'acp-thread-item-title';
+        title.textContent = conversation.spec?.title || 'New conversation';
+        button.append(title);
+        convoList.appendChild(button);
+      });
+
+      group.append(header, convoList);
+      page.threadListEl.appendChild(group);
     });
   }
 
@@ -605,6 +644,170 @@
     });
   }
 
+  function renderPresetGallery(page) {
+    if (!page.threadStreamEl) return;
+    const presets = page.deps.presets || [];
+
+    const gallery = document.createElement('div');
+    gallery.className = 'acp-preset-gallery';
+
+    const title = document.createElement('h3');
+    title.className = 'acp-preset-gallery-title';
+    title.textContent = 'Create a new Spritz';
+    gallery.appendChild(title);
+
+    const grid = document.createElement('div');
+    grid.className = 'acp-preset-grid';
+
+    presets.forEach((preset) => {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'acp-preset-card';
+      const name = document.createElement('strong');
+      name.textContent = preset.name || preset.id || 'Preset';
+      const desc = document.createElement('p');
+      desc.textContent = preset.description || preset.image || '';
+      card.append(name, desc);
+      card.addEventListener('click', async () => {
+        card.disabled = true;
+        card.textContent = 'Creating…';
+        try {
+          const payload: any = {
+            spec: { image: preset.image },
+          };
+          if (preset.id) payload.presetId = preset.id;
+          if (preset.namePrefix) payload.namePrefix = preset.namePrefix;
+          if (page.deps.ownerId) payload.spec.owner = { id: page.deps.ownerId };
+          await page.deps.request('/spritzes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          page.deps.showToast('Spritz created. Loading…', 'info');
+          setTimeout(() => loadACPPage(page), 1500);
+        } catch (err) {
+          reportACPError(page, err, 'Failed to create Spritz.');
+          card.disabled = false;
+          card.innerHTML = '';
+          card.append(name, desc);
+        }
+      });
+      grid.appendChild(card);
+    });
+
+    // Custom card
+    const customCard = document.createElement('button');
+    customCard.type = 'button';
+    customCard.className = 'acp-preset-card acp-preset-card--custom';
+    const customName = document.createElement('strong');
+    customName.textContent = 'Custom';
+    const customDesc = document.createElement('p');
+    customDesc.textContent = 'Configure image, repo, and more';
+    customCard.append(customName, customDesc);
+    customCard.addEventListener('click', () => {
+      openCreateModal(page);
+    });
+    grid.appendChild(customCard);
+
+    gallery.appendChild(grid);
+    page.threadStreamEl.appendChild(gallery);
+  }
+
+  function openCreateModal(page) {
+    const existing = page.card?.querySelector('.acp-create-modal-backdrop');
+    if (existing) existing.remove();
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'acp-create-modal-backdrop';
+
+    const modal = document.createElement('div');
+    modal.className = 'acp-create-modal';
+
+    const header = document.createElement('div');
+    header.className = 'acp-create-modal-header';
+    const headerTitle = document.createElement('h3');
+    headerTitle.textContent = 'Create Custom Spritz';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'acp-nav-icon';
+    closeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    closeBtn.addEventListener('click', () => backdrop.remove());
+    header.append(headerTitle, closeBtn);
+
+    const form = document.createElement('form');
+    form.className = 'acp-create-modal-form';
+
+    const fields = [
+      { label: 'Image', name: 'image', placeholder: 'spritz-starter:latest', required: true },
+      { label: 'Name', name: 'name', placeholder: 'Auto-generated' },
+      { label: 'Repository URL', name: 'repo', placeholder: 'https://github.com/...' },
+      { label: 'Branch', name: 'branch', placeholder: 'main' },
+      { label: 'TTL', name: 'ttl', placeholder: '8h' },
+      { label: 'Namespace', name: 'namespace', placeholder: 'default' },
+    ];
+
+    fields.forEach((field) => {
+      const label = document.createElement('label');
+      label.textContent = field.label;
+      const input = document.createElement('input');
+      input.name = field.name;
+      input.placeholder = field.placeholder;
+      if (field.required) input.required = true;
+      label.appendChild(input);
+      form.appendChild(label);
+    });
+
+    const submitBtn = document.createElement('button');
+    submitBtn.type = 'submit';
+    submitBtn.textContent = 'Create Spritz';
+    form.appendChild(submitBtn);
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const data = new FormData(form);
+      const payload: any = {
+        spec: { image: (data.get('image') || '').toString().trim() },
+      };
+      const rawName = (data.get('name') || '').toString().trim();
+      if (rawName) payload.name = rawName;
+      if (page.deps.ownerId) payload.spec.owner = { id: page.deps.ownerId };
+      const repo = (data.get('repo') || '').toString().trim();
+      if (repo) {
+        payload.spec.repo = { url: repo };
+        const branch = (data.get('branch') || '').toString().trim();
+        if (branch) payload.spec.repo.branch = branch;
+      }
+      const ttl = (data.get('ttl') || '').toString().trim();
+      if (ttl) payload.spec.ttl = ttl;
+      const ns = (data.get('namespace') || '').toString().trim();
+      if (ns) payload.namespace = ns;
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Creating…';
+      try {
+        await page.deps.request('/spritzes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        backdrop.remove();
+        page.deps.showToast('Spritz created. Loading…', 'info');
+        setTimeout(() => loadACPPage(page), 1500);
+      } catch (err) {
+        reportACPError(page, err, 'Failed to create Spritz.');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Create Spritz';
+      }
+    });
+
+    modal.append(header, form);
+    backdrop.appendChild(modal);
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) backdrop.remove();
+    });
+    page.card.appendChild(backdrop);
+  }
+
   function renderThread(page) {
     if (!page.threadTitleEl || !page.threadMetaEl || !page.threadStreamEl) return;
     const currentWorkspace = selectedWorkspace(page);
@@ -634,16 +837,8 @@
       return;
     }
 
-    if (!page.selectedAgent) {
-      const empty = document.createElement('div');
-      empty.className = 'acp-empty';
-      empty.textContent = 'Choose an ACP-ready workspace to start chatting.';
-      page.threadStreamEl.appendChild(empty);
-      renderPermissionPrompt(page);
-      return;
-    }
-
-    if (!page.selectedConversation) {
+    if (!page.selectedAgent || !page.selectedConversation) {
+      renderPresetGallery(page);
       renderPermissionPrompt(page);
       return;
     }
@@ -970,6 +1165,7 @@
     page.bootstrapComplete = true;
     writeCachedConversationRecord(page);
     clearACPNotice(page);
+    if (page.composerEl?.focus) page.composerEl.focus();
   }
 
   async function selectConversation(page, conversationId) {
@@ -1004,6 +1200,7 @@
       return;
     }
     page.conversations = await listACPConversationsData(page.deps, page.selectedName);
+    page.agentConversations[page.selectedName] = page.conversations;
     hydrateCachedConversationPreviews(page);
     const routeConversationId = conversationIdFromHash(window.location.hash || '');
     let resolvedConversationId =
@@ -1011,15 +1208,6 @@
       page.selectedConversationId ||
       page.conversations[0]?.metadata?.name ||
       '';
-    if (!resolvedConversationId && page.selectedName) {
-      try {
-        const conversation = await createACPConversationData(page.deps, page.selectedName);
-        page.conversations = [conversation, ...page.conversations];
-        resolvedConversationId = conversation.metadata?.name || '';
-      } catch {
-        // fall through to empty state
-      }
-    }
     renderConversationList(page);
     if (routeConversationId && resolvedConversationId !== routeConversationId) {
       window.location.replace(chatPagePath(page.selectedName, resolvedConversationId));
@@ -1052,6 +1240,24 @@
           }
         }
       }
+      // Fetch conversations for all agents in parallel
+      const convoResults = await Promise.all(
+        page.agents.map(async (agent) => {
+          const name = agent?.spritz?.metadata?.name || '';
+          if (!name) return { name, convos: [] };
+          try {
+            const convos = await listACPConversationsData(page.deps, name);
+            return { name, convos };
+          } catch {
+            return { name, convos: [] };
+          }
+        }),
+      );
+      page.agentConversations = {};
+      for (const { name, convos } of convoResults) {
+        if (name) page.agentConversations[name] = convos;
+      }
+
       renderAgentPicker(page);
       if (!page.agents.length && !page.selectedSpritz) {
         page.selectedAgent = null;
@@ -1137,40 +1343,32 @@
     const newConversationButton = document.createElement('button');
     newConversationButton.type = 'button';
     newConversationButton.className = 'acp-new-chat-item';
-    newConversationButton.dataset.tooltip = 'New chat';
     newConversationButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>New chat</span>';
 
     const backLink = document.createElement('a');
     backLink.href = '#create';
     backLink.className = 'acp-new-chat-item acp-back-link';
-    backLink.dataset.tooltip = 'Spritzes';
     backLink.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg><span>Spritzes</span>';
 
     const refreshButton = document.createElement('button');
     refreshButton.type = 'button';
     refreshButton.className = 'acp-nav-icon';
     refreshButton.dataset.tooltip = 'Refresh';
-    refreshButton.dataset.tooltipPos = 'bottom';
+    refreshButton.dataset.tooltipPos = 'bottom-end';
     refreshButton.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>';
 
-    const agentSelect = document.createElement('select');
-    agentSelect.className = 'acp-agent-select';
-
-    const collapseIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><polyline points="14 9 11 12 14 15"/></svg>';
-    const expandIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><polyline points="13 9 16 12 13 15"/></svg>';
+    const collapseIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>';
+    const expandIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>';
 
     const toggleBtn = document.createElement('button');
     toggleBtn.type = 'button';
     toggleBtn.className = 'acp-nav-icon acp-sidebar-toggle';
-    toggleBtn.dataset.tooltip = 'Collapse sidebar';
-    toggleBtn.dataset.tooltipPos = 'right';
     toggleBtn.innerHTML = collapseIcon;
 
     const isCollapsed = typeof localStorage !== 'undefined' && localStorage.getItem('spritz:sidebar-collapsed') === 'true';
     if (isCollapsed) {
       shell.dataset.collapsed = 'true';
       toggleBtn.innerHTML = expandIcon;
-      toggleBtn.dataset.tooltip = 'Expand sidebar';
     }
 
     toggleBtn.addEventListener('click', () => {
@@ -1178,19 +1376,17 @@
       if (collapsed) {
         delete shell.dataset.collapsed;
         toggleBtn.innerHTML = collapseIcon;
-        toggleBtn.dataset.tooltip = 'Collapse sidebar';
         try { localStorage.setItem('spritz:sidebar-collapsed', 'false'); } catch {}
       } else {
         shell.dataset.collapsed = 'true';
         toggleBtn.innerHTML = expandIcon;
-        toggleBtn.dataset.tooltip = 'Expand sidebar';
-        try { localStorage.setItem('spritz:sidebar-collapsed', 'true'); } catch {}
+          try { localStorage.setItem('spritz:sidebar-collapsed', 'true'); } catch {}
       }
     });
 
     const selectRow = document.createElement('div');
     selectRow.className = 'acp-sidebar-select-row';
-    selectRow.append(agentSelect, toggleBtn);
+    selectRow.append(toggleBtn);
 
     const threadList = document.createElement('div');
     threadList.className = 'acp-thread-list';
@@ -1220,7 +1416,7 @@
     openButton.type = 'button';
     openButton.className = 'acp-nav-icon';
     openButton.dataset.tooltip = 'Open workspace';
-    openButton.dataset.tooltipPos = 'bottom';
+    openButton.dataset.tooltipPos = 'bottom-end';
     openButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
     headerActions.append(refreshButton, openButton);
 
@@ -1309,7 +1505,7 @@
     deps.shellEl.append(shell);
 
     page.card = shell;
-    page.agentSelectEl = agentSelect;
+    page.agentSelectEl = null;
     page.threadListEl = threadList;
     page.threadTitleEl = threadTitle;
     page.threadMetaEl = threadMeta;
@@ -1330,11 +1526,6 @@
 
     refreshButton.addEventListener('click', () => {
       loadACPPage(page);
-    });
-
-    agentSelect.addEventListener('change', () => {
-      if (!agentSelect.value) return;
-      window.location.assign(chatPagePath(agentSelect.value));
     });
 
     newConversationButton.addEventListener('click', async () => {
@@ -1371,6 +1562,7 @@
         return;
       }
       composerInput.value = '';
+      if (composerInput.focus) composerInput.focus();
       ACPRender.applySessionUpdate(page.transcript, {
         sessionUpdate: 'user_message_chunk',
         content: { type: 'text', text },
