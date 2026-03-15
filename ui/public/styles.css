@@ -1257,7 +1257,9 @@ button.loading svg {
 }
 
 .acp-message--assistant {
-  align-self: flex-start;
+  align-self: stretch;
+  max-width: none;
+  width: 100%;
 }
 
 .acp-message--tool,
