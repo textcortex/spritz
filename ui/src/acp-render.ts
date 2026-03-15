@@ -310,7 +310,7 @@
   function createTextBlocks(text, animated) {
     var normalized = String(text || '');
     if (!normalized) return [];
-    var block = { type: 'text', text: normalized };
+    var block = { type: 'text', text: normalized, _renderedLength: normalized.length };
     if (animated) block._renderedLength = 0;
     return [block];
   }
@@ -330,7 +330,7 @@
       }
       return;
     }
-    var histBlocks = createTextBlocks(value);
+    var histBlocks = createTextBlocks(value, false);
     histBlocks.forEach(function (b) { b._renderedLength = b.text.length; });
     pushMessage(transcript, {
       type,
@@ -1203,7 +1203,7 @@
       content.className = 'acp-thinking-content';
       const textBlock = message.blocks.find((b) => b.type === 'text');
       if (textBlock) {
-        content.appendChild(renderRichText(textBlock.text || ''));
+        content.appendChild(renderRichText(textBlock.text || '', 0));
       }
       details.append(summary, content);
       article.appendChild(details);
