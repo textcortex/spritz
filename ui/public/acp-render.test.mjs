@@ -107,13 +107,15 @@ test('ACP render adapter keeps commands out of transcript and upserts tool cards
     rawOutput: { result: 'done' },
   });
 
-  assert.equal(transcript.messages.length, 1);
-  const toolCard = transcript.messages[0];
-  assert.equal(toolCard.type, 'tool');
-  assert.equal(toolCard.title, 'Search workspace');
-  assert.equal(toolCard.status, 'completed');
-  assert.equal(toolCard.blocks.some((block) => block.type === 'details' && block.title === 'Input'), true);
-  assert.equal(toolCard.blocks.some((block) => block.type === 'details' && block.title === 'Result'), true);
+  // Tool events are now stored in thinkingChunks (harness-agnostic refactor)
+  assert.equal(transcript.messages.length, 0);
+  const toolChunk = transcript.thinkingChunks.find((c) => c._toolCallId === 'tool-1');
+  assert.ok(toolChunk);
+  assert.equal(toolChunk.kind, 'tool');
+  assert.equal(toolChunk.toolName, 'Search workspace');
+  assert.equal(toolChunk.status, 'completed');
+  assert.ok(toolChunk.input);
+  assert.ok(toolChunk.result);
 });
 
 test('ACP render adapter summarizes HTML error pages in tool results', () => {
@@ -138,16 +140,17 @@ test('ACP render adapter summarizes HTML error pages in tool results', () => {
       '<span>Cloudflare</span><p>The web server reported a bad gateway error.</p></body></html>',
   });
 
-  assert.equal(transcript.messages.length, 1);
-  const toolCard = transcript.messages[0];
-  const resultBlock = toolCard.blocks.find((block) => block.type === 'details' && block.title === 'Result');
-  assert.ok(resultBlock);
-  assert.equal(resultBlock.open, false);
-  assert.match(resultBlock.text, /502/i);
-  assert.match(resultBlock.text, /staging\.spritz\.textcortex\.com/i);
-  assert.match(resultBlock.text, /cloudflare/i);
-  assert.match(resultBlock.text, /bad gateway/i);
-  assert.equal(resultBlock.text.includes('<!DOCTYPE html>'), false);
+  // Tool events are now stored in thinkingChunks (harness-agnostic refactor)
+  assert.equal(transcript.messages.length, 0);
+  const toolChunk = transcript.thinkingChunks.find((c) => c._toolCallId === 'tool-502');
+  assert.ok(toolChunk);
+  assert.equal(toolChunk.status, 'completed');
+  assert.ok(toolChunk.result);
+  assert.match(toolChunk.result, /502/i);
+  assert.match(toolChunk.result, /staging\.spritz\.textcortex\.com/i);
+  assert.match(toolChunk.result, /cloudflare/i);
+  assert.match(toolChunk.result, /bad gateway/i);
+  assert.equal(toolChunk.result.includes('<!DOCTYPE html>'), false);
 });
 
 test('ACP render adapter drops HTML error pages from assistant text updates', () => {

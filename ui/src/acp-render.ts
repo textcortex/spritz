@@ -616,11 +616,11 @@
       const existing = transcript.thinkingChunks.find((c) => c._toolCallId === toolCallId);
       if (existing) {
         existing.status = status;
-        existing.toolName = toolName;
+        if (update.name || update.title) existing.toolName = toolName;
         if (inputText) existing.input = inputText;
         if (resultText) existing.result = resultText;
         if (url) existing.url = url;
-        existing.text = url || toolName;
+        existing.text = url || existing.toolName || toolName;
       } else {
         transcript.thinkingChunks.push({
           kind: 'tool',
