@@ -530,7 +530,6 @@
       transcript.thinkingInsertIndex = 0;
       transcript.thinkingStartTime = 0;
       transcript.thinkingElapsedSeconds = 0;
-
       if (historical) {
         appendHistoricalText(
           transcript,
@@ -1380,7 +1379,25 @@
     let i = 0;
     while (i < chunks.length) {
       const chunk = chunks[i];
-      if (chunk.kind === 'thought') { i++; continue; }
+
+      // Thought step
+      if (chunk.kind === 'thought') {
+        if (!chunk.text) { i++; continue; }
+        const step = document.createElement('div');
+        step.className = 'acp-tl-step acp-tl-step--thought';
+        const dot = document.createElement('div');
+        dot.className = 'acp-tl-dot';
+        const content = document.createElement('div');
+        content.className = 'acp-tl-content';
+        const text = document.createElement('span');
+        text.className = 'acp-tl-thought-text';
+        text.textContent = excerpt(chunk.text, 120);
+        content.appendChild(text);
+        step.append(dot, content);
+        fragment.appendChild(step);
+        i++; continue;
+      }
+
       if (chunk.kind !== 'tool') { i++; continue; }
 
       // Group consecutive search chunks
@@ -1473,7 +1490,7 @@
         continue;
       }
 
-      // Generic tool — render individually
+      // Generic tool — name, status, collapsible details
       const statusClass = chunk.status === 'completed' ? 'acp-tl-step--completed'
         : chunk.status === 'failed' ? 'acp-tl-step--failed'
         : 'acp-tl-step--pending';
