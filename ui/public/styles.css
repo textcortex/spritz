@@ -1870,6 +1870,27 @@ pre.ft-animate {
   font-size: 12px;
   color: #666;
   line-height: 1.4;
+  cursor: default;
+}
+.acp-tl-thought-details > summary {
+  cursor: pointer;
+  list-style: none;
+}
+.acp-tl-thought-details > summary::-webkit-details-marker { display: none; }
+.acp-tl-thought-details > summary::marker { display: none; content: ''; }
+.acp-tl-thought-details > summary::after {
+  content: ' ...more';
+  color: #999;
+  font-size: 11px;
+}
+.acp-tl-thought-details[open] > summary::after { content: ''; }
+.acp-tl-thought-full {
+  font-size: 12px;
+  color: #555;
+  line-height: 1.5;
+  margin-top: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* Generic tool steps — status-based dot colors */

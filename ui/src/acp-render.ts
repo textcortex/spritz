@@ -1380,7 +1380,7 @@
     while (i < chunks.length) {
       const chunk = chunks[i];
 
-      // Thought step
+      // Thought step — collapsible when text exceeds 120 chars
       if (chunk.kind === 'thought') {
         if (!chunk.text) { i++; continue; }
         const step = document.createElement('div');
@@ -1389,10 +1389,24 @@
         dot.className = 'acp-tl-dot';
         const content = document.createElement('div');
         content.className = 'acp-tl-content';
-        const text = document.createElement('span');
-        text.className = 'acp-tl-thought-text';
-        text.textContent = excerpt(chunk.text, 120);
-        content.appendChild(text);
+        if (chunk.text.length > 120) {
+          const details = document.createElement('details');
+          details.className = 'acp-tl-thought-details';
+          const summary = document.createElement('summary');
+          summary.className = 'acp-tl-thought-text';
+          summary.textContent = excerpt(chunk.text, 120);
+          details.appendChild(summary);
+          const full = document.createElement('div');
+          full.className = 'acp-tl-thought-full';
+          full.textContent = chunk.text;
+          details.appendChild(full);
+          content.appendChild(details);
+        } else {
+          const text = document.createElement('span');
+          text.className = 'acp-tl-thought-text';
+          text.textContent = chunk.text;
+          content.appendChild(text);
+        }
         step.append(dot, content);
         fragment.appendChild(step);
         i++; continue;
