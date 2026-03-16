@@ -1864,6 +1864,14 @@ pre.ft-animate {
   background: #525252;
 }
 
+/* Thought step — uses same blue dot as pending tools */
+.acp-tl-step--thought .acp-tl-dot { background: #60a5fa; }
+.acp-tl-thought-text {
+  font-size: 12px;
+  color: #666;
+  line-height: 1.4;
+}
+
 /* Generic tool steps — status-based dot colors */
 .acp-tl-step--pending .acp-tl-dot { background: #60a5fa; }
 .acp-tl-step--completed .acp-tl-dot { background: #34d399; }
@@ -1902,12 +1910,7 @@ pre.ft-animate {
   cursor: pointer;
   user-select: none;
 }
-.acp-tl-tool-details summary::-webkit-details-marker { display: none; }
-.acp-tl-tool-details summary::before {
-  content: '▸ ';
-  font-size: 9px;
-}
-.acp-tl-tool-details[open] summary::before { content: '▾ '; }
+.acp-tl-tool-details summary::before { content: none; }
 
 .acp-tl-detail-label {
   font-size: 10px;
