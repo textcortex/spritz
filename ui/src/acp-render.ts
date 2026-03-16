@@ -29,6 +29,11 @@
       availableCommands: [],
       currentMode: '',
       usage: null,
+      thinkingChunks: [] as Array<{ kind: 'thought' | 'tool' | 'done'; text: string; url?: string; toolKind?: 'fetch' | 'search'; _toolCallId?: string }>,
+      thinkingActive: false,
+      thinkingInsertIndex: 0,
+      thinkingStartTime: 0,
+      thinkingElapsedSeconds: 0,
     };
   }
 
@@ -45,17 +50,30 @@
   function serializeTranscript(transcript) {
     return {
       messages: Array.isArray(transcript?.messages)
-        ? transcript.messages.map((message) => ({
-            id: message.id || '',
-            type: message.type || 'system',
-            title: message.title || '',
-            status: message.status || '',
-            tone: message.tone || '',
-            meta: message.meta || '',
-            blocks: Array.isArray(message.blocks) ? message.blocks : [],
-            streaming: Boolean(message.streaming),
-            toolCallId: message.toolCallId || '',
-          }))
+        ? transcript.messages.map((message) => {
+            if (message.type === 'thinking_done') {
+              return {
+                type: 'thinking_done',
+                seconds: message.seconds || 0,
+                chunks: Array.isArray(message.chunks) ? message.chunks : [],
+              };
+            }
+            return {
+              id: message.id || '',
+              type: message.type || 'system',
+              title: message.title || '',
+              status: message.status || '',
+              tone: message.tone || '',
+              meta: message.meta || '',
+              blocks: Array.isArray(message.blocks) ? message.blocks.map(function (b) {
+                var copy = Object.assign({}, b);
+                delete copy._renderedLength;
+                return copy;
+              }) : [],
+              streaming: Boolean(message.streaming),
+              toolCallId: message.toolCallId || '',
+            };
+          })
         : [],
       availableCommands: Array.isArray(transcript?.availableCommands) ? transcript.availableCommands : [],
       currentMode: typeof transcript?.currentMode === 'string' ? transcript.currentMode : '',
@@ -206,7 +224,8 @@
           ? { ...block, type: 'details', title: 'Result', text: htmlError.text, open: false }
           : null;
       }
-      return { ...block, text: String(block.text || '') };
+      var t = String(block.text || '');
+      return { ...block, text: t, _renderedLength: t.length };
     }
     if (block.type === 'details') {
       const htmlError = detectHtmlErrorDocument(block.text);
@@ -219,6 +238,13 @@
   }
 
   function sanitizeHydratedMessage(message) {
+    if (message?.type === 'thinking_done') {
+      return {
+        type: 'thinking_done',
+        seconds: message.seconds || 0,
+        chunks: Array.isArray(message.chunks) ? message.chunks : [],
+      };
+    }
     const type = message?.type || message?.kind || 'system';
     const hadHtmlError = Array.isArray(message?.blocks)
       ? message.blocks.some((block) => {
@@ -281,10 +307,12 @@
     return transcript.messages[transcript.messages.length - 1];
   }
 
-  function createTextBlocks(text) {
-    const normalized = String(text || '');
+  function createTextBlocks(text, animated) {
+    var normalized = String(text || '');
     if (!normalized) return [];
-    return [{ type: 'text', text: normalized }];
+    var block = { type: 'text', text: normalized, _renderedLength: normalized.length };
+    if (animated) block._renderedLength = 0;
+    return [block];
   }
 
   function appendHistoricalText(transcript, type, text, messageKey = '') {
@@ -296,36 +324,39 @@
       const textBlock = last.blocks.find((block) => block.type === 'text');
       if (textBlock) {
         textBlock.text += value;
+        textBlock._renderedLength = textBlock.text.length;
       } else {
-        last.blocks.push({ type: 'text', text: value });
+        last.blocks.push({ type: 'text', text: value, _renderedLength: value.length });
       }
       return;
     }
+    var histBlocks = createTextBlocks(value, false);
+    histBlocks.forEach(function (b) { b._renderedLength = b.text.length; });
     pushMessage(transcript, {
       type,
       streaming: false,
       historyMessageId: normalizedKey,
-      blocks: createTextBlocks(value),
+      blocks: histBlocks,
     });
   }
 
   function appendStreamingText(transcript, type, text) {
-    const chunk = String(text || '');
+    var chunk = String(text || '');
     if (!chunk) return;
-    const last = transcript.messages[transcript.messages.length - 1];
+    var last = transcript.messages[transcript.messages.length - 1];
     if (last && last.type === type && last.streaming) {
-      const textBlock = last.blocks.find((block) => block.type === 'text');
+      var textBlock = last.blocks.find(function (b) { return b.type === 'text'; });
       if (textBlock) {
         textBlock.text += chunk;
       } else {
-        last.blocks.push({ type: 'text', text: chunk });
+        last.blocks.push({ type: 'text', text: chunk, _renderedLength: 0 });
       }
       return;
     }
     pushMessage(transcript, {
       type,
       streaming: true,
-      blocks: createTextBlocks(chunk),
+      blocks: createTextBlocks(chunk, true),
     });
   }
 
@@ -333,8 +364,54 @@
     transcript.messages.forEach((message) => {
       if (message.type === 'assistant' || message.type === 'user') {
         message.streaming = false;
+        // Clean up animation classes
+        if (message._el) {
+          message._el.querySelectorAll('.ft-animate').forEach(function(el) {
+            el.classList.remove('ft-animate');
+          });
+        }
+        // Clear cached DOM so renderThread re-renders with full markdown
+        delete message._el;
       }
     });
+    if (transcript.thinkingActive && transcript.thinkingStartTime) {
+      transcript.thinkingElapsedSeconds = Math.round((Date.now() - transcript.thinkingStartTime) / 1000);
+    }
+    transcript.thinkingActive = false;
+    // Bake the completed thinking block into the message list so it persists
+    // after the next turn resets thinkingChunks.
+    // Only bake if there were web tool calls — skip if only non-web tools/thoughts.
+    const hasWebTools = transcript.thinkingChunks.some((c) => c.kind === 'tool' && c.toolKind);
+    if (transcript.thinkingChunks.length > 0 && hasWebTools) {
+      const seconds = transcript.thinkingElapsedSeconds || 0;
+      const insertIdx = transcript.thinkingInsertIndex || transcript.messages.length;
+      const thinkingMessage = {
+        type: 'thinking_done' as const,
+        seconds,
+        chunks: transcript.thinkingChunks.slice(),
+      };
+      transcript.messages.splice(insertIdx, 0, thinkingMessage);
+      rebuildToolCallIndex(transcript);
+    }
+    // Clear live thinking state
+    transcript.thinkingChunks = [];
+  }
+
+  /** Bake any leftover thinking chunks after historical replay ends. */
+  function finalizeHistoricalThinking(transcript) {
+    const hasWebTools = transcript.thinkingChunks.some((c) => c.kind === 'tool' && c.toolKind);
+    if (transcript.thinkingChunks.length > 0 && hasWebTools) {
+      const insertIdx = transcript.thinkingInsertIndex || transcript.messages.length;
+      transcript.messages.splice(insertIdx, 0, {
+        type: 'thinking_done' as const,
+        seconds: 0,
+        chunks: transcript.thinkingChunks.slice(),
+      });
+      rebuildToolCallIndex(transcript);
+    }
+    transcript.thinkingChunks = [];
+    transcript.thinkingActive = false;
+    transcript.thinkingInsertIndex = 0;
   }
 
   function buildToolBlocks(update, existing) {
@@ -425,6 +502,9 @@
     const historical = Boolean(options.historical);
     if (type === 'user_message_chunk') {
       const text = extractACPText(update.content);
+      if (/^\s*<(?:command-name|command-message|command-args|local-command-stdout)\b/i.test(text)) {
+        return null;
+      }
       const htmlError = detectHtmlErrorDocument(text);
       if (htmlError) {
         return {
@@ -434,6 +514,26 @@
           },
         };
       }
+      // Bake any accumulated historical thinking from the previous turn (only if web tools used)
+      if (historical && transcript.thinkingChunks.length > 0) {
+        const hadWebTools = transcript.thinkingChunks.some((c) => c.kind === 'tool' && c.toolKind);
+        if (hadWebTools) {
+          const insertIdx = transcript.thinkingInsertIndex || transcript.messages.length;
+          transcript.messages.splice(insertIdx, 0, {
+            type: 'thinking_done' as const,
+            seconds: 0,
+            chunks: transcript.thinkingChunks.slice(),
+          });
+          rebuildToolCallIndex(transcript);
+        }
+      }
+      // Reset thinking state for the new turn
+      transcript.thinkingChunks = [];
+      transcript.thinkingActive = false;
+      transcript.thinkingInsertIndex = 0;
+      transcript.thinkingStartTime = 0;
+      transcript.thinkingElapsedSeconds = 0;
+
       if (historical) {
         appendHistoricalText(
           transcript,
@@ -446,8 +546,30 @@
       }
       return null;
     }
+    if (type === 'agent_thought_chunk') {
+      const text = extractACPText(update.content);
+      if (!text || /^\s*<(?:command-name|command-message|command-args|local-command-stdout)\b/i.test(text)) {
+        return null;
+      }
+      if (!transcript.thinkingActive && !transcript.thinkingChunks.length) {
+        transcript.thinkingInsertIndex = transcript.messages.length;
+        if (!historical) transcript.thinkingStartTime = Date.now();
+      }
+      if (!historical) transcript.thinkingActive = true;
+      // Merge consecutive thought fragments into one entry
+      const last = transcript.thinkingChunks[transcript.thinkingChunks.length - 1];
+      if (last && last.kind === 'thought') {
+        last.text += text;
+      } else {
+        transcript.thinkingChunks.push({ kind: 'thought', text: text });
+      }
+      return null;
+    }
     if (type === 'agent_message_chunk') {
       const text = extractACPText(update.content);
+      if (/^\s*<(?:command-name|command-message|command-args|local-command-stdout)\b/i.test(text)) {
+        return null;
+      }
       const htmlError = detectHtmlErrorDocument(text);
       if (htmlError) {
         return {
@@ -457,6 +579,8 @@
           },
         };
       }
+      // Thinking stays active during response streaming;
+      // finalizeStreaming() sets thinkingActive = false when done.
       if (historical) {
         appendHistoricalText(
           transcript,
@@ -470,14 +594,34 @@
       return null;
     }
     if (type === 'tool_call' || type === 'tool_call_update') {
-      const toolResult = upsertToolCall(transcript, update);
-      if (!historical && toolResult?.isError && toolResult.summary) {
-        return {
-          toast: {
-            type: 'error',
-            message: toolResult.summary,
-          },
-        };
+      const toolCallId = update.toolCallId || '';
+      if (type === 'tool_call') {
+        const toolTitle = update.title || '';
+        if (!transcript.thinkingActive && !transcript.thinkingChunks.length) {
+          transcript.thinkingInsertIndex = transcript.messages.length;
+          if (!historical) transcript.thinkingStartTime = transcript.thinkingStartTime || Date.now();
+        }
+        if (!historical) transcript.thinkingActive = true;
+        // Detect web tools via _meta.claudeCode.toolName
+        const realToolName = (update._meta?.claudeCode?.toolName || '').toLowerCase();
+        const isSearch = realToolName === 'websearch';
+        const isFetch = realToolName === 'webfetch';
+        const toolKind = isSearch ? 'search' as const : isFetch ? 'fetch' as const : undefined;
+        const url = (extractToolUrl(update) || '') || undefined;
+        const displayText = toolTitle.replace(/^"|"$/g, '').trim();
+        transcript.thinkingChunks.push({ kind: 'tool', text: displayText || realToolName, url, toolKind, _toolCallId: toolCallId });
+      }
+      // Update existing chunk with URL/title from tool_call_update
+      if (type === 'tool_call_update' && toolCallId) {
+        const existing = transcript.thinkingChunks.find((c) => c._toolCallId === toolCallId);
+        if (existing && existing.toolKind) {
+          const newUrl = extractToolUrl(update) || '';
+          if (newUrl && !existing.url) existing.url = newUrl;
+          const newTitle = (update.title || '').replace(/^"|"$/g, '').trim();
+          if (newTitle && newTitle !== 'undefined' && (!existing.text || existing.text === 'undefined')) {
+            existing.text = newTitle;
+          }
+        }
       }
       return null;
     }
@@ -575,27 +719,44 @@
     return null;
   }
 
-  function renderRichText(text) {
-    const fragment = document.createDocumentFragment ? document.createDocumentFragment() : document.createElement('div');
-    const source = String(text || '');
-    const pattern = /```([\w-]+)?\n?([\s\S]*?)```/g;
-    let lastIndex = 0;
-    let match;
+  /* ── FlowToken-inspired animated markdown renderer (vanilla JS) ── */
+
+  function renderRichText(text, prevLength) {
+    var fragment = document.createDocumentFragment();
+    var source = String(text || '');
+    var cutoff = typeof prevLength === 'number' ? prevLength : source.length;
+    var pattern = /```([\w-]*)\n?([\s\S]*?)```/g;
+    var lastIndex = 0;
+    var match;
     while ((match = pattern.exec(source))) {
-      const before = source.slice(lastIndex, match.index);
-      appendParagraphs(fragment, before);
-      const pre = document.createElement('pre');
+      var before = source.slice(lastIndex, match.index);
+      appendParagraphs(fragment, before, cutoff, lastIndex);
+      var codeText = match[2].trim();
+      var wrapper = document.createElement('div');
+      wrapper.className = 'acp-code-wrapper';
+      if (match.index >= cutoff) wrapper.classList.add('ft-token-block');
+      var pre = document.createElement('pre');
       pre.className = 'acp-code-block';
-      if (match[1]) {
-        pre.dataset.language = match[1];
-      }
-      const code = document.createElement('code');
-      code.textContent = match[2].trim();
+      var lang = match[1] || '';
+      if (lang) pre.dataset.language = lang;
+      var code = document.createElement('code');
+      code.textContent = codeText;
       pre.appendChild(code);
-      fragment.appendChild(pre);
+      wrapper.appendChild(pre);
+      // Async shiki highlighting — replaces plain code after load
+      if (typeof (window as any)._shikiHighlight === 'function') {
+        (function(w, ct, ln) {
+          (window as any)._shikiHighlight(ct, ln || 'text').then(function(html) {
+            if (html && w.parentNode) {
+              w.innerHTML = html;
+            }
+          });
+        })(wrapper, codeText, lang);
+      }
+      fragment.appendChild(wrapper);
       lastIndex = pattern.lastIndex;
     }
-    appendParagraphs(fragment, source.slice(lastIndex));
+    appendParagraphs(fragment, source.slice(lastIndex), cutoff, lastIndex);
     return fragment;
   }
 
@@ -604,101 +765,377 @@
   }
 
   function renderInlineMarkdown(text) {
-    let html = escapeHtml(text);
-    // inline code
+    var html = escapeHtml(text);
     html = html.replace(/`([^`]+)`/g, '<code class="acp-inline-code">$1</code>');
-    // bold
-    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    // italic
-    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-    // links [text](url)
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    html = html.replace(/~~([^~]+)~~/g, '<del>$1</del>');
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
     return html;
   }
 
-  function setInnerHTML(el, html, plainText) {
-    el.innerHTML = html;
-    el.textContent = plainText;
+  /**
+   * Render inline markdown into parent. No per-character animation —
+   * block-level fade-in is applied by the caller via ft-token-block class.
+   */
+  function appendInlineContent(parent, text) {
+    parent.innerHTML = renderInlineMarkdown(text);
   }
 
-  function appendParagraphs(parent, text) {
-    const source = String(text || '').trim();
+  function appendParagraphs(parent, text, cutoff, offset) {
+    var source = String(text || '').trim();
     if (!source) return;
-    const lines = source.split('\n');
-    let i = 0;
+    var globalCutoff = typeof cutoff === 'number' ? cutoff : Infinity;
+    var baseOffset = typeof offset === 'number' ? offset : 0;
+    var lines = source.split('\n');
+    var charPos = baseOffset;
+    var i = 0;
     while (i < lines.length) {
-      const line = lines[i].trim();
-      if (!line) { i++; continue; }
+      var line = lines[i].trim();
+      if (!line) { charPos += lines[i].length + 1; i++; continue; }
+      var lineStart = charPos;
+
       // headings
-      const headingMatch = line.match(/^(#{1,4})\s+(.+)/);
+      var headingMatch = line.match(/^(#{1,4})\s+(.+)/);
       if (headingMatch) {
-        const level = Math.min(headingMatch[1].length + 1, 6);
-        const heading = document.createElement('h' + level);
+        var level = Math.min(headingMatch[1].length + 1, 6);
+        var heading = document.createElement('h' + level);
         heading.className = 'acp-md-heading';
-        setInnerHTML(heading, renderInlineMarkdown(headingMatch[2]), headingMatch[2]);
+        if (lineStart >= globalCutoff) heading.classList.add('ft-token-block');
+        appendInlineContent(heading, headingMatch[2]);
         parent.appendChild(heading);
+        charPos += lines[i].length + 1;
         i++;
         continue;
       }
+
+      // blockquote
+      if (/^>\s?/.test(line)) {
+        var bq = document.createElement('blockquote');
+        bq.className = 'acp-blockquote';
+        var bqStart = charPos;
+        var bqLines = [];
+        while (i < lines.length && /^>\s?/.test(lines[i].trim())) {
+          bqLines.push(lines[i].trim().replace(/^>\s?/, ''));
+          charPos += lines[i].length + 1;
+          i++;
+        }
+        var bqText = bqLines.join('\n');
+        var bqP = document.createElement('p');
+        if (bqStart >= globalCutoff) bq.classList.add('ft-token-block');
+        appendInlineContent(bqP, bqText);
+        bq.appendChild(bqP);
+        parent.appendChild(bq);
+        continue;
+      }
+
+      // table (GFM) — use textContent for cells (no TreeWalker animation)
+      if (/^\|.+\|/.test(line) && i + 1 < lines.length && /^\|[\s:|-]+\|/.test(lines[i + 1]?.trim())) {
+        var tableStart = charPos;
+        var table = document.createElement('table');
+        table.className = 'acp-table';
+        var headerCells = line.split('|').slice(1, -1).map(function (c) { return c.trim(); });
+        var thead = document.createElement('thead');
+        var headRow = document.createElement('tr');
+        headerCells.forEach(function (cell) {
+          var th = document.createElement('th');
+          th.innerHTML = renderInlineMarkdown(cell);
+          headRow.appendChild(th);
+        });
+        thead.appendChild(headRow);
+        table.appendChild(thead);
+        charPos += lines[i].length + 1;
+        i++;
+        var sepCells = lines[i].trim().split('|').slice(1, -1);
+        var aligns = sepCells.map(function (c) {
+          var t = c.trim();
+          if (t.startsWith(':') && t.endsWith(':')) return 'center';
+          if (t.endsWith(':')) return 'right';
+          return 'left';
+        });
+        charPos += lines[i].length + 1;
+        i++;
+        var tbody = document.createElement('tbody');
+        while (i < lines.length && /^\|.+\|/.test(lines[i].trim())) {
+          var cells = lines[i].trim().split('|').slice(1, -1).map(function (c) { return c.trim(); });
+          var tr = document.createElement('tr');
+          cells.forEach(function (cell, ci) {
+            var td = document.createElement('td');
+            if (aligns[ci]) td.style.textAlign = aligns[ci];
+            td.innerHTML = renderInlineMarkdown(cell);
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+          charPos += lines[i].length + 1;
+          i++;
+        }
+        if (tableStart >= globalCutoff) table.classList.add('ft-token-block');
+        table.appendChild(tbody);
+        parent.appendChild(table);
+        continue;
+      }
+
       // unordered list
       if (/^[-*]\s+/.test(line)) {
-        const ul = document.createElement('ul');
+        var ul = document.createElement('ul');
         ul.className = 'acp-md-list';
+        var ulStart = charPos;
         while (i < lines.length && /^[-*]\s+/.test(lines[i].trim())) {
-          const li = document.createElement('li');
-          const liText = lines[i].trim().replace(/^[-*]\s+/, '');
-          setInnerHTML(li, renderInlineMarkdown(liText), liText);
+          var li = document.createElement('li');
+          var liText = lines[i].trim().replace(/^[-*]\s+/, '');
+          if (charPos >= globalCutoff) li.classList.add('ft-token-block');
+          appendInlineContent(li, liText);
           ul.appendChild(li);
+          charPos += lines[i].length + 1;
           i++;
         }
         parent.appendChild(ul);
         continue;
       }
+
       // ordered list
       if (/^\d+[.)]\s+/.test(line)) {
-        const ol = document.createElement('ol');
+        var ol = document.createElement('ol');
         ol.className = 'acp-md-list';
         while (i < lines.length && /^\d+[.)]\s+/.test(lines[i].trim())) {
-          const li = document.createElement('li');
-          const olText = lines[i].trim().replace(/^\d+[.)]\s+/, '');
-          setInnerHTML(li, renderInlineMarkdown(olText), olText);
-          ol.appendChild(li);
+          var oli = document.createElement('li');
+          var olText = lines[i].trim().replace(/^\d+[.)]\s+/, '');
+          if (charPos >= globalCutoff) oli.classList.add('ft-token-block');
+          appendInlineContent(oli, olText);
+          ol.appendChild(oli);
+          charPos += lines[i].length + 1;
           i++;
         }
         parent.appendChild(ol);
         continue;
       }
+
       // horizontal rule
       if (/^[-*_]{3,}\s*$/.test(line)) {
-        parent.appendChild(document.createElement('hr'));
+        var hr = document.createElement('hr');
+        if (lineStart >= globalCutoff) hr.classList.add('ft-token-block');
+        parent.appendChild(hr);
+        charPos += lines[i].length + 1;
         i++;
         continue;
       }
-      // regular paragraph — collect consecutive non-empty, non-special lines
-      const paraLines = [];
+
+      // regular paragraph
+      var paraLines = [];
+      var paraStart = charPos;
       while (i < lines.length) {
-        const l = lines[i].trim();
-        if (!l || /^#{1,4}\s/.test(l) || /^[-*]\s+/.test(l) || /^\d+[.)]\s+/.test(l) || /^[-*_]{3,}\s*$/.test(l)) break;
+        var l = lines[i].trim();
+        if (!l || /^#{1,4}\s/.test(l) || /^[-*]\s+/.test(l) || /^\d+[.)]\s+/.test(l) || /^[-*_]{3,}\s*$/.test(l) || /^>\s?/.test(l) || /^\|.+\|/.test(l)) break;
         paraLines.push(l);
+        charPos += lines[i].length + 1;
         i++;
       }
       if (paraLines.length) {
-        const p = document.createElement('p');
+        var p = document.createElement('p');
         p.className = 'acp-rich-paragraph';
-        const paraText = paraLines.join('\n');
-        setInnerHTML(p, renderInlineMarkdown(paraText), paraText);
+        if (paraStart >= globalCutoff) p.classList.add('ft-token-block');
+        var paraText = paraLines.join('\n');
+        appendInlineContent(p, paraText);
         parent.appendChild(p);
       }
     }
   }
 
-  function renderBlock(block) {
+  /**
+   * Strip incomplete markdown syntax so the parser never renders partial raw syntax.
+   * Handles: unclosed fences, tables, bold, italic, backticks, strikethrough, HTML tags.
+   */
+  function stripIncompleteMd(text) {
+    // 1. Unclosed fenced code block
+    var fenceMatches = text.match(/```/g);
+    if (fenceMatches && fenceMatches.length % 2 !== 0) {
+      var lastFence = text.lastIndexOf('```');
+      text = text.substring(0, lastFence);
+    }
+    // 2. Incomplete table row
+    var lines = text.split('\n');
+    var lastLine = lines[lines.length - 1];
+    if (lastLine && lastLine.indexOf('|') !== -1 && !lastLine.trim().endsWith('|')) {
+      lines.pop();
+      text = lines.join('\n');
+    }
+    // 3. Unclosed bold ** (check full text, not just tail)
+    var boldCount = (text.match(/\*\*/g) || []).length;
+    if (boldCount % 2 !== 0) {
+      text = text.substring(0, text.lastIndexOf('**'));
+    }
+    // 4. Unclosed italic * (after removing paired **)
+    var cleanText = text.replace(/\*\*/g, '');
+    var italicCount = (cleanText.match(/\*/g) || []).length;
+    if (italicCount % 2 !== 0) {
+      // Find the last lone * in the original text
+      for (var ii = text.length - 1; ii >= 0; ii--) {
+        if (text[ii] === '*' && (ii === 0 || text[ii - 1] !== '*') && (ii === text.length - 1 || text[ii + 1] !== '*')) {
+          text = text.substring(0, ii);
+          break;
+        }
+      }
+    }
+    // 5. Unclosed backtick (check full text — exclude triple backticks)
+    var btText = text.replace(/```/g, '');
+    var btCount = (btText.match(/`/g) || []).length;
+    if (btCount % 2 !== 0) {
+      // Find last lone backtick (not part of ```)
+      for (var bi = text.length - 1; bi >= 0; bi--) {
+        if (text[bi] === '`' && !(text[bi - 1] === '`' && text[bi - 2] === '`') && !(text[bi + 1] === '`' && text[bi + 2] === '`')) {
+          text = text.substring(0, bi);
+          break;
+        }
+      }
+    }
+    // 6. Unclosed strikethrough ~~ (check full text)
+    var strikeCount = (text.match(/~~/g) || []).length;
+    if (strikeCount % 2 !== 0) {
+      text = text.substring(0, text.lastIndexOf('~~'));
+    }
+    // 7. Incomplete HTML tag
+    var lastOpenBracket = text.lastIndexOf('<');
+    if (lastOpenBracket !== -1 && text.substring(lastOpenBracket).indexOf('>') === -1) {
+      text = text.substring(0, lastOpenBracket);
+    }
+    // 8. Incomplete markdown link [text](url) — strip if unclosed
+    // Match incomplete: [text](url  or  [text](  or  [text]( or [text
+    var lastOpenBracket2 = text.lastIndexOf('[');
+    if (lastOpenBracket2 !== -1) {
+      var afterBracket = text.substring(lastOpenBracket2);
+      // Full valid link: [text](url)
+      if (!/\[[^\]]*\]\([^)]*\)/.test(afterBracket)) {
+        text = text.substring(0, lastOpenBracket2);
+      }
+    }
+    // 9. Incomplete heading at end (# without content on last line)
+    var lastNewline = text.lastIndexOf('\n');
+    var trailingLine = text.substring(lastNewline + 1).trim();
+    if (/^#{1,6}\s*$/.test(trailingLine)) {
+      text = text.substring(0, lastNewline === -1 ? 0 : lastNewline);
+    }
+    return text;
+  }
+
+  // WeakMap to track text lengths for delta animation
+  var _textLengths = new WeakMap();
+
+  /**
+   * Incremental streaming with morphdom callbacks.
+   * morphdom diffs old DOM vs new — only touches what changed.
+   * onNodeAdded: animates brand new elements.
+   * onElUpdated: wraps only NEW text delta in animated span.
+   * Already-rendered text stays untouched at full opacity.
+   */
+  function appendStreamingChunk(message) {
+    try {
+      if (!message || !message._el || !message.streaming) return false;
+      var textBlock = null;
+      for (var bi = 0; bi < (message.blocks || []).length; bi++) {
+        if (message.blocks[bi].type === 'text') { textBlock = message.blocks[bi]; break; }
+      }
+      if (!textBlock) return false;
+      var raw = textBlock.text || '';
+      var prevLen = typeof textBlock._renderedLength === 'number' ? textBlock._renderedLength : 0;
+      if (raw.length === prevLen) return true;
+      var container = message._el.querySelector('.acp-block--text');
+      if (!container) return false;
+
+      var safeRaw = stripIncompleteMd(raw);
+      if (!safeRaw.trim()) return true;
+
+      // Render markdown to a temp element
+      var temp = document.createElement('div');
+      temp.appendChild(renderRichText(safeRaw, safeRaw.length));
+
+      if (typeof (window as any).morphdom === 'function') {
+        // Snapshot text lengths before morphing
+        container.querySelectorAll('*').forEach(function(el) {
+          _textLengths.set(el, (el.textContent || '').length);
+        });
+
+        // Use morphdom to diff — only patches what changed
+        (window as any).morphdom(container, temp, {
+          childrenOnly: true,
+
+          onBeforeElUpdated: function(fromEl, toEl) {
+            if (fromEl.classList && fromEl.classList.contains('ft-animate')) {
+              toEl.classList.add('ft-animate');
+            }
+            return true;
+          },
+
+          onElUpdated: function(el) {
+            var pLen = _textLengths.get(el) || 0;
+            var currText = el.textContent || '';
+            if (currText.length > pLen) {
+              if (el.children.length === 0) {
+                var oldText = currText.substring(0, pLen);
+                var newText = currText.substring(pLen);
+                if (newText.trim()) {
+                  el.innerHTML = '';
+                  if (oldText) {
+                    var oldSpan = document.createElement('span');
+                    oldSpan.textContent = oldText;
+                    el.appendChild(oldSpan);
+                  }
+                  var newSpan = document.createElement('span');
+                  newSpan.className = 'ft-animate';
+                  newSpan.textContent = newText;
+                  el.appendChild(newSpan);
+                }
+              }
+            }
+            _textLengths.set(el, currText.length);
+          },
+
+          onNodeAdded: function(node) {
+            if (node.nodeType === 1) {
+              node.classList.add('ft-animate');
+              node.querySelectorAll('*').forEach(function(child) {
+                child.classList.add('ft-animate');
+              });
+            }
+            return node;
+          },
+        });
+      } else {
+        // Fallback: no morphdom — just replace children directly
+        // Still streams incrementally, just without fade animation
+        while (container.firstChild) container.removeChild(container.firstChild);
+        while (temp.firstChild) container.appendChild(temp.firstChild);
+      }
+
+      textBlock._renderedLength = raw.length;
+      return true;
+    } catch (err) {
+      // If anything fails, return false so renderThread falls back to full re-render
+      console.warn('[appendStreamingChunk] error, falling back:', err);
+      return false;
+    }
+  }
+
+  function renderBlock(block, streaming) {
     if (!block) return null;
     if (block.type === 'text') {
-      const htmlError = detectHtmlErrorDocument(block.text);
-      const wrapper = document.createElement('div');
+      var htmlError = detectHtmlErrorDocument(block.text);
+      var raw = htmlError ? htmlError.text : block.text || '';
+      var wrapper = document.createElement('div');
       wrapper.className = 'acp-block acp-block--text';
-      wrapper.appendChild(renderRichText(htmlError ? htmlError.text : block.text || ''));
+
+      if (streaming) {
+        // Streaming: full markdown, no per-element animation — scroll handles reveal
+        var safeRaw = stripIncompleteMd(raw);
+        if (safeRaw.trim()) {
+          wrapper.appendChild(renderRichText(safeRaw, safeRaw.length));
+        }
+        block._renderedLength = raw.length;
+      } else {
+        // Finalized: full rich markdown
+        wrapper.appendChild(renderRichText(raw, raw.length));
+        block._renderedLength = raw.length;
+      }
+
       return wrapper;
     }
     if (block.type === 'plan') {
@@ -766,11 +1203,53 @@
       content.className = 'acp-thinking-content';
       const textBlock = message.blocks.find((b) => b.type === 'text');
       if (textBlock) {
-        content.appendChild(renderRichText(textBlock.text || ''));
+        content.appendChild(renderRichText(textBlock.text || '', 0));
       }
       details.append(summary, content);
       article.appendChild(details);
       return article;
+    }
+
+    if (message.type === 'thinking_done') {
+      const container = document.createElement('div');
+      container.className = 'acp-thinking-baked acp-thinking--done';
+
+      const header = document.createElement('button');
+      header.type = 'button';
+      header.className = 'acp-thinking-header';
+      header.setAttribute('aria-expanded', 'false');
+
+      const labelWrap = document.createElement('span');
+      labelWrap.className = 'acp-thinking-label-wrap';
+      const label = document.createElement('span');
+      label.className = 'acp-thinking-label';
+      label.textContent = message.seconds > 0
+        ? `Thought for ${message.seconds} second${message.seconds !== 1 ? 's' : ''}`
+        : 'Thought';
+      labelWrap.appendChild(label);
+
+      const chevron = document.createElement('span');
+      chevron.className = 'acp-thinking-chevron';
+      chevron.innerHTML = CHEVRON_SVG;
+
+      header.append(labelWrap, chevron);
+
+      const body = document.createElement('div');
+      body.className = 'acp-thinking-body';
+      const timeline = document.createElement('div');
+      timeline.className = 'acp-thinking-timeline';
+
+      timeline.appendChild(buildGroupedTimeline(message.chunks || [], true));
+
+      body.appendChild(timeline);
+      container.append(header, body);
+
+      header.addEventListener('click', () => {
+        const expanded = container.classList.toggle('acp-thinking--expanded');
+        header.setAttribute('aria-expanded', String(expanded));
+      });
+
+      return container;
     }
 
     const article = document.createElement('article');
@@ -808,12 +1287,309 @@
     }
 
     message.blocks.forEach((block) => {
-      const node = renderBlock(block);
+      const node = renderBlock(block, message.streaming);
       if (node) bubble.appendChild(node);
     });
 
     article.appendChild(bubble);
     return article;
+  }
+
+  let _thinkingEl: HTMLElement | null = null;
+  let _thinkingRenderedCount = 0;
+  let _thinkingWordInterval: ReturnType<typeof setInterval> | null = null;
+  let _thinkingWordIndex = 0;
+  let _thinkingPrevToolCount = 0;
+  let _thinkingPrevThoughtCount = 0;
+  const THINKING_WORDS = ['Thinking', 'Planning', 'Refining'];
+
+  const MORPH_SVG =
+    '<svg class="acp-thinking-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path class="acp-thinking-morph" d="M 12 8 C 14.21 8 16 9.79 16 12 C 16 14.21 14.21 16 12 16 C 9.79 16 8 14.21 8 12 C 8 9.79 9.79 8 12 8 Z">' +
+    '<animate attributeName="d" ' +
+    'values="M 12 8 C 14.21 8 16 9.79 16 12 C 16 14.21 14.21 16 12 16 C 9.79 16 8 14.21 8 12 C 8 9.79 9.79 8 12 8 Z;' +
+    'M 12 12 C 14 8.5 19 8.5 19 12 C 19 15.5 14 15.5 12 12 C 10 8.5 5 8.5 5 12 C 5 15.5 10 15.5 12 12 Z;' +
+    'M 12 16 C 14.21 16 16 14.21 16 12 C 16 9.79 14.21 8 12 8 C 9.79 8 8 9.79 8 12 C 8 14.21 9.79 16 12 16 Z;' +
+    'M 12 12 C 14 8.5 19 8.5 19 12 C 19 15.5 14 15.5 12 12 C 10 8.5 5 8.5 5 12 C 5 15.5 10 15.5 12 12 Z;' +
+    'M 12 8 C 14.21 8 16 9.79 16 12 C 16 14.21 14.21 16 12 16 C 9.79 16 8 14.21 8 12 C 8 9.79 9.79 8 12 8 Z" ' +
+    'dur="6s" repeatCount="indefinite" calcMode="spline" ' +
+    'keySplines="0.4 0 0.2 1; 0.4 0 0.2 1; 0.4 0 0.2 1; 0.4 0 0.2 1"/>' +
+    '</path></svg>';
+
+  const CHEVRON_SVG =
+    '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
+    '<polyline points="9 18 15 12 9 6"/></svg>';
+
+  const SEARCH_ICON =
+    '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+
+  // Match web-related tools by name substring (after lowering + stripping separators)
+
+  function extractToolUrl(update) {
+    let input = update.rawInput;
+    if (!input) return '';
+    if (typeof input === 'string') {
+      try { input = JSON.parse(input); }
+      catch { return input.startsWith('http') ? input : ''; }
+    }
+    if (typeof input !== 'object' || input === null) return '';
+    return input.url || input.query || input.uri || '';
+  }
+
+  const GLOBE_ICON =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>' +
+    '<path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
+
+  function extractDomain(url) {
+    try { return new URL(url).hostname.replace(/^www\./, ''); }
+    catch { return url; }
+  }
+
+  /** Build grouped timeline DOM nodes from thinking chunks. */
+  function buildGroupedTimeline(chunks, showFinished) {
+    const fragment = document.createDocumentFragment();
+    const searchPills: Array<{ text: string }> = [];
+    const fetchSources: Array<{ url: string; domain: string }> = [];
+
+    // Collect web tool data — skip thoughts and non-web tools
+    for (const chunk of chunks) {
+      if (chunk.kind !== 'tool') continue;
+      if (!chunk.toolKind) continue;
+      const cleanText = (chunk.text || '').replace(/^"|"$/g, '').trim();
+      if (chunk.toolKind === 'fetch') {
+        if (chunk.url) {
+          fetchSources.push({ url: chunk.url, domain: extractDomain(chunk.url) });
+        }
+        const pillText = chunk.url ? extractDomain(chunk.url) : cleanText;
+        if (pillText && pillText !== 'undefined') searchPills.push({ text: pillText });
+      } else if (chunk.toolKind === 'search') {
+        const pillText = chunk.url || cleanText;
+        if (pillText && pillText !== 'undefined') searchPills.push({ text: pillText });
+      }
+    }
+
+    // "Searching" step with grouped pills
+    if (searchPills.length > 0) {
+      const step = document.createElement('div');
+      step.className = 'acp-tl-step acp-tl-step--tool';
+      const dot = document.createElement('div');
+      dot.className = 'acp-tl-dot';
+      const content = document.createElement('div');
+      content.className = 'acp-tl-content';
+      const label = document.createElement('span');
+      label.className = 'acp-tl-group-label';
+      label.textContent = 'Searching';
+      content.appendChild(label);
+      const pillRow = document.createElement('div');
+      pillRow.className = 'acp-tl-pill-row';
+      for (const item of searchPills) {
+        const pill = document.createElement('span');
+        pill.className = 'acp-tl-search-pill';
+        pill.innerHTML = SEARCH_ICON;
+        const pillText = document.createElement('span');
+        pillText.textContent = item.text;
+        pill.appendChild(pillText);
+        pillRow.appendChild(pill);
+      }
+      content.appendChild(pillRow);
+      step.append(dot, content);
+      fragment.appendChild(step);
+    }
+
+    // "Reviewing sources" step with fetched links
+    if (fetchSources.length > 0) {
+      const step = document.createElement('div');
+      step.className = 'acp-tl-step acp-tl-step--sources';
+      const dot = document.createElement('div');
+      dot.className = 'acp-tl-dot';
+      const content = document.createElement('div');
+      content.className = 'acp-tl-content';
+      const label = document.createElement('span');
+      label.className = 'acp-tl-group-label';
+      label.textContent = 'Reviewing sources';
+      content.appendChild(label);
+      const sourceList = document.createElement('div');
+      sourceList.className = 'acp-tl-source-list';
+      for (const src of fetchSources) {
+        const row = document.createElement('div');
+        row.className = 'acp-tl-source-row';
+        const favicon = document.createElement('img');
+        favicon.className = 'acp-tl-source-favicon';
+        favicon.src = `https://www.google.com/s2/favicons?domain=${src.domain}&sz=32`;
+        favicon.alt = '';
+        favicon.width = 16;
+        favicon.height = 16;
+        const link = document.createElement('a');
+        link.className = 'acp-tl-source-link';
+        link.href = src.url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = src.url;
+        const domainEl = document.createElement('span');
+        domainEl.className = 'acp-tl-source-domain';
+        domainEl.textContent = src.domain;
+        row.append(favicon, link, domainEl);
+        sourceList.appendChild(row);
+      }
+      content.appendChild(sourceList);
+      step.append(dot, content);
+      fragment.appendChild(step);
+    }
+
+    // "Finished" step
+    if (showFinished) {
+      const step = document.createElement('div');
+      step.className = 'acp-tl-step acp-tl-step--finished';
+      const dot = document.createElement('div');
+      dot.className = 'acp-tl-dot';
+      const content = document.createElement('div');
+      content.className = 'acp-tl-content';
+      const text = document.createElement('span');
+      text.className = 'acp-tl-text acp-tl-text--finished';
+      text.textContent = 'Finished';
+      content.appendChild(text);
+      step.append(dot, content);
+      fragment.appendChild(step);
+    }
+
+    return fragment;
+  }
+
+  function renderThinkingBlock(transcript) {
+    const chunks = transcript.thinkingChunks;
+    const isActive = transcript.thinkingActive;
+    const hasWebTools = chunks.some((c) => c.kind === 'tool' && c.toolKind);
+    // Only show thinking block when web tools are involved
+    if (!hasWebTools) {
+      if (_thinkingEl) {
+        _thinkingEl = null;
+        _thinkingRenderedCount = 0;
+        _thinkingPrevToolCount = 0;
+        _thinkingPrevThoughtCount = 0;
+        if (_thinkingWordInterval) {
+          clearInterval(_thinkingWordInterval);
+          _thinkingWordInterval = null;
+        }
+      }
+      return null;
+    }
+
+    // Create element if it doesn't exist
+    if (!_thinkingEl) {
+      _thinkingRenderedCount = 0;
+      _thinkingWordIndex = 0;
+      const container = document.createElement('div');
+      container.className = 'acp-thinking acp-thinking--expanded'; // auto-open
+
+      const header = document.createElement('button');
+      header.className = 'acp-thinking-header';
+      header.type = 'button';
+      header.setAttribute('aria-expanded', 'true');
+
+      const icon = document.createElement('span');
+      icon.className = 'acp-thinking-icon-wrap';
+      icon.innerHTML = MORPH_SVG;
+
+      // Word label: inline-grid with invisible sizer + animated visible span
+      const labelWrap = document.createElement('span');
+      labelWrap.className = 'acp-thinking-label-wrap';
+
+      const sizer = document.createElement('span');
+      sizer.className = 'acp-thinking-label-sizer shimmer-text';
+      sizer.setAttribute('aria-hidden', 'true');
+      sizer.textContent = THINKING_WORDS.reduce((a, b) => a.length >= b.length ? a : b);
+
+      const label = document.createElement('span');
+      label.className = 'acp-thinking-label shimmer-text';
+      label.textContent = 'Thinking';
+
+      labelWrap.append(sizer, label);
+
+      const chevron = document.createElement('span');
+      chevron.className = 'acp-thinking-chevron';
+      chevron.innerHTML = CHEVRON_SVG;
+
+      header.append(icon, labelWrap, chevron);
+
+      const body = document.createElement('div');
+      body.className = 'acp-thinking-body';
+
+      const timeline = document.createElement('div');
+      timeline.className = 'acp-thinking-timeline';
+      body.appendChild(timeline);
+
+      container.append(header, body);
+
+      // Toggle expand/collapse
+      header.addEventListener('click', function () {
+        const expanded = container.classList.toggle('acp-thinking--expanded');
+        header.setAttribute('aria-expanded', String(expanded));
+      });
+
+      // Rotating words
+      if (_thinkingWordInterval) clearInterval(_thinkingWordInterval);
+      _thinkingWordInterval = setInterval(() => {
+        if (!_thinkingEl) return;
+        const el = _thinkingEl.querySelector('.acp-thinking-label') as HTMLElement | null;
+        if (!el || _thinkingEl.classList.contains('acp-thinking--done')) return;
+        _thinkingWordIndex = (_thinkingWordIndex + 1) % THINKING_WORDS.length;
+        const nextWord = THINKING_WORDS[_thinkingWordIndex];
+        el.classList.add('acp-thinking-label--exit');
+        setTimeout(() => {
+          el.classList.remove('acp-thinking-label--exit');
+          el.textContent = nextWord;
+          el.classList.add('acp-thinking-label--enter');
+          setTimeout(() => { el.classList.remove('acp-thinking-label--enter'); }, 240);
+        }, 160);
+      }, 2500);
+
+      _thinkingEl = container;
+    }
+
+    // Update label for done state
+    const labelEl = _thinkingEl.querySelector('.acp-thinking-label') as HTMLElement | null;
+    const sizerEl = _thinkingEl.querySelector('.acp-thinking-label-sizer') as HTMLElement | null;
+    if (isActive) {
+      _thinkingEl.classList.remove('acp-thinking--done');
+    } else {
+      const seconds = transcript.thinkingElapsedSeconds || Math.round((Date.now() - (transcript.thinkingStartTime || Date.now())) / 1000);
+      const doneText = `Thought for ${seconds} second${seconds !== 1 ? 's' : ''}`;
+      if (labelEl) {
+        labelEl.textContent = doneText;
+        labelEl.classList.remove('shimmer-text', 'acp-thinking-label--enter', 'acp-thinking-label--exit');
+      }
+      if (sizerEl) sizerEl.textContent = doneText;
+      _thinkingEl.classList.add('acp-thinking--done');
+      // Auto-close when done
+      _thinkingEl.classList.remove('acp-thinking--expanded');
+      _thinkingEl.querySelector('.acp-thinking-header')?.setAttribute('aria-expanded', 'false');
+      if (_thinkingWordInterval) {
+        clearInterval(_thinkingWordInterval);
+        _thinkingWordInterval = null;
+      }
+    }
+
+    // Rebuild grouped timeline
+    const timeline = _thinkingEl.querySelector('.acp-thinking-timeline');
+    if (timeline) {
+      timeline.innerHTML = '';
+      timeline.appendChild(buildGroupedTimeline(chunks, !isActive && chunks.length > 0));
+    }
+
+    return _thinkingEl;
+  }
+
+  function clearThinkingBlock() {
+    _thinkingEl = null;
+    _thinkingRenderedCount = 0;
+    _thinkingPrevToolCount = 0;
+    _thinkingPrevThoughtCount = 0;
+    if (_thinkingWordInterval) {
+      clearInterval(_thinkingWordInterval);
+      _thinkingWordInterval = null;
+    }
   }
 
   function getPreviewText(transcript) {
@@ -860,15 +1636,19 @@
   }
 
   global.SpritzACPRender = {
+    appendStreamingChunk,
     buildCommandItems,
+    clearThinkingBlock,
     createTranscript,
     detectHtmlErrorDocument,
     applySessionUpdate,
+    finalizeHistoricalThinking,
     finalizeStreaming,
     getPreviewText,
     hydrateTranscript,
     isTranscriptBearingUpdate,
     renderMessage,
+    renderThinkingBlock,
     serializeTranscript,
     transcriptContainsHtmlError,
   };

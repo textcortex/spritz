@@ -103,6 +103,17 @@ ttl: 8h"
       </section>
     </main>
 
+    <script src="/morphdom-umd.min.js"></script>
+    <script type="module">
+      import { codeToHtml } from 'https://esm.sh/shiki@3.4.2';
+      window._shikiHighlight = async function(code, lang) {
+        try {
+          return await codeToHtml(code, { lang: lang || 'text', theme: 'github-light-default' });
+        } catch(e) {
+          return null;
+        }
+      };
+    </script>
     <script src="/config.js?v=__SPRITZ_UI_ASSET_VERSION__"></script>
     <script src="/preset-config.js?v=__SPRITZ_UI_ASSET_VERSION__"></script>
     <script src="/acp-client.js?v=__SPRITZ_UI_ASSET_VERSION__"></script>

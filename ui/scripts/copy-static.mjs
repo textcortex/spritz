@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 const uiDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const sourceDir = path.join(uiDir, 'public');
 const distDir = path.join(uiDir, 'dist');
-const staticFiles = ['config.js', 'index.html', 'styles.css'];
+const staticFiles = ['config.js', 'index.html', 'styles.css', 'morphdom-umd.min.js'];
 const staticDirectories = ['vendor'];
 const builtEntries = [
   'acp-client',

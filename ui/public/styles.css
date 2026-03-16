@@ -1257,7 +1257,9 @@ button.loading svg {
 }
 
 .acp-message--assistant {
-  align-self: flex-start;
+  align-self: stretch;
+  max-width: none;
+  width: 100%;
 }
 
 .acp-message--tool,
@@ -1475,18 +1477,144 @@ h5.acp-md-heading { font-size: 14px; }
   margin: 12px 0;
 }
 
+/* ── FlowToken animation keyframes ── */
+@keyframes ft-fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Streaming fade-in: applied by morphdom callbacks to new/updated DOM nodes */
+.ft-animate {
+  animation: ft-fadeIn 0.3s ease-in-out both;
+}
+
+/* Inline elements stay inline; block elements keep their natural display */
+span.ft-animate,
+strong.ft-animate,
+em.ft-animate,
+del.ft-animate,
+a.ft-animate,
+code.ft-animate:not(pre code) {
+  display: inline;
+}
+
+/* Block elements: smooth fade without breaking layout */
+h1.ft-animate, h2.ft-animate, h3.ft-animate, h4.ft-animate, h5.ft-animate, h6.ft-animate,
+p.ft-animate,
+blockquote.ft-animate,
+hr.ft-animate {
+  display: block;
+}
+
+ul.ft-animate, ol.ft-animate {
+  display: block;
+}
+
+li.ft-animate {
+  display: list-item;
+}
+
+table.ft-animate {
+  display: table;
+}
+
+thead.ft-animate { display: table-header-group; }
+tbody.ft-animate { display: table-row-group; }
+tr.ft-animate { display: table-row; }
+th.ft-animate, td.ft-animate { display: table-cell; }
+
+div.ft-animate {
+  display: block;
+}
+
+pre.ft-animate {
+  display: block;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ft-animate {
+    animation: none !important;
+  }
+}
+
+/* ── Code block wrapper ── */
+.acp-code-wrapper {
+  position: relative;
+}
+
+/* ── Table (GFM) ── */
+.acp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 8px 0;
+}
+
+.acp-table th,
+.acp-table td {
+  padding: 8px 12px;
+  border: 1px solid #e5e5e5;
+  text-align: left;
+}
+
+.acp-table th {
+  font-weight: 600;
+  background: #fafafa;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.acp-table tbody tr:hover {
+  background: #fafafa;
+}
+
+/* ── Blockquote ── */
+.acp-blockquote {
+  margin: 8px 0;
+  padding: 8px 16px;
+  border-left: 3px solid #e5e5e5;
+  color: #666666;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.acp-blockquote p {
+  margin: 0;
+}
+
+/* ── Strikethrough ── */
+.acp-block--text del {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
 .acp-code-block,
 .acp-details-body {
   margin: 0;
   padding: 14px 16px;
   border-radius: 10px;
-  background: #101827;
-  color: #f8fafc;
+  background: #f6f8fa;
+  color: #24292f;
   overflow: auto;
   font-size: 12px;
   line-height: 1.55;
   font-family: "SFMono-Regular", "JetBrains Mono", "Menlo", monospace;
 }
+
+/* Shiki: layout + gray bg, token colors come from shiki inline styles */
+.acp-code-wrapper pre.shiki {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 10px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.55;
+  font-family: "SFMono-Regular", "JetBrains Mono", "Menlo", monospace;
+  background-color: #f6f8fa !important;
+}
+
 
 .acp-details {
   display: flex;
@@ -1544,6 +1672,345 @@ h5.acp-md-heading { font-size: 14px; }
   border-radius: 999px;
   background: rgba(46, 58, 70, 0.08);
   font-size: 12px;
+}
+
+/* ── Agent Thinking Component ── */
+.acp-thinking,
+.acp-thinking-baked {
+  align-self: flex-start;
+  max-width: min(820px, 86%);
+  padding: 4px 0;
+}
+
+.acp-thinking-header {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  color: #666666;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  line-height: 1;
+  font-family: inherit;
+}
+
+.acp-thinking-header:hover {
+  color: #333333;
+}
+
+.acp-thinking-icon-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #999999;
+}
+
+.acp-thinking-icon {
+  display: block;
+}
+
+.acp-thinking-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+  color: #999999;
+}
+
+.acp-thinking--expanded .acp-thinking-chevron {
+  transform: rotate(90deg);
+}
+
+/* Word label: inline-grid with sizer for stable width */
+.acp-thinking-label-wrap {
+  display: inline-grid;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.4;
+  padding-bottom: 1px;
+}
+
+.acp-thinking-label-sizer {
+  grid-column: 1;
+  grid-row: 1;
+  visibility: hidden;
+  white-space: nowrap;
+}
+
+.acp-thinking-label {
+  grid-column: 1;
+  grid-row: 1;
+  white-space: nowrap;
+}
+
+/* Shimmer text effect */
+.shimmer-text {
+  color: transparent;
+  background: linear-gradient(
+    90deg,
+    #a3a3a3 0%,
+    #a3a3a3 35%,
+    #525252 50%,
+    #a3a3a3 65%,
+    #a3a3a3 100%
+  );
+  background-size: 300% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  animation: shimmer 4.5s ease-in-out infinite;
+}
+
+@media (prefers-color-scheme: dark) {
+  .shimmer-text {
+    background: linear-gradient(
+      90deg,
+      #525252 0%,
+      #525252 35%,
+      #a3a3a3 50%,
+      #525252 65%,
+      #525252 100%
+    );
+    background-size: 300% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+  }
+}
+
+/* Word swap animations */
+.acp-thinking-label--exit {
+  animation: thinking-word-exit 0.16s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.acp-thinking-label--enter {
+  animation: thinking-word-enter 0.24s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes thinking-word-exit {
+  from { transform: translateY(0); opacity: 1; }
+  to { transform: translateY(-80%); opacity: 0; }
+}
+
+@keyframes thinking-word-enter {
+  from { transform: translateY(80%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* Collapsible body — fixed height transition to avoid layout shift */
+.acp-thinking-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s ease;
+}
+
+.acp-thinking--expanded .acp-thinking-body {
+  grid-template-rows: 1fr;
+}
+
+.acp-thinking-body > .acp-thinking-timeline {
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ── Timeline ── */
+.acp-thinking-timeline {
+  padding: 6px 0 2px 12px;
+  position: relative;
+}
+
+/* Continuous vertical line running behind all dots */
+.acp-thinking-timeline::before {
+  content: '';
+  position: absolute;
+  left: 15px; /* 12px padding + 3px to center on 7px dot */
+  top: 6px;
+  bottom: 2px;
+  width: 1px;
+  background: #e0e0e0;
+}
+
+.acp-tl-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  position: relative;
+  padding-bottom: 6px;
+}
+
+.acp-tl-step:last-child {
+  padding-bottom: 0;
+}
+
+/* Dot */
+.acp-tl-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #d4d4d4;
+  flex-shrink: 0;
+  margin-top: 5px;
+  position: relative;
+  z-index: 1;
+}
+
+.acp-tl-step--tool .acp-tl-dot {
+  background: #a3a3a3;
+}
+
+.acp-tl-step--finished .acp-tl-dot {
+  background: #525252;
+}
+
+/* Content */
+.acp-tl-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.acp-tl-text {
+  font-size: 13px;
+  color: #666666;
+  line-height: 1.4;
+}
+
+.acp-tl-text--finished {
+  color: #525252;
+  font-weight: 500;
+}
+
+/* Group label for Searching / Reviewing sources */
+.acp-tl-group-label {
+  display: block;
+  font-size: 12px;
+  color: #999999;
+  margin-bottom: 6px;
+}
+
+/* Pill row — horizontal wrapping row of pills */
+.acp-tl-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Search pill for tool calls */
+.acp-tl-search-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.05);
+  font-size: 11px;
+  color: #525252;
+  line-height: 1.3;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acp-tl-search-pill svg {
+  flex-shrink: 0;
+  color: #999999;
+}
+
+/* Source list for fetched URLs */
+.acp-tl-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+}
+
+.acp-tl-source-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.acp-tl-source-row:last-child {
+  border-bottom: none;
+}
+
+.acp-tl-source-favicon {
+  flex-shrink: 0;
+  border-radius: 2px;
+}
+
+.acp-tl-source-link {
+  flex: 1;
+  font-size: 12px;
+  color: #333333;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.acp-tl-source-link:hover {
+  text-decoration: underline;
+}
+
+.acp-tl-source-domain {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #999999;
+}
+
+/* Done state — muted, no shimmer */
+.acp-thinking--done .acp-thinking-header {
+  color: #999999;
+}
+
+.acp-thinking--done .acp-thinking-icon-wrap {
+  display: none;
+}
+
+.acp-thinking--done .acp-thinking-label-wrap {
+  display: inline;
+}
+
+.acp-thinking--done .acp-thinking-label-sizer {
+  display: none;
+}
+
+.acp-thinking--done .acp-thinking-label {
+  color: #999999;
+  -webkit-text-fill-color: unset;
+  -webkit-background-clip: unset;
+  background-clip: unset;
+  background: none;
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .acp-thinking-morph animate {
+    display: none;
+  }
+
+  .shimmer-text {
+    animation: none;
+    -webkit-text-fill-color: currentColor;
+    background: none;
+  }
+
+  .acp-thinking-label--exit,
+  .acp-thinking-label--enter {
+    animation: none;
+  }
+
+  .acp-tl-step {
+    animation: none;
+  }
 }
 
 .acp-main-footer {
