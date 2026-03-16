@@ -1864,6 +1864,72 @@ pre.ft-animate {
   background: #525252;
 }
 
+/* Generic tool steps — status-based dot colors */
+.acp-tl-step--pending .acp-tl-dot { background: #60a5fa; }
+.acp-tl-step--completed .acp-tl-dot { background: #34d399; }
+.acp-tl-step--failed .acp-tl-dot { background: #f87171; }
+
+.acp-tl-tool-label-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.acp-tl-tool-icon {
+  display: inline-flex;
+  color: #999999;
+  flex-shrink: 0;
+}
+
+.acp-tl-status {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  margin-left: 2px;
+  background: rgba(0,0,0,0.05);
+  color: #666;
+  text-transform: capitalize;
+}
+.acp-tl-step--completed .acp-tl-status { color: #059669; background: rgba(5,150,105,0.1); }
+.acp-tl-step--failed .acp-tl-status { color: #dc2626; background: rgba(220,38,38,0.1); }
+
+/* Collapsible tool details inside timeline */
+.acp-tl-tool-details { margin-top: 4px; }
+.acp-tl-tool-details summary {
+  font-size: 11px;
+  color: #999;
+  cursor: pointer;
+  user-select: none;
+}
+.acp-tl-tool-details summary::-webkit-details-marker { display: none; }
+.acp-tl-tool-details summary::before {
+  content: '▸ ';
+  font-size: 9px;
+}
+.acp-tl-tool-details[open] summary::before { content: '▾ '; }
+
+.acp-tl-detail-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #999;
+  margin: 6px 0 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.acp-tl-tool-details pre {
+  font-size: 11px;
+  max-height: 200px;
+  overflow: auto;
+  background: rgba(0,0,0,0.03);
+  border-radius: 6px;
+  padding: 8px;
+  margin: 2px 0 0 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: #555;
+}
+
 /* Content */
 .acp-tl-content {
   flex: 1;

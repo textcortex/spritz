@@ -870,6 +870,8 @@
         }
 
         const msg = messages[mi];
+        // Tool messages are rendered inside the thinking timeline, not as standalone cards
+        if (msg.type === 'tool') continue;
         if (domNode && msg._el === domNode && !msg.streaming) {
           domIdx++;
           continue;
