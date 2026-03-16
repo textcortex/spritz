@@ -380,9 +380,7 @@
     transcript.thinkingActive = false;
     // Bake the completed thinking block into the message list so it persists
     // after the next turn resets thinkingChunks.
-    // Only bake if there were web tool calls — skip if only non-web tools/thoughts.
-    const hasWebTools = transcript.thinkingChunks.some((c) => c.kind === 'tool' && c.toolKind);
-    if (transcript.thinkingChunks.length > 0 && hasWebTools) {
+    if (transcript.thinkingChunks.length > 0) {
       const seconds = transcript.thinkingElapsedSeconds || 0;
       const insertIdx = transcript.thinkingInsertIndex || transcript.messages.length;
       const thinkingMessage = {
@@ -399,8 +397,7 @@
 
   /** Bake any leftover thinking chunks after historical replay ends. */
   function finalizeHistoricalThinking(transcript) {
-    const hasWebTools = transcript.thinkingChunks.some((c) => c.kind === 'tool' && c.toolKind);
-    if (transcript.thinkingChunks.length > 0 && hasWebTools) {
+    if (transcript.thinkingChunks.length > 0) {
       const insertIdx = transcript.thinkingInsertIndex || transcript.messages.length;
       transcript.messages.splice(insertIdx, 0, {
         type: 'thinking_done' as const,
@@ -514,18 +511,15 @@
           },
         };
       }
-      // Bake any accumulated historical thinking from the previous turn (only if web tools used)
+      // Bake any accumulated historical thinking from the previous turn
       if (historical && transcript.thinkingChunks.length > 0) {
-        const hadWebTools = transcript.thinkingChunks.some((c) => c.kind === 'tool' && c.toolKind);
-        if (hadWebTools) {
-          const insertIdx = transcript.thinkingInsertIndex || transcript.messages.length;
-          transcript.messages.splice(insertIdx, 0, {
-            type: 'thinking_done' as const,
-            seconds: 0,
-            chunks: transcript.thinkingChunks.slice(),
-          });
-          rebuildToolCallIndex(transcript);
-        }
+        const insertIdx = transcript.thinkingInsertIndex || transcript.messages.length;
+        transcript.messages.splice(insertIdx, 0, {
+          type: 'thinking_done' as const,
+          seconds: 0,
+          chunks: transcript.thinkingChunks.slice(),
+        });
+        rebuildToolCallIndex(transcript);
       }
       // Reset thinking state for the new turn
       transcript.thinkingChunks = [];
@@ -594,34 +588,14 @@
       return null;
     }
     if (type === 'tool_call' || type === 'tool_call_update') {
-      const toolCallId = update.toolCallId || '';
-      if (type === 'tool_call') {
-        const toolTitle = update.title || '';
-        if (!transcript.thinkingActive && !transcript.thinkingChunks.length) {
-          transcript.thinkingInsertIndex = transcript.messages.length;
-          if (!historical) transcript.thinkingStartTime = transcript.thinkingStartTime || Date.now();
-        }
-        if (!historical) transcript.thinkingActive = true;
-        // Detect web tools via _meta.claudeCode.toolName
-        const realToolName = (update._meta?.claudeCode?.toolName || '').toLowerCase();
-        const isSearch = realToolName === 'websearch';
-        const isFetch = realToolName === 'webfetch';
-        const toolKind = isSearch ? 'search' as const : isFetch ? 'fetch' as const : undefined;
-        const url = (extractToolUrl(update) || '') || undefined;
-        const displayText = toolTitle.replace(/^"|"$/g, '').trim();
-        transcript.thinkingChunks.push({ kind: 'tool', text: displayText || realToolName, url, toolKind, _toolCallId: toolCallId });
-      }
-      // Update existing chunk with URL/title from tool_call_update
-      if (type === 'tool_call_update' && toolCallId) {
-        const existing = transcript.thinkingChunks.find((c) => c._toolCallId === toolCallId);
-        if (existing && existing.toolKind) {
-          const newUrl = extractToolUrl(update) || '';
-          if (newUrl && !existing.url) existing.url = newUrl;
-          const newTitle = (update.title || '').replace(/^"|"$/g, '').trim();
-          if (newTitle && newTitle !== 'undefined' && (!existing.text || existing.text === 'undefined')) {
-            existing.text = newTitle;
-          }
-        }
+      const toolResult = upsertToolCall(transcript, update);
+      if (!historical && toolResult?.isError && toolResult.summary) {
+        return {
+          toast: {
+            type: 'error',
+            message: toolResult.summary,
+          },
+        };
       }
       return null;
     }

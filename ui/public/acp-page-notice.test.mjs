@@ -661,9 +661,10 @@ test('ACP page surfaces HTML tool failures as toasts without dumping raw markup'
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  // Tool calls now go through thinkingChunks instead of upsertToolCall,
-  // so HTML error detection in tool results no longer produces toasts
-  assert.equal(toastMessages.length, 0);
+  assert.equal(toastMessages.length, 1);
+  assert.match(toastMessages[0], /502/i);
+  assert.match(toastMessages[0], /staging\.spritz\.textcortex\.com/i);
+  assert.equal(toastMessages[0].includes('<!DOCTYPE html>'), false);
 });
 
 test('ACP page surfaces HTML assistant failures as toasts without restoring markup into chat', async () => {
