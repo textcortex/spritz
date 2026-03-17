@@ -377,6 +377,9 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 			},
 			Volumes: volumes,
 		}
+		if serviceAccountName := strings.TrimSpace(spritz.Spec.ServiceAccountName); serviceAccountName != "" {
+			podSpec.ServiceAccountName = serviceAccountName
+		}
 		if shouldExposeACP(spritz) {
 			podSpec.Containers[0].ReadinessProbe = &corev1.Probe{
 				ProbeHandler: corev1.ProbeHandler{

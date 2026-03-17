@@ -74,6 +74,9 @@ func (s *server) normalizeCreateRequest(_ context.Context, principal principal, 
 	body.Name = strings.TrimSpace(body.Name)
 	body.NamePrefix = strings.TrimSpace(body.NamePrefix)
 	applyTopLevelCreateFields(&body)
+	if strings.TrimSpace(body.Spec.ServiceAccountName) != "" && !principalCanUseProvisionerFlow(principal) {
+		return nil, newCreateRequestError(http.StatusForbidden, errors.New("spec.serviceAccountName is reserved for provisioner use"))
+	}
 	if principal.isService() {
 		if err := validateProvisionerRequestSurface(&body); err != nil {
 			return nil, newCreateRequestError(http.StatusBadRequest, err)

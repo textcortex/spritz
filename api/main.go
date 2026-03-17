@@ -443,6 +443,9 @@ func (s *server) createSpritz(c echo.Context) error {
 			return writeError(c, http.StatusBadRequest, err.Error())
 		}
 	}
+	if err := s.ensureServiceAccount(c.Request().Context(), namespace, body.Spec.ServiceAccountName); err != nil {
+		return writeError(c, http.StatusInternalServerError, "failed to ensure service account")
+	}
 
 	labels := map[string]string{
 		ownerLabelKey: ownerLabelValue(owner.ID),
@@ -578,6 +581,33 @@ func (s *server) createSpritz(c echo.Context) error {
 	}
 
 	return writeError(c, http.StatusInternalServerError, "failed to generate unique spritz name")
+}
+
+// ensureServiceAccount creates the requested workspace service account on demand.
+func (s *server) ensureServiceAccount(ctx context.Context, namespace, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+
+	objectKey := client.ObjectKey{Namespace: namespace, Name: name}
+	serviceAccount := &corev1.ServiceAccount{}
+	if err := s.client.Get(ctx, objectKey, serviceAccount); err == nil {
+		return nil
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	serviceAccount = &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+	}
+	if err := s.client.Create(ctx, serviceAccount); err != nil && !apierrors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
 }
 
 func (s *server) listSpritzes(c echo.Context) error {
