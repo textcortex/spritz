@@ -83,10 +83,10 @@ describe('createACPClient', () => {
     expect(client.isReady()).toBe(true);
   });
 
-  it('does not send prompts before socket opens', () => {
+  it('does not send prompts before socket opens', async () => {
     const client = createTestClient();
     client.start(); // Don't await — socket not open yet
-    expect(() => client.sendPrompt('hello')).rejects.toThrow('not ready');
+    await expect(() => client.sendPrompt('hello')).rejects.toThrow('not ready');
   });
 
   it('sendPrompt sends JSON-RPC with correct method/params', async () => {
