@@ -1,11 +1,11 @@
-FROM node:22-alpine AS build
+FROM node:22-slim AS build
 
 WORKDIR /workspace
 
 RUN corepack enable
 
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --no-frozen-lockfile
 
 COPY . ./
 RUN pnpm build

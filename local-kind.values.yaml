@@ -1,0 +1,64 @@
+global:
+  host: console.example.com
+  ingress:
+    className: nginx
+    tls:
+      enabled: false
+      secretName: ""
+
+ui:
+  ownerId: local-user
+  presets:
+    - id: claude-code
+      name: Claude Code
+      image: spritz-claude-code:local
+      description: Claude Code via ACP
+      env:
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: anthropic-api-key
+              key: ANTHROPIC_API_KEY
+
+operator:
+  sharedMounts:
+    enabled: true
+    mounts:
+      - name: config
+        mountPath: /home/dev/.config
+        scope: owner
+        mode: snapshot
+        syncMode: poll
+    apiUrl: http://spritz-api.spritz-system:8080
+    tokenSecret:
+      name: spritz-shared-mounts-token
+      key: token
+    syncerImage: spritz-api:latest
+    syncerImagePullPolicy: IfNotPresent
+
+api:
+  sharedMounts:
+    enabled: true
+    mounts:
+      - name: config
+        mountPath: /home/dev/.config
+        scope: owner
+        mode: snapshot
+        syncMode: poll
+    prefix: spritz-shared
+    rclone:
+      remote: local
+      bucket: /tmp/spritz-shared
+      configSecret:
+        name: spritz-rclone-config
+        key: rclone.conf
+    internalTokenSecret:
+      name: spritz-api-shared-mounts-token
+      key: token
+  provisioners:
+    allowCustomImage: true
+  defaultIngress:
+    mode: ingress
+    hostTemplate: console.example.com
+    path: /w/{name}
+    className: nginx
