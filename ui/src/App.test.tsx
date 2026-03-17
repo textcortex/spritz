@@ -41,21 +41,21 @@ function renderAtRoute(path: string) {
 describe('App routing', () => {
   it('renders ChatPage at /', () => {
     renderAtRoute('/');
-    expect(screen.getByTestId('chat-page')).toBeInTheDocument();
+    expect(screen.getByTestId('chat-page')).toBeDefined();
   });
 
   it('renders CreatePage at /create', () => {
     renderAtRoute('/create');
-    expect(screen.getByTestId('create-page')).toBeInTheDocument();
+    expect(screen.getByTestId('create-page')).toBeDefined();
   });
 
   it('renders ChatPage at /chat/some-name', () => {
     renderAtRoute('/chat/some-name');
-    expect(screen.getByTestId('chat-page')).toBeInTheDocument();
+    expect(screen.getByTestId('chat-page')).toBeDefined();
   });
 
   it('renders TerminalPage at /terminal/my-spritz', () => {
     renderAtRoute('/terminal/my-spritz');
-    expect(screen.getByTestId('terminal-page')).toBeInTheDocument();
+    expect(screen.getByTestId('terminal-page')).toBeDefined();
   });
 });

@@ -21,8 +21,8 @@ describe('PresetPanel', () => {
     render(<PresetPanel presets={PRESETS} selectedIndex="" onSelect={() => {}} />);
     const select = screen.getByLabelText('Preset') as HTMLSelectElement;
     expect(select.value).toBe('custom');
-    expect(screen.getByText('Starter (spritz-starter:latest)')).toBeInTheDocument();
-    expect(screen.getByText('Devbox (spritz-devbox:latest)')).toBeInTheDocument();
+    expect(screen.getByText('Starter (spritz-starter:latest)')).toBeDefined();
+    expect(screen.getByText('Devbox (spritz-devbox:latest)')).toBeDefined();
   });
 
   it('calls onSelect with correct preset when option is selected', async () => {
@@ -43,7 +43,7 @@ describe('PresetPanel', () => {
 
   it('shows description when selected preset has one', () => {
     render(<PresetPanel presets={PRESETS} selectedIndex="0" onSelect={() => {}} />);
-    expect(screen.getByText('Minimal starter')).toBeInTheDocument();
+    expect(screen.getByText('Minimal starter')).toBeDefined();
   });
 });
 

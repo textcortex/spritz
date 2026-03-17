@@ -29,35 +29,33 @@ describe('NoticeBanner', () => {
         <NoticeBanner />
       </NoticeProvider>,
     );
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('shows error notice with correct message', async () => {
     renderWithNotice();
     await userEvent.click(screen.getByText('Show Error'));
-    expect(screen.getByRole('alert')).toBeInTheDocument();
-    expect(screen.getByText('Error occurred')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toBeDefined();
+    expect(screen.getByText('Error occurred')).toBeDefined();
   });
 
   it('shows info notice with correct message', async () => {
     renderWithNotice();
     await userEvent.click(screen.getByText('Show Info'));
-    expect(screen.getByRole('alert')).toBeInTheDocument();
-    expect(screen.getByText('Info message')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toBeDefined();
+    expect(screen.getByText('Info message')).toBeDefined();
   });
 
   it('dismiss button clears the notice', async () => {
     renderWithNotice();
     await userEvent.click(screen.getByText('Show Error'));
-    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toBeDefined();
 
-    const dismissButton = screen.getByRole('button', { name: '' });
-    // Find the X button inside the alert
     const alert = screen.getByRole('alert');
     const closeButton = alert.querySelector('button');
     expect(closeButton).not.toBeNull();
     await userEvent.click(closeButton!);
 
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });
