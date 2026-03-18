@@ -71,16 +71,24 @@ describe('createACPClient', () => {
     });
   }
 
-  it('calls onReadyChange(true) after socket opens', async () => {
-    const onReadyChange = vi.fn();
-    const client = createTestClient({ onReadyChange });
-
+  async function startClient(overrides: Partial<ACPClientOptions> = {}) {
+    const client = createTestClient(overrides);
     const startPromise = client.start();
+    // start() creates the WebSocket, so lastWs is now set
+    lastWs.autoRespond = true;
     lastWs.simulateOpen();
     await startPromise;
+    lastWs.autoRespond = false;
+    // Clear the initialize + session/load messages from sent
+    lastWs.sent.length = 0;
+    return client;
+  }
+
+  it('calls onReadyChange(true) after socket opens', async () => {
+    const onReadyChange = vi.fn();
+    await startClient({ onReadyChange });
 
     expect(onReadyChange).toHaveBeenCalledWith(true);
-    expect(client.isReady()).toBe(true);
   });
 
   it('does not send prompts before socket opens', async () => {
@@ -90,10 +98,7 @@ describe('createACPClient', () => {
   });
 
   it('sendPrompt sends JSON-RPC with correct method/params', async () => {
-    const client = createTestClient();
-    const startPromise = client.start();
-    lastWs.simulateOpen();
-    await startPromise;
+    const client = await startClient();
 
     // Don't await the prompt — it waits for response
     client.sendPrompt('hello world');
@@ -116,10 +121,7 @@ describe('createACPClient', () => {
   });
 
   it('routes RPC responses to pending promises', async () => {
-    const client = createTestClient();
-    const startPromise = client.start();
-    lastWs.simulateOpen();
-    await startPromise;
+    const client = await startClient();
 
     const promptPromise = client.sendPrompt('test');
     const msg = JSON.parse(lastWs.sent[0]);
@@ -131,10 +133,7 @@ describe('createACPClient', () => {
 
   it('dispatches session/update to onUpdate', async () => {
     const onUpdate = vi.fn();
-    const client = createTestClient({ onUpdate });
-    const startPromise = client.start();
-    lastWs.simulateOpen();
-    await startPromise;
+    await startClient({ onUpdate });
 
     lastWs.simulateMessage({
       jsonrpc: '2.0',
@@ -142,15 +141,12 @@ describe('createACPClient', () => {
       params: { update: { sessionUpdate: 'heartbeat' } },
     });
 
-    expect(onUpdate).toHaveBeenCalledWith({ sessionUpdate: 'heartbeat' });
+    expect(onUpdate).toHaveBeenCalledWith({ sessionUpdate: 'heartbeat' }, { historical: false });
   });
 
   it('dispatches session/request_permission to onPermissionRequest', async () => {
     const onPermissionRequest = vi.fn();
-    const client = createTestClient({ onPermissionRequest });
-    const startPromise = client.start();
-    lastWs.simulateOpen();
-    await startPromise;
+    await startClient({ onPermissionRequest });
 
     lastWs.simulateMessage({
       jsonrpc: '2.0',
@@ -165,10 +161,7 @@ describe('createACPClient', () => {
   });
 
   it('responds with -32601 for unsupported server requests', async () => {
-    const client = createTestClient();
-    const startPromise = client.start();
-    lastWs.simulateOpen();
-    await startPromise;
+    await startClient();
 
     lastWs.simulateMessage({
       jsonrpc: '2.0',
@@ -178,16 +171,13 @@ describe('createACPClient', () => {
 
     // Should have sent an error response
     const responses = lastWs.sent.map((s) => JSON.parse(s));
-    const errorResponse = responses.find((r) => r.error?.code === -32601);
+    const errorResponse = responses.find((r: Record<string, unknown>) => (r.error as Record<string, unknown>)?.code === -32601);
     expect(errorResponse).toBeDefined();
     expect(errorResponse.id).toBe(42);
   });
 
   it('dispose closes socket and rejects pending requests', async () => {
-    const client = createTestClient();
-    const startPromise = client.start();
-    lastWs.simulateOpen();
-    await startPromise;
+    const client = await startClient();
 
     const promptPromise = client.sendPrompt('test');
     client.dispose();

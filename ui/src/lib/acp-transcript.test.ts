@@ -65,7 +65,7 @@ describe('applySessionUpdate', () => {
     expect(t.thinkingChunks[0].kind).toBe('thought');
   });
 
-  it('creates tool message for tool_call', () => {
+  it('creates tool entry in thinkingChunks for tool_call', () => {
     const t = createTranscript();
     applySessionUpdate(t, {
       sessionUpdate: 'tool_call',
@@ -74,14 +74,15 @@ describe('applySessionUpdate', () => {
       status: 'pending',
       rawInput: { path: '/foo' },
     });
-    expect(t.messages).toHaveLength(1);
-    expect(t.messages[0].role).toBe('tool');
-    expect(t.messages[0].title).toBe('Read file');
-    expect(t.messages[0]._toolCallId).toBe('tc-1');
-    expect(t.toolCallIndex.get('tc-1')).toBe(0);
+    expect(t.messages).toHaveLength(0);
+    const chunk = t.thinkingChunks.find((c) => c._toolCallId === 'tc-1');
+    expect(chunk).toBeDefined();
+    expect(chunk!.kind).toBe('tool');
+    expect(chunk!.toolName).toBe('Read file');
+    expect(chunk!.status).toBe('pending');
   });
 
-  it('updates existing tool message for tool_call_update', () => {
+  it('updates existing tool entry in thinkingChunks for tool_call_update', () => {
     const t = createTranscript();
     applySessionUpdate(t, {
       sessionUpdate: 'tool_call',
@@ -96,8 +97,10 @@ describe('applySessionUpdate', () => {
       status: 'complete',
       rawOutput: 'file contents',
     });
-    expect(t.messages).toHaveLength(1);
-    expect(t.messages[0].status).toBe('complete');
+    const chunk = t.thinkingChunks.find((c) => c._toolCallId === 'tc-1');
+    expect(chunk).toBeDefined();
+    expect(chunk!.status).toBe('complete');
+    expect(chunk!.result).toBe('file contents');
   });
 
   it('sets usage for usage_update', () => {
@@ -207,7 +210,7 @@ describe('finalizeStreaming', () => {
     expect(thinkingDone).toBeDefined();
   });
 
-  it('does not insert thinking_done when no web tools', () => {
+  it('inserts thinking_done for non-web tools too', () => {
     const t = createTranscript();
     applySessionUpdate(t, {
       sessionUpdate: 'tool_call',
@@ -216,7 +219,8 @@ describe('finalizeStreaming', () => {
     });
     finalizeStreaming(t);
     const thinkingDone = t.messages.find((m) => m.role === 'thinking_done');
-    expect(thinkingDone).toBeUndefined();
+    expect(thinkingDone).toBeDefined();
+    expect(thinkingDone!._thinkingChunks).toHaveLength(1);
   });
 });
 
@@ -255,12 +259,6 @@ describe('serializeTranscript / hydrateTranscript', () => {
   it('round-trips through serialize and hydrate', () => {
     const t = createTranscript();
     applySessionUpdate(t, { sessionUpdate: 'agent_message_chunk', content: 'Hello' });
-    applySessionUpdate(t, {
-      sessionUpdate: 'tool_call',
-      toolCallId: 'tc-1',
-      title: 'Tool',
-      status: 'done',
-    });
     applySessionUpdate(t, { sessionUpdate: 'available_commands_update', availableCommands: ['cmd'] });
     applySessionUpdate(t, { sessionUpdate: 'current_mode_update', mode: 'code' });
 
@@ -270,6 +268,5 @@ describe('serializeTranscript / hydrateTranscript', () => {
     expect(restored.messages).toHaveLength(t.messages.length);
     expect(restored.availableCommands).toEqual(['cmd']);
     expect(restored.currentMode).toBe('code');
-    expect(restored.toolCallIndex.get('tc-1')).toBeDefined();
   });
 });

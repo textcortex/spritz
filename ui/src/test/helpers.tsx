@@ -97,11 +97,22 @@ export class FakeWebSocket {
     this.url = url;
   }
 
+  autoRespond = false;
+
   send(data: string) {
     if (this.readyState !== FakeWebSocket.OPEN) {
       throw new Error('WebSocket is not open');
     }
     this.sent.push(data);
+    if (this.autoRespond) {
+      try {
+        const msg = JSON.parse(data);
+        if (msg.id !== undefined && msg.method) {
+          // Auto-respond to RPC requests with a success result
+          queueMicrotask(() => this.simulateMessage({ jsonrpc: '2.0', id: msg.id, result: {} }));
+        }
+      } catch { /* ignore */ }
+    }
   }
 
   close() {

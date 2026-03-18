@@ -55,7 +55,7 @@ export function PermissionDialog({ entry, onRespond }: PermissionDialogProps) {
             <button
               type="button"
               className="rounded-full border border-transparent bg-black px-4 py-2 text-[13px] text-white hover:opacity-80"
-              onClick={() => entry.respond({ allow: true }) || onRespond()}
+              onClick={() => { entry.respond({ allow: true }); onRespond(); }}
             >
               Allow
             </button>
