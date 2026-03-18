@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(grep -r spritz-ui /Users/preet/Desktop/Work/Client/spritz/helm --include=*.yaml --include=*.yml)"
-    ]
-  }
-}
