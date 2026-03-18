@@ -22,6 +22,9 @@ const (
 type SpritzSpec struct {
 	// +kubebuilder:validation:Pattern="^[a-z0-9]+((\\.|_|__|-+)[a-z0-9]+)*(:[0-9]+)?(/[a-z0-9]+((\\.|_|__|-+)[a-z0-9]+)*)*(@sha256:[a-f0-9]{64}|:[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127})?$"
 	Image string          `json:"image"`
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
 	Repo  *SpritzRepo     `json:"repo,omitempty"`
 	Repos []SpritzRepo    `json:"repos,omitempty"`
 	Env   []corev1.EnvVar `json:"env,omitempty"`

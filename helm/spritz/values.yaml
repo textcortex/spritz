@@ -241,6 +241,7 @@ api:
     gatewayNamespace: spritz-system
     gatewayPort: 22
     user: spritz
+  presets: []
   resources:
     requests:
       cpu: 100m

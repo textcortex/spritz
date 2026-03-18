@@ -745,6 +745,105 @@ func TestCreateSpritzRejectsProvisionerLowLevelSpecFields(t *testing.T) {
 	}
 }
 
+func TestCreateSpritzRejectsHumanProvidedServiceAccountName(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	body := []byte(`{
+		"name":"tidal-ember",
+		"spec":{
+			"image":"example.com/spritz:latest",
+			"serviceAccountName":"zeno-agent-ag-123"
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "spec.serviceAccountName is reserved") {
+		t.Fatalf("expected reserved service account error, got %s", rec.Body.String())
+	}
+}
+
+func TestCreateSpritzAllowsProvisionerServiceAccountNameAndCreatesServiceAccount(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	body := []byte(`{
+		"presetId":"openclaw",
+		"ownerId":"user-123",
+		"idempotencyKey":"discord-service-account",
+		"spec":{
+			"serviceAccountName":"zeno-agent-ag-123"
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "zenobot")
+	req.Header.Set("X-Spritz-Principal-Type", "service")
+	req.Header.Set("X-Spritz-Principal-Scopes", "spritz.instances.create,spritz.instances.assign_owner")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response json: %v", err)
+	}
+	data, ok := payload["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected data object in response, got %#v", payload["data"])
+	}
+	spritzPayload, ok := data["spritz"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected spritz object in response, got %#v", data["spritz"])
+	}
+	metadata, ok := spritzPayload["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected spritz metadata object in response, got %#v", spritzPayload["metadata"])
+	}
+	spritzName, _ := metadata["name"].(string)
+	if spritzName == "" {
+		t.Fatalf("expected response spritz metadata.name, got %#v", metadata)
+	}
+
+	storedSpritz := &spritzv1.Spritz{}
+	if err := s.client.Get(
+		context.Background(),
+		client.ObjectKey{Name: spritzName, Namespace: s.namespace},
+		storedSpritz,
+	); err != nil {
+		t.Fatalf("expected created spritz resource: %v", err)
+	}
+	if storedSpritz.Spec.ServiceAccountName != "zeno-agent-ag-123" {
+		t.Fatalf("expected spritz spec service account name, got %q", storedSpritz.Spec.ServiceAccountName)
+	}
+
+	serviceAccount := &corev1.ServiceAccount{}
+	if err := s.client.Get(
+		context.Background(),
+		client.ObjectKey{Name: "zeno-agent-ag-123", Namespace: s.namespace},
+		serviceAccount,
+	); err != nil {
+		t.Fatalf("expected created service account: %v", err)
+	}
+}
+
 func TestCreateSpritzRejectsProvisionerUserConfigOverrides(t *testing.T) {
 	s := newCreateSpritzTestServer(t)
 	configureProvisionerTestServer(s)

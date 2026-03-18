@@ -248,7 +248,10 @@ spec:
               value: {{ .Values.acp.port | quote }}
             - name: SPRITZ_ACP_PATH
               value: {{ .Values.acp.path | quote }}
-            {{- if .Values.ui.presets }}
+            {{- if .Values.api.presets }}
+            - name: SPRITZ_PRESETS
+              value: {{ .Values.api.presets | toJson | quote }}
+            {{- else if .Values.ui.presets }}
             - name: SPRITZ_PRESETS
               value: {{ .Values.ui.presets | toJson | quote }}
             {{- end }}
