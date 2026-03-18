@@ -1,18 +1,22 @@
 {
   "compilerOptions": {
-    "allowSyntheticDefaultImports": true,
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
+    "target": "ES2023",
     "lib": ["DOM", "DOM.Iterable", "ES2023"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
     "noEmit": true,
-    "outDir": "dist",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "strict": false,
-    "target": "ES2023",
-    "types": ["node"]
+    "isolatedModules": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
-  "include": ["src/**/*", "public/*.test.mjs", "entrypoint.test.mjs", "nginx-config.test.mjs", "test-paths.mjs"],
+  "include": ["src/**/*"],
   "exclude": ["dist", "node_modules"]
 }
