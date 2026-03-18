@@ -19,11 +19,12 @@ function HashRedirect() {
     // #chat/name → /chat/name
     // #create → /create
     // #terminal/name → /terminal/name
-    const match = hash.match(/^#(chat|terminal|create)(?:\/(.*))?$/);
+    const match = hash.match(/^#(chat|terminal|create)(?:\/(.+?))?(?:\/([^/]+))?$/);
     if (match) {
       const route = match[1];
       const param = match[2] || '';
-      const path = param ? `/${route}/${param}` : `/${route}`;
+      const subParam = match[3] || '';
+      const path = subParam ? `/${route}/${param}/${subParam}` : param ? `/${route}/${param}` : `/${route}`;
       window.history.replaceState(null, '', window.location.pathname + window.location.search);
       navigate(path, { replace: true });
     }
@@ -44,6 +45,7 @@ export function App() {
               <Route path="create" element={<CreatePage />} />
               <Route path="terminal/:name" element={<TerminalPage />} />
               <Route path="chat/:name?" element={<ChatPage />} />
+              <Route path="chat/:name/:conversationId" element={<ChatPage />} />
             </Route>
           </Routes>
         </NoticeProvider>

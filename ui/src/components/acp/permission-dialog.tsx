@@ -1,7 +1,9 @@
-import { ShieldAlertIcon } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import type { PermissionEntry } from '@/types/acp';
-import { extractACPText } from '@/lib/acp-client';
+
+interface PermissionOption {
+  optionId: string;
+  name?: string;
+}
 
 interface PermissionDialogProps {
   entry: PermissionEntry;
@@ -10,11 +12,17 @@ interface PermissionDialogProps {
 
 export function PermissionDialog({ entry, onRespond }: PermissionDialogProps) {
   const params = entry.params as Record<string, unknown> | undefined;
-  const description = extractACPText(params?.description || params?.message || '');
-  const tool = String(params?.tool || params?.name || 'unknown');
+  const toolCall = params?.toolCall as Record<string, unknown> | undefined;
+  const toolTitle = String(toolCall?.title || toolCall?.toolCallId || params?.tool || params?.name || 'Tool call');
+  const options = (params?.options || []) as PermissionOption[];
 
-  const handleAllow = () => {
-    entry.respond({ allow: true });
+  const handleOption = (option: PermissionOption) => {
+    entry.respond({
+      outcome: {
+        outcome: 'selected',
+        optionId: option.optionId,
+      },
+    });
     onRespond();
   };
 
@@ -24,24 +32,42 @@ export function PermissionDialog({ entry, onRespond }: PermissionDialogProps) {
   };
 
   return (
-    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/30">
-      <div className="mb-2 flex items-center gap-2">
-        <ShieldAlertIcon className="size-4 text-amber-600" />
-        <span className="text-sm font-medium">Permission Required</span>
-      </div>
-      <p className="mb-1 text-xs text-muted-foreground">
-        Tool: <code className="rounded bg-muted px-1">{tool}</code>
-      </p>
-      {description && (
-        <p className="mb-3 text-sm">{description}</p>
-      )}
-      <div className="flex gap-2">
-        <Button size="sm" className="rounded-full" onClick={handleAllow}>
-          Allow
-        </Button>
-        <Button size="sm" variant="outline" className="rounded-full" onClick={handleDeny}>
-          Deny
-        </Button>
+    <div className="flex flex-col gap-2.5 rounded-2xl border border-[#e5e5e5] bg-[#fafafa] px-4 py-3.5 text-sm">
+      <p className="m-0 text-sm">{toolTitle} is requesting permission.</p>
+      <div className="flex flex-wrap gap-1.5">
+        {options.length > 0 ? (
+          options.map((option, i) => (
+            <button
+              key={option.optionId}
+              type="button"
+              className={
+                i === 0
+                  ? 'rounded-full border border-transparent bg-black px-4 py-2 text-[13px] text-white hover:opacity-80'
+                  : 'rounded-full border border-[#e5e5e5] bg-white px-4 py-2 text-[13px] text-black hover:border-[#ccc] hover:bg-[#f5f5f5]'
+              }
+              onClick={() => handleOption(option)}
+            >
+              {option.name || option.optionId}
+            </button>
+          ))
+        ) : (
+          <>
+            <button
+              type="button"
+              className="rounded-full border border-transparent bg-black px-4 py-2 text-[13px] text-white hover:opacity-80"
+              onClick={() => entry.respond({ allow: true }) || onRespond()}
+            >
+              Allow
+            </button>
+            <button
+              type="button"
+              className="rounded-full border border-[#e5e5e5] bg-white px-4 py-2 text-[13px] text-black hover:border-[#ccc] hover:bg-[#f5f5f5]"
+              onClick={handleDeny}
+            >
+              Deny
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

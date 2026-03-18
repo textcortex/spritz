@@ -15,6 +15,11 @@ export interface Spritz {
     url?: string;
     acp?: {
       state: string;
+      agentInfo?: {
+        name?: string;
+        title?: string;
+        version?: string;
+      };
     };
     ssh?: {
       host: string;

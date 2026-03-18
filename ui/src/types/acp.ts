@@ -2,8 +2,9 @@ export interface ACPBlock {
   type: 'text' | 'details' | 'plan' | 'tags' | 'keyValue';
   text?: string;
   title?: string;
-  entries?: Array<{ text: string; done?: boolean }>;
-  tags?: string[];
+  open?: boolean;
+  entries?: Array<{ text?: string; done?: boolean; label?: string; value?: string; content?: string; status?: string; priority?: string; name?: string }>;
+  items?: Array<{ label?: string; name?: string; title?: string }>;
   key?: string;
   value?: string;
   streaming?: boolean;
@@ -15,9 +16,12 @@ export interface ACPMessage {
   blocks: ACPBlock[];
   title?: string;
   status?: string;
+  tone?: string;
   meta?: string;
   streaming?: boolean;
   _toolCallId?: string;
+  _thinkingChunks?: ThinkingChunk[];
+  _thinkingElapsedSeconds?: number;
 }
 
 export interface ThinkingChunk {
@@ -26,12 +30,16 @@ export interface ThinkingChunk {
   url?: string;
   toolKind?: string;
   _toolCallId?: string;
+  toolName?: string;
+  status?: string;
+  input?: string;
+  result?: string;
 }
 
 export interface ACPTranscript {
   messages: ACPMessage[];
   toolCallIndex: Map<string, number>;
-  availableCommands: string[];
+  availableCommands: Array<string | { name: string; description?: string }>;
   currentMode: string;
   usage: { label: string; used: number; size: number } | null;
   thinkingChunks: ThinkingChunk[];
@@ -83,7 +91,7 @@ export interface ACPClientOptions {
   onStatus?: (text: string) => void;
   onReadyChange?: (ready: boolean) => void;
   onAgentInfo?: (info: AgentInfo | null) => void;
-  onUpdate?: (update: SessionUpdate) => void;
+  onUpdate?: (update: SessionUpdate, options?: { historical?: boolean }) => void;
   onPermissionRequest?: (entry: PermissionEntry) => void;
   onPromptStateChange?: (inFlight: boolean) => void;
   onClose?: (reason: string) => void;

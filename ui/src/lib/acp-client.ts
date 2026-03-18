@@ -64,6 +64,7 @@ export function createACPClient(options: ACPClientOptions): ACPClient {
   let nextId = 1;
   let ready = false;
   let disposed = false;
+  let replaying = false;
   const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void; method: string }>();
   const sessionId = conversation?.spec?.sessionId || '';
 
@@ -124,7 +125,7 @@ export function createACPClient(options: ACPClientOptions): ACPClient {
     // Session update notification
     if (message.method === 'session/update') {
       const params = message.params as Record<string, unknown> | undefined;
-      onUpdate?.(params?.update as Record<string, unknown>);
+      onUpdate?.(params?.update as Record<string, unknown>, { historical: replaying });
       return;
     }
 
@@ -158,13 +159,43 @@ export function createACPClient(options: ACPClientOptions): ACPClient {
 
       return new Promise<void>((resolve, reject) => {
         ws = new WebSocket(wsUrl);
-        ws.onopen = () => {
-          // No client-side bootstrap needed — server already did it.
-          // The WebSocket is a raw proxy to the workspace.
-          ready = true;
-          onReadyChange?.(true);
-          onStatus?.('Connected');
-          resolve();
+        ws.onopen = async () => {
+          try {
+            // Initialize the ACP connection on *this* WebSocket so the
+            // workspace runtime knows about us.
+            onStatus?.('Initializing…');
+            await requestRPC('initialize', {
+              protocolVersion: 1,
+              clientCapabilities: {},
+              clientInfo: { name: 'spritz-ui', title: 'Spritz UI', version: '1.0.0' },
+            });
+
+            // Load the session to replay any past conversation history.
+            // The workspace runtime streams the transcript back as
+            // session/update notifications which the onUpdate handler
+            // already processes.  Mark replaying=true so updates are
+            // tagged as historical.
+            if (sessionId) {
+              onStatus?.('Loading session…');
+              replaying = true;
+              try {
+                await requestRPC('session/load', {
+                  sessionId,
+                  cwd: conversation?.spec?.cwd || '/workspace',
+                  mcpServers: [],
+                });
+              } finally {
+                replaying = false;
+              }
+            }
+
+            ready = true;
+            onReadyChange?.(true);
+            onStatus?.('Connected');
+            resolve();
+          } catch (err) {
+            reject(err instanceof Error ? err : new Error(String(err)));
+          }
         };
         ws.onmessage = (event) => {
           try {

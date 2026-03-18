@@ -2,16 +2,22 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   PlusIcon,
-  MessageSquareIcon,
-  ChevronRightIcon,
-  PanelLeftCloseIcon,
-  PanelLeftOpenIcon,
+  PencilIcon,
   LayoutGridIcon,
+  MessageSquareIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
 import type { ConversationInfo } from '@/types/acp';
 import type { Spritz } from '@/types/spritz';
+
+/* Sidebar collapse/expand toggle icon matching the original acp-sidebar-toggle */
+function SidebarToggleIcon({ collapsed }: { collapsed: boolean }) {
+  return collapsed ? (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+  ) : (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+  );
+}
 
 interface AgentGroup {
   spritz: Spritz;
@@ -39,78 +45,88 @@ export function Sidebar({
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
-  const sidebarContent = (
-    <aside
-      className={cn(
-        'flex h-full flex-col border-r bg-[#fafafa] transition-all duration-200 dark:bg-sidebar',
-        collapsed ? 'w-14' : 'w-[260px]',
-      )}
-    >
-      {/* Header */}
-      <div className="flex items-center justify-between border-b px-3 py-3">
-        {!collapsed && (
-          <h2 className="text-sm font-semibold">Conversations</h2>
-        )}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-8 shrink-0"
-          onClick={onToggleCollapse}
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          {collapsed ? (
-            <PanelLeftOpenIcon className="size-4" />
-          ) : (
-            <PanelLeftCloseIcon className="size-4" />
-          )}
-        </Button>
-      </div>
+  const firstAgentName = agents.length > 0 ? agents[0].spritz.metadata.name : null;
 
-      {/* Agent groups */}
-      <div className="scrollbar-hidden flex-1 overflow-y-auto py-2">
-        {agents.length === 0 && !collapsed && (
-          <div className="px-4 py-6 text-center text-xs text-muted-foreground">
-            No ACP-ready workspaces found.
+  function renderSidebarInner(isCollapsed: boolean, closeMobile?: () => void) {
+    const close = closeMobile ?? (() => {});
+
+    return (
+      <aside
+        className="flex h-full min-h-0 flex-col overflow-hidden border-r border-[#e5e5e5] bg-[#fafafa] dark:border-border dark:bg-sidebar"
+      >
+        {/* Top section matching original acp-sidebar-top */}
+        <div className="flex shrink-0 flex-col gap-2 border-b border-[#e5e5e5] bg-[#fafafa] p-3 dark:border-border dark:bg-sidebar">
+          {/* Select row: just the toggle button */}
+          <div className={cn('flex items-center gap-2', isCollapsed && 'justify-center')}>
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              className="flex size-9 items-center justify-center rounded-[10px] border border-[#e5e5e5] bg-white text-black transition-colors hover:bg-[#f5f5f5] hover:border-[#ccc] dark:border-border dark:bg-muted dark:hover:bg-muted/80"
+              title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              <SidebarToggleIcon collapsed={isCollapsed} />
+            </button>
           </div>
-        )}
-        {agents.map((group) => (
-          <AgentSection
-            key={group.spritz.metadata.name}
-            group={group}
-            selectedConversationId={selectedConversationId}
-            onSelectConversation={(conv) => {
-              onSelectConversation(conv);
-              onCloseMobile();
-            }}
-            onNewConversation={onNewConversation}
-            collapsed={collapsed}
-          />
-        ))}
-      </div>
 
-      {/* Footer — back to create */}
-      <div className="border-t p-2">
-        <Link
-          to="/create"
-          onClick={onCloseMobile}
-          className={cn(
-            'flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50',
-            collapsed && 'justify-center px-0',
+          {/* Actions: New chat + Spritzes link */}
+          {!isCollapsed && (
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2.5 rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-2 text-[13px] font-medium transition-colors hover:bg-[#f5f5f5] hover:border-[#ccc] dark:border-border dark:bg-muted dark:hover:bg-muted/80"
+                onClick={() => {
+                  if (firstAgentName) onNewConversation(firstAgentName);
+                  close();
+                }}
+              >
+                <PencilIcon className="size-4 shrink-0" />
+                <span>New chat</span>
+              </button>
+              <Link
+                to="/create"
+                onClick={close}
+                className="flex w-full items-center gap-2.5 rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-2 text-[13px] font-medium text-black no-underline transition-colors hover:bg-[#f5f5f5] hover:border-[#ccc] dark:border-border dark:bg-muted dark:text-foreground dark:hover:bg-muted/80"
+              >
+                <LayoutGridIcon className="size-4 shrink-0" />
+                <span>Spritzes</span>
+              </Link>
+            </div>
           )}
-        >
-          <LayoutGridIcon className="size-3.5 shrink-0" />
-          {!collapsed && <span>Create workspace</span>}
-        </Link>
-      </div>
-    </aside>
-  );
+        </div>
+
+        {/* Thread list */}
+        <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-2">
+          {agents.length === 0 && !isCollapsed && (
+            <div className="px-3 py-6 text-center text-xs text-muted-foreground">
+              No ACP-ready workspaces found.
+            </div>
+          )}
+          {agents.map((group) => (
+            <AgentSection
+              key={group.spritz.metadata.name}
+              group={group}
+              selectedConversationId={selectedConversationId}
+              onSelectConversation={(conv) => {
+                onSelectConversation(conv);
+                close();
+              }}
+              onNewConversation={onNewConversation}
+              collapsed={isCollapsed}
+            />
+          ))}
+        </div>
+      </aside>
+    );
+  }
 
   return (
     <>
-      {/* Desktop sidebar — inline */}
-      <div className="hidden md:block">{sidebarContent}</div>
+      {/* Desktop sidebar — fills grid cell */}
+      <div className="hidden h-full min-h-0 md:block">
+        {renderSidebarInner(collapsed)}
+      </div>
 
-      {/* Mobile drawer — overlay */}
+      {/* Mobile drawer with backdrop */}
       {mobileOpen && (
         <div className="fixed inset-0 z-40 md:hidden">
           <div
@@ -118,50 +134,7 @@ export function Sidebar({
             onClick={onCloseMobile}
           />
           <div className="relative z-50 h-full w-[260px]">
-            {/* Force expanded on mobile */}
-            <aside className="flex h-full w-[260px] flex-col border-r bg-[#fafafa] dark:bg-sidebar">
-              <div className="flex items-center justify-between border-b px-3 py-3">
-                <h2 className="text-sm font-semibold">Conversations</h2>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-8"
-                  onClick={onCloseMobile}
-                >
-                  <PanelLeftCloseIcon className="size-4" />
-                </Button>
-              </div>
-              <div className="scrollbar-hidden flex-1 overflow-y-auto py-2">
-                {agents.length === 0 && (
-                  <div className="px-4 py-6 text-center text-xs text-muted-foreground">
-                    No ACP-ready workspaces found.
-                  </div>
-                )}
-                {agents.map((group) => (
-                  <AgentSection
-                    key={group.spritz.metadata.name}
-                    group={group}
-                    selectedConversationId={selectedConversationId}
-                    onSelectConversation={(conv) => {
-                      onSelectConversation(conv);
-                      onCloseMobile();
-                    }}
-                    onNewConversation={onNewConversation}
-                    collapsed={false}
-                  />
-                ))}
-              </div>
-              <div className="border-t p-2">
-                <Link
-                  to="/create"
-                  onClick={onCloseMobile}
-                  className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50"
-                >
-                  <LayoutGridIcon className="size-3.5 shrink-0" />
-                  <span>Create workspace</span>
-                </Link>
-              </div>
-            </aside>
+            {renderSidebarInner(false, onCloseMobile)}
           </div>
         </div>
       )}
@@ -188,52 +161,53 @@ function AgentSection({
   if (collapsed) {
     return (
       <div className="flex flex-col items-center gap-1 py-1">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-8"
+        <button
+          type="button"
+          className="flex size-8 items-center justify-center rounded-lg transition-colors hover:bg-[#f0f0f0] dark:hover:bg-muted/50"
           onClick={() => onNewConversation(name)}
           title={`New conversation with ${name}`}
         >
           <MessageSquareIcon className="size-3.5" />
-        </Button>
+        </button>
       </div>
     );
   }
 
   return (
-    <div className="px-2">
-      {/* Group header */}
+    <div className="flex flex-col">
+      {/* Agent header */}
       <div className="group flex items-center">
         <button
           type="button"
-          className="flex flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50"
+          className="flex flex-1 items-center gap-2 rounded-lg border-0 bg-transparent px-3 py-2 text-left text-[13px] font-medium transition-colors hover:bg-[#f0f0f0] dark:hover:bg-muted/50"
           onClick={() => setExpanded(!expanded)}
         >
-          <ChevronRightIcon
+          {/* Chevron */}
+          <span
             className={cn(
-              'size-3 shrink-0 transition-transform duration-150',
-              expanded && 'rotate-90',
+              'inline-block h-[5px] w-[5px] shrink-0 border-b-[1.5px] border-r-[1.5px] border-[#999] transition-transform duration-150',
+              expanded ? 'rotate-45' : '-rotate-45',
             )}
           />
           <span className="truncate">{name}</span>
         </button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-6 opacity-0 transition-opacity group-hover:opacity-100"
+        <button
+          type="button"
+          className="flex size-6 items-center justify-center rounded bg-transparent text-[#999] opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
           onClick={() => onNewConversation(name)}
           title="New conversation"
         >
-          <PlusIcon className="size-3" />
-        </Button>
+          <PlusIcon className="size-3.5" />
+        </button>
       </div>
 
-      {/* Conversations */}
+      {/* Conversation items */}
       {expanded && (
-        <div className="ml-1 flex flex-col gap-0.5 py-1">
+        <div className="mt-0.5 flex flex-col gap-0.5 pl-2">
           {group.conversations.length === 0 && (
-            <div className="px-3 py-1 text-[10px] text-muted-foreground">No conversations</div>
+            <div className="px-3 py-1 text-[11px] text-muted-foreground">
+              No conversations
+            </div>
           )}
           {group.conversations.map((conv) => {
             const id = conv.metadata.name;
@@ -244,13 +218,14 @@ function AgentSection({
                 key={id}
                 type="button"
                 className={cn(
-                  'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] transition-colors hover:bg-muted/50',
-                  isActive && 'bg-white font-medium dark:bg-muted',
+                  'block w-full cursor-pointer rounded-md px-3 py-1.5 text-left text-[13px] transition-colors hover:bg-[#f0f0f0] dark:hover:bg-muted/50',
+                  isActive
+                    ? 'bg-white dark:bg-muted'
+                    : 'bg-transparent',
                 )}
                 onClick={() => onSelectConversation(conv)}
               >
-                <MessageSquareIcon className="size-3 shrink-0 text-muted-foreground" />
-                <span className="truncate">{title}</span>
+                <span className="block truncate">{title}</span>
               </button>
             );
           })}

@@ -45,6 +45,153 @@ function humanizeUpdateType(type: string): string {
     .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
+/* ── HTML error detection (ported from main) ── */
+
+function decodeHtmlEntities(text: string): string {
+  return String(text || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+}
+
+function stripHtmlTags(text: string): string {
+  return decodeHtmlEntities(
+    String(text || '')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' '),
+  )
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractHtmlTagText(html: string, tagName: string): string {
+  const match = String(html || '').match(new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, 'i'));
+  return match ? stripHtmlTags(match[1]) : '';
+}
+
+function detectHtmlErrorDocument(text: string): { text: string; open: boolean; isError: boolean } | null {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  if (!/^\s*<(?:!doctype\s+html|html\b)/i.test(raw)) return null;
+
+  const title = extractHtmlTagText(raw, 'title');
+  const flattened = stripHtmlTags(raw);
+  const codeMatch = flattened.match(/\berror code\s+(\d{3})\b/i) || title.match(/\b(\d{3})\b/);
+  const hostMatches = [...flattened.matchAll(/\b([a-z0-9.-]+\.[a-z]{2,})\b/gi)].map((m) => m[1]);
+  const host =
+    hostMatches.sort((a, b) => b.length - a.length).find((v) => !/^cloudflare\.com$/i.test(v)) || '';
+  const providerMatch = flattened.match(/\b(Cloudflare|Vercel|Netlify|nginx|Apache)\b/i);
+  const summaryMatch =
+    flattened.match(/\bThe web server reported [^.]+\./i) ||
+    flattened.match(/\bThis page isn['']t working[^.]*\./i) ||
+    flattened.match(/\bBad gateway\b/i);
+
+  const parts: string[] = [];
+  if (codeMatch?.[1]) parts.push(`HTTP ${codeMatch[1]}`);
+  if (title) parts.push(title);
+  else if (summaryMatch?.[0]) parts.push(summaryMatch[0]);
+  else parts.push('HTML error response');
+  if (host) parts.push(host);
+  if (providerMatch?.[1]) parts.push(providerMatch[1]);
+
+  return { text: parts.join(' · '), open: false, isError: true };
+}
+
+function normalizeToolResultText(rawOutput: unknown): { text: string; open: boolean; isError: boolean } {
+  const text = stringifyDetails(rawOutput);
+  if (!text) return { text: '', open: true, isError: false };
+  const htmlError = detectHtmlErrorDocument(text);
+  if (htmlError) return htmlError;
+  return { text, open: true, isError: false };
+}
+
+/* ── Tool call upsert (ported from main) ── */
+
+function buildToolBlocks(
+  update: Record<string, unknown>,
+  existing: ACPTranscript['messages'][number] | null,
+) {
+  const blocks: Array<{ type: 'details'; title: string; text: string; open: boolean }> = [];
+  const inputText = stringifyDetails(update.rawInput);
+  const normalizedResult = normalizeToolResultText(update.rawOutput);
+  const resultText = normalizedResult.text;
+
+  if (inputText) {
+    blocks.push({ type: 'details', title: 'Input', text: inputText, open: false });
+  } else if (existing) {
+    const prior = existing.blocks.find((b) => b.type === 'details' && b.title === 'Input');
+    if (prior) blocks.push({ type: 'details', title: 'Input', text: prior.text || '', open: false });
+  }
+  if (resultText) {
+    blocks.push({ type: 'details', title: 'Result', text: resultText, open: normalizedResult.open });
+  } else if (existing) {
+    const prior = existing.blocks.find((b) => b.type === 'details' && b.title === 'Result');
+    if (prior) blocks.push({ type: 'details', title: 'Result', text: prior.text || '', open: prior.open !== false });
+  }
+
+  return { blocks, isError: normalizedResult.isError, summary: normalizedResult.isError ? normalizedResult.text : '' };
+}
+
+function upsertToolCall(transcript: ACPTranscript, update: Record<string, unknown>) {
+  const toolCallId = (update.toolCallId as string) || createId('tool');
+  const existingIndex = transcript.toolCallIndex.get(toolCallId);
+  const existing = existingIndex !== undefined ? transcript.messages[existingIndex] : null;
+  const normalized = buildToolBlocks(update, existing);
+  const title = ((update.title as string) || existing?.title || 'Tool call').replace(/^"|"$/g, '').trim();
+  const status =
+    normalized.isError && (!update.status || update.status === 'completed')
+      ? 'failed'
+      : (update.status as string) || existing?.status || 'pending';
+  const tone = status === 'completed' ? 'success' : status === 'failed' ? 'danger' : 'info';
+  const meta = (update.type as string) || existing?.meta || '';
+
+  const next = {
+    role: 'tool' as const,
+    title,
+    status,
+    tone,
+    meta,
+    blocks: normalized.blocks,
+    _toolCallId: toolCallId,
+  };
+
+  if (existing && existingIndex !== undefined) {
+    transcript.messages[existingIndex] = { ...existing, ...next };
+  } else {
+    transcript.toolCallIndex.set(toolCallId, transcript.messages.length);
+    transcript.messages.push({ ...next, streaming: false });
+  }
+
+  return normalized;
+}
+
+/* ── Tool kind classification (regex-based, matching main/staging) ── */
+
+function classifyToolKind(name: string): 'fetch' | 'search' | 'generic' {
+  const lower = (name || '').toLowerCase().replace(/[-_]/g, '');
+  if (/search|query|grep|glob|find/.test(lower)) return 'search';
+  if (/fetch|browse|readpage|navigate|webfetch/.test(lower)) return 'fetch';
+  return 'generic';
+}
+
+function extractToolUrl(rawInput: unknown): string {
+  let input = rawInput;
+  if (typeof input === 'string') {
+    try { input = JSON.parse(input); } catch { return (input as string).startsWith('http') ? (input as string) : ''; }
+  }
+  if (input && typeof input === 'object') {
+    const obj = input as Record<string, unknown>;
+    return String(obj.url || obj.query || obj.uri || '');
+  }
+  return '';
+}
+
+/* ── Streaming text helpers ── */
+
 function appendStreamingText(transcript: ACPTranscript, role: 'user' | 'assistant', text: string) {
   const chunk = String(text || '');
   if (!chunk) return;
@@ -58,11 +205,7 @@ function appendStreamingText(transcript: ACPTranscript, role: 'user' | 'assistan
     }
     return;
   }
-  transcript.messages.push({
-    role,
-    blocks: [{ type: 'text', text: chunk }],
-    streaming: true,
-  });
+  transcript.messages.push({ role, blocks: [{ type: 'text', text: chunk }], streaming: true });
 }
 
 function appendHistoricalText(
@@ -92,6 +235,8 @@ function appendHistoricalText(
   });
 }
 
+/* ── Main update processor ── */
+
 interface UpdateResult {
   toast?: { type: string; message: string };
   conversationTitle?: string;
@@ -107,20 +252,16 @@ export function applySessionUpdate(
 
   if (type === 'user_message_chunk') {
     const text = extractACPText(update.content);
+    // Skip internal protocol messages
     if (/^\s*<(?:command-name|command-message|command-args|local-command-stdout)\b/i.test(text)) return null;
+    if (/^\s*\[Request\s+(interrupted|cancelled|canceled)\b/i.test(text)) return null;
+
+    const htmlError = detectHtmlErrorDocument(text);
+    if (htmlError) return { toast: { type: 'error', message: htmlError.text } };
 
     // Bake historical thinking
     if (historical && transcript.thinkingChunks.length > 0) {
-      const hadWebTools = transcript.thinkingChunks.some((c) => c.kind === 'tool' && c.toolKind);
-      if (hadWebTools) {
-        const insertIdx = transcript.thinkingInsertIndex || transcript.messages.length;
-        transcript.messages.splice(insertIdx, 0, {
-          role: 'thinking_done',
-          blocks: [],
-          _toolCallId: undefined,
-        });
-        rebuildToolCallIndex(transcript);
-      }
+      bakeThinkingDone(transcript);
     }
 
     transcript.thinkingChunks = [];
@@ -157,6 +298,11 @@ export function applySessionUpdate(
   if (type === 'agent_message_chunk') {
     const text = extractACPText(update.content);
     if (/^\s*<(?:command-name|command-message|command-args|local-command-stdout)\b/i.test(text)) return null;
+    if (/^\s*\[Request\s+(interrupted|cancelled|canceled)\b/i.test(text)) return null;
+
+    const htmlError = detectHtmlErrorDocument(text);
+    if (htmlError) return { toast: { type: 'error', message: htmlError.text } };
+
     if (historical) {
       appendHistoricalText(transcript, 'assistant', text, (update.historyMessageId || update.messageId) as string);
     } else {
@@ -166,64 +312,60 @@ export function applySessionUpdate(
   }
 
   if (type === 'tool_call' || type === 'tool_call_update') {
-    const toolCallId = (update.toolCallId as string) || '';
+    // Start thinking session if needed
     if (type === 'tool_call') {
       if (!transcript.thinkingActive && !transcript.thinkingChunks.length) {
         transcript.thinkingInsertIndex = transcript.messages.length;
         if (!historical) transcript.thinkingStartTime = transcript.thinkingStartTime || Date.now();
       }
       if (!historical) transcript.thinkingActive = true;
-      const meta = update._meta as Record<string, Record<string, string>> | undefined;
-      const realToolName = (meta?.claudeCode?.toolName || '').toLowerCase();
-      const isSearch = realToolName === 'websearch';
-      const isFetch = realToolName === 'webfetch';
-      const toolKind = isSearch ? 'search' : isFetch ? 'fetch' : undefined;
-      const title = ((update.title as string) || '').replace(/^"|"$/g, '').trim();
+    }
+
+    // Check for errors in tool result (for toast only — don't add to messages)
+    const normalizedResult = normalizeToolResultText(update.rawOutput);
+
+    // Add to thinking chunks with full metadata (tools render inside the thinking timeline only)
+    const toolCallId = (update.toolCallId as string) || createId('tool');
+    const toolName = String(update.name || update.title || update.type || 'Tool call');
+    const status = (update.status as string) || 'pending';
+    const inputText = stringifyDetails(update.rawInput);
+    const resultText = normalizedResult.text;
+    const url = extractToolUrl(update.rawInput);
+    const toolKind = classifyToolKind(toolName);
+
+    // Upsert into thinkingChunks (matching main branch)
+    const existingChunk = transcript.thinkingChunks.find((c) => c._toolCallId === toolCallId);
+    if (existingChunk) {
+      existingChunk.status = status;
+      if (update.name || update.title) existingChunk.toolName = toolName;
+      if (inputText) existingChunk.input = inputText;
+      if (resultText) existingChunk.result = resultText;
+      if (url) existingChunk.url = url;
+      existingChunk.text = url || existingChunk.toolName || toolName;
+    } else {
       transcript.thinkingChunks.push({
         kind: 'tool',
-        text: title || realToolName,
         toolKind,
         _toolCallId: toolCallId,
+        toolName,
+        status,
+        text: url || toolName,
+        url: url || undefined,
+        input: inputText || undefined,
+        result: resultText || undefined,
       });
-
-      // Also add as tool message
-      const resultText = stringifyDetails(update.rawOutput);
-      const inputText = stringifyDetails(update.rawInput);
-      transcript.messages.push({
-        role: 'tool',
-        title: (update.title as string) || 'Tool call',
-        status: (update.status as string) || 'pending',
-        blocks: [
-          ...(inputText ? [{ type: 'details' as const, title: 'Input', text: inputText }] : []),
-          ...(resultText ? [{ type: 'details' as const, title: 'Result', text: resultText }] : []),
-        ],
-        _toolCallId: toolCallId,
-      });
-      transcript.toolCallIndex.set(toolCallId, transcript.messages.length - 1);
     }
-    if (type === 'tool_call_update' && toolCallId) {
-      const existingIdx = transcript.toolCallIndex.get(toolCallId);
-      if (existingIdx !== undefined) {
-        const existing = transcript.messages[existingIdx];
-        if (update.title) existing.title = (update.title as string).replace(/^"|"$/g, '').trim();
-        if (update.status) existing.status = update.status as string;
-        const resultText = stringifyDetails(update.rawOutput);
-        if (resultText) {
-          const resultBlock = existing.blocks.find((b) => b.title === 'Result');
-          if (resultBlock) {
-            resultBlock.text = resultText;
-          } else {
-            existing.blocks.push({ type: 'details', title: 'Result', text: resultText });
-          }
-        }
-      }
+
+    // Return error toast if tool result had an error
+    if (!historical && normalizedResult?.isError && normalizedResult.text) {
+      return { toast: { type: 'error', message: normalizedResult.text } };
     }
     return null;
   }
 
   if (type === 'available_commands_update') {
     transcript.availableCommands = Array.isArray(update.availableCommands)
-      ? (update.availableCommands as string[])
+      ? (update.availableCommands as Array<string | { name: string; description?: string }>)
       : [];
     return null;
   }
@@ -241,21 +383,38 @@ export function applySessionUpdate(
   }
 
   if (type === 'session_info_update') {
-    return {
-      conversationTitle: (update?.title as string) || '',
-    };
+    const infoObj = (update?.sessionInfo || {}) as Record<string, unknown>;
+    return { conversationTitle: (update?.title as string) || (infoObj.title as string) || '' };
   }
 
   if (type === 'plan') {
+    const rawEntries = Array.isArray(update.entries) ? update.entries : [];
+    // Normalize entries: main branch uses entry.content, not entry.text
+    const entries = (rawEntries as Array<Record<string, unknown>>).map((e) => ({
+      text: String(e.content || e.text || e.status || 'Pending step'),
+      done: Boolean(e.done || e.status === 'completed'),
+    }));
+    // Skip empty plans
+    if (entries.length === 0) return null;
     transcript.messages.push({
       role: 'plan',
       title: 'Plan',
+      blocks: [{ type: 'plan', entries }],
+    });
+    return null;
+  }
+
+  if (type === 'config_option_update') {
+    transcript.messages.push({
+      role: 'system',
+      title: 'Setting updated',
+      tone: 'muted',
       blocks: [
         {
-          type: 'plan',
-          entries: Array.isArray(update.entries)
-            ? (update.entries as Array<{ text: string; done?: boolean }>)
-            : [],
+          type: 'keyValue',
+          entries: [
+            { label: String((update as Record<string, unknown>).key || ''), value: String((update as Record<string, unknown>).value || '') },
+          ],
         },
       ],
     });
@@ -274,6 +433,21 @@ export function applySessionUpdate(
   return null;
 }
 
+/* ── Bake thinking chunks into a thinking_done message ── */
+
+function bakeThinkingDone(transcript: ACPTranscript) {
+  const insertIdx = transcript.thinkingInsertIndex || transcript.messages.length;
+  const elapsed = transcript.thinkingElapsedSeconds ||
+    (transcript.thinkingStartTime ? Math.round((Date.now() - transcript.thinkingStartTime) / 1000) : 0);
+  transcript.messages.splice(insertIdx, 0, {
+    role: 'thinking_done',
+    blocks: [],
+    _thinkingChunks: [...transcript.thinkingChunks],
+    _thinkingElapsedSeconds: elapsed,
+  });
+  rebuildToolCallIndex(transcript);
+}
+
 export function finalizeStreaming(transcript: ACPTranscript): void {
   transcript.messages.forEach((message) => {
     if (message.role === 'assistant' || message.role === 'user') {
@@ -285,16 +459,38 @@ export function finalizeStreaming(transcript: ACPTranscript): void {
   }
   transcript.thinkingActive = false;
 
-  const hasWebTools = transcript.thinkingChunks.some((c) => c.kind === 'tool' && c.toolKind);
-  if (transcript.thinkingChunks.length > 0 && hasWebTools) {
-    const insertIdx = transcript.thinkingInsertIndex || transcript.messages.length;
-    transcript.messages.splice(insertIdx, 0, {
-      role: 'thinking_done',
-      blocks: [],
-    });
-    rebuildToolCallIndex(transcript);
+  if (transcript.thinkingChunks.length > 0) {
+    bakeThinkingDone(transcript);
   }
   transcript.thinkingChunks = [];
+  transcript.thinkingInsertIndex = 0;
+  transcript.thinkingStartTime = 0;
+  transcript.thinkingElapsedSeconds = 0;
+}
+
+/** Bake any leftover thinking chunks after history replay completes. */
+export function finalizeHistoricalThinking(transcript: ACPTranscript): void {
+  if (transcript.thinkingChunks.length > 0) {
+    bakeThinkingDone(transcript);
+  }
+  transcript.thinkingChunks = [];
+  transcript.thinkingActive = false;
+  transcript.thinkingInsertIndex = 0;
+  transcript.thinkingStartTime = 0;
+  transcript.thinkingElapsedSeconds = 0;
+}
+
+/** Returns true if the update carries actual transcript content (messages, tools, etc.)
+ *  as opposed to metadata-only updates (commands, mode, usage, session info). */
+export function isTranscriptBearingUpdate(update: Record<string, unknown>): boolean {
+  const type = (update?.sessionUpdate as string) || '';
+  return ![
+    '',
+    'available_commands_update',
+    'current_mode_update',
+    'usage_update',
+    'session_info_update',
+  ].includes(type);
 }
 
 export function getPreviewText(transcript: ACPTranscript): string {
