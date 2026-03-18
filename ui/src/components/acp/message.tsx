@@ -6,11 +6,11 @@ import type { ACPMessage, ACPBlock } from '@/types/acp';
 
 /* ── Block renderer matching main's renderBlock() ── */
 
-function BlockRenderer({ block }: { block: ACPBlock }) {
+function BlockRenderer({ block, streaming }: { block: ACPBlock; streaming?: boolean }) {
   if (block.type === 'text') {
     return (
       <div className="acp-block">
-        <Markdown content={block.text || ''} />
+        <Markdown content={block.text || ''} streaming={streaming} />
       </div>
     );
   }
@@ -140,7 +140,7 @@ function AssistantMessage({ message }: { message: ACPMessage }) {
       <div className="py-1 px-0">
         <div className="space-y-3">
           {message.blocks.map((block, i) => (
-            <BlockRenderer key={i} block={block} />
+            <BlockRenderer key={i} block={block} streaming={message.streaming} />
           ))}
         </div>
         {message.streaming && (
@@ -178,7 +178,7 @@ function EventCard({ message }: { message: ACPMessage }) {
         {/* Body: blocks */}
         <div className="flex flex-col gap-3">
           {message.blocks.map((block, i) => (
-            <BlockRenderer key={i} block={block} />
+            <BlockRenderer key={i} block={block} streaming={message.streaming} />
           ))}
         </div>
         {message.streaming && (
