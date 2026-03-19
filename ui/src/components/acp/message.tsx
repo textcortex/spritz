@@ -24,6 +24,7 @@ function BlockRenderer({ block, streaming }: { block: ACPBlock; streaming?: bool
       <ol className="m-0 flex list-decimal flex-col gap-1 pl-5 text-sm">
         {(block.entries || []).map((entry, i) => (
           <li key={i} className={entry.done ? 'text-[#999] line-through' : ''}>
+            {entry.done && <span className="sr-only">(completed) </span>}
             {entry.text}
           </li>
         ))}
@@ -79,10 +80,11 @@ function DetailsBlock({ title, text, defaultOpen }: { title: string; text: strin
     <div className="flex flex-col gap-1.5">
       <button
         type="button"
+        aria-expanded={open}
         className="flex items-center gap-1.5 border-none bg-transparent p-0 text-left text-[13px] font-semibold cursor-pointer hover:opacity-70"
         onClick={() => setOpen(!open)}
       >
-        <span className={cn('inline-block text-[10px] transition-transform will-change-transform', open ? 'rotate-90' : 'rotate-0')}>
+        <span aria-hidden="true" className={cn('inline-block text-[10px] transition-transform will-change-transform', open ? 'rotate-90' : 'rotate-0')}>
           &#9654;
         </span>
         {title}
@@ -120,7 +122,7 @@ function StatusPill({ status, tone }: { status: string; tone?: string }) {
 
 function UserBubble({ message }: { message: ACPMessage }) {
   return (
-    <article className="flex flex-col gap-2 max-w-[min(820px,86%)] self-end">
+    <article aria-label="Your message" className="flex flex-col gap-2 max-w-[min(820px,86%)] self-end">
       <div className="rounded-[20px] rounded-br-[6px] border border-transparent bg-black px-4 py-2 text-white">
         {message.blocks.map((block, i) => (
           <BlockRenderer key={i} block={block} />
@@ -136,7 +138,7 @@ function UserBubble({ message }: { message: ACPMessage }) {
 
 function AssistantMessage({ message }: { message: ACPMessage }) {
   return (
-    <article className="flex flex-col gap-2 self-stretch w-full">
+    <article aria-label="Assistant message" className="flex flex-col gap-2 self-stretch w-full">
       <div className="py-1 px-0">
         <div className="flex flex-col gap-3">
           {message.blocks.map((block, i) => (
@@ -144,7 +146,7 @@ function AssistantMessage({ message }: { message: ACPMessage }) {
           ))}
         </div>
         {message.streaming && (
-          <span className="mt-1 inline-block size-1.5 animate-pulse will-change-[opacity] rounded-full bg-black" />
+          <span role="status" aria-label="Generating response" className="mt-1 inline-block size-1.5 animate-pulse will-change-[opacity] rounded-full bg-black" />
         )}
       </div>
     </article>
@@ -156,8 +158,9 @@ function AssistantMessage({ message }: { message: ACPMessage }) {
 /* Main: .acp-event-card { border-radius: 20px; padding: 12px 16px; border: 1px solid #f0f0f0; background: #fafafa; font-size: 13px } */
 
 function EventCard({ message }: { message: ACPMessage }) {
+  const label = message.title || (message.role === 'tool' ? 'Tool result' : message.role === 'plan' ? 'Plan' : 'System update');
   return (
-    <article className="flex flex-col gap-2 self-start max-w-[min(820px,86%)]">
+    <article aria-label={label} className="flex flex-col gap-2 self-start max-w-[min(820px,86%)]">
       <div className="flex flex-col gap-1.5 rounded-[20px] border border-[#f0f0f0] bg-[#fafafa] px-4 py-3 text-[13px]">
         {/* Header: title + status pill */}
         {(message.title || message.status) && (
@@ -182,7 +185,7 @@ function EventCard({ message }: { message: ACPMessage }) {
           ))}
         </div>
         {message.streaming && (
-          <span className="mt-2 inline-block size-1.5 animate-pulse will-change-[opacity] rounded-full bg-[#3782ff]" />
+          <span role="status" aria-label="Processing" className="mt-2 inline-block size-1.5 animate-pulse will-change-[opacity] rounded-full bg-[#3782ff]" />
         )}
       </div>
     </article>

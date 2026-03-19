@@ -233,10 +233,12 @@ export function CreateForm({ onCreated }: CreateFormProps) {
           type="button"
           variant="ghost"
           size="sm"
+          aria-expanded={advancedOpen}
           className="gap-1 text-muted-foreground"
           onClick={() => setAdvancedOpen(!advancedOpen)}
         >
           <ChevronDownIcon
+            aria-hidden="true"
             className={`size-4 transition-transform will-change-transform ${advancedOpen ? 'rotate-180' : ''}`}
           />
           Advanced options
@@ -326,12 +328,12 @@ export function CreateForm({ onCreated }: CreateFormProps) {
         </div>
       </div>
 
-      <Button type="submit" disabled={submitting} className="w-fit rounded-full h-11 cursor-pointer px-4">
+      <Button type="submit" disabled={submitting} aria-busy={submitting} className="w-fit rounded-full h-11 cursor-pointer px-4">
         {submitting ? (
           'Creating…'
         ) : (
           <>
-            <PlusIcon className="size-4" />
+            <PlusIcon aria-hidden="true" className="size-4" />
             Create Spritz
           </>
         )}

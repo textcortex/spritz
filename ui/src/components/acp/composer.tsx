@@ -74,6 +74,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             value={text}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
+            aria-label="Message input"
             placeholder={promptInFlight ? 'Waiting for response\u2026' : 'Message the agent\u2026'}
             disabled={disabled || promptInFlight}
             rows={1}
@@ -85,14 +86,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 render={
                   <button
                     type="button"
+                    aria-label={promptInFlight ? 'Stop response' : 'Send message'}
                     className="flex size-9 items-center justify-center rounded-full border-none bg-black p-0 text-white transition-opacity will-change-[opacity] hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
                     onClick={promptInFlight ? onCancel : handleSubmit}
                     disabled={!promptInFlight && (disabled || !text.trim())}
                   >
                     {promptInFlight ? (
-                      <SquareIcon className="size-3.5 fill-current" />
+                      <SquareIcon aria-hidden="true" className="size-3.5 fill-current" />
                     ) : (
-                      <SendIcon className="size-4" />
+                      <SendIcon aria-hidden="true" className="size-4" />
                     )}
                   </button>
                 }
@@ -104,7 +106,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
         {/* Status row — below composer, matching original acp-status-row */}
         <div className="grid grid-cols-[auto_auto_1fr] items-center gap-3 px-3 text-[13px] sm:px-0">
-          <span className="inline-flex items-center gap-2 opacity-70">
+          <span role="status" aria-live="polite" className="inline-flex items-center gap-2 opacity-70">
             {status && !isTerminal && <GridLoader />}
             {status && <span>{status}</span>}
           </span>
@@ -121,7 +123,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 /** 3x3 grid loader matching the old .grid-loader */
 function GridLoader() {
   return (
-    <span className="inline-grid shrink-0 grid-cols-[repeat(3,4px)] grid-rows-[repeat(3,4px)] gap-[1.5px]">
+    <span role="img" aria-label="Loading" className="inline-grid shrink-0 grid-cols-[repeat(3,4px)] grid-rows-[repeat(3,4px)] gap-[1.5px]">
       {Array.from({ length: 9 }).map((_, i) => (
         <span
           key={i}

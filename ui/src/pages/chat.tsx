@@ -538,10 +538,12 @@ export function ChatPage() {
         <div className="shrink-0 border-b border-[#e5e5e5] bg-[#fafafa] px-5 py-3 dark:border-border dark:bg-muted/10">
           <div className="flex items-center justify-between gap-3">
             <button
+              type="button"
+              aria-label="Open sidebar menu"
               className="inline-flex size-9 items-center justify-center rounded-[10px] border border-[#e5e5e5] bg-white text-black transition-colors hover:bg-[#f5f5f5] hover:border-[#ccc] md:hidden dark:border-border dark:bg-background dark:text-foreground"
               onClick={() => setMobileMenuOpen(true)}
             >
-              <MenuIcon className="size-4" />
+              <MenuIcon aria-hidden="true" className="size-4" />
             </button>
             <div className="min-w-0 flex-1">
               <h2 className="m-0 truncate text-sm font-medium">
@@ -563,12 +565,13 @@ export function ChatPage() {
                   render={
                     <button
                       type="button"
+                      aria-label="Refresh conversations"
                       className="inline-flex size-9 items-center justify-center rounded-[10px] border border-[#e5e5e5] bg-white text-black transition-colors hover:bg-[#f5f5f5] hover:border-[#ccc] dark:border-border dark:bg-background dark:text-foreground"
                       onClick={() => fetchAgents()}
                     />
                   }
                 >
-                  <RotateCwIcon className="size-4" />
+                  <RotateCwIcon aria-hidden="true" className="size-4" />
                 </TooltipTrigger>
                 <TooltipContent>Refresh</TooltipContent>
               </Tooltip>
@@ -580,11 +583,12 @@ export function ChatPage() {
                         href={`/terminal/${encodeURIComponent(name)}`}
                         target="_blank"
                         rel="noopener noreferrer"
+                        aria-label="Open instance in new tab"
                         className="inline-flex size-9 items-center justify-center rounded-[10px] border border-[#e5e5e5] bg-white text-black transition-colors hover:bg-[#f5f5f5] hover:border-[#ccc] dark:border-border dark:bg-background dark:text-foreground"
                       />
                     }
                   >
-                    <ExternalLinkIcon className="size-4" />
+                    <ExternalLinkIcon aria-hidden="true" className="size-4" />
                   </TooltipTrigger>
                   <TooltipContent>Open instance</TooltipContent>
                 </Tooltip>
@@ -615,7 +619,7 @@ export function ChatPage() {
         </div>
 
         {/* Messages area */}
-        <div className="flex flex-1 flex-col overflow-auto px-6 pt-7 pb-3" style={{ scrollbarGutter: 'stable' }}>
+        <div role="log" aria-label="Chat messages" aria-live="polite" className="flex flex-1 flex-col overflow-auto px-6 pt-7 pb-3" style={{ scrollbarGutter: 'stable' }}>
           {!selectedConversation ? (
             <div className="m-auto max-w-[420px] text-center text-sm opacity-70">
               Select a conversation or create a new instance.
