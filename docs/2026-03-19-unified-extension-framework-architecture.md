@@ -1,31 +1,38 @@
 ---
 date: 2026-03-19
 author: Onur Solmaz <onur@textcortex.com>
-title: Unified Extension Framework Architecture
+title: Unified Extension and Policy Framework Architecture
 tags: [spritz, api, extensions, auth, provisioning, architecture]
 ---
 
 ## Overview
 
-This document defines a unified extension framework for Spritz.
+This document defines a unified extension and policy framework for Spritz.
 
 The goal is to stop adding new feature-specific integration surfaces for
 provisioning, auth, login metadata, identity resolution, and future linking
-workflows. Instead, Spritz should expose one standard extension model that can
-be configured by deployments and invoked natively by the API.
+workflows. Instead, Spritz should expose one durable control-plane model that
+combines:
+
+- extensions for resolving facts,
+- workspace classes for defining behavior,
+- a policy engine for enforcing intent,
+- a stable lifecycle for turning requests into concrete resources.
 
 This keeps `spz`, the UI, and any service-principal caller on the same control
 plane path:
 
 - clients send a normal Spritz request,
 - Spritz resolves any configured extension steps,
+- Spritz evaluates class-driven policy,
 - Spritz applies validated mutations,
-- Spritz creates or updates the canonical resource.
+- Spritz materializes the canonical resource.
 
-The extension framework must remain portable and deployment-agnostic. Spritz
-must define the standard, while deployment-owned systems remain responsible for
-business-specific decisions such as account linking, runtime binding, or
-product-specific policy evaluation.
+The framework must remain portable and deployment-agnostic. Spritz must define
+the standard, while deployment-owned systems remain responsible for
+business-specific decisions such as account linking, runtime binding, or other
+resolved facts. Spritz itself should remain the place where permissions,
+lifecycle, collaboration, and credential rules are enforced.
 
 ## Problem Statement
 
@@ -51,14 +58,17 @@ That creates four problems:
 
 ## Goals
 
-- Define one standard extension model for API-driven integration behavior.
+- Define one standard model for API-driven integration behavior and policy.
 - Keep `spz` as the thin canonical client for all provisioning flows.
 - Let create-time preset-specific logic run natively inside Spritz.
 - Reuse the same extension model for owner resolution, runtime binding, login
   metadata, and future identity-linking flows.
-- Keep extension logic deployment-owned while keeping Spritz portable.
+- Make workspace behavior durable through first-class workspace classes instead
+  of image-name checks or one-off booleans.
+- Keep resolved facts deployment-owned while keeping policy enforcement inside
+  Spritz.
 - Standardize config, request/response shape, logging, timeout handling,
-  idempotency, and failure mapping.
+  idempotency, access verbs, and failure mapping.
 
 ## Non-goals
 
@@ -134,6 +144,37 @@ If an extension changes the effective create request, that resolved result must
 be included in idempotency and replay logic. Otherwise identical idempotency
 keys could replay into different runtime bindings.
 
+## Canonical Control-Plane Model
+
+The durable Spritz model should be:
+
+- `Principal`
+- `Intent`
+- `Resource`
+- `Preset`
+- `WorkspaceClass`
+- `ResolvedFacts`
+- `PolicyDecision`
+- `Materialization`
+
+Meaning:
+
+- `Principal`: who is asking
+- `Intent`: what they are trying to do, such as create, read, use, share, or
+  manage
+- `Resource`: the workspace or instance being acted on
+- `Preset`: the user-facing entry point and default bundle
+- `WorkspaceClass`: the durable behavioral class of the workspace
+- `ResolvedFacts`: canonical facts returned by extensions or internal
+  resolution
+- `PolicyDecision`: the allow, deny, or approval-required decision plus the
+  derived access and runtime rules
+- `Materialization`: the final spec, ACL, credentials, lifecycle, and metadata
+  written by Spritz
+
+This is the abstraction that should survive feature churn. Extensions are one
+part of it, not the whole story.
+
 ## Unified Model
 
 Spritz should introduce one extension registry in the API layer.
@@ -154,11 +195,39 @@ Spritz should also introduce a first-class policy layer for workspace behavior.
 The unified model should therefore have two parts:
 
 - extensions resolve facts and provide bounded mutations,
-- policy profiles decide how a workspace may be created, discovered, shared,
-  accessed, credentialed, and operated.
+- workspace classes and policy decide how a workspace may be created,
+  discovered, shared, accessed, credentialed, and operated.
 
 Both parts are needed. Extensions alone are not enough for long-term security
 or collaboration requirements.
+
+## Stable Lifecycle Phases
+
+Spritz should standardize a small set of lifecycle phases:
+
+- `resolve`
+- `authorize`
+- `materialize`
+- `notify`
+
+### Resolve
+
+Gather or normalize facts needed to make a decision.
+
+### Authorize
+
+Evaluate the request against the workspace class and resolved facts.
+
+### Materialize
+
+Write the canonical resource state.
+
+### Notify
+
+Emit post-decision or post-create hooks.
+
+This phase model is more durable than creating a separate subsystem for each
+new feature.
 
 ## Extension Kinds
 
@@ -197,13 +266,13 @@ Typical uses:
 Resolvers are the most important initial kind because they cover the existing
 external owner flow and the create-time preset binding problem.
 
-## Policy Profiles
+## Workspace Classes
 
-Spritz should define a first-class policy profile or runtime class concept for
-workspace behavior.
+Spritz should define a first-class `WorkspaceClass` concept for workspace
+behavior.
 
-A policy profile is attached to a preset and governs how a created workspace is
-meant to behave.
+A workspace class is attached to a preset and governs how a created workspace
+is meant to behave.
 
 Examples:
 
@@ -212,23 +281,28 @@ Examples:
 - `privileged-dev`
 - `restricted-runtime`
 
-Each profile should be versioned and treated as part of the canonical workspace
+Each class should be versioned and treated as part of the canonical workspace
 state.
 
 Suggested stored fields on each workspace:
 
 - owner
-- profile ID
-- profile version
+- workspace class ID
+- workspace class version
 - resolved extension context
 - materialized access control entries
 
 This gives Spritz a portable way to support very different workspace types
 without encoding behavior into image names or one-off feature flags.
 
+`Policy profile` may still exist as an internal implementation term, but the
+public architectural concept should be `WorkspaceClass`. It is a more durable
+control-plane abstraction and better matches other long-lived infrastructure
+patterns.
+
 ## Policy Facets
 
-Each policy profile should define a small, stable set of behavior facets.
+Each workspace class should define a small, stable set of behavior facets.
 
 Suggested facets:
 
@@ -415,7 +489,7 @@ Not allowed initially:
 - arbitrary image rewrite unless explicitly allowed by preset policy,
 - arbitrary owner change after create,
 - arbitrary post-create permission grants,
-- arbitrary credential attachment that bypasses the workspace policy profile.
+- arbitrary credential attachment that bypasses the workspace class policy.
 
 Mutation allowlists should be enforced in code per operation.
 
@@ -425,10 +499,10 @@ Security behavior should not be keyed directly off image names.
 
 Instead:
 
-- presets should reference policy profiles,
-- policy profiles should define allowed behavior,
-- profiles may optionally restrict which images are valid for that preset or
-  profile.
+- presets should reference workspace classes,
+- workspace classes should define allowed behavior,
+- classes may optionally restrict which images are valid for that preset or
+  class.
 
 This matters because two workspaces may use similar runtime images but require
 very different collaboration and credential rules.
@@ -455,7 +529,7 @@ Example intent:
 - restricted runtime credentials,
 - collaboration disabled or narrowly scoped.
 
-This is a typical fit for a `personal-agent` policy profile.
+This is a typical fit for a `personal-agent` workspace class.
 
 ### Internal collaborative developer runtime
 
@@ -466,7 +540,7 @@ Example intent:
 - readable by a broader internal audience,
 - usable by an explicitly allowed collaboration group,
 - simultaneous interaction allowed,
-- privileged credentials allowed only through this policy profile,
+- privileged credentials allowed only through this workspace class,
 - stronger audit and session controls.
 
 This is a typical fit for a `privileged-dev` or `internal-collab` policy
@@ -504,7 +578,7 @@ The create resolver should return facts such as:
 - classification annotations.
 
 It should not directly decide final permissions. Those should still be derived
-from the selected policy profile.
+from the selected workspace class.
 
 ## CLI Contract
 
@@ -558,10 +632,10 @@ This follows the same principle already used for external owner resolution.
 
 Additional policy requirements:
 
-- the selected policy profile must be part of the canonical request,
+- the selected workspace class must be part of the canonical request,
 - create must fail if required profile inputs or required resolver outputs are
   missing,
-- credentials attached to a workspace must be allowed by the policy profile,
+- credentials attached to a workspace must be allowed by the workspace class,
 - discovery and collaboration rules must be enforced by Spritz even when a
   resolver suggests additional context,
 - post-create reads and interactions must use the same owner plus ACL plus
@@ -614,11 +688,11 @@ Suggested metrics:
 - add `preset.create.resolve`,
 - allow presets to require resolver-produced fields before create succeeds.
 
-### Phase 4: Add policy profiles
+### Phase 4: Add workspace classes
 
-- add first-class policy profile configuration,
-- let presets reference policy profiles,
-- store profile ID and version on created workspaces,
+- add first-class workspace class configuration,
+- let presets reference workspace classes,
+- store workspace class ID and version on created workspaces,
 - enforce access verbs, discovery, credential policy, and lifecycle through the
   profile engine.
 
