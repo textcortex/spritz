@@ -109,7 +109,6 @@ func TestGetRuntimeBindingRejectsMissingServiceAccountName(t *testing.T) {
 		t.Fatalf("expected missing serviceAccountName to return 422, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
-
 func TestGetRuntimeBindingRejectsIncompleteBinding(t *testing.T) {
 	spritz := &spritzv1.Spritz{
 		ObjectMeta: metav1.ObjectMeta{
@@ -169,7 +168,6 @@ func TestGetRuntimeBindingRejectsNamespaceOutsideServerScope(t *testing.T) {
 		t.Fatalf("expected namespace mismatch to return 403, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
-
 func TestGetRuntimeBindingRouteIsNotRegisteredWithoutInternalAuth(t *testing.T) {
 	s := &server{
 		auth:         authConfig{mode: authModeNone},
