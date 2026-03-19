@@ -166,6 +166,8 @@ EOF
     export ANTHROPIC_BASE_URL="http://127.0.0.1:8091"
     export SPRITZ_OPENCLAW_SERVER_BIN="${test_dir}/bin/acp-server"
     export SPRITZ_OPENCLAW_MAIN_ENTRYPOINT="${test_dir}/bin/main-entrypoint"
+    mkdir -p "$(dirname "${HOME}/.openclaw/agents/main/agent/auth-profiles.json")"
+    printf '{"profiles":{"anthropic:default":{"type":"api_key"}}}\n' > "${HOME}/.openclaw/agents/main/agent/auth-profiles.json"
     bash "${entrypoint}" true
   )
 

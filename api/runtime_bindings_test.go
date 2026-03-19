@@ -81,7 +81,7 @@ func TestGetRuntimeBindingReturnsCanonicalFacts(t *testing.T) {
 	}
 }
 
-func TestGetRuntimeBindingUsesDefaultServiceAccountWhenUnset(t *testing.T) {
+func TestGetRuntimeBindingRejectsMissingServiceAccountName(t *testing.T) {
 	spritz := &spritzv1.Spritz{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "openclaw-morning-sky",
@@ -105,11 +105,8 @@ func TestGetRuntimeBindingUsesDefaultServiceAccountWhenUnset(t *testing.T) {
 
 	e.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected runtime binding lookup to return 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), `"serviceAccountName":"default"`) {
-		t.Fatalf("expected response body to use default service account, got %s", rec.Body.String())
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected missing serviceAccountName to return 422, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -123,7 +120,8 @@ func TestGetRuntimeBindingRejectsIncompleteBinding(t *testing.T) {
 			},
 		},
 		Spec: spritzv1.SpritzSpec{
-			Owner: spritzv1.SpritzOwner{ID: "user-123"},
+			Owner:              spritzv1.SpritzOwner{ID: "user-123"},
+			ServiceAccountName: "zeno-agent-abcd1234",
 		},
 	}
 	s := newRuntimeBindingsTestServer(t, spritz)

@@ -773,6 +773,36 @@ func TestCreateSpritzRejectsHumanProvidedServiceAccountName(t *testing.T) {
 	}
 }
 
+func TestCreateSpritzRejectsHumanReservedControlPlaneAnnotations(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	body := []byte(`{
+		"name":"tidal-ember",
+		"annotations":{
+			"spritz.sh/preset-id":"zeno"
+		},
+		"spec":{
+			"image":"example.com/spritz:latest"
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "reserved control-plane keys") {
+		t.Fatalf("expected reserved annotation error, got %s", rec.Body.String())
+	}
+}
+
 func TestCreateSpritzAllowsProvisionerServiceAccountNameAndCreatesServiceAccount(t *testing.T) {
 	s := newCreateSpritzTestServer(t)
 	configureProvisionerTestServer(s)
@@ -1353,7 +1383,6 @@ func TestCreateSpritzKeepsResponseMetadataIndependentFromHumanAnnotations(t *tes
 	body := []byte(`{
 		"name":"tidal-ember",
 		"annotations":{
-			"spritz.sh/preset-id":"spoofed-preset",
 			"spritz.sh/source":"spoofed-source",
 			"spritz.sh/idempotency-key":"spoofed-key"
 		},
@@ -1369,9 +1398,6 @@ func TestCreateSpritzKeepsResponseMetadataIndependentFromHumanAnnotations(t *tes
 		t.Fatalf("expected status 201, got %d: %s", rec.Code, rec.Body.String())
 	}
 	responseBody := rec.Body.String()
-	if strings.Contains(responseBody, "\"presetId\":\"spoofed-preset\"") {
-		t.Fatalf("expected response presetId to ignore caller annotations, got %s", responseBody)
-	}
 	if strings.Contains(responseBody, "\"source\":\"spoofed-source\"") {
 		t.Fatalf("expected response source to ignore caller annotations, got %s", responseBody)
 	}

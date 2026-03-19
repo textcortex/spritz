@@ -127,6 +127,7 @@ NODE
 
 seed_env_auth_profiles() {
   if uses_runtime_anthropic_bridge; then
+    rm -f "${auth_store_path}"
     return 0
   fi
 

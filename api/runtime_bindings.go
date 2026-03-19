@@ -80,7 +80,7 @@ func buildRuntimeBindingResponse(spritz *spritzv1.Spritz) (runtimeBindingRespons
 
 	serviceAccountName := strings.TrimSpace(spritz.Spec.ServiceAccountName)
 	if serviceAccountName == "" {
-		serviceAccountName = "default"
+		return runtimeBindingResponse{}, fmt.Errorf("spec.serviceAccountName is required")
 	}
 
 	annotations := spritz.GetAnnotations()
