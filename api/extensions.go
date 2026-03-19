@@ -252,8 +252,26 @@ func normalizeExtensionOperation(raw string) extensionOperation {
 func normalizeExtensionMatch(input extensionMatchInput) extensionMatchRule {
 	return extensionMatchRule{
 		principalIDs: normalizeStringTokenSet(input.PrincipalIDs),
-		presetIDs:    normalizeStringTokenSet(input.PresetIDs),
+		presetIDs:    normalizePresetIDSet(input.PresetIDs),
 	}
+}
+
+func normalizePresetIDSet(values []string) map[string]struct{} {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		token := sanitizeSpritzNameToken(value)
+		if token == "" {
+			continue
+		}
+		out[token] = struct{}{}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func normalizeExtensionTransport(input extensionTransportInput) (configuredHTTPTransport, error) {

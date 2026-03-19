@@ -38,3 +38,13 @@ func TestNewExtensionRegistryRejectsUnknownOperation(t *testing.T) {
 		t.Fatalf("expected unsupported operation error, got %v", err)
 	}
 }
+
+func TestNormalizeExtensionMatchSanitizesPresetIDs(t *testing.T) {
+	match := normalizeExtensionMatch(extensionMatchInput{PresetIDs: []string{"Zeno", "my_preset"}})
+	if _, ok := match.presetIDs["zeno"]; !ok {
+		t.Fatalf("expected sanitized preset id to include zeno, got %#v", match.presetIDs)
+	}
+	if _, ok := match.presetIDs["my-preset"]; !ok {
+		t.Fatalf("expected sanitized preset id to include my-preset, got %#v", match.presetIDs)
+	}
+}

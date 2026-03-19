@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -19,18 +21,18 @@ type presetCreateResolveInput struct {
 }
 
 func normalizePresetInputs(raw json.RawMessage) (json.RawMessage, error) {
-	if len(strings.TrimSpace(string(raw))) == 0 {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return nil, nil
 	}
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	var value map[string]json.RawMessage
+	if err := decoder.Decode(&value); err != nil {
 		return nil, errors.New("presetInputs must be valid JSON")
 	}
-	if value == nil {
-		return nil, nil
-	}
-	if _, ok := value.(map[string]any); !ok {
-		return nil, errors.New("presetInputs must be a JSON object")
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, errors.New("presetInputs must be valid JSON")
 	}
 	normalized, err := json.Marshal(value)
 	if err != nil {

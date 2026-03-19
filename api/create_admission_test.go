@@ -329,6 +329,81 @@ func TestCreateSpritzProvisionerPresetResolverReplaysWithResolvedBinding(t *test
 	}
 }
 
+func TestCreateSpritzProvisionerRejectsDisallowedPresetBeforeResolver(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	var requestCount int
+	resolver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		defer r.Body.Close()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer resolver.Close()
+	s.presets = presetCatalog{
+		byID: []runtimePreset{{
+			ID:            "zeno",
+			Name:          "Zeno",
+			Image:         "example.com/zeno:latest",
+			NamePrefix:    "zeno",
+			InstanceClass: "personal-agent",
+		}},
+	}
+	s.provisioners.allowedPresetIDs = map[string]struct{}{"openclaw": {}}
+	s.instanceClasses = instanceClassCatalog{
+		byID: map[string]instanceClass{
+			"personal-agent": {
+				ID:      "personal-agent",
+				Version: "v1",
+				Creation: instanceClassCreationPolicy{
+					RequireOwner:           true,
+					RequiredResolvedFields: []string{requiredResolvedFieldServiceAccountName},
+				},
+			},
+		},
+	}
+	s.extensions = extensionRegistry{
+		resolvers: []configuredResolver{{
+			id:        "runtime-binding",
+			kind:      extensionKindResolver,
+			operation: extensionOperationPresetCreateResolve,
+			match: extensionMatchRule{
+				presetIDs: map[string]struct{}{"zeno": {}},
+			},
+			transport: configuredHTTPTransport{
+				url:     resolver.URL,
+				timeout: time.Second,
+			},
+		}},
+	}
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	body := []byte(`{
+		"presetId":"zeno",
+		"presetInputs":{"agentId":"ag-123"},
+		"ownerId":"user-123",
+		"idempotencyKey":"disallowed-preset",
+		"spec":{}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "zenobot")
+	req.Header.Set("X-Spritz-Principal-Type", "service")
+	req.Header.Set("X-Spritz-Principal-Scopes", "spritz.instances.create,spritz.instances.assign_owner")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if requestCount != 0 {
+		t.Fatalf("expected resolver not to run for disallowed preset, got %d requests", requestCount)
+	}
+}
+
 func TestCreateRequestFingerprintIncludesPresetInputs(t *testing.T) {
 	base := createRequest{
 		OwnerID:      "user-123",
@@ -350,6 +425,16 @@ func TestCreateRequestFingerprintIncludesPresetInputs(t *testing.T) {
 	}
 	if first == second {
 		t.Fatal("expected presetInputs to affect create fingerprint")
+	}
+}
+
+func TestNormalizePresetInputsPreservesLargeIntegers(t *testing.T) {
+	normalized, err := normalizePresetInputs(json.RawMessage(`{"agentId":123456789012345678}`))
+	if err != nil {
+		t.Fatalf("normalizePresetInputs failed: %v", err)
+	}
+	if string(normalized) != `{"agentId":123456789012345678}` {
+		t.Fatalf("expected large integer precision to be preserved, got %s", string(normalized))
 	}
 }
 

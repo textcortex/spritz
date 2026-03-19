@@ -171,19 +171,18 @@ func (tx *provisionerCreateTransaction) prepare() error {
 	}
 	tx.body.Spec.Owner = owner
 	tx.resolvedExternalOwner = resolvedExternalOwner
+	if err := tx.server.validateProvisionerCreate(tx.ctx, tx.principal, tx.namespace, tx.body, tx.requestedImage, tx.requestedRepo, tx.requestedNamespace); err != nil {
+		if errors.Is(err, errForbidden) {
+			return newProvisionerForbiddenError()
+		}
+		return newProvisionerCreateError(http.StatusBadRequest, err)
+	}
 	if err := tx.server.resolveCreateAdmission(tx.ctx, tx.principal, tx.namespace, tx.body); err != nil {
 		var admissionErr *admissionError
 		if errors.As(err, &admissionErr) {
 			return newProvisionerCreateErrorWithData(admissionErr.status, admissionErr.message, admissionErr.data, err)
 		}
 		return newProvisionerCreateError(http.StatusInternalServerError, err)
-	}
-
-	if err := tx.server.validateProvisionerCreate(tx.ctx, tx.principal, tx.namespace, tx.body, tx.requestedImage, tx.requestedRepo, tx.requestedNamespace); err != nil {
-		if errors.Is(err, errForbidden) {
-			return newProvisionerForbiddenError()
-		}
-		return newProvisionerCreateError(http.StatusBadRequest, err)
 	}
 	if err := resolveCreateLifetimes(&tx.body.Spec, tx.server.provisioners, true); err != nil {
 		return newProvisionerCreateError(http.StatusBadRequest, err)
