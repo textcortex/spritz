@@ -34,7 +34,7 @@ function PhaseIcon({ phase }: { phase: string }) {
 function SpritzSkeleton() {
   return (
     <div className="flex items-center justify-between gap-4 px-4 py-3">
-      <div className="flex-1 space-y-2">
+      <div className="flex flex-1 flex-col gap-2">
         <Skeleton className="h-4 w-32" />
         <Skeleton className="h-3 w-48" />
       </div>
@@ -241,8 +241,8 @@ export const SpritzList = forwardRef<SpritzListHandle>(function SpritzList(_, re
   };
 
   return (
-    <div>
-      <div className="mb-3 flex items-center justify-between">
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">Active Spritzes</h2>
         <Button
           variant="ghost"

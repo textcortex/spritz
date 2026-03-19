@@ -81,7 +81,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           <div className="relative z-[1] -mt-4 flex items-center justify-end gap-2 rounded-b-[28px] bg-[linear-gradient(to_bottom,transparent,white_60%)] px-3 pb-3 pt-5">
             <button
               type="button"
-              className="flex size-9 items-center justify-center rounded-full border-none bg-black p-0 text-white transition-opacity hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex size-9 items-center justify-center rounded-full border-none bg-black p-0 text-white transition-opacity will-change-[opacity] hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
               onClick={promptInFlight ? onCancel : handleSubmit}
               disabled={!promptInFlight && (disabled || !text.trim())}
               title={promptInFlight ? 'Stop' : 'Send'}
@@ -121,6 +121,7 @@ function GridLoader() {
           className="rounded-[1px] bg-[#d4d4d4]"
           style={{
             animation: `grid-pulse 1.2s ease-in-out infinite ${[0, 0.1, 0.2, 0.7, 0.8, 0.3, 0.6, 0.5, 0.4][i]}s`,
+            willChange: 'background-color',
           }}
         />
       ))}

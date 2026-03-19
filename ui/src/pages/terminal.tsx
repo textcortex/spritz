@@ -5,15 +5,17 @@ export function TerminalPage() {
   const { name } = useParams<{ name: string }>();
 
   return (
-    <div className="mx-auto max-w-3xl p-6">
-      <h2 className="text-2xl font-bold">Terminal</h2>
-      <p className="mt-1 text-muted-foreground">
-        Connected to: <code className="rounded bg-muted px-1.5 py-0.5 text-sm">{name}</code>
-      </p>
-      <div className="mt-6 rounded-lg border bg-card p-6 text-card-foreground">
+    <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-2xl font-bold">Terminal</h2>
+        <p className="text-muted-foreground">
+          Connected to: <code className="rounded bg-muted px-1.5 py-0.5 text-sm">{name}</code>
+        </p>
+      </div>
+      <div className="rounded-lg border bg-card p-6 text-card-foreground">
         <p className="text-sm text-muted-foreground">Terminal will be implemented in Phase 5.</p>
       </div>
-      <div className="mt-4">
+      <div>
         <Link to="/">
           <Button variant="outline">Back to Chat</Button>
         </Link>

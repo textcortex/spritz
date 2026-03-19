@@ -16,11 +16,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
 
 interface CreateFormProps {
   onCreated?: () => void;
@@ -54,6 +49,26 @@ export function CreateForm({ onCreated }: CreateFormProps) {
   const [presetIndex, setPresetIndex] = useState('');
   const initialized = useRef(false);
 
+  const generateName = useCallback(async (imageOverride?: string) => {
+    const imageValue = (imageOverride ?? image).trim();
+    if (!imageValue) return;
+    setGeneratingName(true);
+    try {
+      const payload: Record<string, string> = { image: imageValue };
+      if (namespace.trim()) payload.namespace = namespace.trim();
+      const data = await request<{ name: string }>('/spritzes/suggest-name', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      setName(String(data?.name || '').trim());
+    } catch {
+      // Silently ignore — user can retry manually
+    } finally {
+      setGeneratingName(false);
+    }
+  }, [image, namespace]);
+
   // Restore form state from localStorage on mount
   useEffect(() => {
     if (initialized.current) return;
@@ -75,6 +90,10 @@ export function CreateForm({ onCreated }: CreateFormProps) {
           setActivePreset(presets[Number(idx)]);
         }
       }
+      // Auto-generate a name from saved image
+      if (saved.fields.image) {
+        generateName(saved.fields.image);
+      }
     } else if (presets.length > 0) {
       // Default to first preset
       setPresetIndex('0');
@@ -83,8 +102,12 @@ export function CreateForm({ onCreated }: CreateFormProps) {
       if (presets[0].repoUrl !== undefined) setRepo(presets[0].repoUrl || '');
       if (presets[0].branch !== undefined) setBranch(presets[0].branch || '');
       if (presets[0].ttl !== undefined) setTtl(presets[0].ttl || '');
+      // Auto-generate a name from preset image
+      if (presets[0].image) {
+        generateName(presets[0].image);
+      }
     }
-  }, [presets]);
+  }, [presets, generateName]);
 
   // Persist form state on changes
   const persistState = useCallback(() => {
@@ -118,30 +141,6 @@ export function CreateForm({ onCreated }: CreateFormProps) {
     },
     [],
   );
-
-  const handleRandomName = async () => {
-    const imageValue = image.trim();
-    if (!imageValue) {
-      showNotice('Image is required before generating a name.');
-      return;
-    }
-    setGeneratingName(true);
-    try {
-      const payload: Record<string, string> = { image: imageValue };
-      if (namespace.trim()) payload.namespace = namespace.trim();
-      const data = await request<{ name: string }>('/spritzes/suggest-name', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      setName(String(data?.name || '').trim());
-      showNotice('', 'info');
-    } catch (err: unknown) {
-      showNotice(err instanceof Error ? err.message : 'Failed to generate a name.');
-    } finally {
-      setGeneratingName(false);
-    }
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -192,106 +191,115 @@ export function CreateForm({ onCreated }: CreateFormProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
+    <form onSubmit={handleSubmit} className="flex flex-col gap-5">
       <PresetPanel
         presets={presets}
         selectedIndex={presetIndex}
         onSelect={handlePresetSelect}
       />
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="name">Name</Label>
-          <div className="flex">
-            <Input
-              id="name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Leave blank to auto-generate"
-              className="rounded-r-none border-r-0"
-            />
-            <Button
-              type="button"
-              variant="outline"
-              className="rounded-l-none"
-              onClick={handleRandomName}
-              disabled={generatingName}
-              title="Generate random name"
-            >
-              <DicesIcon className="size-4" />
-              Random
-            </Button>
-          </div>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="image">Image</Label>
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="name">Name</Label>
+        <div className="flex gap-2">
           <Input
-            id="image"
-            value={image}
-            onChange={(e) => setImage(e.target.value)}
-            placeholder="spritz-starter:latest"
-            required
+            id="name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Auto-generated name"
+            className="h-11"
           />
+          <Button
+            type="button"
+            variant="outline"
+            className="size-11 shrink-0 p-0"
+            onClick={() => generateName()}
+            disabled={generatingName}
+            title="Generate random name"
+          >
+            <DicesIcon className={`size-4 ${generatingName ? 'animate-spin' : ''}`} />
+          </Button>
         </div>
       </div>
 
-      {!hideRepoInputs && (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="repo">Repository URL</Label>
+      <div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="gap-1 text-muted-foreground"
+          onClick={() => setAdvancedOpen(!advancedOpen)}
+        >
+          <ChevronDownIcon
+            className={`size-4 transition-transform will-change-transform ${advancedOpen ? 'rotate-180' : ''}`}
+          />
+          Advanced options
+        </Button>
+        <div
+          className="grid transition-[grid-template-rows] duration-300 ease-in-out will-change-[grid-template-rows]"
+          style={{ gridTemplateRows: advancedOpen ? '1fr' : '0fr' }}
+        >
+          <div className="overflow-hidden min-h-0">
+            <div className="flex flex-col gap-5 pt-3">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="image">Image</Label>
             <Input
-              id="repo"
-              value={repo}
-              onChange={(e) => setRepo(e.target.value)}
-              placeholder="https://github.com/..."
+              id="image"
+              className="h-11"
+              value={image}
+              onChange={(e) => setImage(e.target.value)}
+              placeholder="spritz-starter:latest"
             />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="branch">Branch</Label>
-            <Input
-              id="branch"
-              value={branch}
-              onChange={(e) => setBranch(e.target.value)}
-              placeholder="main"
-            />
-          </div>
-        </div>
-      )}
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="ttl">TTL</Label>
-          <Input
-            id="ttl"
-            value={ttl}
-            onChange={(e) => setTtl(e.target.value)}
-            placeholder="8h"
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="namespace">Namespace</Label>
-          <Input
-            id="namespace"
-            value={namespace}
-            onChange={(e) => setNamespace(e.target.value)}
-            placeholder="default"
-          />
-        </div>
-      </div>
+          {!hideRepoInputs && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="repo">Repository URL</Label>
+                <Input
+                  id="repo"
+                  className="h-11"
+                  value={repo}
+                  onChange={(e) => setRepo(e.target.value)}
+                  placeholder="https://github.com/..."
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="branch">Branch</Label>
+                <Input
+                  id="branch"
+                  className="h-11"
+                  value={branch}
+                  onChange={(e) => setBranch(e.target.value)}
+                  placeholder="main"
+                />
+              </div>
+            </div>
+          )}
 
-      <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-        <CollapsibleTrigger
-          render={
-            <Button type="button" variant="ghost" size="sm" className="gap-1 text-muted-foreground">
-              <ChevronDownIcon
-                className={`size-4 transition-transform ${advancedOpen ? 'rotate-180' : ''}`}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="ttl">TTL</Label>
+              <Input
+                id="ttl"
+                className="h-11"
+                value={ttl}
+                onChange={(e) => setTtl(e.target.value)}
+                placeholder="8h"
               />
-              Advanced configuration
-            </Button>
-          }
-        />
-        <CollapsibleContent className="mt-3">
-          <div className="space-y-2">
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="namespace">Namespace</Label>
+              <Input
+                id="namespace"
+                className="h-11"
+                value={namespace}
+                onChange={(e) => setNamespace(e.target.value)}
+                placeholder="default"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
             <Label htmlFor="user-config">User config (YAML/JSON)</Label>
             <Textarea
               id="user-config"
@@ -306,10 +314,12 @@ export function CreateForm({ onCreated }: CreateFormProps) {
               Provide shared mounts, ttl, repo, env, or resources. JSON is also accepted.
             </p>
           </div>
-        </CollapsibleContent>
-      </Collapsible>
+            </div>
+          </div>
+        </div>
+      </div>
 
-      <Button type="submit" disabled={submitting} className="w-full rounded-full sm:w-auto">
+      <Button type="submit" disabled={submitting} className="w-fit rounded-full h-11 cursor-pointer px-4">
         {submitting ? (
           'Creating…'
         ) : (

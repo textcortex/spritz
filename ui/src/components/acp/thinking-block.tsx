@@ -112,8 +112,8 @@ function SearchStep({ items }: { items: ThinkingChunk[] }) {
   return (
     <div className="flex items-start gap-2.5 relative pb-1.5">
       <div className="w-[7px] h-[7px] rounded-full bg-[#a3a3a3] shrink-0 mt-[5px] relative z-[1]" />
-      <div className="flex-1 min-w-0">
-        <span className="block text-xs text-[#999] mb-1.5">Searching</span>
+      <div className="flex flex-1 flex-col gap-1.5 min-w-0">
+        <span className="block text-xs text-[#999]">Searching</span>
         <div className="flex flex-wrap gap-1.5">
           {pills.map((text, i) => (
             <span
@@ -141,8 +141,8 @@ function FetchStep({ items }: { items: ThinkingChunk[] }) {
   return (
     <div className="flex items-start gap-2.5 relative pb-1.5">
       <div className="w-[7px] h-[7px] rounded-full bg-[#a3a3a3] shrink-0 mt-[5px] relative z-[1]" />
-      <div className="flex-1 min-w-0">
-        <span className="block text-xs text-[#999] mb-1.5">Reviewing sources</span>
+      <div className="flex flex-1 flex-col gap-1.5 min-w-0">
+        <span className="block text-xs text-[#999]">Reviewing sources</span>
         <div
           className="flex flex-col rounded-lg overflow-hidden"
           style={{ background: 'rgba(0,0,0,0.02)', border: '1px solid rgba(0,0,0,0.06)' }}
@@ -204,7 +204,7 @@ function GenericToolStep({ chunk }: { chunk: ThinkingChunk }) {
           <span className="text-xs text-[#999]">{name}</span>
           {chunk.status && chunk.status !== 'pending' && (
             <span
-              className="inline-block text-[10px] py-[1px] px-1.5 rounded-full ml-0.5 capitalize"
+              className="inline-block text-[10px] py-[1px] px-1.5 rounded-full capitalize"
               style={statusBadgeStyle}
             >
               {chunk.status.replace(/_/g, ' ')}
@@ -212,7 +212,7 @@ function GenericToolStep({ chunk }: { chunk: ThinkingChunk }) {
           )}
         </div>
         {(chunk.input || chunk.result) && (
-          <div className="mt-1">
+          <div className="flex flex-col gap-1">
             <button
               type="button"
               onClick={() => setDetailsOpen(!detailsOpen)}
@@ -221,18 +221,18 @@ function GenericToolStep({ chunk }: { chunk: ThinkingChunk }) {
               {detailsOpen ? '▾' : '▸'} Details
             </button>
             {detailsOpen && (
-              <div className="flex flex-col gap-1.5 mt-1.5">
+              <div className="flex flex-col gap-1.5">
                 {chunk.input && (
-                  <div>
-                    <div className="text-[10px] font-semibold text-[#999] mb-0.5 uppercase tracking-[0.5px]">Input</div>
+                  <div className="flex flex-col gap-0.5">
+                    <div className="text-[10px] font-semibold text-[#999] uppercase tracking-[0.5px]">Input</div>
                     <pre className="m-0 max-h-[200px] overflow-auto rounded-md p-2 text-[11px]" style={{ background: 'rgba(0,0,0,0.03)' }}>
                       {chunk.input}
                     </pre>
                   </div>
                 )}
                 {chunk.result && (
-                  <div>
-                    <div className="text-[10px] font-semibold text-[#999] mb-0.5 uppercase tracking-[0.5px]">Result</div>
+                  <div className="flex flex-col gap-0.5">
+                    <div className="text-[10px] font-semibold text-[#999] uppercase tracking-[0.5px]">Result</div>
                     <pre className="m-0 max-h-[200px] overflow-auto rounded-md p-2 text-[11px]" style={{ background: 'rgba(0,0,0,0.03)' }}>
                       {chunk.result}
                     </pre>
@@ -404,7 +404,7 @@ export function ThinkingBlock({ chunks, active, elapsedSeconds }: ThinkingBlockP
 
         {/* Chevron */}
         <span
-          className="inline-flex items-center justify-center shrink-0 text-[#999] transition-transform duration-200"
+          className="inline-flex items-center justify-center shrink-0 text-[#999] transition-transform duration-200 will-change-transform"
           style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
         >
           <ChevronIcon />
@@ -413,7 +413,7 @@ export function ThinkingBlock({ chunks, active, elapsedSeconds }: ThinkingBlockP
 
       {/* Collapsible body — grid-template-rows transition */}
       <div
-        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out will-change-[grid-template-rows]"
         style={{ gridTemplateRows: expanded ? '1fr' : '0fr' }}
       >
         <div className="overflow-hidden min-h-0">

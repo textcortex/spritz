@@ -10,15 +10,15 @@ export function CreatePage() {
   };
 
   return (
-    <div className="mx-auto max-w-[960px] space-y-8 px-6 py-12 md:px-12">
-      <div>
+    <div className="mx-auto flex max-w-[960px] flex-col gap-8 px-6 py-12 md:px-12">
+      <div className="flex flex-col gap-1">
         <h2 className="text-2xl font-semibold">Create Spritz</h2>
-        <p className="mt-1 text-[15px] text-muted-foreground">
+        <p className="text-[15px] text-muted-foreground">
           Spin up an ephemeral dev Spritz managed by API.
         </p>
       </div>
 
-      <div className="rounded-[20px] border border-[#e5e5e5] bg-card p-8 text-card-foreground dark:border-border">
+      <div className="rounded-[20px] border border-[#e5e5e5] bg-card p-4 text-card-foreground dark:border-border">
         <CreateForm onCreated={handleCreated} />
       </div>
 

@@ -14,7 +14,7 @@ export function PresetPanel({ presets, selectedIndex, onSelect }: PresetPanelPro
   const selectedPreset = selectedIndex ? presets[Number(selectedIndex)] : null;
 
   return (
-    <div className="space-y-2">
+    <div className="flex flex-col gap-2">
       <Label htmlFor="preset-select">Preset</Label>
       <select
         id="preset-select"
@@ -28,7 +28,7 @@ export function PresetPanel({ presets, selectedIndex, onSelect }: PresetPanelPro
           const preset = presets[Number(value)];
           if (preset) onSelect(preset, value);
         }}
-        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        className="flex h-11 w-full rounded-lg border border-input bg-transparent px-3 py-1 text-sm shadow-none transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
         <option value="custom">Custom</option>
         {presets.map((preset, index) => (

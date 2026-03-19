@@ -21,7 +21,7 @@ function BlockRenderer({ block, streaming }: { block: ACPBlock; streaming?: bool
 
   if (block.type === 'plan') {
     return (
-      <ol className="m-0 list-decimal space-y-1 pl-5 text-sm">
+      <ol className="m-0 flex list-decimal flex-col gap-1 pl-5 text-sm">
         {(block.entries || []).map((entry, i) => (
           <li key={i} className={entry.done ? 'text-[#999] line-through' : ''}>
             {entry.text}
@@ -76,19 +76,19 @@ function DetailsBlock({ title, text, defaultOpen }: { title: string; text: strin
   const [open, setOpen] = useState(defaultOpen);
 
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col gap-1.5">
       <button
         type="button"
         className="flex items-center gap-1.5 border-none bg-transparent p-0 text-left text-[13px] font-semibold cursor-pointer hover:opacity-70"
         onClick={() => setOpen(!open)}
       >
-        <span className={cn('inline-block text-[10px] transition-transform', open ? 'rotate-90' : 'rotate-0')}>
+        <span className={cn('inline-block text-[10px] transition-transform will-change-transform', open ? 'rotate-90' : 'rotate-0')}>
           &#9654;
         </span>
         {title}
       </button>
       {open && (
-        <pre className="mt-1.5 m-0 max-h-[300px] overflow-auto rounded-md bg-[rgba(0,0,0,0.03)] p-2 text-xs leading-[1.55] font-[SFMono-Regular,JetBrains_Mono,Menlo,monospace]">
+        <pre className="m-0 max-h-[300px] overflow-auto rounded-md bg-[rgba(0,0,0,0.03)] p-2 text-xs leading-[1.55] font-[SFMono-Regular,JetBrains_Mono,Menlo,monospace]">
           {text}
         </pre>
       )}
@@ -138,13 +138,13 @@ function AssistantMessage({ message }: { message: ACPMessage }) {
   return (
     <article className="flex flex-col gap-2 self-stretch w-full">
       <div className="py-1 px-0">
-        <div className="space-y-3">
+        <div className="flex flex-col gap-3">
           {message.blocks.map((block, i) => (
             <BlockRenderer key={i} block={block} streaming={message.streaming} />
           ))}
         </div>
         {message.streaming && (
-          <span className="mt-1 inline-block size-1.5 animate-pulse rounded-full bg-black" />
+          <span className="mt-1 inline-block size-1.5 animate-pulse will-change-[opacity] rounded-full bg-black" />
         )}
       </div>
     </article>
@@ -158,10 +158,10 @@ function AssistantMessage({ message }: { message: ACPMessage }) {
 function EventCard({ message }: { message: ACPMessage }) {
   return (
     <article className="flex flex-col gap-2 self-start max-w-[min(820px,86%)]">
-      <div className="rounded-[20px] border border-[#f0f0f0] bg-[#fafafa] px-4 py-3 text-[13px]">
+      <div className="flex flex-col gap-1.5 rounded-[20px] border border-[#f0f0f0] bg-[#fafafa] px-4 py-3 text-[13px]">
         {/* Header: title + status pill */}
         {(message.title || message.status) && (
-          <div className="mb-1.5 flex items-center justify-between gap-3">
+          <div className="flex items-center justify-between gap-3">
             <strong className="text-[13px] font-semibold">
               {message.title || (message.role === 'tool' ? 'Tool' : message.role === 'plan' ? 'Plan' : 'Update')}
             </strong>
@@ -182,7 +182,7 @@ function EventCard({ message }: { message: ACPMessage }) {
           ))}
         </div>
         {message.streaming && (
-          <span className="mt-2 inline-block size-1.5 animate-pulse rounded-full bg-[#3782ff]" />
+          <span className="mt-2 inline-block size-1.5 animate-pulse will-change-[opacity] rounded-full bg-[#3782ff]" />
         )}
       </div>
     </article>

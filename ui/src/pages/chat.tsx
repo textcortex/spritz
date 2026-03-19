@@ -457,10 +457,10 @@ export function ChatPage() {
   if (loading) {
     return (
       <div className="grid h-dvh grid-cols-[1fr] md:grid-cols-[260px_minmax(0,1fr)] overflow-hidden">
-        <div className="hidden md:flex flex-col border-r border-[#e5e5e5] bg-[#fafafa] p-3 dark:border-border dark:bg-sidebar">
-          <Skeleton className="mb-3 h-9 w-full rounded-lg" />
-          <Skeleton className="mb-2 h-9 w-full rounded-lg" />
-          <div className="mt-2 space-y-1">
+        <div className="hidden md:flex flex-col gap-2 border-r border-[#e5e5e5] bg-[#fafafa] p-3 dark:border-border dark:bg-sidebar">
+          <Skeleton className="h-9 w-full rounded-lg" />
+          <Skeleton className="h-9 w-full rounded-lg" />
+          <div className="flex flex-col gap-1">
             <Skeleton className="h-8 w-full rounded-[10px]" />
             <Skeleton className="h-8 w-full rounded-[10px]" />
             <Skeleton className="h-8 w-full rounded-[10px]" />
@@ -479,7 +479,7 @@ export function ChatPage() {
   return (
     <div
       className={cn(
-        'grid h-dvh overflow-hidden transition-[grid-template-columns] duration-200',
+        'grid h-dvh overflow-hidden transition-[grid-template-columns] duration-200 will-change-[grid-template-columns]',
         'grid-cols-[1fr] md:grid-cols-[260px_minmax(0,1fr)]',
         sidebarCollapsed && 'md:grid-cols-[56px_minmax(0,1fr)]',
       )}
@@ -571,8 +571,8 @@ export function ChatPage() {
               Select a conversation or create a new instance.
             </div>
           ) : transcript.messages.length === 0 ? (
-            <div className="m-auto max-w-[540px] text-center">
-              <strong className="mb-1.5 block text-base font-medium">Start a conversation</strong>
+            <div className="m-auto flex max-w-[540px] flex-col gap-1.5 text-center">
+              <strong className="block text-base font-medium">Start a conversation</strong>
               <p className="m-0 text-sm text-[#999]">Send a message to begin.</p>
             </div>
           ) : (

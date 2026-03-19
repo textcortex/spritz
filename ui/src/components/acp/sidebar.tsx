@@ -174,7 +174,7 @@ function AgentSection({
   }
 
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col gap-0.5">
       {/* Agent header */}
       <div className="group flex items-center">
         <button
@@ -185,7 +185,7 @@ function AgentSection({
           {/* Chevron */}
           <span
             className={cn(
-              'inline-block h-[5px] w-[5px] shrink-0 border-b-[1.5px] border-r-[1.5px] border-[#999] transition-transform duration-150',
+              'inline-block h-[5px] w-[5px] shrink-0 border-b-[1.5px] border-r-[1.5px] border-[#999] transition-transform duration-150 will-change-transform',
               expanded ? 'rotate-45' : '-rotate-45',
             )}
           />
@@ -193,7 +193,7 @@ function AgentSection({
         </button>
         <button
           type="button"
-          className="flex size-6 items-center justify-center rounded bg-transparent text-[#999] opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+          className="flex size-6 items-center justify-center rounded bg-transparent text-[#999] opacity-0 transition-opacity will-change-[opacity] hover:text-foreground group-hover:opacity-100"
           onClick={() => onNewConversation(name)}
           title="New conversation"
         >
@@ -203,7 +203,7 @@ function AgentSection({
 
       {/* Conversation items */}
       {expanded && (
-        <div className="mt-0.5 flex flex-col gap-0.5 pl-2">
+        <div className="flex flex-col gap-0.5 pl-2">
           {group.conversations.length === 0 && (
             <div className="px-3 py-1 text-[11px] text-muted-foreground">
               No conversations
