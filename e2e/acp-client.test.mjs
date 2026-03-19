@@ -3,8 +3,8 @@ import test from 'node:test';
 
 import {
   connectACPWebSocket,
-  runACPWorkspacePrompt,
-  withACPWorkspaceClient,
+  runACPInstancePrompt,
+  withACPInstanceClient,
 } from './acp-client.mjs';
 
 class FakeWebSocket extends EventTarget {
@@ -86,14 +86,14 @@ test('connectACPWebSocket times out RPC calls without a response', async () => {
   client.close();
 });
 
-test('withACPWorkspaceClient always closes the websocket client and stops the port-forward', async () => {
+test('withACPInstanceClient always closes the websocket client and stops the port-forward', async () => {
   let stopped = false;
   let closed = false;
 
-  const result = await withACPWorkspaceClient(
+  const result = await withACPInstanceClient(
     {
       namespace: 'example-ns',
-      workspaceName: 'example-workspace',
+      instanceName: 'example-instance',
       endpoint: { port: 2529, path: '/' },
       timeoutSeconds: 1,
       startPortForward: async () => ({
@@ -119,16 +119,16 @@ test('withACPWorkspaceClient always closes the websocket client and stops the po
   assert.equal(stopped, true);
 });
 
-test('runACPWorkspacePrompt delegates the ACP flow through the workspace client owner', async () => {
+test('runACPInstancePrompt delegates the ACP flow through the instance client owner', async () => {
   const calls = [];
-  const result = await runACPWorkspacePrompt({
+  const result = await runACPInstancePrompt({
     namespace: 'example-ns',
-    workspaceName: 'example-workspace',
+    instanceName: 'example-instance',
     endpoint: { port: 2529, path: '/' },
     timeoutSeconds: 1,
     promptText: 'Reply with smoke-token',
     settleDelayMs: 0,
-    withWorkspaceClient: async (_options, callback) => callback({
+    withInstanceClient: async (_options, callback) => callback({
       updates: [
         { sessionUpdate: 'agent_message_chunk', content: [{ type: 'text', text: 'spritz-' }] },
         { sessionUpdate: 'agent_message_chunk', content: [{ type: 'text', text: 'smoke-ok' }] },

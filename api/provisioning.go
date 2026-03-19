@@ -104,7 +104,7 @@ type createSpritzResponse struct {
 	Spritz         *spritzv1.Spritz `json:"spritz"`
 	AccessURL      string           `json:"accessUrl,omitempty"`
 	ChatURL        string           `json:"chatUrl,omitempty"`
-	WorkspaceURL   string           `json:"workspaceUrl,omitempty"`
+	InstanceURL    string           `json:"instanceUrl,omitempty"`
 	Namespace      string           `json:"namespace,omitempty"`
 	OwnerID        string           `json:"ownerId,omitempty"`
 	ActorID        string           `json:"actorId,omitempty"`
@@ -494,7 +494,7 @@ func (s *server) enforceProvisionerQuotas(ctx context.Context, namespace string,
 		}
 	}
 	if s.provisioners.maxActivePerOwner > 0 && activeForOwner >= s.provisioners.maxActivePerOwner {
-		return fmt.Errorf("owner active workspace limit reached")
+		return fmt.Errorf("owner active instance limit reached")
 	}
 	if s.provisioners.maxCreatesPerActor > 0 && actorCreates >= s.provisioners.maxCreatesPerActor {
 		return fmt.Errorf("actor create rate limit reached")
@@ -1195,13 +1195,13 @@ func summarizeCreateResponse(spritz *spritzv1.Spritz, principal principal, prese
 	}
 	createdAt := spritz.CreationTimestamp.DeepCopy()
 	idleExpiresAt, maxExpiresAt, expiresAt := lifecycleExpiryTimes(spritz, time.Now())
-	workspaceURL := spritzv1.WorkspaceURLForSpritz(spritz)
+	instanceURL := spritzv1.InstanceURLForSpritz(spritz)
 	chatURL := spritzv1.ChatURLForSpritz(spritz)
 	return createSpritzResponse{
 		Spritz:         responseSpritz,
 		AccessURL:      spritzv1.AccessURLForSpritz(spritz),
 		ChatURL:        chatURL,
-		WorkspaceURL:   workspaceURL,
+		InstanceURL:    instanceURL,
 		Namespace:      spritz.Namespace,
 		OwnerID:        ownerID,
 		ActorID:        principal.ID,

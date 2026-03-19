@@ -6,7 +6,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestWorkspaceURLForSpritzUsesIngressPath(t *testing.T) {
+func TestInstanceURLForSpritzUsesIngressPath(t *testing.T) {
 	spritz := &Spritz{
 		ObjectMeta: metav1ObjectMeta("openclaw-tide-wind", "spritz-test"),
 		Spec: SpritzSpec{
@@ -17,8 +17,8 @@ func TestWorkspaceURLForSpritzUsesIngressPath(t *testing.T) {
 		},
 	}
 
-	if got := WorkspaceURLForSpritz(spritz); got != "https://console.example.com/w/openclaw-tide-wind/" {
-		t.Fatalf("expected workspace url, got %q", got)
+	if got := InstanceURLForSpritz(spritz); got != "https://console.example.com/w/openclaw-tide-wind/" {
+		t.Fatalf("expected instance url, got %q", got)
 	}
 }
 
@@ -54,7 +54,7 @@ func TestAccessURLForSpritzPromotesChatURL(t *testing.T) {
 	}
 }
 
-func TestAccessURLForSpritzFallsBackToWorkspaceURL(t *testing.T) {
+func TestAccessURLForSpritzFallsBackToInstanceURL(t *testing.T) {
 	spritz := &Spritz{
 		ObjectMeta: metav1ObjectMeta("openclaw-tide-wind", "spritz-test"),
 		Spec: SpritzSpec{

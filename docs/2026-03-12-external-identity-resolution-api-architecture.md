@@ -426,7 +426,7 @@ Recommended service-principal response shape for `ownerRef.type=external`:
 - `spritz`
 - `accessUrl`
 - `chatUrl`
-- `workspaceUrl`
+- `instanceUrl`
 - Kubernetes namespace for the instance
 - `presetId`
 - `idempotencyKey`

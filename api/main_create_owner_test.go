@@ -72,8 +72,8 @@ func TestCreateSpritzOwnerUsesIDAndOmitsEmail(t *testing.T) {
 	if data["chatUrl"] != "http://tidal-ember.spritz-test.svc.cluster.local:8080/#chat/tidal-ember" {
 		t.Fatalf("expected chatUrl in response, got %#v", data["chatUrl"])
 	}
-	if data["workspaceUrl"] != "http://tidal-ember.spritz-test.svc.cluster.local:8080" {
-		t.Fatalf("expected workspaceUrl in response, got %#v", data["workspaceUrl"])
+	if data["instanceUrl"] != "http://tidal-ember.spritz-test.svc.cluster.local:8080" {
+		t.Fatalf("expected instanceUrl in response, got %#v", data["instanceUrl"])
 	}
 }
 
@@ -1522,7 +1522,7 @@ func TestCreateSpritzEnforcesProvisionerActiveQuotaAcrossAllowedNamespaces(t *te
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "owner active workspace limit reached") {
+	if !strings.Contains(rec.Body.String(), "owner active instance limit reached") {
 		t.Fatalf("expected active quota error, got %s", rec.Body.String())
 	}
 }
@@ -1900,7 +1900,7 @@ func TestSetIdempotencyReservationNameKeepsSinglePendingCandidate(t *testing.T) 
 	}
 }
 
-func TestCreateSpritzDoesNotReplayDifferentActorOrKeyForSameNamedWorkspace(t *testing.T) {
+func TestCreateSpritzDoesNotReplayDifferentActorOrKeyForSameNamedInstance(t *testing.T) {
 	s := newCreateSpritzTestServer(t)
 	configureProvisionerTestServer(s)
 	e := echo.New()
@@ -1984,7 +1984,7 @@ func TestCreateSpritzReplaysGeneratedNameAfterCompletionFailure(t *testing.T) {
 	e.ServeHTTP(rec1, req1)
 
 	if rec1.Code != http.StatusInternalServerError {
-		t.Fatalf("expected first create to fail after workspace creation, got %d: %s", rec1.Code, rec1.Body.String())
+		t.Fatalf("expected first create to fail after instance creation, got %d: %s", rec1.Code, rec1.Body.String())
 	}
 
 	req2 := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(reqBody))
@@ -1996,7 +1996,7 @@ func TestCreateSpritzReplaysGeneratedNameAfterCompletionFailure(t *testing.T) {
 	e.ServeHTTP(rec2, req2)
 
 	if rec2.Code != http.StatusOK {
-		t.Fatalf("expected retry to replay created workspace, got %d: %s", rec2.Code, rec2.Body.String())
+		t.Fatalf("expected retry to replay created instance, got %d: %s", rec2.Code, rec2.Body.String())
 	}
 
 	var payload map[string]any

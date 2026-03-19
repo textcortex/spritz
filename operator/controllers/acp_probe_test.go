@@ -3,16 +3,16 @@ package controllers
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-	"testing"
-	"time"
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"net/http"
+	"net/http/httptest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"testing"
+	"time"
 
 	spritzv1 "spritz.sh/operator/api/v1"
 )
@@ -76,20 +76,20 @@ func TestReconcileStatusStoresACPReadyCondition(t *testing.T) {
 		Client: k8sClient,
 		Scheme: scheme,
 		ACP: ACPProbeConfig{
-			Enabled:         true,
-			Port:            spritzv1.DefaultACPPort,
-			Path:            spritzv1.DefaultACPPath,
-			ProbeTimeout:    2 * time.Second,
-			RefreshInterval: 30 * time.Second,
+			Enabled:                 true,
+			Port:                    spritzv1.DefaultACPPort,
+			Path:                    spritzv1.DefaultACPPath,
+			ProbeTimeout:            2 * time.Second,
+			RefreshInterval:         30 * time.Second,
 			MetadataRefreshInterval: 5 * time.Minute,
-			HealthPath:      "/healthz",
-			MetadataPath:    "/.well-known/spritz-acp",
+			HealthPath:              "/healthz",
+			MetadataPath:            "/.well-known/spritz-acp",
 			ClientInfo: acpImplementationInfo{
 				Name:    "spritz-operator",
 				Title:   "Spritz ACP Operator",
 				Version: "1.0.0",
 			},
-			WorkspaceURL: func(namespace, name string) string {
+			InstanceURL: func(namespace, name string) string {
 				return metadataServer.URL
 			},
 		},
@@ -139,14 +139,14 @@ func TestReconcileStatusMarksACPUnknownWhileProvisioning(t *testing.T) {
 		Client: k8sClient,
 		Scheme: scheme,
 		ACP: ACPProbeConfig{
-			Enabled:         true,
-			Port:            spritzv1.DefaultACPPort,
-			Path:            spritzv1.DefaultACPPath,
-			ProbeTimeout:    2 * time.Second,
-			RefreshInterval: 30 * time.Second,
+			Enabled:                 true,
+			Port:                    spritzv1.DefaultACPPort,
+			Path:                    spritzv1.DefaultACPPath,
+			ProbeTimeout:            2 * time.Second,
+			RefreshInterval:         30 * time.Second,
 			MetadataRefreshInterval: 5 * time.Minute,
-			HealthPath:      "/healthz",
-			MetadataPath:    "/.well-known/spritz-acp",
+			HealthPath:              "/healthz",
+			MetadataPath:            "/.well-known/spritz-acp",
 		},
 	}
 
@@ -210,8 +210,8 @@ func TestReconcileStatusUsesHealthChecksBetweenMetadataRefreshes(t *testing.T) {
 		},
 		Status: spritzv1.SpritzStatus{
 			ACP: &spritzv1.SpritzACPStatus{
-				State:       "ready",
-				LastProbeAt: &now,
+				State:          "ready",
+				LastProbeAt:    &now,
 				LastMetadataAt: &metadataAt,
 				AgentInfo: &spritzv1.SpritzACPAgentInfo{
 					Name:    "agent-otter",
@@ -243,7 +243,7 @@ func TestReconcileStatusUsesHealthChecksBetweenMetadataRefreshes(t *testing.T) {
 			MetadataRefreshInterval: 10 * time.Minute,
 			HealthPath:              "/healthz",
 			MetadataPath:            "/.well-known/spritz-acp",
-			WorkspaceURL: func(namespace, name string) string {
+			InstanceURL: func(namespace, name string) string {
 				return server.URL
 			},
 		},

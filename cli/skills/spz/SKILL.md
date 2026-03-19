@@ -1,6 +1,6 @@
 ---
 name: spz
-description: Use the spz CLI to spawn, provision, inspect, and access Spritz workspaces, including service-principal create flows, preset-based provisioning, canonical access URLs, and ACP-ready workspace operations.
+description: Use the spz CLI to spawn, provision, inspect, and access Spritz instances, including service-principal create flows, preset-based provisioning, canonical access URLs, and ACP-ready instance operations.
 ---
 
 # spz
@@ -11,32 +11,32 @@ Use this skill when you need to interact with a Spritz control plane through the
 
 Typical cases:
 
-- spawn a new agent workspace from a preset such as `openclaw` or `claude-code`
-- create a new workspace from a preset such as `openclaw` or `claude-code`
-- create a workspace on behalf of a user with a service-principal bearer token
-- suggest a DNS-safe random name for a workspace
-- inspect a workspace URL
+- spawn a new agent instance from a preset such as `openclaw` or `claude-code`
+- create a new instance from a preset such as `openclaw` or `claude-code`
+- create an instance on behalf of a user with a service-principal bearer token
+- suggest a DNS-safe random name for an instance
+- inspect an instance URL
 - attach to terminal access
 - manage local `spz` profiles for different Spritz environments
 
 ## What Spritz is
 
-Spritz is a control plane for agent workspaces.
+Spritz is a control plane for agent instances.
 
-In user-facing agent language, `spawn` means `create a Spritz workspace for an agent`.
+In user-facing agent language, `spawn` means `create a Spritz instance for an agent`.
 
 Core model:
 
-- a workspace is a `Spritz` resource
-- the workspace may expose ACP on port `2529`
+- an instance is a `Spritz` resource
+- the instance may expose ACP on port `2529`
 - Spritz owns provisioning, routing, auth, canonical URLs, and lifecycle
 - the backend image owns the runtime itself
 
 For external provisioners:
 
 - the human remains the owner
-- the service principal is only the actor that created the workspace
-- create-only service principals should not be able to edit, delete, terminal into, or list user workspaces unless explicitly granted
+- the service principal is only the actor that created the instance
+- create-only service principals should not be able to edit, delete, terminal into, or list user instances unless explicitly granted
 
 ## Authentication modes
 
@@ -120,7 +120,7 @@ Rules:
 - if provider, subject, preset, or tenant context is unclear, ask for
   clarification instead of guessing
 - the service principal is only the actor
-- the same `idempotency-key` and same request should replay the same workspace
+- the same `idempotency-key` and same request should replay the same instance
 - the same `idempotency-key` with a different request should fail with conflict
 - the response should include the canonical access URL
 
@@ -158,13 +158,13 @@ Suggest a name:
 spz suggest-name --preset claude-code
 ```
 
-Open a workspace URL:
+Open an instance URL:
 
 ```bash
 spz open openclaw-tide-wind
 ```
 
-List workspaces:
+List instances:
 
 ```bash
 spz list
@@ -196,7 +196,7 @@ spz profile use staging
   who requested it and include what was created plus the returned URLs for
   opening it
 - treat the create response as the source of truth for the access URL
-- do not construct workspace URLs yourself
+- do not construct instance URLs yourself
 - use idempotency keys for any retried or externally triggered create operation
 - for service principals, expect create to succeed and list/delete to be denied unless extra scopes were granted
 

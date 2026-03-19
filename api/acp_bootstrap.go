@@ -102,19 +102,19 @@ func (e *acpBootstrapRPCError) missingSession() bool {
 	return strings.Contains(message, "session") && strings.Contains(message, "not found")
 }
 
-type acpBootstrapWorkspaceClient struct {
+type acpBootstrapInstanceClient struct {
 	conn   *websocket.Conn
 	nextID int64
 }
 
-func (c *acpBootstrapWorkspaceClient) close() error {
+func (c *acpBootstrapInstanceClient) close() error {
 	if c == nil || c.conn == nil {
 		return nil
 	}
 	return c.conn.Close()
 }
 
-func (c *acpBootstrapWorkspaceClient) initialize(ctx context.Context, clientInfo acpBootstrapClientInfo, clientCapabilities map[string]any) (*acpBootstrapInitializeResult, error) {
+func (c *acpBootstrapInstanceClient) initialize(ctx context.Context, clientInfo acpBootstrapClientInfo, clientCapabilities map[string]any) (*acpBootstrapInitializeResult, error) {
 	result := &acpBootstrapInitializeResult{}
 	if err := c.request(ctx, "initialize", acpBootstrapInitializeRequest{
 		ProtocolVersion:    1,
@@ -126,7 +126,7 @@ func (c *acpBootstrapWorkspaceClient) initialize(ctx context.Context, clientInfo
 	return result, nil
 }
 
-func (c *acpBootstrapWorkspaceClient) loadSession(ctx context.Context, sessionID, cwd string) (int32, error) {
+func (c *acpBootstrapInstanceClient) loadSession(ctx context.Context, sessionID, cwd string) (int32, error) {
 	var replayCount int32
 	err := c.request(ctx, "session/load", map[string]any{
 		"sessionId":  sessionID,
@@ -140,7 +140,7 @@ func (c *acpBootstrapWorkspaceClient) loadSession(ctx context.Context, sessionID
 	return replayCount, err
 }
 
-func (c *acpBootstrapWorkspaceClient) newSession(ctx context.Context, cwd string) (string, error) {
+func (c *acpBootstrapInstanceClient) newSession(ctx context.Context, cwd string) (string, error) {
 	var result struct {
 		SessionID string `json:"sessionId"`
 	}
@@ -153,7 +153,7 @@ func (c *acpBootstrapWorkspaceClient) newSession(ctx context.Context, cwd string
 	return strings.TrimSpace(result.SessionID), nil
 }
 
-func (c *acpBootstrapWorkspaceClient) request(ctx context.Context, method string, params any, target any, onNotification func(*acpBootstrapJSONRPCMessage)) error {
+func (c *acpBootstrapInstanceClient) request(ctx context.Context, method string, params any, target any, onNotification func(*acpBootstrapJSONRPCMessage)) error {
 	c.nextID++
 	requestID := fmt.Sprintf("bootstrap-%d", c.nextID)
 	if err := c.writeJSON(ctx, map[string]any{
@@ -189,7 +189,7 @@ func (c *acpBootstrapWorkspaceClient) request(ctx context.Context, method string
 	}
 }
 
-func (c *acpBootstrapWorkspaceClient) writeJSON(ctx context.Context, payload any) error {
+func (c *acpBootstrapInstanceClient) writeJSON(ctx context.Context, payload any) error {
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := c.conn.SetWriteDeadline(deadline); err != nil {
 			return err
@@ -198,7 +198,7 @@ func (c *acpBootstrapWorkspaceClient) writeJSON(ctx context.Context, payload any
 	return c.conn.WriteJSON(payload)
 }
 
-func (c *acpBootstrapWorkspaceClient) readMessage(ctx context.Context) (*acpBootstrapJSONRPCMessage, error) {
+func (c *acpBootstrapInstanceClient) readMessage(ctx context.Context) (*acpBootstrapJSONRPCMessage, error) {
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := c.conn.SetReadDeadline(deadline); err != nil {
 			return nil, err
@@ -328,12 +328,12 @@ func (s *server) bootstrapACPConversationBinding(ctx context.Context, conversati
 	dialCtx, cancel := context.WithTimeout(ctx, s.acp.bootstrapDialTimeout)
 	defer cancel()
 
-	workspaceConn, _, err := websocket.DefaultDialer.DialContext(dialCtx, s.acpWorkspaceURL(spritz.Namespace, spritz.Name), nil)
+	instanceConn, _, err := websocket.DefaultDialer.DialContext(dialCtx, s.acpInstanceURL(spritz.Namespace, spritz.Name), nil)
 	if err != nil {
 		s.recordConversationBindingError(ctx, conversation.Namespace, conversation.Name, "", err)
 		return nil, err
 	}
-	client := &acpBootstrapWorkspaceClient{conn: workspaceConn}
+	client := &acpBootstrapInstanceClient{conn: instanceConn}
 	defer func() {
 		_ = client.close()
 	}()

@@ -35,7 +35,7 @@ Supporting owners live in:
 
 - `e2e/acp-smoke-lib.mjs`
 - `e2e/acp-client.mjs`
-- `e2e/workspace-waiter.mjs`
+- `e2e/instance-waiter.mjs`
 
 ## Required Inputs
 
@@ -176,11 +176,11 @@ At minimum, changes to the smoke harness should run:
 ```bash
 node --test e2e/acp-smoke-lib.test.mjs \
   e2e/acp-client.test.mjs \
-  e2e/workspace-waiter.test.mjs
+  e2e/instance-waiter.test.mjs
 
 node --check e2e/acp-smoke-lib.mjs \
   e2e/acp-client.mjs \
-  e2e/workspace-waiter.mjs \
+  e2e/instance-waiter.mjs \
   e2e/acp-smoke.mjs
 ```
 

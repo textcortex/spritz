@@ -34,7 +34,7 @@ type ACPProbeConfig struct {
 	RefreshInterval         time.Duration
 	MetadataRefreshInterval time.Duration
 	ClientInfo              acpImplementationInfo
-	WorkspaceURL            func(namespace, name string) string
+	InstanceURL             func(namespace, name string) string
 }
 
 type acpImplementationInfo struct {
@@ -129,9 +129,9 @@ func (c ACPProbeConfig) shouldRefreshMetadata(status *spritzv1.SpritzACPStatus) 
 	return time.Since(status.LastMetadataAt.Time) >= c.MetadataRefreshInterval
 }
 
-func (c ACPProbeConfig) workspaceBaseURL(namespace, name string) string {
-	if c.WorkspaceURL != nil {
-		return c.WorkspaceURL(namespace, name)
+func (c ACPProbeConfig) instanceBaseURL(namespace, name string) string {
+	if c.InstanceURL != nil {
+		return c.InstanceURL(namespace, name)
 	}
 	return (&url.URL{
 		Scheme: "http",
@@ -140,7 +140,7 @@ func (c ACPProbeConfig) workspaceBaseURL(namespace, name string) string {
 }
 
 func (c ACPProbeConfig) endpointURL(namespace, name, requestPath string) string {
-	base, err := url.Parse(c.workspaceBaseURL(namespace, name))
+	base, err := url.Parse(c.instanceBaseURL(namespace, name))
 	if err != nil {
 		return ""
 	}

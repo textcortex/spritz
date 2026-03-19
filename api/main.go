@@ -583,7 +583,7 @@ func (s *server) createSpritz(c echo.Context) error {
 	return writeError(c, http.StatusInternalServerError, "failed to generate unique spritz name")
 }
 
-// ensureServiceAccount creates the requested workspace service account on demand.
+// ensureServiceAccount creates the requested instance service account on demand.
 func (s *server) ensureServiceAccount(ctx context.Context, namespace, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {

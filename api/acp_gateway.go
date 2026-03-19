@@ -44,17 +44,17 @@ func (s *server) openACPConversationConnection(c echo.Context) error {
 		_ = browserConn.Close()
 	}()
 
-	workspaceConn, _, err := websocket.DefaultDialer.DialContext(c.Request().Context(), s.acpWorkspaceURL(spritz.Namespace, spritz.Name), nil)
+	instanceConn, _, err := websocket.DefaultDialer.DialContext(c.Request().Context(), s.acpInstanceURL(spritz.Namespace, spritz.Name), nil)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		_ = workspaceConn.Close()
+		_ = instanceConn.Close()
 	}()
 
 	return proxyWebSockets(
 		browserConn,
-		workspaceConn,
+		instanceConn,
 		func(payload []byte) {
 			s.scheduleACPPromptActivity(c.Logger(), spritz.Namespace, spritz.Name, payload)
 		},

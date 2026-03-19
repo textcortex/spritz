@@ -12,7 +12,7 @@ import (
 	spritzv1 "spritz.sh/operator/api/v1"
 )
 
-func TestReconcileDeploymentUsesWorkspaceServiceAccountName(t *testing.T) {
+func TestReconcileDeploymentUsesInstanceServiceAccountName(t *testing.T) {
 	scheme := newControllerTestScheme(t)
 	spritz := &spritzv1.Spritz{
 		ObjectMeta: metav1.ObjectMeta{Name: "tidy-otter", Namespace: "spritz-test"},

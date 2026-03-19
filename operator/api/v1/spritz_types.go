@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	// DefaultACPPort is the reserved internal ACP service/container port for Spritz workspaces.
+	// DefaultACPPort is the reserved internal ACP service/container port for Spritz instances.
 	DefaultACPPort = int32(2529)
 	// DefaultACPPath is the default WebSocket path for the Spritz ACP transport.
 	DefaultACPPath = "/"
@@ -21,17 +21,17 @@ const (
 // +kubebuilder:validation:XValidation:rule="!(has(self.repo) && has(self.repos) && size(self.repos) > 0)",message="spec.repo and spec.repos are mutually exclusive"
 type SpritzSpec struct {
 	// +kubebuilder:validation:Pattern="^[a-z0-9]+((\\.|_|__|-+)[a-z0-9]+)*(:[0-9]+)?(/[a-z0-9]+((\\.|_|__|-+)[a-z0-9]+)*)*(@sha256:[a-f0-9]{64}|:[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127})?$"
-	Image string          `json:"image"`
+	Image string `json:"image"`
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-	ServiceAccountName string `json:"serviceAccountName,omitempty"`
-	Repo  *SpritzRepo     `json:"repo,omitempty"`
-	Repos []SpritzRepo    `json:"repos,omitempty"`
-	Env   []corev1.EnvVar `json:"env,omitempty"`
+	ServiceAccountName string          `json:"serviceAccountName,omitempty"`
+	Repo               *SpritzRepo     `json:"repo,omitempty"`
+	Repos              []SpritzRepo    `json:"repos,omitempty"`
+	Env                []corev1.EnvVar `json:"env,omitempty"`
 	// SharedMounts configures per-spritz shared directories.
 	SharedMounts []sharedmounts.MountSpec `json:"sharedMounts,omitempty"`
 	// +kubebuilder:validation:Pattern="^([0-9]+h)?([0-9]+m)?([0-9]+s)?$"
-	TTL         string                      `json:"ttl,omitempty"`
+	TTL string `json:"ttl,omitempty"`
 	// +kubebuilder:validation:Pattern="^([0-9]+h)?([0-9]+m)?([0-9]+s)?$"
 	IdleTTL     string                      `json:"idleTtl,omitempty"`
 	Resources   corev1.ResourceRequirements `json:"resources,omitempty"`
@@ -139,17 +139,17 @@ type SpritzStatus struct {
 	// +kubebuilder:validation:Enum=Provisioning;Ready;Expiring;Expired;Terminating;Error
 	Phase string `json:"phase,omitempty"`
 	// +kubebuilder:validation:Format=uri
-	URL            string             `json:"url,omitempty"`
-	ACP            *SpritzACPStatus   `json:"acp,omitempty"`
-	SSH            *SpritzSSHInfo     `json:"ssh,omitempty"`
-	Message        string             `json:"message,omitempty"`
-	LastActivityAt *metav1.Time       `json:"lastActivityAt,omitempty"`
-	IdleExpiresAt  *metav1.Time       `json:"idleExpiresAt,omitempty"`
-	MaxExpiresAt   *metav1.Time       `json:"maxExpiresAt,omitempty"`
-	ExpiresAt      *metav1.Time       `json:"expiresAt,omitempty"`
-	LifecycleReason string            `json:"lifecycleReason,omitempty"`
-	ReadyAt        *metav1.Time       `json:"readyAt,omitempty"`
-	Conditions     []metav1.Condition `json:"conditions,omitempty"`
+	URL             string             `json:"url,omitempty"`
+	ACP             *SpritzACPStatus   `json:"acp,omitempty"`
+	SSH             *SpritzSSHInfo     `json:"ssh,omitempty"`
+	Message         string             `json:"message,omitempty"`
+	LastActivityAt  *metav1.Time       `json:"lastActivityAt,omitempty"`
+	IdleExpiresAt   *metav1.Time       `json:"idleExpiresAt,omitempty"`
+	MaxExpiresAt    *metav1.Time       `json:"maxExpiresAt,omitempty"`
+	ExpiresAt       *metav1.Time       `json:"expiresAt,omitempty"`
+	LifecycleReason string             `json:"lifecycleReason,omitempty"`
+	ReadyAt         *metav1.Time       `json:"readyAt,omitempty"`
+	Conditions      []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // SpritzACPStatus describes ACP discovery state for the workload.
@@ -267,7 +267,7 @@ type SpritzList struct {
 // +kubebuilder:printcolumn:name="Session",type=string,JSONPath=".spec.sessionId"
 // +kubebuilder:printcolumn:name="Binding",type=string,JSONPath=".status.bindingState"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
-// SpritzConversation stores ACP conversation metadata for a spritz workspace.
+// SpritzConversation stores ACP conversation metadata for a spritz instance.
 // +kubebuilder:subresource:status
 type SpritzConversation struct {
 	metav1.TypeMeta   `json:",inline"`

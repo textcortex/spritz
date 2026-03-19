@@ -224,7 +224,7 @@ function closeChild(child, timerRef) {
 }
 
 /**
- * Owns the long-lived claude-agent-acp child process for the workspace.
+ * Owns the long-lived claude-agent-acp child process for the instance.
  * The runtime survives websocket reconnects so ACP session ids remain valid
  * between Spritz bootstrap and the browser chat connection.
  */

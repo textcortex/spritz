@@ -116,8 +116,8 @@ The intended model is one UI endpoint per running devbox instance.
 When used as a Spritz ACP backend, this image exposes ACP on the reserved internal port `2529`
 automatically. Spritz can then:
 
-- fetch health and metadata from the workspace ACP adapter
-- mark the workspace ACP-ready in `status.acp`
+- fetch health and metadata from the instance ACP adapter
+- mark the instance ACP-ready in `status.acp`
 - proxy browser ACP traffic through `spritz-api`
 
 The ACP adapter is image-owned compatibility glue. Once OpenClaw grows a native socket transport,
