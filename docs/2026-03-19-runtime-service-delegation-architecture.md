@@ -172,6 +172,10 @@ The exchange handler should:
 This endpoint should be generic. It should not know service-specific pricing,
 model names, or deployment business logic.
 
+For the concrete control-plane read contract a downstream service can use to
+validate runtime identity against an instance binding, see
+[2026-03-19-runtime-binding-resolution-api-implementation-plan.md](2026-03-19-runtime-binding-resolution-api-implementation-plan.md).
+
 ## Delegation Token
 
 The delegated credential should be a short-lived signed token with explicit
@@ -316,6 +320,7 @@ Validation should include:
 
 ## References
 
+- [2026-03-19-runtime-binding-resolution-api-implementation-plan.md](2026-03-19-runtime-binding-resolution-api-implementation-plan.md)
 - [2026-03-19-unified-extension-framework-architecture.md](2026-03-19-unified-extension-framework-architecture.md)
 - [2026-03-11-external-provisioner-and-service-principal-architecture.md](2026-03-11-external-provisioner-and-service-principal-architecture.md)
 - [2026-03-12-external-identity-resolution-api-architecture.md](2026-03-12-external-identity-resolution-api-architecture.md)
