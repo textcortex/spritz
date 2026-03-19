@@ -1,0 +1,455 @@
+---
+date: 2026-03-19
+author: Onur Solmaz <onur@textcortex.com>
+title: Unified Extension Framework Architecture
+tags: [spritz, api, extensions, auth, provisioning, architecture]
+---
+
+## Overview
+
+This document defines a unified extension framework for Spritz.
+
+The goal is to stop adding new feature-specific integration surfaces for
+provisioning, auth, login metadata, identity resolution, and future linking
+workflows. Instead, Spritz should expose one standard extension model that can
+be configured by deployments and invoked natively by the API.
+
+This keeps `spz`, the UI, and any service-principal caller on the same control
+plane path:
+
+- clients send a normal Spritz request,
+- Spritz resolves any configured extension steps,
+- Spritz applies validated mutations,
+- Spritz creates or updates the canonical resource.
+
+The extension framework must remain portable and deployment-agnostic. Spritz
+must define the standard, while deployment-owned systems remain responsible for
+business-specific decisions such as account linking, runtime binding, or
+product-specific policy evaluation.
+
+## Problem Statement
+
+Spritz already has more than one extension-style integration point:
+
+- bearer and browser auth configuration,
+- login metadata exposed to the UI,
+- external owner resolution during provisioning,
+- preset-based create-time defaults,
+- provisioner-specific behavior for service principals.
+
+These pieces work, but they are managed as separate subsystems with separate
+config formats and separate execution paths.
+
+That creates four problems:
+
+- new integrations tend to become one-off configuration surfaces,
+- similar concepts such as "resolve this identity" and "resolve this preset
+  binding" do not share a standard contract,
+- clients cannot rely on one predictable native create path,
+- Spritz becomes harder to evolve because extension behavior is scattered across
+  unrelated files and environment variables.
+
+## Goals
+
+- Define one standard extension model for API-driven integration behavior.
+- Keep `spz` as the thin canonical client for all provisioning flows.
+- Let create-time preset-specific logic run natively inside Spritz.
+- Reuse the same extension model for owner resolution, runtime binding, login
+  metadata, and future identity-linking flows.
+- Keep extension logic deployment-owned while keeping Spritz portable.
+- Standardize config, request/response shape, logging, timeout handling,
+  idempotency, and failure mapping.
+
+## Non-goals
+
+- Embedding deployment-specific business logic in Spritz core.
+- Turning Spritz into a general-purpose workflow engine.
+- Allowing extensions to mutate arbitrary parts of the system without policy
+  limits.
+- Replacing presets, service-principal scopes, or owner semantics.
+- Making `spz` implement authorization or fallback logic on its own.
+
+## Design Principles
+
+### Spritz owns orchestration, not business policy
+
+Spritz should decide when an extension runs, how it is authenticated, how its
+result is validated, and how it affects the canonical request.
+
+Deployments should decide the business answer to extension questions such as:
+
+- which external user maps to which owner,
+- which runtime binding belongs to a selected target,
+- which login URL or refresh URL should be presented,
+- which identity-link status is valid.
+
+### Extensions are operation-based
+
+Extensions should attach to a small set of named operations instead of being
+hard-coded into feature-specific code paths.
+
+Examples:
+
+- `owner.resolve`
+- `preset.create.resolve`
+- `auth.login.metadata`
+- `identity.link.resolve`
+- `workspace.lifecycle.notify`
+
+### Clients stay thin
+
+`spz`, UI callers, and service integrations should submit normal Spritz
+requests. They should not reproduce fallback rules, runtime binding logic, or
+owner lookup logic locally.
+
+### Mutations are explicit and limited
+
+An extension should not arbitrarily rewrite requests. It should return a
+validated mutation set with a narrow allowed surface.
+
+### Extension results must affect idempotency
+
+If an extension changes the effective create request, that resolved result must
+be included in idempotency and replay logic. Otherwise identical idempotency
+keys could replay into different runtime bindings.
+
+## Unified Model
+
+Spritz should introduce one extension registry in the API layer.
+
+High-level model:
+
+- extensions are declared in API config,
+- each extension has an `id`, `kind`, `operation`, and transport,
+- operations decide when an extension is invoked,
+- Spritz builds a standard request envelope,
+- the extension returns a standard response envelope,
+- Spritz validates and applies allowed mutations.
+
+This turns feature-specific hooks into data-driven extension configuration.
+
+## Extension Kinds
+
+### Resolver
+
+A resolver runs synchronously before Spritz continues an operation.
+
+Typical uses:
+
+- resolve an external owner into an internal owner,
+- resolve a preset-specific runtime binding,
+- resolve an identity-link target,
+- resolve policy-driven defaults that must be fixed before create.
+
+### Auth Provider
+
+An auth provider exposes login and refresh metadata for browser clients and
+other consumers that need to know how to authenticate against the deployment.
+
+Typical uses:
+
+- login URL metadata,
+- return-to behavior,
+- token refresh endpoint metadata.
+
+### Lifecycle Hook
+
+A lifecycle hook runs after a core operation succeeds or fails.
+
+Typical uses:
+
+- notify an external control plane,
+- emit lifecycle events,
+- run bookkeeping after delete or expiration.
+
+Resolvers are the most important initial kind because they cover the existing
+external owner flow and the create-time preset binding problem.
+
+## Standard Extension Configuration
+
+Spritz should expose one config surface for extensions, for example:
+
+```yaml
+api:
+  extensions:
+    - id: external-owner
+      kind: resolver
+      operation: owner.resolve
+      transport:
+        type: http
+        url: https://resolver.example.com/v1/owners/resolve
+        authHeaderEnv: SPRITZ_INTERNAL_TOKEN
+        timeout: 5s
+
+    - id: runtime-binding
+      kind: resolver
+      operation: preset.create.resolve
+      match:
+        presetIds: [assistant-runtime]
+      transport:
+        type: http
+        url: https://resolver.example.com/v1/runtime-bindings/resolve
+        authHeaderEnv: SPRITZ_INTERNAL_TOKEN
+        timeout: 5s
+
+    - id: web-login
+      kind: auth_provider
+      operation: auth.login.metadata
+      provider:
+        loginUrl: https://console.example.com/login
+        refreshUrl: https://console.example.com/api/auth/refresh
+```
+
+Rules:
+
+- `id` MUST be unique.
+- `kind` MUST be one of the supported extension kinds.
+- `operation` MUST be one of the supported extension operations.
+- `match` MAY further restrict invocation, such as by preset ID.
+- HTTP transport MUST support timeout and auth configuration.
+
+## Standard Request Envelope
+
+Spritz should call resolvers with one common request contract:
+
+```json
+{
+  "version": "v1",
+  "extensionId": "runtime-binding",
+  "kind": "resolver",
+  "operation": "preset.create.resolve",
+  "requestId": "req-123",
+  "principal": {
+    "id": "service-123",
+    "type": "service",
+    "scopes": ["spritz.instances.create"]
+  },
+  "context": {
+    "namespace": "workspaces",
+    "presetId": "assistant-runtime"
+  },
+  "input": {
+    "owner": {
+      "id": "user-123"
+    },
+    "ownerRef": {
+      "type": "external",
+      "provider": "chat",
+      "subject": "abc"
+    },
+    "presetInputs": {
+      "targetId": "runtime-123"
+    },
+    "spec": {
+      "image": "registry.example.com/runtime:latest"
+    }
+  }
+}
+```
+
+Notes:
+
+- `principal` is already authenticated by Spritz.
+- `context` is canonicalized by Spritz, not by the caller.
+- `input` contains only the operation-specific payload needed by the resolver.
+
+## Standard Response Envelope
+
+Resolvers should answer with one common response contract:
+
+```json
+{
+  "status": "resolved",
+  "output": {
+    "targetId": "runtime-123"
+  },
+  "mutations": {
+    "ownerId": "user-123",
+    "spec": {
+      "serviceAccountName": "runtime-user-123"
+    },
+    "annotations": {
+      "spritz.sh/resolved-target-id": "runtime-123"
+    }
+  }
+}
+```
+
+Supported statuses should include:
+
+- `resolved`
+- `unresolved`
+- `forbidden`
+- `ambiguous`
+- `invalid`
+- `unavailable`
+
+Spritz should map these to stable API responses and should not require each
+feature-specific resolver to invent its own error format.
+
+## Allowed Mutation Surface
+
+Spritz should only allow extensions to mutate a narrow set of fields.
+
+Initial allowed surface:
+
+- resolved owner ID
+- selected spec fields such as `serviceAccountName`
+- selected annotations
+- selected labels
+- normalized preset metadata returned in response payloads
+
+Not allowed initially:
+
+- arbitrary namespace rewrite,
+- arbitrary image rewrite unless explicitly allowed by preset policy,
+- arbitrary owner change after create,
+- arbitrary post-create permission grants.
+
+Mutation allowlists should be enforced in code per operation.
+
+## Native Preset Create Resolution
+
+This is the most important new capability.
+
+Spritz should add first-class `presetInputs` to create requests and allow a
+preset-scoped resolver to run before workspace creation.
+
+That enables native flows such as:
+
+- caller uses `spz create --preset assistant-runtime`,
+- caller optionally passes selector inputs,
+- Spritz resolves the owner,
+- Spritz invokes the preset create resolver,
+- the resolver returns required runtime binding fields,
+- Spritz applies them and creates the workspace.
+
+This keeps the CLI thin and guarantees that create-time binding logic is always
+enforced server-side.
+
+## CLI Contract
+
+`spz` should remain a thin client over the native API shape.
+
+It should support `presetInputs` directly, for example:
+
+```bash
+spz create \
+  --preset assistant-runtime \
+  --owner-provider chat \
+  --owner-subject 123456 \
+  --preset-input targetId=runtime-123
+```
+
+or:
+
+```bash
+spz create \
+  --preset assistant-runtime \
+  --owner-provider chat \
+  --owner-subject 123456
+```
+
+If the resolver defines fallback behavior for missing inputs, that fallback must
+run in the API, not in the CLI.
+
+## Idempotency and Replay
+
+Extension results must be included in the effective resolved create payload.
+
+Rules:
+
+- the canonical request fingerprint MUST include applied extension mutations,
+- replay MUST restore the same resolved result,
+- pending idempotent reservations MUST not re-run a resolver with different
+  semantics,
+- extension output SHOULD be stored in the resolved idempotent payload when it
+  affects create.
+
+This follows the same principle already used for external owner resolution.
+
+## Security and Policy
+
+- only explicitly configured extensions may run,
+- extensions should be invoked only for allowed principals and operations,
+- service-principal scopes still gate whether the operation may proceed,
+- extension auth headers and secrets must stay in deployment config,
+- Spritz should reject unconfigured extension references,
+- resolver outputs must be validated before any mutation is applied.
+
+For HTTP extensions:
+
+- require explicit timeouts,
+- treat network failures as `unavailable`,
+- log request IDs and extension IDs,
+- avoid passing secrets or unnecessary request fields.
+
+## Observability
+
+Each extension invocation should log:
+
+- extension ID,
+- operation,
+- principal ID and type,
+- request ID,
+- outcome status,
+- duration,
+- whether the result came from replay or a live call.
+
+Suggested metrics:
+
+- invocation count by extension ID and status,
+- latency histogram by extension ID,
+- unavailable/error count,
+- replay reuse count for resolved payloads.
+
+## Migration Plan
+
+### Phase 1: Introduce the extension registry
+
+- add generic extension config parsing and validation,
+- add a standard HTTP executor,
+- add request and response envelope types,
+- keep existing feature-specific code working.
+
+### Phase 2: Migrate external owner resolution
+
+- adapt the existing external owner resolver to `owner.resolve`,
+- preserve the current public API shape,
+- keep a compatibility layer for existing env vars.
+
+### Phase 3: Add preset create resolution
+
+- add `presetInputs` to create requests,
+- add `preset.create.resolve`,
+- allow presets to require resolver-produced fields before create succeeds.
+
+### Phase 4: Move login metadata under the same roof
+
+- represent deployment-specific login and refresh metadata as an auth-provider
+  extension,
+- keep UI config behavior backward-compatible during migration.
+
+### Phase 5: Add future identity-link and lifecycle operations
+
+- reuse the same framework for linking and post-create hooks instead of adding
+  new one-off config paths.
+
+## Validation
+
+Validation should include:
+
+- config parsing tests for the extension registry,
+- resolver transport tests,
+- create-path tests proving resolver mutations affect idempotency,
+- preset create tests proving `presetInputs` are passed through and validated,
+- compatibility tests for existing external owner resolution,
+- CLI tests proving `spz` remains a thin request builder,
+- auth/UI tests for migrated login metadata behavior.
+
+## References
+
+- [2026-03-11-external-provisioner-and-service-principal-architecture.md](2026-03-11-external-provisioner-and-service-principal-architecture.md)
+- [2026-03-12-external-identity-resolution-api-architecture.md](2026-03-12-external-identity-resolution-api-architecture.md)
+- [2026-03-13-spz-audience-and-external-owner-guidance.md](2026-03-13-spz-audience-and-external-owner-guidance.md)
+- [2026-02-24-portable-authentication-and-account-architecture.md](2026-02-24-portable-authentication-and-account-architecture.md)
