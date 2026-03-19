@@ -1,7 +1,7 @@
 ---
 date: 2026-03-13
 author: Onur Solmaz <onur@textcortex.com>
-title: Spawn Language for Agent Workspaces
+title: Spawn Language for Agent Instances
 tags: [spritz, wording, cli, agents]
 ---
 
@@ -12,9 +12,9 @@ agent in a Spritz-backed system.
 
 In plain language:
 
-- `spawn an agent` means `create a Spritz workspace for that agent`
+- `spawn an agent` means `create a Spritz instance for that agent`
 - the technical system action is still `create` / `provision`
-- the stored resource is still a `workspace`
+- the stored resource is still a `instance`
 
 This is a vocabulary rule, not a data model change.
 
@@ -22,14 +22,14 @@ This is a vocabulary rule, not a data model change.
 
 Use `spawn` when the human intent is:
 
-- start a fresh agent workspace
+- start a fresh agent instance
 - make that agent reachable through its returned URLs or terminal access
-- create the workspace from a preset such as `openclaw` or `claude-code`
+- create the instance from a preset such as `openclaw` or `claude-code`
 
 Do not use `spawn` to mean:
 
 - start a local child process
-- fork an existing workspace
+- fork an existing instance
 - duplicate a conversation
 - create a new owner identity
 
@@ -37,8 +37,8 @@ Do not use `spawn` to mean:
 
 When an agent or operator says `spawn`, interpret it as:
 
-1. resolve who the workspace is for
-2. resolve what preset or workspace spec should be used
+1. resolve who the instance is for
+2. resolve what preset or instance spec should be used
 3. call Spritz create
 4. report back with what was spawned and how to open it
 
@@ -46,13 +46,13 @@ Keep the canonical technical language unchanged:
 
 - API actions stay `create`
 - provisioning remains `provisioning`
-- the resource remains a `workspace`
+- the resource remains a `instance`
 - ownership remains the internal Spritz owner model
 
 ## CLI and Skill Guidance
 
 The bundled `spz` skill should understand `spawn` as shorthand for creating a
-Spritz workspace.
+Spritz instance.
 
 Expected behavior:
 
@@ -60,7 +60,7 @@ Expected behavior:
 - if the owner is an external platform user, use external owner flags rather
   than treating the platform ID as `--owner-id`
 - if preset, provider, subject, or tenant is unclear, ask for clarification
-- after success, report the spawned workspace name and returned open URLs
+- after success, report the spawned instance name and returned open URLs
 
 ## Examples
 

@@ -5,12 +5,12 @@
 </p>
 
 <p align="center">
-  <strong>Open-source Kubernetes orchestrator for disposable agent workspaces</strong>
+  <strong>Open-source Kubernetes orchestrator for disposable agent instances</strong>
 </p>
 
-Spritz is a self-hosted control plane for spawning isolated agent workspaces on Kubernetes.
+Spritz is a self-hosted control plane for spawning isolated agent instances on Kubernetes.
 
-You deploy Spritz on your own cluster, package one or more agent runtimes as presets, and let humans or gateway automations spawn fresh agents on demand. Each spawned agent runs in its own workspace workload, is owned by a specific user, and is exposed through a consistent UI, API, and ACP gateway.
+You deploy Spritz on your own cluster, package one or more agent runtimes as presets, and let humans or gateway automations spawn fresh agents on demand. Each spawned agent runs in its own instance workload, is owned by a specific user, and is exposed through a consistent UI, API, and ACP gateway.
 
 Spritz is built to stay runtime-agnostic. [OpenClaw](https://docs.openclaw.ai/) is one example runtime in this repository, but Spritz is not tied to OpenClaw. Any agent that speaks the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/get-started/introduction) on the Spritz runtime contract can run behind it, whether that is OpenClaw, Claude Code, a Codex-based runtime, or a custom internal agent image.
 
@@ -25,13 +25,13 @@ Spritz is for teams that want to run many user-owned agents on shared Kubernetes
 The model is simple:
 
 - the gateway bot or automation is just the requester
-- the actual agent runs in a separate Spritz workspace
-- the workspace is owned by the human user it was created for
+- the actual agent runs in a separate Spritz instance
+- the instance is owned by the human user it was created for
 - the human opens it through a Spritz client surface and talks to the agent there
 
 That makes Spritz useful for:
 
-- disposable per-task agent workspaces
+- disposable per-task agent instances
 - internal gateway bots on Discord, Slack, Teams, or other messaging surfaces
 - self-managed enterprise deployments on private infrastructure
 - high-concurrency setups where many users may run multiple agents at once
@@ -39,18 +39,18 @@ That makes Spritz useful for:
 
 ## What it feels like
 
-In user-facing language, `spawn` means `create a fresh agent workspace`.
+In user-facing language, `spawn` means `create a fresh agent instance`.
 
 A typical flow looks like this:
 
 1. A company deploys Spritz on its own Kubernetes cluster with the Helm chart.
 2. The company defines presets for the agent runtimes it wants to offer, such as OpenClaw, Claude Code, or a custom ACP-capable image.
 3. A human asks a gateway bot or internal automation to spawn an agent for a task.
-4. The gateway bot calls Spritz to create the workspace for that user.
-5. Spritz provisions the workspace, binds it to the resolved owner, and returns canonical open URLs.
+4. The gateway bot calls Spritz to create the instance for that user.
+5. Spritz provisions the instance, binds it to the resolved owner, and returns canonical open URLs.
 6. The user opens a Spritz client surface and works with the spawned agent.
 
-Today the built-in interactive surface is the Spritz web UI. That UI is one first-party client, not the only intended interface. Over time, Spritz is meant to sit behind adapters that embed the same workspace flow into chat products such as Discord, Slack, Teams, or other messaging surfaces. Those adapters are planned future work; today the web UI is the shipped interactive client.
+Today the built-in interactive surface is the Spritz web UI. That UI is one first-party client, not the only intended interface. Over time, Spritz is meant to sit behind adapters that embed the same instance flow into chat products such as Discord, Slack, Teams, or other messaging surfaces. Those adapters are planned future work; today the web UI is the shipped interactive client.
 
 ## Why Spritz exists
 
@@ -99,31 +99,31 @@ The important boundary is the protocol, not the brand of the agent.
 
 Spritz currently provides:
 
-- a Kubernetes operator that reconciles `Spritz` resources into running workspaces
-- a Spritz API that owns auth, workspace access, ACP metadata, and ACP proxying
-- a built-in web UI for creating workspaces, opening them, and chatting with ACP-capable agents
+- a Kubernetes operator that reconciles `Spritz` resources into running instances
+- a Spritz API that owns auth, instance access, ACP metadata, and ACP proxying
+- a built-in web UI for creating instances, opening them, and chatting with ACP-capable agents
 - a CLI and service-principal-friendly create flow for external provisioners
-- preset-based workspace creation with canonical URLs in the create response
+- preset-based instance creation with canonical URLs in the create response
 - external owner resolution for gateway bots that know a platform user ID but not an internal owner ID
-- owner-bound workspaces where the creator and the later user do not need to be the same principal
+- owner-bound instances where the creator and the later user do not need to be the same principal
 - ACP readiness discovery written into `Spritz.status.acp`
 - browser terminal access routed through `spritz-api`
-- optional shared mounts for owner-scoped state sharing between disposable workspaces
+- optional shared mounts for owner-scoped state sharing between disposable instances
 
-That means a gateway bot can create a workspace for a human user, but the bot does not need to become that user and does not automatically inherit post-create access to the workspace. The built-in UI is the current first-party client for opening and using those workspaces, while chat-native adapters are expected to layer on top later.
+That means a gateway bot can create an instance for a human user, but the bot does not need to become that user and does not automatically inherit post-create access to the instance. The built-in UI is the current first-party client for opening and using those instances, while chat-native adapters are expected to layer on top later.
 
 ## Gateway bots and external owner resolution
 
 One of Spritz's core use cases is the gateway-agent pattern.
 
-For example, a deployment can run a bot on Discord, Slack, Teams, or another messaging platform. That bot can ask Spritz to spawn a workspace using the platform-native user identifier it already has. Spritz then resolves the true workspace owner through a deployment-owned resolver and creates the workspace for that owner.
+For example, a deployment can run a bot on Discord, Slack, Teams, or another messaging platform. That bot can ask Spritz to spawn an instance using the platform-native user identifier it already has. Spritz then resolves the true instance owner through a deployment-owned resolver and creates the instance for that owner.
 
 In practice, this gives you a clean separation:
 
 - the messaging bot knows the platform user ID
-- Spritz owns workspace creation, access, and lifecycle
+- Spritz owns instance creation, access, and lifecycle
 - the deployment decides how platform identities resolve to real owners
-- the created workspace remains owned by the human user, not by the bot
+- the created instance remains owned by the human user, not by the bot
 
 This is the long-term stable path for chat-triggered agent spawns.
 
@@ -148,7 +148,7 @@ Human or gateway bot
             |
             v
 +------------------------+
-|   Agent workspace      |
+|   Agent instance      |
 | OpenClaw, Claude Code, |
 | or any ACP runtime     |
 | on ws://:2529/         |
@@ -172,15 +172,15 @@ The default install path is intentionally simple:
 
 This keeps the default deployment understandable and portable.
 
-### Workspace model
+### Instance model
 
-A workspace is the actual running environment for one spawned agent. In Kubernetes terms, that is a `Spritz` resource reconciled into a deployment and related services.
+An instance is the actual running environment for one spawned agent. In Kubernetes terms, that is a `Spritz` resource reconciled into a deployment and related services.
 
-The user-facing verb can be `spawn`, but the stored resource remains a workspace.
+The user-facing verb can be `spawn`, but the stored resource remains an instance.
 
 ### ACP model
 
-Spritz reserves one internal ACP endpoint per workspace:
+Spritz reserves one internal ACP endpoint per instance:
 
 - port `2529`
 - transport `WebSocket`
@@ -210,8 +210,8 @@ For an authenticated install, enable the in-cluster auth gateway and provide OID
 After install:
 
 1. open the configured host
-2. create a workspace from the UI or API
-3. open the workspace directly or use the built-in ACP chat surface if the runtime exposes ACP on `2529`
+2. create an instance from the UI or API
+3. open the instance directly or use the built-in ACP chat surface if the runtime exposes ACP on `2529`
 
 ## Design constraints
 
@@ -241,6 +241,6 @@ Spritz is intended to remain portable and standalone:
 - [ACP Port and Agent Chat Architecture](docs/2026-03-09-acp-port-and-agent-chat-architecture.md)
 - [External Provisioner and Service Principal Architecture](docs/2026-03-11-external-provisioner-and-service-principal-architecture.md)
 - [External Identity Resolution API Architecture](docs/2026-03-12-external-identity-resolution-api-architecture.md)
-- [Spawn Language for Agent Workspaces](docs/2026-03-13-spawn-language-for-agent-workspaces.md)
+- [Spawn Language for Agent Instances](docs/2026-03-13-spawn-language-for-agent-workspaces.md)
 - [OpenClaw Integration](docs/2026-03-13-openclaw-integration.md)
 - [Local kind Development Guide](docs/2026-03-14-local-kind-development-guide.md)

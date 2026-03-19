@@ -8,7 +8,7 @@ tags: [spritz, provisioning, auth, cli, lifecycle, architecture]
 ## Overview
 
 This document defines the target architecture for letting external automation
-create Spritz workspaces for human users.
+create Spritz instances for human users.
 
 Typical examples include:
 
@@ -21,8 +21,8 @@ The target model is:
 
 - Spritz remains the only control plane,
 - the external system acts as a narrow service principal,
-- the created workspace is owned by the human user,
-- the external system cannot later mutate or delete that workspace unless it is
+- the created instance is owned by the human user,
+- the external system cannot later mutate or delete that instance unless it is
   granted a separate lifecycle role,
 - Spritz returns the canonical access URL and lifecycle metadata at creation
   time.
@@ -32,23 +32,23 @@ The existing `spz` CLI should be the official machine client for this flow.
 ## Problem Statement
 
 Spritz already supports authenticated browser users and a CLI/API surface for
-creating workspaces. What is missing is a production-ready model for external
-systems to create workspaces for someone else without turning those systems into
+creating instances. What is missing is a production-ready model for external
+systems to create instances for someone else without turning those systems into
 full administrators or hidden impersonators.
 
 The system must satisfy all of these requirements:
 
-- an external system can create a workspace for a real user,
-- the user later accesses that workspace with their normal Spritz login,
+- an external system can create an instance for a real user,
+- the user later accesses that instance with their normal Spritz login,
 - the external system does not need Kubernetes access,
 - the external system does not construct access URLs on its own,
-- the created workspace has both an idle lifetime and a hard maximum lifetime,
+- the created instance has both an idle lifetime and a hard maximum lifetime,
 - all policy, audit, and ownership decisions stay centralized in Spritz,
 - the design stays portable and backend-agnostic.
 
 ## Non-goals
 
-- Letting external systems act as the user after the workspace is created.
+- Letting external systems act as the user after the instance is created.
 - Giving bots direct Kubernetes or CRD write access.
 - Making images the main external-facing abstraction.
 - Duplicating provisioning logic in the CLI, UI, or bot.
@@ -73,12 +73,12 @@ External systems must not bypass Spritz and must not write CRDs directly.
 
 ### External systems are provisioners, not impersonators
 
-An external system may request workspace creation for a user, but it must not:
+An external system may request instance creation for a user, but it must not:
 
 - become that user,
 - inherit that user's access rights,
-- edit the workspace after creation,
-- delete the workspace after creation,
+- edit the instance after creation,
+- delete the instance after creation,
 - open terminal, SSH, or ACP sessions as that user.
 
 ### Presets are the public provisioning abstraction
@@ -116,7 +116,7 @@ It should:
 ### One runtime path and one ownership model
 
 The same ownership and lifecycle model should apply regardless of whether the
-workspace was created:
+instance was created:
 
 - from the UI,
 - from `spz`,
@@ -130,8 +130,8 @@ workspace was created:
 A human principal:
 
 - authenticates through the normal browser identity flow,
-- owns the created workspace,
-- can later open, use, chat with, and delete their own workspace subject to
+- owns the created instance,
+- can later open, use, chat with, and delete their own instance subject to
   normal policy.
 
 ### Service principal
@@ -196,7 +196,7 @@ This is the most important part of the design.
 
 ### Core rule
 
-The external system may create a workspace for a human owner, but it may not
+The external system may create an instance for a human owner, but it may not
 act as that owner later.
 
 That means Spritz should not use a broad permission such as "act as owner" or
@@ -232,14 +232,14 @@ Not allowed by default:
 
 ### Ownership is immutable
 
-Once a workspace is created:
+Once an instance is created:
 
 - `spec.owner.id` must be treated as immutable
 
 except for an explicit admin-only break-glass path.
 
 This prevents ownership hijacking and prevents a provisioner from creating a
-workspace and reassigning it later.
+instance and reassigning it later.
 
 ### Create-for-owner is create-time only
 
@@ -249,9 +249,9 @@ That right must not imply any later rights over the created object.
 
 ### Separate actor from owner
 
-Every created workspace must record:
+Every created instance must record:
 
-- owner: the human who owns and uses the workspace,
+- owner: the human who owns and uses the instance,
 - actor: the service principal that requested creation,
 - source: the external integration or channel,
 - request id: the external idempotency/request identifier.
@@ -278,7 +278,7 @@ Provisioner policy should define:
 - whether custom repos are allowed,
 - maximum idle TTL,
 - maximum hard TTL,
-- maximum active workspaces per owner,
+- maximum active instances per owner,
 - maximum create rate per actor,
 - maximum create rate per owner,
 - optional repo allowlist or denylist,
@@ -347,7 +347,7 @@ the result back to the user without a follow-up read.
 
 Recommended response fields:
 
-- workspace name,
+- instance name,
 - owner id,
 - actor id,
 - namespace,
@@ -375,7 +375,7 @@ The create API should require:
 - `idempotencyKey`
 
 The same actor submitting the same idempotency key should get the same
-provisioning result rather than a second workspace.
+provisioning result rather than a second instance.
 
 Typical external ids include:
 
@@ -463,17 +463,17 @@ This keeps all clients consistent across:
 
 The same model applies to:
 
-- workspace open URLs,
+- instance open URLs,
 - chat URLs,
 - any future terminal or deep-link URLs.
 
 ## Lifecycle Model
 
-Every externally provisioned workspace should support two lifetime controls.
+Every externally provisioned instance should support two lifetime controls.
 
 ### Idle TTL
 
-Delete the workspace after a period of inactivity.
+Delete the instance after a period of inactivity.
 
 Example:
 
@@ -481,7 +481,7 @@ Example:
 
 ### Hard maximum TTL
 
-Delete the workspace after a maximum lifetime regardless of activity.
+Delete the instance after a maximum lifetime regardless of activity.
 
 Example:
 
@@ -566,7 +566,7 @@ Thinking like a large production platform means quotas are mandatory.
 
 Recommended controls:
 
-- max active workspaces per owner,
+- max active instances per owner,
 - max creates per owner per time window,
 - max creates per service principal per time window,
 - optional org/team quotas,
@@ -594,7 +594,7 @@ Audit records should include:
 - source,
 - idempotency key,
 - result,
-- created workspace name,
+- created instance name,
 - canonical access URL,
 - policy decisions that affected the request.
 
@@ -640,7 +640,7 @@ The external system should not need:
 
 - Kubernetes credentials,
 - CRD write access,
-- direct access to workspace pods,
+- direct access to instance pods,
 - browser cookies,
 - access through the browser login host.
 
@@ -648,7 +648,7 @@ The external system should not need:
 
 The full target flow is:
 
-1. A user asks an external system to create a workspace.
+1. A user asks an external system to create an instance.
 2. The external system resolves that user to a stable Spritz owner id.
 3. The external system runs `spz create` with:
    - owner id,
@@ -663,7 +663,7 @@ The full target flow is:
    - the caller may assign the requested owner at create time,
    - preset and lifecycle policy are allowed,
    - quota and rate-limit checks pass.
-6. Spritz creates the workspace with:
+6. Spritz creates the instance with:
    - human owner,
    - service actor audit metadata,
    - canonical lifecycle fields,
@@ -672,15 +672,15 @@ The full target flow is:
 8. The external system gives that URL back to the user.
 9. The user visits the URL and logs in through the normal Spritz browser auth
    path.
-10. From that point on, the user uses the workspace as its owner, and the
+10. From that point on, the user uses the instance as its owner, and the
     external system has no lifecycle control over it.
 
 ## Validation Criteria
 
 The design is correct only if all of the following are true:
 
-- an external provisioner can create a workspace for a human user,
-- the created workspace is owned by the human user,
+- an external provisioner can create an instance for a human user,
+- the created instance is owned by the human user,
 - the provisioner cannot later edit or delete it,
 - the provisioner does not need Kubernetes access,
 - the provisioner does not construct access URLs locally,

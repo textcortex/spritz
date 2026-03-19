@@ -59,7 +59,7 @@ Key implication: direct `/w/{name}` access with `bind=lan` expects real gateway 
 
 Spritz treats ACP as backend-agnostic.
 
-For OpenClaw to appear in the Spritz ACP chat UI, the workspace must answer ACP on:
+For OpenClaw to appear in the Spritz ACP chat UI, the instance must answer ACP on:
 
 - port `2529`
 - WebSocket path `/`
@@ -108,7 +108,7 @@ Required platform behavior:
 
 - All `/w/{name}` traffic must pass through an auth proxy.
 - Proxy must authenticate users and overwrite identity headers.
-- No bypass path to the workspace service.
+- No bypass path to the instance service.
 
 ### `none` (not for LAN exposure)
 
@@ -119,11 +119,11 @@ Required platform behavior:
 
 If the target is "no token prompt in Control UI":
 
-1. Put workspace routes behind an identity-aware proxy.
+1. Put instance routes behind an identity-aware proxy.
 2. Switch OpenClaw auth to `trusted-proxy`.
 3. Configure `trustedProxies` to only the proxy source IPs/CIDRs.
 4. Configure `trustedProxy.userHeader` to the forwarded authenticated identity.
-5. Enforce network policy so workspace pods are not reachable except through ingress/proxy.
+5. Enforce network policy so instance pods are not reachable except through ingress/proxy.
 
 Do not disable auth globally to get tokenless behavior.
 

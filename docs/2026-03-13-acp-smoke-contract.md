@@ -11,10 +11,10 @@ This document defines the contract for the Spritz ACP smoke harness.
 
 The smoke harness is the production-facing regression check for the core external provisioner and ACP workflow:
 
-- create a workspace through the service-principal `spz` path
-- wait for the workspace to reach `Ready`
+- create an instance through the service-principal `spz` path
+- wait for the instance to reach `Ready`
 - wait for ACP to reach `ready`
-- open a real ACP session against the workspace
+- open a real ACP session against the instance
 - send a prompt and verify a real assistant reply
 - verify that the service principal is still denied on post-create operations
 
@@ -61,17 +61,17 @@ The runner must not depend on ambient `spz` profile state or shell auth.
 The caller must have:
 
 - `kubectl` access to the target cluster
-- permission to port-forward to workspace services
-- permission to read `Spritz` resources and workspace pods in the target namespace
+- permission to port-forward to instance services
+- permission to read `Spritz` resources and instance pods in the target namespace
 
 The service-principal bearer token used by the smoke must have enough scope to:
 
-- create a workspace for the target owner
+- create an instance for the target owner
 
 It must not have permission to:
 
-- list all workspaces
-- delete the created workspace
+- list all instances
+- delete the created instance
 
 Those denials are part of the contract and are asserted by the smoke.
 
@@ -81,13 +81,13 @@ The smoke is considered successful only if all of the following are true for eac
 
 - the service-principal create path succeeds
 - the create response includes canonical URLs
-- the returned workspace name is stable under idempotent replay
+- the returned instance name is stable under idempotent replay
 - a mismatched replay with the same idempotency key fails
 - the service principal is denied on `list`
 - the service principal is denied on `delete`
-- the workspace reaches `Ready`
+- the instance reaches `Ready`
 - ACP reaches `ready`
-- the workspace advertises a usable ACP endpoint
+- the instance advertises a usable ACP endpoint
 - a real ACP prompt produces real assistant output containing the expected smoke token
 
 ## What The Harness Does Not Prove
@@ -136,8 +136,8 @@ Errors and failure explanations are emitted to stderr.
 
 Default behavior:
 
-- every created workspace is deleted during normal completion
-- every created workspace is also deleted during failure unwind when possible
+- every created instance is deleted during normal completion
+- every created instance is also deleted during failure unwind when possible
 
 `--keep` is opt-in only and exists for manual debugging.
 
@@ -147,7 +147,7 @@ CI or operator workflows should not rely on `--keep`.
 
 The harness enforces a strict owner and actor model:
 
-- the created workspace owner must be the requested human owner
+- the created instance owner must be the requested human owner
 - the actor must remain a service principal
 - create authority must not imply post-create control
 
@@ -159,11 +159,11 @@ The smoke contract must not silently weaken these invariants:
 
 - create must go through the service-principal path
 - canonical URLs must be returned by the API
-- idempotent replay must return the same workspace
+- idempotent replay must return the same instance
 - mismatched replay must fail
 - service principal list must fail
 - service principal delete must fail
-- workspace readiness must be real, not inferred
+- instance readiness must be real, not inferred
 - ACP readiness must be real, not inferred
 - prompt completion must include assistant output containing the expected token
 

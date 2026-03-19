@@ -1,13 +1,13 @@
 ---
 date: 2026-03-19
 author: Onur Solmaz <onur@textcortex.com>
-title: Unified Admission, WorkspaceClass, and Policy Architecture
+title: Unified Admission, InstanceClass, and Policy Architecture
 tags: [spritz, api, extensions, auth, provisioning, architecture]
 ---
 
 ## Overview
 
-This document defines a unified admission, workspace class, and policy
+This document defines a unified admission, instance class, and policy
 architecture for Spritz.
 
 The goal is to stop adding new feature-specific integration surfaces for
@@ -16,7 +16,7 @@ workflows. Instead, Spritz should expose one durable control-plane model that
 combines:
 
 - admission-style resolvers and hooks for resolving facts,
-- workspace classes for defining behavior,
+- instance classes for defining behavior,
 - a policy engine for enforcing intent,
 - a stable lifecycle for turning requests into concrete resources.
 
@@ -64,7 +64,7 @@ That creates four problems:
 - Let create-time preset-specific logic run natively inside Spritz.
 - Reuse the same admission model for owner resolution, runtime binding, login
   metadata, and future identity-linking flows.
-- Make `WorkspaceClass` the durable behavioral resource instead of image-name
+- Make `InstanceClass` the durable behavioral resource instead of image-name
   checks or one-off booleans.
 - Prefer declarative, typed policy over opaque feature-specific branching.
 - Keep resolved facts deployment-owned while keeping policy enforcement inside
@@ -95,7 +95,7 @@ Deployments should decide the business answer to extension questions such as:
 - which login URL or refresh URL should be presented,
 - which identity-link status is valid.
 
-Spritz should still own the enforcement model for workspace creation, access,
+Spritz should still own the enforcement model for instance creation, access,
 discovery, credentials, and lifecycle. Deployment-owned systems may resolve
 facts, but Spritz should apply those facts through a stable policy model.
 
@@ -113,13 +113,13 @@ Examples:
 - `preset.create.resolve`
 - `auth.login.metadata`
 - `identity.link.resolve`
-- `workspace.lifecycle.notify`
+- `instance.lifecycle.notify`
 
-### WorkspaceClass is the primary control-plane resource
+### InstanceClass is the primary control-plane resource
 
 `Preset` is a user-facing entry point.
 
-`WorkspaceClass` is the durable control-plane abstraction that defines
+`InstanceClass` is the durable control-plane abstraction that defines
 behavior, access, credential posture, and lifecycle.
 
 That distinction should remain stable even if presets, images, or caller types
@@ -150,13 +150,13 @@ permission behavior from leaking into arbitrary resolver code.
 
 ### Policy should be declarative and typed
 
-Workspace behavior should be described as structured policy data attached to
-`WorkspaceClass`, not as scattered booleans or opaque callback code.
+Instance behavior should be described as structured policy data attached to
+`InstanceClass`, not as scattered booleans or opaque callback code.
 
 The policy engine should consume:
 
 - `Intent`
-- `WorkspaceClass`
+- `InstanceClass`
 - `ResolvedFacts`
 - the current `Resource` state
 
@@ -171,7 +171,7 @@ resolved bindings are explicit parts of resource state.
 Spritz should therefore persist:
 
 - owner identity,
-- workspace class ID and version,
+- instance class ID and version,
 - policy-relevant resolved facts,
 - materialized access control entries.
 
@@ -194,7 +194,7 @@ The durable Spritz model should be:
 - `Intent`
 - `Resource`
 - `Preset`
-- `WorkspaceClass`
+- `InstanceClass`
 - `ResolvedFacts`
 - `PolicyDecision`
 - `Materialization`
@@ -204,9 +204,9 @@ Meaning:
 - `Principal`: who is asking
 - `Intent`: what they are trying to do, such as create, read, use, share, or
   manage
-- `Resource`: the workspace or instance being acted on
+- `Resource`: the instance or instance being acted on
 - `Preset`: the user-facing entry point and default bundle
-- `WorkspaceClass`: the durable behavioral class of the workspace
+- `InstanceClass`: the durable behavioral class of the instance
 - `ResolvedFacts`: canonical facts returned by extensions or internal
   resolution
 - `PolicyDecision`: the allow, deny, or approval-required decision plus the
@@ -233,12 +233,12 @@ High-level model:
 
 This turns feature-specific hooks into data-driven admission configuration.
 
-Spritz should also introduce a first-class policy layer for workspace behavior.
+Spritz should also introduce a first-class policy layer for instance behavior.
 
 The unified model should therefore have two parts:
 
 - resolvers and hooks resolve facts and provide bounded mutations,
-- workspace classes and policy decide how a workspace may be created,
+- instance classes and policy decide how an instance may be created,
   discovered, shared, accessed, credentialed, and operated.
 
 Both parts are needed. Resolvers alone are not enough for long-term security or
@@ -259,7 +259,7 @@ Gather or normalize facts needed to make a decision.
 
 ### Authorize
 
-Evaluate the request against the workspace class and resolved facts.
+Evaluate the request against the instance class and resolved facts.
 
 ### Materialize
 
@@ -309,17 +309,17 @@ Typical uses:
 Resolvers are the most important initial kind because they cover the existing
 external owner flow and the create-time preset binding problem.
 
-## WorkspaceClass as a First-Class Resource
+## InstanceClass as a First-Class Resource
 
-The long-term target should be for `WorkspaceClass` to become a first-class API
+The long-term target should be for `InstanceClass` to become a first-class API
 resource, not just deployment config.
 
-In the short term, Spritz may define workspace classes in configuration for
+In the short term, Spritz may define instance classes in configuration for
 speed of implementation. The stable target should still be:
 
-- presets reference a named `WorkspaceClass`,
-- `WorkspaceClass` has a versioned schema,
-- workspaces record the resolved class and class version,
+- presets reference a named `InstanceClass`,
+- `InstanceClass` has a versioned schema,
+- instances record the resolved class and class version,
 - policy evaluation consumes the class as structured data,
 - clients and operators can reason about class identity independently of
   presets.
@@ -332,7 +332,7 @@ Example long-term shape:
 
 ```yaml
 apiVersion: spritz.dev/v1alpha1
-kind: WorkspaceClass
+kind: InstanceClass
 metadata:
   name: personal-agent
 spec:
@@ -354,12 +354,12 @@ spec:
     mode: standard
 ```
 
-## Workspace Classes
+## Instance Classes
 
-Spritz should define a first-class `WorkspaceClass` concept for workspace
+Spritz should define a first-class `InstanceClass` concept for instance
 behavior.
 
-A workspace class is attached to a preset and governs how a created workspace
+An instance class is attached to a preset and governs how a created instance
 is meant to behave.
 
 Examples:
@@ -369,28 +369,28 @@ Examples:
 - `privileged-dev`
 - `restricted-runtime`
 
-Each class should be versioned and treated as part of the canonical workspace
+Each class should be versioned and treated as part of the canonical instance
 state.
 
-Suggested stored fields on each workspace:
+Suggested stored fields on each instance:
 
 - owner
-- workspace class ID
-- workspace class version
+- instance class ID
+- instance class version
 - resolved extension context
 - materialized access control entries
 
-This gives Spritz a portable way to support very different workspace types
+This gives Spritz a portable way to support very different instance types
 without encoding behavior into image names or one-off feature flags.
 
 `Policy profile` may still exist as an internal implementation term, but the
-public architectural concept should be `WorkspaceClass`. It is a more durable
+public architectural concept should be `InstanceClass`. It is a more durable
 control-plane abstraction and better matches other long-lived infrastructure
 patterns.
 
 ## Declarative Policy Model
 
-`WorkspaceClass` should describe policy as typed data, not as arbitrary code.
+`InstanceClass` should describe policy as typed data, not as arbitrary code.
 
 At minimum, the policy engine should be able to evaluate:
 
@@ -406,11 +406,11 @@ policy engine. A resolver may say "the resolved binding is runtime-123"; it
 should not say "therefore everyone in engineering gets terminal access."
 
 That decision belongs to Spritz policy evaluation over the selected
-`WorkspaceClass`.
+`InstanceClass`.
 
 ## Policy Facets
 
-Each workspace class should define a small, stable set of behavior facets.
+Each instance class should define a small, stable set of behavior facets.
 
 Suggested facets:
 
@@ -443,10 +443,10 @@ Suggested verbs:
 
 Expected meanings:
 
-- `discover`: see that the workspace exists in lists, search, or discovery
+- `discover`: see that the instance exists in lists, search, or discovery
   surfaces
 - `read`: view metadata, ownership, and non-secret state
-- `use`: open the workspace and interact with its primary runtime
+- `use`: open the instance and interact with its primary runtime
 - `chat`: send normal ACP or chat input
 - `terminal`: open shell-like or terminal-style access
 - `share`: grant other principals additional access
@@ -516,7 +516,7 @@ Spritz should call resolvers with one common request contract:
     "scopes": ["spritz.instances.create"]
   },
   "context": {
-    "namespace": "workspaces",
+    "namespace": "instances",
     "presetId": "assistant-runtime"
   },
   "input": {
@@ -600,7 +600,7 @@ Not allowed initially:
 - arbitrary image rewrite unless explicitly allowed by preset policy,
 - arbitrary owner change after create,
 - arbitrary post-create permission grants,
-- arbitrary credential attachment that bypasses the workspace class policy.
+- arbitrary credential attachment that bypasses the instance class policy.
 
 Mutation allowlists should be enforced in code per operation.
 
@@ -613,12 +613,12 @@ Security behavior should not be keyed directly off image names.
 
 Instead:
 
-- presets should reference workspace classes,
-- workspace classes should define allowed behavior,
+- presets should reference instance classes,
+- instance classes should define allowed behavior,
 - classes may optionally restrict which images are valid for that preset or
   class.
 
-This matters because two workspaces may use similar runtime images but require
+This matters because two instances may use similar runtime images but require
 very different collaboration and credential rules.
 
 For example:
@@ -643,7 +643,7 @@ Example intent:
 - restricted runtime credentials,
 - collaboration disabled or narrowly scoped.
 
-This is a typical fit for a `personal-agent` workspace class.
+This is a typical fit for a `personal-agent` instance class.
 
 ### Internal collaborative developer runtime
 
@@ -654,10 +654,10 @@ Example intent:
 - readable by a broader internal audience,
 - usable by an explicitly allowed collaboration group,
 - simultaneous interaction allowed,
-- privileged credentials allowed only through this workspace class,
+- privileged credentials allowed only through this instance class,
 - stronger audit and session controls.
 
-This is a typical fit for a `privileged-dev` or `internal-collab` workspace
+This is a typical fit for a `privileged-dev` or `internal-collab` instance
 class.
 
 The important point is that ownership and collaboration do not have to be the
@@ -669,7 +669,7 @@ read and use access through policy.
 This is the most important new capability.
 
 Spritz should add first-class `presetInputs` to create requests and allow a
-preset-scoped resolver to run before workspace creation.
+preset-scoped resolver to run before instance creation.
 
 That enables native flows such as:
 
@@ -678,7 +678,7 @@ That enables native flows such as:
 - Spritz resolves the owner,
 - Spritz invokes the preset create resolver,
 - the resolver returns required runtime binding fields,
-- Spritz applies them and creates the workspace.
+- Spritz applies them and creates the instance.
 
 This keeps the CLI thin and guarantees that create-time binding logic is always
 enforced server-side.
@@ -692,7 +692,7 @@ The create resolver should return facts such as:
 - classification annotations.
 
 It should not directly decide final permissions. Those should still be derived
-from the selected workspace class.
+from the selected instance class.
 
 ## CLI Contract
 
@@ -747,14 +747,14 @@ This follows the same principle already used for external owner resolution.
 
 Additional policy requirements:
 
-- the selected workspace class must be part of the canonical request,
+- the selected instance class must be part of the canonical request,
 - create must fail if required class inputs or required resolver outputs are
   missing,
-- credentials attached to a workspace must be allowed by the workspace class,
+- credentials attached to an instance must be allowed by the instance class,
 - discovery and collaboration rules must be enforced by Spritz even when a
   resolver suggests additional context,
 - post-create reads and interactions must use the same owner plus ACL plus
-  policy evaluation path regardless of how the workspace was created.
+  policy evaluation path regardless of how the instance was created.
 
 For HTTP resolvers and hooks:
 
@@ -803,15 +803,15 @@ Suggested metrics:
 - add `preset.create.resolve`,
 - allow presets to require resolver-produced fields before create succeeds.
 
-### Phase 4: Add workspace classes
+### Phase 4: Add instance classes
 
-- add first-class workspace class configuration,
-- let presets reference workspace classes,
-- store workspace class ID and version on created workspaces,
+- add first-class instance class configuration,
+- let presets reference instance classes,
+- store instance class ID and version on created instances,
 - enforce access verbs, discovery, credential policy, and lifecycle through the
   policy engine.
 - keep config-backed classes as the short-term shape, but target a first-class
-  `WorkspaceClass` API resource.
+  `InstanceClass` API resource.
 
 ### Phase 5: Move login metadata under the same roof
 
@@ -832,10 +832,10 @@ Validation should include:
 - resolver transport tests,
 - create-path tests proving resolver mutations affect idempotency,
 - preset create tests proving `presetInputs` are passed through and validated,
-- workspace-class policy tests for discover, read, use, chat, terminal, share,
+- instance-class policy tests for discover, read, use, chat, terminal, share,
   and manage behavior,
 - tests proving credentials and privileged runtime features are gated by
-  workspace-class policy,
+  instance-class policy,
 - tests proving multiple principals can collaborate when allowed while owner
   metadata remains stable,
 - compatibility tests for existing external owner resolution,

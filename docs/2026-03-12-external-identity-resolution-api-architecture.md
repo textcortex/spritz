@@ -19,7 +19,7 @@ identity resolver that is already authoritative for mappings such as:
 
 Spritz stays provider-agnostic and product-agnostic. It accepts a normalized
 external owner reference, derives the caller namespace from authentication, and
-asks a configured resolver which Spritz owner should own the workspace.
+asks a configured resolver which Spritz owner should own the instance.
 
 The external caller sends only the external platform identity it already has,
 such as a Microsoft Teams user ID. Internal Spritz owner identifiers remain a
@@ -102,7 +102,7 @@ surface is still `POST /spritzes`.
 
 ### Spritz owner
 
-The human principal that owns and later accesses a workspace.
+The human principal that owns and later accesses an instance.
 
 ### External owner reference
 
@@ -385,7 +385,7 @@ Properties:
 
 ### Audit and persistence
 
-When Spritz creates a workspace from `ownerRef.type=external`, it should record
+When Spritz creates an instance from `ownerRef.type=external`, it should record
 enough information for audit without leaking raw external identifiers in common
 resource metadata.
 
@@ -427,7 +427,7 @@ Recommended service-principal response shape for `ownerRef.type=external`:
 - `accessUrl`
 - `chatUrl`
 - `workspaceUrl`
-- Kubernetes namespace for the workspace
+- Kubernetes namespace for the instance
 - `presetId`
 - `idempotencyKey`
 - `replayed`
@@ -449,8 +449,8 @@ Rules:
 - Once a request has resolved successfully, Spritz SHOULD persist the resolved
   owner in the idempotency reservation payload used for that create attempt.
 - After a successful create, retries with the same idempotency key MUST replay
-  the same created workspace even if the external mapping later changes.
-- Resolver failure or timeout MUST leave no partially created workspace behind.
+  the same created instance even if the external mapping later changes.
+- Resolver failure or timeout MUST leave no partially created instance behind.
 
 ## Public Error Model
 
@@ -515,7 +515,7 @@ Safe default behavior for v1:
 If a mapping changes in the external system, future creates should follow the
 current resolver answer.
 
-Existing workspaces keep their existing owner. Resolution affects only future
+Existing instances keep their existing owner. Resolution affects only future
 create operations.
 
 ## Microsoft Teams Guidance
@@ -564,7 +564,7 @@ The architecture is complete when Spritz can demonstrate all of these flows:
 8. Service-principal create responses omit `ownerId` when the request used
    `ownerRef.type=external`.
 9. Retrying a successful create with the same idempotency key replays the same
-   workspace even if the resolver mapping later changes.
+   instance even if the resolver mapping later changes.
 10. Microsoft Teams requests use Entra tenant ID plus Entra user object ID as
     the canonical external identity.
 

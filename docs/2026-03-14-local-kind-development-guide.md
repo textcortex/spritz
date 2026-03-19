@@ -29,13 +29,13 @@ A local Spritz install has four main parts:
 
 - `spritz-ui`: the web UI
 - `spritz-api`: the backend
-- `spritz-operator`: the Kubernetes reconciler that creates workspace resources
-- workspace images: the actual per-workspace containers such as Claude Code or OpenClaw
+- `spritz-operator`: the Kubernetes reconciler that creates instance resources
+- instance images: the actual per-instance containers such as Claude Code or OpenClaw
 
 In this guide:
 
 - the control plane runs in namespace `spritz-system`
-- workspaces run in namespace `spritz`
+- instances run in namespace `spritz`
 - the public host is `console.example.com`
 - traffic is served over plain `http` for simplicity
 
@@ -103,7 +103,7 @@ kubectl rollout status -n ingress-nginx daemonset/ingress-nginx-controller --tim
 
 The operator watches `HTTPRoute` resources at startup. Without the Gateway API
 CRDs, the operator can fail during cache sync before it reconciles any
-workspaces.
+instances.
 
 Install the matching CRDs:
 
@@ -113,7 +113,7 @@ kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/downloa
 
 ## 4. Create the Spritz namespaces
 
-The workspace namespace is not created automatically by the current local path.
+The instance namespace is not created automatically by the current local path.
 
 ```bash
 kubectl create namespace spritz-system --dry-run=client -o yaml | kubectl apply -f -
@@ -138,9 +138,9 @@ kind load docker-image spritz-api:latest --name spritz
 kind load docker-image spritz-ui:latest --name spritz
 ```
 
-## 6. Build the Claude Code workspace image
+## 6. Build the Claude Code instance image
 
-If you want a chat-capable workspace locally, build the Claude Code example image.
+If you want a chat-capable instance locally, build the Claude Code example image.
 
 Build from `images/`:
 
@@ -156,7 +156,7 @@ Load it into kind:
 kind load docker-image spritz-claude-code:local --name spritz
 ```
 
-Use a non-`latest` tag such as `:local`. For workspace images, Kubernetes will
+Use a non-`latest` tag such as `:local`. For instance images, Kubernetes will
 normally try to pull `:latest` from a registry, which leads to `ImagePullBackOff`
 even if the image was loaded into kind.
 
@@ -168,7 +168,7 @@ Export the key in your shell:
 export ANTHROPIC_API_KEY='replace-me'
 ```
 
-Create the secret in the workspace namespace:
+Create the secret in the instance namespace:
 
 ```bash
 kubectl create secret generic anthropic-api-key \
@@ -179,8 +179,8 @@ kubectl create secret generic anthropic-api-key \
 
 ## 8. Configure shared mounts
 
-Shared mounts let workspaces persist and sync files (such as `~/.config`) across
-disposable workspace restarts for the same owner. The syncer sidecar uses rclone
+Shared mounts let instances persist and sync files (such as `~/.config`) across
+disposable instance restarts for the same owner. The syncer sidecar uses rclone
 for storage. For local kind, we use the `local` filesystem type inside the API pod.
 
 ### Generate a shared bearer token
@@ -194,7 +194,7 @@ SHARED_TOKEN=$(openssl rand -hex 32)
 ### Create secrets in both namespaces
 
 The token must exist in `spritz-system` (for the API) and `spritz` (for the
-syncer sidecar running inside workspace pods):
+syncer sidecar running inside instance pods):
 
 ```bash
 kubectl create secret generic spritz-shared-mounts-token \
@@ -302,9 +302,9 @@ api:
 Important local choices:
 
 - `tls.enabled: false` keeps the setup on plain `http`
-- `ui.ownerId: local-user` gives workspaces an owner in auth-disabled local mode
+- `ui.ownerId: local-user` gives instances an owner in auth-disabled local mode
 - `ui.presets` injects the Anthropic key via a Kubernetes secret
-- `defaultIngress` gives each workspace a browser route
+- `defaultIngress` gives each instance a browser route
 - `operator.sharedMounts` and `api.sharedMounts` enable owner-scoped config
   persistence using the local filesystem via rclone
 - `syncerImage: spritz-api:latest` reuses the API image which bundles the
@@ -357,12 +357,12 @@ http://console.example.com
 
 This local guide intentionally uses `http`, not `https`.
 
-## 13. Create a workspace
+## 13. Create an instance
 
 In the UI:
 
 - choose the `Claude Code` preset
-- create the workspace
+- create the instance
 
 Then inspect it:
 
@@ -373,7 +373,7 @@ kubectl get pods,svc,ingress -n spritz
 
 ## Useful inspection commands
 
-These are the fastest commands to understand where a workspace is stuck:
+These are the fastest commands to understand where an instance is stuck:
 
 ```bash
 kubectl get spritzes -n spritz
@@ -436,16 +436,16 @@ ui:
 
 ### `shared mounts requested but operator is not configured`
 
-The workspace spec includes shared mounts but the operator does not have the
+The instance spec includes shared mounts but the operator does not have the
 shared mount backend configured. Follow step 8 to create the required secrets
 and add the `operator.sharedMounts` and `api.sharedMounts` sections to your
 Helm values file, then upgrade the release.
 
-### `Init:CreateContainerConfigError` — secret not found in workspace namespace
+### `Init:CreateContainerConfigError` — secret not found in instance namespace
 
-The syncer init container runs inside the workspace pod in the `spritz`
+The syncer init container runs inside the instance pod in the `spritz`
 namespace. The token secret must exist in both `spritz-system` (for the API)
-and `spritz` (for workspace pods):
+and `spritz` (for instance pods):
 
 ```bash
 kubectl create secret generic spritz-shared-mounts-token \
@@ -454,7 +454,7 @@ kubectl create secret generic spritz-shared-mounts-token \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-### Workspace is stuck at `waiting for deployment`
+### Instance is stuck at `waiting for deployment`
 
 Inspect the pod:
 
@@ -463,14 +463,14 @@ kubectl describe pod <pod-name> -n spritz
 ```
 
 One common cause is using an image that does not satisfy the Spritz runtime contract.
-Spritz expects the workspace to answer ACP health on port `2529`.
+Spritz expects the instance to answer ACP health on port `2529`.
 
 For example, a plain image such as `nginx:alpine` will run as a container, but it
 will never pass the ACP readiness checks required for chat.
 
-### `ImagePullBackOff` for a locally built workspace image
+### `ImagePullBackOff` for a locally built instance image
 
-Do not use `:latest` for a workspace image loaded into kind.
+Do not use `:latest` for an instance image loaded into kind.
 
 Use a non-`latest` tag such as:
 
@@ -484,16 +484,16 @@ Then load that exact tag into kind:
 kind load docker-image spritz-claude-code:local --name spritz
 ```
 
-### Generated workspace URL uses `https`
+### Generated instance URL uses `https`
 
 The simplest local path in this guide is HTTP-only.
 
-If a generated workspace URL uses `https://console.example.com/...`, switch it to
+If a generated instance URL uses `https://console.example.com/...`, switch it to
 `http://console.example.com/...` in the browser.
 
 ## Cleanup
 
-Delete a workspace:
+Delete an instance:
 
 ```bash
 kubectl delete spritz <name> -n spritz
