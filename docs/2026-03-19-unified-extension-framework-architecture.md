@@ -1,20 +1,21 @@
 ---
 date: 2026-03-19
 author: Onur Solmaz <onur@textcortex.com>
-title: Unified Extension and Policy Framework Architecture
+title: Unified Admission, WorkspaceClass, and Policy Architecture
 tags: [spritz, api, extensions, auth, provisioning, architecture]
 ---
 
 ## Overview
 
-This document defines a unified extension and policy framework for Spritz.
+This document defines a unified admission, workspace class, and policy
+architecture for Spritz.
 
 The goal is to stop adding new feature-specific integration surfaces for
 provisioning, auth, login metadata, identity resolution, and future linking
 workflows. Instead, Spritz should expose one durable control-plane model that
 combines:
 
-- extensions for resolving facts,
+- admission-style resolvers and hooks for resolving facts,
 - workspace classes for defining behavior,
 - a policy engine for enforcing intent,
 - a stable lifecycle for turning requests into concrete resources.
@@ -23,7 +24,7 @@ This keeps `spz`, the UI, and any service-principal caller on the same control
 plane path:
 
 - clients send a normal Spritz request,
-- Spritz resolves any configured extension steps,
+- Spritz resolves any configured admission steps,
 - Spritz evaluates class-driven policy,
 - Spritz applies validated mutations,
 - Spritz materializes the canonical resource.
@@ -58,13 +59,14 @@ That creates four problems:
 
 ## Goals
 
-- Define one standard model for API-driven integration behavior and policy.
+- Define one standard model for API-driven admission and policy behavior.
 - Keep `spz` as the thin canonical client for all provisioning flows.
 - Let create-time preset-specific logic run natively inside Spritz.
-- Reuse the same extension model for owner resolution, runtime binding, login
+- Reuse the same admission model for owner resolution, runtime binding, login
   metadata, and future identity-linking flows.
-- Make workspace behavior durable through first-class workspace classes instead
-  of image-name checks or one-off booleans.
+- Make `WorkspaceClass` the durable behavioral resource instead of image-name
+  checks or one-off booleans.
+- Prefer declarative, typed policy over opaque feature-specific branching.
 - Keep resolved facts deployment-owned while keeping policy enforcement inside
   Spritz.
 - Standardize config, request/response shape, logging, timeout handling,
@@ -97,9 +99,12 @@ Spritz should still own the enforcement model for workspace creation, access,
 discovery, credentials, and lifecycle. Deployment-owned systems may resolve
 facts, but Spritz should apply those facts through a stable policy model.
 
-### Extensions are operation-based
+### Resolvers should be admission-style
 
-Extensions should attach to a small set of named operations instead of being
+Resolvers should be narrow, phase-scoped, and admission-like instead of acting
+as a general plugin system.
+
+They should attach to a small set of named operations instead of being
 hard-coded into feature-specific code paths.
 
 Examples:
@@ -109,6 +114,16 @@ Examples:
 - `auth.login.metadata`
 - `identity.link.resolve`
 - `workspace.lifecycle.notify`
+
+### WorkspaceClass is the primary control-plane resource
+
+`Preset` is a user-facing entry point.
+
+`WorkspaceClass` is the durable control-plane abstraction that defines
+behavior, access, credential posture, and lifecycle.
+
+That distinction should remain stable even if presets, images, or caller types
+change over time.
 
 ### Clients stay thin
 
@@ -133,9 +148,36 @@ read access, interactive use, collaboration, credentials, and lifecycle.
 This separation keeps extension logic narrow and prevents deployment-specific
 permission behavior from leaking into arbitrary resolver code.
 
+### Policy should be declarative and typed
+
+Workspace behavior should be described as structured policy data attached to
+`WorkspaceClass`, not as scattered booleans or opaque callback code.
+
+The policy engine should consume:
+
+- `Intent`
+- `WorkspaceClass`
+- `ResolvedFacts`
+- the current `Resource` state
+
+and produce one typed decision that Spritz can enforce consistently across
+create, discover, read, use, share, and manage flows.
+
+### Resource identity should stay explicit
+
+Long-lived control planes age better when class identity, owner identity, and
+resolved bindings are explicit parts of resource state.
+
+Spritz should therefore persist:
+
+- owner identity,
+- workspace class ID and version,
+- policy-relevant resolved facts,
+- materialized access control entries.
+
 ### Mutations are explicit and limited
 
-An extension should not arbitrarily rewrite requests. It should return a
+A resolver or hook should not arbitrarily rewrite requests. It should return a
 validated mutation set with a narrow allowed surface.
 
 ### Extension results must affect idempotency
@@ -172,12 +214,13 @@ Meaning:
 - `Materialization`: the final spec, ACL, credentials, lifecycle, and metadata
   written by Spritz
 
-This is the abstraction that should survive feature churn. Extensions are one
-part of it, not the whole story.
+This is the abstraction that should survive feature churn. Resolvers and hooks
+are one part of it, not the whole story.
 
-## Unified Model
+## Admission and Policy Model
 
-Spritz should introduce one extension registry in the API layer.
+Spritz should introduce one registry for admission-style resolvers and hooks in
+the API layer.
 
 High-level model:
 
@@ -188,18 +231,18 @@ High-level model:
 - the extension returns a standard response envelope,
 - Spritz validates and applies allowed mutations.
 
-This turns feature-specific hooks into data-driven extension configuration.
+This turns feature-specific hooks into data-driven admission configuration.
 
 Spritz should also introduce a first-class policy layer for workspace behavior.
 
 The unified model should therefore have two parts:
 
-- extensions resolve facts and provide bounded mutations,
+- resolvers and hooks resolve facts and provide bounded mutations,
 - workspace classes and policy decide how a workspace may be created,
   discovered, shared, accessed, credentialed, and operated.
 
-Both parts are needed. Extensions alone are not enough for long-term security
-or collaboration requirements.
+Both parts are needed. Resolvers alone are not enough for long-term security or
+collaboration requirements.
 
 ## Stable Lifecycle Phases
 
@@ -229,7 +272,7 @@ Emit post-decision or post-create hooks.
 This phase model is more durable than creating a separate subsystem for each
 new feature.
 
-## Extension Kinds
+## Admission Kinds
 
 ### Resolver
 
@@ -266,6 +309,51 @@ Typical uses:
 Resolvers are the most important initial kind because they cover the existing
 external owner flow and the create-time preset binding problem.
 
+## WorkspaceClass as a First-Class Resource
+
+The long-term target should be for `WorkspaceClass` to become a first-class API
+resource, not just deployment config.
+
+In the short term, Spritz may define workspace classes in configuration for
+speed of implementation. The stable target should still be:
+
+- presets reference a named `WorkspaceClass`,
+- `WorkspaceClass` has a versioned schema,
+- workspaces record the resolved class and class version,
+- policy evaluation consumes the class as structured data,
+- clients and operators can reason about class identity independently of
+  presets.
+
+This is closer to long-lived control-plane patterns such as class resources in
+other infrastructure systems and gives Spritz a more durable contract than a
+collection of loosely related config fragments.
+
+Example long-term shape:
+
+```yaml
+apiVersion: spritz.dev/v1alpha1
+kind: WorkspaceClass
+metadata:
+  name: personal-agent
+spec:
+  creation:
+    requireOwner: true
+    requiredResolvedFields: [serviceAccountName]
+  access:
+    verbs:
+      discover: owner_only
+      read: owner_only
+      use: owner_only
+      share: denied
+      manage: owner_only
+  credentials:
+    allowedClasses: [safe-runtime]
+  lifecycle:
+    ttlPolicy: retained
+  audit:
+    mode: standard
+```
+
 ## Workspace Classes
 
 Spritz should define a first-class `WorkspaceClass` concept for workspace
@@ -299,6 +387,26 @@ without encoding behavior into image names or one-off feature flags.
 public architectural concept should be `WorkspaceClass`. It is a more durable
 control-plane abstraction and better matches other long-lived infrastructure
 patterns.
+
+## Declarative Policy Model
+
+`WorkspaceClass` should describe policy as typed data, not as arbitrary code.
+
+At minimum, the policy engine should be able to evaluate:
+
+- creation requirements,
+- allowed access verbs by principal set,
+- collaboration and concurrency rules,
+- allowed credential classes,
+- lifecycle and TTL rules,
+- audit and approval requirements.
+
+Resolvers may supply facts used by policy, but they should not become a second
+policy engine. A resolver may say "the resolved binding is runtime-123"; it
+should not say "therefore everyone in engineering gets terminal access."
+
+That decision belongs to Spritz policy evaluation over the selected
+`WorkspaceClass`.
 
 ## Policy Facets
 
@@ -347,9 +455,10 @@ Expected meanings:
 These verbs should be enforced by Spritz regardless of which extension resolved
 the create-time facts.
 
-## Standard Extension Configuration
+## Standard Admission Configuration
 
-Spritz should expose one config surface for extensions, for example:
+Spritz should expose one config surface for admission-style resolvers and
+hooks, for example:
 
 ```yaml
 api:
@@ -390,7 +499,7 @@ Rules:
 - `match` MAY further restrict invocation, such as by preset ID.
 - HTTP transport MUST support timeout and auth configuration.
 
-## Standard Request Envelope
+## Standard Admission Request Envelope
 
 Spritz should call resolvers with one common request contract:
 
@@ -434,8 +543,10 @@ Notes:
 - `principal` is already authenticated by Spritz.
 - `context` is canonicalized by Spritz, not by the caller.
 - `input` contains only the operation-specific payload needed by the resolver.
+- request shape should stay strongly typed per operation even if the transport
+  envelope is generic.
 
-## Standard Response Envelope
+## Standard Admission Response Envelope
 
 Resolvers should answer with one common response contract:
 
@@ -471,7 +582,7 @@ feature-specific resolver to invent its own error format.
 
 ## Allowed Mutation Surface
 
-Spritz should only allow extensions to mutate a narrow set of fields.
+Spritz should only allow resolvers and hooks to mutate a narrow set of fields.
 
 Initial allowed surface:
 
@@ -492,6 +603,9 @@ Not allowed initially:
 - arbitrary credential attachment that bypasses the workspace class policy.
 
 Mutation allowlists should be enforced in code per operation.
+
+This should feel closer to admission-style mutation than to a general-purpose
+extension runtime.
 
 ## Presets, Images, and Policy
 
@@ -543,8 +657,8 @@ Example intent:
 - privileged credentials allowed only through this workspace class,
 - stronger audit and session controls.
 
-This is a typical fit for a `privileged-dev` or `internal-collab` policy
-profile.
+This is a typical fit for a `privileged-dev` or `internal-collab` workspace
+class.
 
 The important point is that ownership and collaboration do not have to be the
 same thing. Spritz can preserve a single owner while still allowing multi-user
@@ -608,7 +722,7 @@ run in the API, not in the CLI.
 
 ## Idempotency and Replay
 
-Extension results must be included in the effective resolved create payload.
+Resolver results must be included in the effective resolved create payload.
 
 Rules:
 
@@ -616,24 +730,25 @@ Rules:
 - replay MUST restore the same resolved result,
 - pending idempotent reservations MUST not re-run a resolver with different
   semantics,
-- extension output SHOULD be stored in the resolved idempotent payload when it
+- resolver output SHOULD be stored in the resolved idempotent payload when it
   affects create.
 
 This follows the same principle already used for external owner resolution.
 
-## Security and Policy
+## Authorization and Admission Rules
 
-- only explicitly configured extensions may run,
-- extensions should be invoked only for allowed principals and operations,
+- only explicitly configured resolvers and hooks may run,
+- resolvers and hooks should be invoked only for allowed principals and
+  operations,
 - service-principal scopes still gate whether the operation may proceed,
-- extension auth headers and secrets must stay in deployment config,
+- resolver and hook auth headers and secrets must stay in deployment config,
 - Spritz should reject unconfigured extension references,
 - resolver outputs must be validated before any mutation is applied.
 
 Additional policy requirements:
 
 - the selected workspace class must be part of the canonical request,
-- create must fail if required profile inputs or required resolver outputs are
+- create must fail if required class inputs or required resolver outputs are
   missing,
 - credentials attached to a workspace must be allowed by the workspace class,
 - discovery and collaboration rules must be enforced by Spritz even when a
@@ -641,7 +756,7 @@ Additional policy requirements:
 - post-create reads and interactions must use the same owner plus ACL plus
   policy evaluation path regardless of how the workspace was created.
 
-For HTTP extensions:
+For HTTP resolvers and hooks:
 
 - require explicit timeouts,
 - treat network failures as `unavailable`,
@@ -650,7 +765,7 @@ For HTTP extensions:
 
 ## Observability
 
-Each extension invocation should log:
+Each resolver or hook invocation should log:
 
 - extension ID,
 - operation,
@@ -669,9 +784,9 @@ Suggested metrics:
 
 ## Migration Plan
 
-### Phase 1: Introduce the extension registry
+### Phase 1: Introduce the resolver and hook registry
 
-- add generic extension config parsing and validation,
+- add generic resolver and hook config parsing and validation,
 - add a standard HTTP executor,
 - add request and response envelope types,
 - keep existing feature-specific code working.
@@ -694,7 +809,9 @@ Suggested metrics:
 - let presets reference workspace classes,
 - store workspace class ID and version on created workspaces,
 - enforce access verbs, discovery, credential policy, and lifecycle through the
-  profile engine.
+  policy engine.
+- keep config-backed classes as the short-term shape, but target a first-class
+  `WorkspaceClass` API resource.
 
 ### Phase 5: Move login metadata under the same roof
 
@@ -711,14 +828,14 @@ Suggested metrics:
 
 Validation should include:
 
-- config parsing tests for the extension registry,
+- config parsing tests for the resolver and hook registry,
 - resolver transport tests,
 - create-path tests proving resolver mutations affect idempotency,
 - preset create tests proving `presetInputs` are passed through and validated,
-- policy-profile tests for discover, read, use, chat, terminal, share, and
-  manage behavior,
+- workspace-class policy tests for discover, read, use, chat, terminal, share,
+  and manage behavior,
 - tests proving credentials and privileged runtime features are gated by
-  profile policy,
+  workspace-class policy,
 - tests proving multiple principals can collaborate when allowed while owner
   metadata remains stable,
 - compatibility tests for existing external owner resolution,
