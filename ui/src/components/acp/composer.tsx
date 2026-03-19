@@ -5,6 +5,7 @@ const TERMINAL_STATUSES = ['connected', 'completed', 'disconnected', 'no acp-rea
 
 export interface ComposerHandle {
   fillText: (value: string) => void;
+  focus: () => void;
 }
 
 interface ComposerProps {
@@ -23,6 +24,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     fillText(value: string) {
       setText(value);
       setTimeout(() => textareaRef.current?.focus(), 0);
+    },
+    focus() {
+      textareaRef.current?.focus();
     },
   }));
 

@@ -351,6 +351,13 @@ export function ChatPage() {
     };
   }, [selectedConversation?.metadata?.name, config.apiBaseUrl]);
 
+  // Auto-focus composer when conversation becomes ready or agent finishes responding
+  useEffect(() => {
+    if (clientReady && !promptInFlight) {
+      composerRef.current?.focus();
+    }
+  }, [clientReady, promptInFlight]);
+
   // Auto-scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -569,7 +576,7 @@ export function ChatPage() {
               <p className="m-0 text-sm text-[#999]">Send a message to begin.</p>
             </div>
           ) : (
-            <div className="mx-auto w-full max-w-[880px] flex flex-col gap-2 flex-1">
+            <div className="mx-auto w-full max-w-[880px] flex flex-col gap-6 flex-1">
               {transcript.messages.map((message, i) => {
                 const elements = [<ChatMessage key={`msg-${i}`} message={message} />];
                 // Insert thinking block at its correct position (before the assistant response)

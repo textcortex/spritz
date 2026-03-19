@@ -9,7 +9,7 @@ interface MarkdownProps {
 
 export function Markdown({ content, className = '', streaming = false }: MarkdownProps) {
   return (
-    <div className={`prose prose-sm max-w-none dark:prose-invert ${className}`}>
+    <div className={`prose text-[14px] max-w-none dark:prose-invert flex flex-col gap-6 ${className}`}>
       <AnimatedMarkdown
         content={content}
         animation={streaming ? 'fadeIn' : null}

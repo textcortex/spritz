@@ -75,7 +75,7 @@ function ThoughtStep({ chunk }: { chunk: ThinkingChunk }) {
         {isLong && !showFull ? (
           <div>
             <span
-              className="text-xs text-[#666] leading-[1.4] cursor-pointer"
+              className="text-xs text-[#666] leading-1 cursor-pointer"
               onClick={() => setShowFull(true)}
             >
               {excerpt(text, 120)}
@@ -385,7 +385,7 @@ export function ThinkingBlock({ chunks, active, elapsedSeconds }: ThinkingBlockP
 
         {/* Word label */}
         {isDone ? (
-          <span className="text-[13px] text-[#999] leading-[1.4]">{doneText}</span>
+          <span className="text-sm font-normal leading-[1.4]">{doneText}</span>
         ) : (
           <span className="inline-grid overflow-hidden text-[13px] leading-[1.4]" style={{ paddingBottom: 1 }}>
             {/* Invisible sizer to prevent layout shift */}

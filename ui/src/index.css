@@ -201,3 +201,132 @@
     animation: none;
   }
 }
+
+/* Notion-style prose */
+.prose {
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--color-prose-body);
+}
+
+.prose h2 {
+  font-size: 1.25rem;
+  font-weight: 500;
+  color: var(--color-prose-heading);
+  text-wrap: balance;
+}
+
+.prose h3 {
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: var(--color-prose-heading);
+  text-wrap: balance;
+}
+
+.prose p {
+  margin-top: 0;
+}
+
+.prose a {
+  color: var(--color-prose-heading);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--color-scrollbar);
+  transition: text-decoration-color 0.15s;
+}
+
+.prose a:hover {
+  text-decoration-color: var(--color-prose-heading);
+}
+
+.prose strong {
+  font-weight: 600;
+  color: var(--color-prose-heading);
+}
+
+.prose ul,
+.prose ol {
+  margin-top: 0;
+  padding-left: 1.5rem;
+}
+
+.prose li {
+  margin-bottom: 0.25rem;
+}
+
+.prose ol {
+  list-style-type: decimal;
+}
+
+.prose ul {
+  list-style-type: disc;
+}
+
+.prose blockquote {
+  border-left: 2px solid var(--color-border-subtle);
+  padding-left: 1rem;
+  color: var(--color-prose-muted);
+  margin: 1rem 0;
+  font-style: normal;
+}
+
+.prose code {
+  font-size: 0.875em;
+  background: var(--color-card) !important;
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.prose pre {
+  background: var(--color-card) !important;
+  border-radius: 8px;
+  padding: 1rem;
+  overflow-x: auto;
+  margin: 1rem 0;
+}
+
+.prose pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.prose hr {
+  border: none;
+  border-top: 1px solid var(--color-border-light);
+  margin: 2rem 0;
+}
+
+.prose img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin: 1rem 0;
+}
+
+.prose .img-placeholder {
+  width: 100%;
+  background: var(--color-border-light);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 1rem 0;
+}
+
+.prose .img-placeholder img {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  margin: 0;
+}
+
+.prose .img-placeholder.loaded img {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prose .img-placeholder img {
+    transition: none;
+    opacity: 1;
+  }
+}
