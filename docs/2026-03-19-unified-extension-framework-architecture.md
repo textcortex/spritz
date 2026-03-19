@@ -66,6 +66,8 @@ That creates four problems:
   metadata, and future identity-linking flows.
 - Make `InstanceClass` the durable behavioral resource instead of image-name
   checks or one-off booleans.
+- Support delegated runtime service access, charging, and plan enforcement for
+  internal services such as model gateways.
 - Prefer declarative, typed policy over opaque feature-specific branching.
 - Keep resolved facts deployment-owned while keeping policy enforcement inside
   Spritz.
@@ -171,8 +173,11 @@ resolved bindings are explicit parts of resource state.
 Spritz should therefore persist:
 
 - owner identity,
+- runtime principal identity,
 - instance class ID and version,
 - policy-relevant resolved facts,
+- charged-principal selection when it is material to later delegated service
+  use,
 - materialized access control entries.
 
 ### Mutations are explicit and limited
@@ -216,6 +221,21 @@ Meaning:
 
 This is the abstraction that should survive feature churn. Resolvers and hooks
 are one part of it, not the whole story.
+
+For runtime-backed instances, Spritz should also distinguish several principal
+roles explicitly:
+
+- `ownerPrincipal`: the accountable owner recorded on the instance
+- `runtimePrincipal`: the identity the running instance presents to internal
+  services
+- `requestActor`: the principal currently asking Spritz or a delegated service
+  to do something
+- `chargedPrincipal`: the principal whose plan, budget, or quota should be
+  charged for delegated service use
+
+These roles may coincide for simple personal instances, but they should remain
+separate in the model so that future collaborative, team-owned, or
+privileged-runtime classes do not hard-code one billing or authorization shape.
 
 ## Admission and Policy Model
 
@@ -419,6 +439,7 @@ Suggested facets:
 - `discoveryPolicy`
 - `accessPolicy`
 - `sessionPolicy`
+- `delegationPolicy`
 - `credentialPolicy`
 - `lifecyclePolicy`
 - `auditPolicy`
@@ -454,6 +475,94 @@ Expected meanings:
 
 These verbs should be enforced by Spritz regardless of which extension resolved
 the create-time facts.
+
+## Delegated Service Intents
+
+Access verbs are not enough for internal service calls made by a running
+instance.
+
+Spritz should also model delegated service intents for calls from instance
+runtimes into deployment-owned services. These intents are not normal
+instance-resource verbs. They represent downstream actions such as:
+
+- `llm.invoke`
+- `tool.call`
+- `knowledge.read`
+- `secret.fetch`
+
+These intents should be authorized by `InstanceClass` policy using the bound
+runtime identity and the resolved charged principal.
+
+This keeps downstream service authorization and accounting on the same
+control-plane model instead of letting every service invent its own ad hoc
+identity rules.
+
+## Runtime Service Delegation
+
+Some instance classes will call internal services such as model gateways,
+search services, or deployment-owned tool backends.
+
+Those calls should not be modeled as browser-user calls forwarded through the
+instance. They should be modeled as delegated runtime service access.
+
+The durable rules should be:
+
+- the instance authenticates to internal services as its bound
+  `runtimePrincipal`
+- internal services derive or receive the canonical `chargedPrincipal`
+  according to Spritz policy
+- the charged principal's plan, budget, model entitlement, or quota is checked
+  at the delegated service boundary
+- the request fails there if the charged principal is not allowed to use that
+  capability
+- raw browser session tokens or other end-user tokens should not be handed to
+  the container just so it can call internal services
+
+This is especially important for model-gateway traffic. A personal instance may
+ultimately bill the bound user, while a collaborative or privileged instance
+may later bill an owner, team budget, or some other deployment-defined
+principal. That choice must be policy-driven per `InstanceClass`, not baked
+into the runtime image or the client.
+
+Spritz therefore needs a first-class way to represent:
+
+- which delegated service intents are allowed for a class
+- which credential classes or identity assertions are valid for those intents
+- how the `chargedPrincipal` is selected
+- whether the current `requestActor` must also be allowed to trigger the
+  delegated action
+
+## Delegation Policy
+
+`delegationPolicy` should define the rules for downstream service use by an
+instance runtime.
+
+At minimum it should support:
+
+- allowed delegated service intents such as `llm.invoke`
+- the permitted authentication mode for the runtime principal
+- the charged-principal selection rule, such as owner, bound user, team budget,
+  or another resolved principal
+- whether runtime calls are actor-mediated or may proceed solely on runtime
+  identity
+- allowed model, tool, or service classes
+- auditing requirements for delegated service use
+
+Example long-term shape:
+
+```yaml
+delegation:
+  intents:
+    llm.invoke:
+      authn: runtime_principal
+      chargedPrincipal: bound_user
+      actorCheck: required
+      allowedServiceClasses: [standard-llm]
+```
+
+Spritz should own this policy contract even if an internal service such as a
+LiteLLM-style gateway ultimately performs the final entitlement or billing
+check.
 
 ## Standard Admission Configuration
 
@@ -645,6 +754,14 @@ Example intent:
 
 This is a typical fit for a `personal-agent` instance class.
 
+Typical delegated-service posture:
+
+- runtime principal is bound to the selected runtime identity
+- charged principal is the bound user
+- model calls fail if the bound user lacks plan entitlement
+- browser tokens are never forwarded into the runtime just to satisfy model
+  billing
+
 ### Internal collaborative developer runtime
 
 Example intent:
@@ -663,6 +780,16 @@ class.
 The important point is that ownership and collaboration do not have to be the
 same thing. Spritz can preserve a single owner while still allowing multi-user
 read and use access through policy.
+
+Typical delegated-service posture:
+
+- runtime principal may represent the instance itself or a bound team runtime
+- charged principal may be owner, team budget, or another policy-selected
+  principal
+- delegated service use may require both runtime identity and an allowed
+  request actor
+- privileged model or database access is granted by class policy, not by image
+  name
 
 ## Native Preset Create Resolution
 
@@ -751,6 +878,8 @@ Additional policy requirements:
 - create must fail if required class inputs or required resolver outputs are
   missing,
 - credentials attached to an instance must be allowed by the instance class,
+- delegated internal service use must be allowed by the instance class and
+  resolved against runtime and charged-principal policy,
 - discovery and collaboration rules must be enforced by Spritz even when a
   resolver suggests additional context,
 - post-create reads and interactions must use the same owner plus ACL plus
@@ -762,6 +891,15 @@ For HTTP resolvers and hooks:
 - treat network failures as `unavailable`,
 - log request IDs and extension IDs,
 - avoid passing secrets or unnecessary request fields.
+
+For delegated runtime service calls:
+
+- internal services should authenticate the runtime via Spritz-managed identity,
+  not raw browser tokens
+- the delegated-service boundary should enforce plan, quota, or entitlement
+  checks for the resolved charged principal
+- service calls should carry enough canonical identity metadata for audit
+  attribution without leaking end-user credentials into the runtime
 
 ## Observability
 
@@ -781,6 +919,8 @@ Suggested metrics:
 - latency histogram by extension ID,
 - unavailable/error count,
 - replay reuse count for resolved payloads.
+- delegated-service calls by instance class, intent, charged-principal type,
+  and outcome.
 
 ## Migration Plan
 
@@ -813,13 +953,21 @@ Suggested metrics:
 - keep config-backed classes as the short-term shape, but target a first-class
   `InstanceClass` API resource.
 
-### Phase 5: Move login metadata under the same roof
+### Phase 5: Add runtime service delegation policy
+
+- add `delegationPolicy` and delegated service intents such as `llm.invoke`,
+- define runtime principal and charged-principal handling,
+- require internal services to consume Spritz-managed runtime identity instead
+  of raw browser tokens,
+- make charged-principal selection policy-driven per `InstanceClass`.
+
+### Phase 6: Move login metadata under the same roof
 
 - represent deployment-specific login and refresh metadata as an auth-provider
   extension,
 - keep UI config behavior backward-compatible during migration.
 
-### Phase 6: Add future identity-link and lifecycle operations
+### Phase 7: Add future identity-link and lifecycle operations
 
 - reuse the same framework for linking and post-create hooks instead of adding
   new one-off config paths.
@@ -836,6 +984,10 @@ Validation should include:
   and manage behavior,
 - tests proving credentials and privileged runtime features are gated by
   instance-class policy,
+- delegated-service tests proving runtime principal authentication and
+  charged-principal selection behave as configured,
+- tests proving model-gateway style failures surface correctly when the charged
+  principal lacks entitlement,
 - tests proving multiple principals can collaborate when allowed while owner
   metadata remains stable,
 - compatibility tests for existing external owner resolution,

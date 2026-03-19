@@ -43,6 +43,8 @@ type server struct {
 	sshDefaults          sshDefaults
 	sshMintLimiter       *sshMintLimiter
 	acp                  acpConfig
+	extensions           extensionRegistry
+	instanceClasses      instanceClassCatalog
 	presets              presetCatalog
 	provisioners         provisionerPolicy
 	externalOwners       externalOwnerConfig
@@ -101,8 +103,22 @@ func main() {
 	ingressDefaults := newIngressDefaults()
 	terminal := newTerminalConfig()
 	acp := newACPConfig()
+	extensions, err := newExtensionRegistry()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid extension config: %v\n", err)
+		os.Exit(1)
+	}
+	instanceClasses, err := newInstanceClassCatalog()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid instance class config: %v\n", err)
+		os.Exit(1)
+	}
 	presets, err := newPresetCatalog()
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid preset config: %v\n", err)
+		os.Exit(1)
+	}
+	if err := instanceClasses.validatePresetCatalog(presets); err != nil {
 		fmt.Fprintf(os.Stderr, "invalid preset config: %v\n", err)
 		os.Exit(1)
 	}
@@ -159,6 +175,8 @@ func main() {
 		sshDefaults:       sshDefaults,
 		sshMintLimiter:    sshMintLimiter,
 		acp:               acp,
+		extensions:        extensions,
+		instanceClasses:   instanceClasses,
 		presets:           presets,
 		provisioners:      provisioners,
 		externalOwners:    externalOwners,
@@ -255,6 +273,7 @@ type createRequest struct {
 	NamePrefix     string              `json:"namePrefix,omitempty"`
 	Namespace      string              `json:"namespace,omitempty"`
 	PresetID       string              `json:"presetId,omitempty"`
+	PresetInputs   json.RawMessage     `json:"presetInputs,omitempty"`
 	OwnerID        string              `json:"ownerId,omitempty"`
 	OwnerRef       *ownerRef           `json:"ownerRef,omitempty"`
 	IdleTTL        string              `json:"idleTtl,omitempty"`
@@ -439,6 +458,16 @@ func (s *server) createSpritz(c echo.Context) error {
 	}
 
 	if !principal.isService() {
+		if err := s.resolveCreateAdmission(c.Request().Context(), principal, namespace, &body); err != nil {
+			var admissionErr *admissionError
+			if errors.As(err, &admissionErr) {
+				if admissionErr.data != nil {
+					return writeJSendFailData(c, admissionErr.status, admissionErr.data)
+				}
+				return writeError(c, admissionErr.status, admissionErr.message)
+			}
+			return writeError(c, http.StatusInternalServerError, err.Error())
+		}
 		if err := resolveCreateLifetimes(&body.Spec, s.provisioners, false); err != nil {
 			return writeError(c, http.StatusBadRequest, err.Error())
 		}

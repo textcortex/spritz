@@ -462,13 +462,14 @@ function createUsage(guidance = guidanceForAudience()) {
   console.log(`Spritz create
 
 Usage:
-  spritz create [name] [--preset <id>] [--image <image>] [--repo <url>] [--branch <branch>] [--owner-provider <provider> --owner-subject <subject> [--owner-tenant <tenant>] | --owner-id <id>] [--idle-ttl <duration>] [--ttl <duration>] [--idempotency-key <id>] [--source <source>] [--request-id <id>] [--name-prefix <prefix>] [--namespace <ns>]
+  spritz create [name] [--preset <id>] [--preset-input <key=value>] [--image <image>] [--repo <url>] [--branch <branch>] [--owner-provider <provider> --owner-subject <subject> [--owner-tenant <tenant>] | --owner-id <id>] [--idle-ttl <duration>] [--ttl <duration>] [--idempotency-key <id>] [--source <source>] [--request-id <id>] [--name-prefix <prefix>] [--namespace <ns>]
 
 Environment:
   AUDIENCE (current: ${guidance.audience})
 
 Examples:
   spritz create --preset claude-code --owner-provider discord --owner-subject 123456789012345678 --source discord --request-id discord-123 --idempotency-key discord-123 --json
+  spritz create --preset zeno --preset-input agentId=ag-123 --owner-id user-123 --idempotency-key req-456 --json
   spritz create --preset openclaw --owner-id user-123 --idempotency-key req-123 --json
 
 ${ownerNotes}
@@ -480,7 +481,7 @@ function usage(guidance = guidanceForAudience()) {
 
 Usage:
   spritz list [--namespace <ns>]
-  spritz create [name] [--preset <id>] [--image <image>] [--repo <url>] [--branch <branch>] [--owner-provider <provider> --owner-subject <subject> [--owner-tenant <tenant>] | --owner-id <id>] [--idle-ttl <duration>] [--ttl <duration>] [--idempotency-key <id>] [--source <source>] [--request-id <id>] [--name-prefix <prefix>] [--namespace <ns>]
+  spritz create [name] [--preset <id>] [--preset-input <key=value>] [--image <image>] [--repo <url>] [--branch <branch>] [--owner-provider <provider> --owner-subject <subject> [--owner-tenant <tenant>] | --owner-id <id>] [--idle-ttl <duration>] [--ttl <duration>] [--idempotency-key <id>] [--source <source>] [--request-id <id>] [--name-prefix <prefix>] [--namespace <ns>]
   spritz suggest-name [--preset <id>] [--image <image>] [--name-prefix <prefix>] [--namespace <ns>]
   spritz delete <name> [--namespace <ns>]
   spritz open <name> [--namespace <ns>]
@@ -527,6 +528,19 @@ function argValue(flag: string): string | undefined {
   return rest[idx + 1];
 }
 
+function argValues(flag: string): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < rest.length; index += 1) {
+    if (rest[index] !== flag) continue;
+    const value = rest[index + 1];
+    if (value && !value.startsWith('--')) {
+      values.push(value);
+      index += 1;
+    }
+  }
+  return values;
+}
+
 function argValueInfo(flag: string): { present: boolean; value?: string } {
   const idx = rest.indexOf(flag);
   if (idx === -1) return { present: false };
@@ -551,6 +565,24 @@ function positionalArgs(): string[] {
     values.push(token);
   }
   return values;
+}
+
+function parsePresetInputs(values: string[]): Record<string, string> | undefined {
+  if (values.length === 0) return undefined;
+  const out: Record<string, string> = {};
+  for (const item of values) {
+    const index = item.indexOf('=');
+    if (index <= 0 || index === item.length - 1) {
+      throw new Error('--preset-input must use key=value');
+    }
+    const key = item.slice(0, index).trim();
+    const value = item.slice(index + 1).trim();
+    if (!key || !value) {
+      throw new Error('--preset-input must use key=value');
+    }
+    out[key] = value;
+  }
+  return out;
 }
 
 function normalizeHeaders(headers?: HeadersInit): Record<string, string> {
@@ -1235,6 +1267,7 @@ async function main() {
   if (command === 'create') {
     const name = positionalArgs()[0];
     const presetId = argValue('--preset');
+    const presetInputs = parsePresetInputs(argValues('--preset-input'));
     const image = argValue('--image');
 
     const repo = argValue('--repo');
@@ -1279,6 +1312,7 @@ async function main() {
     if (name) body.name = name;
     if (namePrefix) body.namePrefix = namePrefix;
     if (presetId) body.presetId = presetId;
+    if (presetInputs) body.presetInputs = presetInputs;
     if (ownerId) body.ownerId = ownerId;
     if (usingExternalOwner) {
       body.ownerRef = {
