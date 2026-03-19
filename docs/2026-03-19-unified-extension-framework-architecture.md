@@ -960,6 +960,8 @@ Suggested metrics:
 - require internal services to consume Spritz-managed runtime identity instead
   of raw browser tokens,
 - make charged-principal selection policy-driven per `InstanceClass`.
+- follow the concrete delegation shape in
+  [2026-03-19-runtime-service-delegation-architecture.md](2026-03-19-runtime-service-delegation-architecture.md).
 
 ### Phase 6: Move login metadata under the same roof
 
@@ -1000,3 +1002,4 @@ Validation should include:
 - [2026-03-12-external-identity-resolution-api-architecture.md](2026-03-12-external-identity-resolution-api-architecture.md)
 - [2026-03-13-spz-audience-and-external-owner-guidance.md](2026-03-13-spz-audience-and-external-owner-guidance.md)
 - [2026-02-24-portable-authentication-and-account-architecture.md](2026-02-24-portable-authentication-and-account-architecture.md)
+- [2026-03-19-runtime-service-delegation-architecture.md](2026-03-19-runtime-service-delegation-architecture.md)
