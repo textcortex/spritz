@@ -129,16 +129,16 @@ export function collectAssistantText(updates) {
   return assistantTextCombined || assistantTextForDisplay;
 }
 
-export async function withACPWorkspaceClient(options, callback) {
+export async function withACPInstanceClient(options, callback) {
   const {
     namespace,
-    workspaceName,
+    instanceName,
     endpoint,
     timeoutSeconds,
     startPortForward = startACPPortForward,
     connectWebSocket = connectACPWebSocket,
   } = options;
-  const portForward = await startPortForward(namespace, workspaceName, endpoint.port);
+  const portForward = await startPortForward(namespace, instanceName, endpoint.port);
   let client;
   try {
     client = await connectWebSocket(`ws://127.0.0.1:${portForward.localPort}${endpoint.path}`, timeoutSeconds, options);
@@ -152,10 +152,10 @@ export async function withACPWorkspaceClient(options, callback) {
   }
 }
 
-export async function runACPWorkspacePrompt(options) {
+export async function runACPInstancePrompt(options) {
   const {
     namespace,
-    workspaceName,
+    instanceName,
     endpoint,
     timeoutSeconds,
     promptText,
@@ -163,13 +163,13 @@ export async function runACPWorkspacePrompt(options) {
     mcpServers = [],
     clientInfo = { name: 'spritz-smoke', title: 'Spritz Smoke', version: '1.0.0' },
     settleDelayMs = 750,
-    withWorkspaceClient = withACPWorkspaceClient,
+    withInstanceClient = withACPInstanceClient,
   } = options;
 
-  return withWorkspaceClient(
+  return withInstanceClient(
     {
       namespace,
-      workspaceName,
+      instanceName,
       endpoint,
       timeoutSeconds,
       WebSocket: options.WebSocket,

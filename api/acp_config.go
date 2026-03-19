@@ -24,7 +24,7 @@ type acpConfig struct {
 	port                 int32
 	path                 string
 	allowedOrigins       map[string]struct{}
-	workspaceURL         func(namespace, name string) string
+	instanceURL          func(namespace, name string) string
 	clientInfo           acpBootstrapClientInfo
 	clientCapabilities   map[string]any
 	bootstrapDialTimeout time.Duration
@@ -39,7 +39,7 @@ func defaultACPClientCapabilities() map[string]any {
 			},
 		},
 		"_meta": map[string]any{
-			"terminal-auth":  true,
+			"terminal-auth":   true,
 			"terminal_output": true,
 		},
 	}

@@ -225,7 +225,7 @@ func TestCreateSpritzReplaysExternalOwnerProvisioningAfterResolverMappingChanges
 	firstName := firstPayload["data"].(map[string]any)["spritz"].(map[string]any)["metadata"].(map[string]any)["name"]
 	replayedName := replayPayload["data"].(map[string]any)["spritz"].(map[string]any)["metadata"].(map[string]any)["name"]
 	if firstName != replayedName {
-		t.Fatalf("expected replayed workspace name to match, got first=%#v replay=%#v", firstName, replayedName)
+		t.Fatalf("expected replayed instance name to match, got first=%#v replay=%#v", firstName, replayedName)
 	}
 	if _, exists := replayPayload["data"].(map[string]any)["ownerId"]; exists {
 		t.Fatalf("expected replayed external-owner response to omit ownerId")

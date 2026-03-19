@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { summarizeWorkspaceFailure, waitForWorkspace } from './workspace-waiter.mjs';
+import { summarizeInstanceFailure, waitForInstance } from './instance-waiter.mjs';
 
-test('summarizeWorkspaceFailure prioritizes shared mount init failures', () => {
-  const result = summarizeWorkspaceFailure({
+test('summarizeInstanceFailure prioritizes shared mount init failures', () => {
+  const result = summarizeInstanceFailure({
     spritz: { status: { phase: 'Provisioning', message: 'waiting for deployment' } },
     podList: {
       items: [
@@ -33,8 +33,8 @@ test('summarizeWorkspaceFailure prioritizes shared mount init failures', () => {
   });
 });
 
-test('summarizeWorkspaceFailure reports image pull failures distinctly', () => {
-  const result = summarizeWorkspaceFailure({
+test('summarizeInstanceFailure reports image pull failures distinctly', () => {
+  const result = summarizeInstanceFailure({
     spritz: { status: { phase: 'Provisioning', message: 'waiting for deployment' } },
     podList: {
       items: [
@@ -63,7 +63,7 @@ test('summarizeWorkspaceFailure reports image pull failures distinctly', () => {
   });
 });
 
-test('waitForWorkspace returns the ready workspace payload and discovered ACP endpoint', async () => {
+test('waitForInstance returns the ready instance payload and discovered ACP endpoint', async () => {
   let callCount = 0;
   const readySpritz = {
     status: {
@@ -78,9 +78,9 @@ test('waitForWorkspace returns the ready workspace payload and discovered ACP en
     },
   };
 
-  const result = await waitForWorkspace({
+  const result = await waitForInstance({
     namespace: 'example-ns',
-    name: 'example-workspace',
+    name: 'example-instance',
     timeoutSeconds: 1,
     pollSeconds: 0.001,
     kubectlGetJSON: async (args) => {
@@ -94,7 +94,7 @@ test('waitForWorkspace returns the ready workspace payload and discovered ACP en
       if (args.includes('spritz')) {
         return readySpritz;
       }
-      return { items: [{ metadata: { name: 'example-workspace-pod' } }] };
+      return { items: [{ metadata: { name: 'example-instance-pod' } }] };
     },
   });
 
@@ -103,12 +103,12 @@ test('waitForWorkspace returns the ready workspace payload and discovered ACP en
   assert.equal(result.failureSummary, null);
 });
 
-test('waitForWorkspace recovers from transient kubectl polling errors', async () => {
+test('waitForInstance recovers from transient kubectl polling errors', async () => {
   let failed = false;
 
-  const result = await waitForWorkspace({
+  const result = await waitForInstance({
     namespace: 'example-ns',
-    name: 'example-workspace',
+    name: 'example-instance',
     timeoutSeconds: 1,
     pollSeconds: 0.001,
     kubectlGetJSON: async (args) => {
@@ -127,11 +127,11 @@ test('waitForWorkspace recovers from transient kubectl polling errors', async ()
   assert.deepEqual(result.acpEndpoint, { port: 2529, path: '/' });
 });
 
-test('waitForWorkspace fails with the last staged failure summary on timeout', async () => {
+test('waitForInstance fails with the last staged failure summary on timeout', async () => {
   await assert.rejects(
-    () => waitForWorkspace({
+    () => waitForInstance({
       namespace: 'example-ns',
-      name: 'example-workspace',
+      name: 'example-instance',
       timeoutSeconds: 0.01,
       pollSeconds: 0.001,
       kubectlGetJSON: async (args) => {

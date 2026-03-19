@@ -173,7 +173,7 @@ export function buildIdempotencyKey(prefix, presetId) {
     .trim()
     .replace(/[^a-zA-Z0-9-]+/g, '-')
     .replace(/^-+|-+$/g, '');
-  return `${safePrefix}-${safePreset || 'workspace'}`;
+  return `${safePrefix}-${safePreset || 'instance'}`;
 }
 
 /**
@@ -211,7 +211,7 @@ export function joinACPTextChunks(values) {
  * Build a deterministic smoke prompt token for a preset run.
  */
 export function buildSmokeToken(presetId) {
-  return `spritz-smoke-${normalizePresetID(presetId) || 'workspace'}`;
+  return `spritz-smoke-${normalizePresetID(presetId) || 'instance'}`;
 }
 
 /**
@@ -286,7 +286,7 @@ export async function waitForWebSocketOpen(socket, timeoutMs) {
 }
 
 /**
- * Validate the service-principal create response contract and return the created workspace name.
+ * Validate the service-principal create response contract and return the created instance name.
  */
 export function assertSmokeCreateResponse(response, ownerId, presetId) {
   const spritzName = response?.spritz?.metadata?.name;
@@ -299,7 +299,7 @@ export function assertSmokeCreateResponse(response, ownerId, presetId) {
   if (response.actorType !== 'service') {
     throw new Error(`expected actorType service, got ${response.actorType || '<empty>'}`);
   }
-  if (!response.chatUrl || !response.workspaceUrl || !response.accessUrl) {
+  if (!response.chatUrl || !response.instanceUrl || !response.accessUrl) {
     throw new Error(`create response missing canonical URLs: ${JSON.stringify(response, null, 2)}`);
   }
   const expectedPresetID = normalizePresetID(presetId);

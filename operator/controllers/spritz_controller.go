@@ -36,7 +36,7 @@ const (
 	defaultSSHMode             = "service"
 	spritzContainerName        = "spritz"
 	spritzFinalizer            = "spritz.sh/finalizer"
-	ownerLabelKey             = "spritz.sh/owner"
+	ownerLabelKey              = "spritz.sh/owner"
 	defaultTTLGrace            = 5 * time.Minute
 	defaultRepoInitImage       = "alpine/git:2.45.2"
 	repoAuthMountPath          = "/var/run/spritz/repo-auth"
@@ -752,7 +752,7 @@ func setACPReadyCondition(conditions *[]metav1.Condition, generation int64, stat
 		condition.Message = "ACP is ready."
 	case "unknown":
 		condition.Reason = "Unknown"
-		condition.Message = "ACP is waiting for the workspace to become ready."
+		condition.Message = "ACP is waiting for the instance to become ready."
 	case "probing":
 		condition.Reason = "Probing"
 		condition.Message = "ACP probe is in progress."

@@ -17,13 +17,13 @@ export async function kubectlJSON(args, options = {}) {
   }
 }
 
-export function summarizeWorkspaceFailure({ spritz, podList }) {
+export function summarizeInstanceFailure({ spritz, podList }) {
   const status = spritz?.status || {};
   const pod = Array.isArray(podList?.items) ? podList.items[0] : null;
   if (!pod) {
     return {
       stage: 'create',
-      message: status.message || 'workspace pod not created',
+      message: status.message || 'instance pod not created',
     };
   }
 
@@ -73,7 +73,7 @@ export function summarizeWorkspaceFailure({ spritz, podList }) {
   if (status.phase && status.phase !== 'Ready') {
     return {
       stage: 'readiness',
-      message: status.message || `workspace phase is ${status.phase}`,
+      message: status.message || `instance phase is ${status.phase}`,
     };
   }
 
@@ -86,11 +86,11 @@ export function summarizeWorkspaceFailure({ spritz, podList }) {
 
   return {
     stage: 'unknown',
-    message: status.message || 'workspace did not become ready',
+    message: status.message || 'instance did not become ready',
   };
 }
 
-export async function waitForWorkspace(options) {
+export async function waitForInstance(options) {
   const {
     namespace,
     name,
@@ -99,7 +99,7 @@ export async function waitForWorkspace(options) {
     kubectlGetJSON = kubectlJSON,
   } = options;
   const deadline = Date.now() + timeoutSeconds * 1000;
-  let lastFailure = { stage: 'create', message: 'workspace not observed yet' };
+  let lastFailure = { stage: 'create', message: 'instance not observed yet' };
 
   while (Date.now() < deadline) {
     const remainingMs = Math.max(deadline - Date.now(), 1000);
@@ -125,9 +125,9 @@ export async function waitForWorkspace(options) {
         failureSummary: null,
       };
     }
-    lastFailure = summarizeWorkspaceFailure({ spritz, podList });
+    lastFailure = summarizeInstanceFailure({ spritz, podList });
     await new Promise((resolve) => setTimeout(resolve, pollSeconds * 1000));
   }
 
-  throw new Error(`workspace ${name} did not become usable within ${timeoutSeconds}s (${lastFailure.stage}: ${lastFailure.message})`);
+  throw new Error(`instance ${name} did not become usable within ${timeoutSeconds}s (${lastFailure.stage}: ${lastFailure.message})`);
 }

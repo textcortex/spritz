@@ -56,7 +56,7 @@ sharedMounts:
     scope: owner
     mode: snapshot
     syncMode: manual
-  - name: workspace
+  - name: instance
     mountPath: /home/dev/workspace
     scope: owner
     mode: snapshot
@@ -206,12 +206,12 @@ This is intentionally simple and works for initial rollout, but it is coarse:
 
 ## Recommended Long-Term Auth (Best Practice)
 
-Replace the shared token with a short-lived, per-workspace token that is scoped
+Replace the shared token with a short-lived, per-instance token that is scoped
 to one owner (and optionally one mount).
 
 Preferred model:
 
-1. Operator mints a JWT per workspace pod with claims:
+1. Operator mints a JWT per instance pod with claims:
    - `owner_id`
    - `mount` (optional)
    - `exp` (short TTL, 30-60 minutes)

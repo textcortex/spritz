@@ -11,15 +11,15 @@ This document defines the production ACP model in Spritz.
 
 The goal is a default setup that works out of the box with the Helm chart:
 
-- every workspace reserves ACP on port `2529`
+- every instance reserves ACP on port `2529`
 - any backend listening on that port is treated as ACP-capable
 - Spritz discovers ACP agents automatically
 - the browser talks to agents through the Spritz API gateway
-- ACP remains backend-agnostic so workspaces can run OpenClaw or any other ACP implementation
+- ACP remains backend-agnostic so instances can run OpenClaw or any other ACP implementation
 
 ## Architecture
 
-### ACP contract inside each workspace
+### ACP contract inside each instance
 
 Spritz reserves one internal service/container port for ACP:
 
@@ -28,7 +28,7 @@ Spritz reserves one internal service/container port for ACP:
 - path: `/`
 - protocol: ACP JSON-RPC
 
-If a workspace process listens there and answers ACP `initialize`, Spritz treats it as an ACP agent.
+If an instance process listens there and answers ACP `initialize`, Spritz treats it as an ACP agent.
 
 For the current Spritz ACP runtime contract, the same service should also expose:
 
@@ -42,7 +42,7 @@ traffic still uses the WebSocket endpoint.
 
 The operator owns ACP discovery.
 
-When a workspace deployment is ready, the operator:
+When an instance deployment is ready, the operator:
 
 1. checks `http://<spritz>.<namespace>.svc.cluster.local:2529/healthz`
 2. fetches `http://<spritz>.<namespace>.svc.cluster.local:2529/.well-known/spritz-acp` when ACP
@@ -56,9 +56,9 @@ The API does not probe ACP during user requests.
 
 The API owns only:
 
-- listing ACP-ready workspaces
+- listing ACP-ready instances
 - managing conversation metadata
-- proxying authenticated ACP WebSocket traffic from browser to workspace
+- proxying authenticated ACP WebSocket traffic from browser to instance
 
 This keeps discovery and status mutation in the control plane, not in request handlers.
 
@@ -76,15 +76,15 @@ This keeps discovery and status mutation in the control plane, not in request ha
 
 It does not store the transcript.
 
-Each conversation has its own generated ID, so one workspace can have many independent ACP threads.
+Each conversation has its own generated ID, so one instance can have many independent ACP threads.
 
 ### Browser path
 
-The browser never connects directly to workspace ACP ports.
+The browser never connects directly to instance ACP ports.
 
 The path is always:
 
-`browser -> spritz-api -> workspace:2529`
+`browser -> spritz-api -> instance:2529`
 
 That keeps auth, origin checks, and future policy enforcement in one place.
 
@@ -120,7 +120,7 @@ Meaning:
 
 Spritz must not depend on OpenClaw-specific ACP behavior.
 
-Any workspace backend may be used as long as it:
+Any instance backend may be used as long as it:
 
 - listens on port `2529`
 - speaks ACP over WebSocket
@@ -159,7 +159,7 @@ session management directly.
 The default Spritz UI provides a test and operator surface for ACP:
 
 - left column: ACP-ready agents
-- middle column: conversations for the selected workspace
+- middle column: conversations for the selected instance
 - right column: active ACP thread
 
 Each thread maps to one `SpritzConversation` and one ACP session lifecycle.
@@ -194,10 +194,10 @@ The production defaults are:
 
 A deployment is considered correct when all of these are true:
 
-- new workspaces expose service/container port `2529`
-- `Spritz.status.acp.state` becomes `ready` for ACP-capable workspaces
+- new instances expose service/container port `2529`
+- `Spritz.status.acp.state` becomes `ready` for ACP-capable instances
 - `ACPReady=True` appears on ready agents
-- `GET /api/acp/agents` lists only ACP-ready workspaces
+- `GET /api/acp/agents` lists only ACP-ready instances
 - `POST /api/acp/conversations` creates a generated conversation ID
 - the UI can create a conversation, connect, and exchange ACP messages through the API bridge
 

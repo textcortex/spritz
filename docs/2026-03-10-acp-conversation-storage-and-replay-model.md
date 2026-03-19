@@ -51,7 +51,7 @@ Responsibilities:
 - identifies the chat thread in Spritz
 - appears in the URL as `#chat/<spritz>/<conversation>`
 - keys browser-local transcript cache
-- owns thread metadata such as title, owner, workspace, and cwd
+- owns thread metadata such as title, owner, instance, and cwd
 
 ### ACP session id
 
@@ -136,7 +136,7 @@ The correct restore flow is:
 2. Spritz loads `SpritzConversation`
 3. Spritz API bootstraps the selected conversation
 4. Spritz API reads `spec.sessionId`
-5. Spritz API initializes ACP against the selected workspace
+5. Spritz API initializes ACP against the selected instance
 6. Spritz API loads the existing ACP session or explicitly repairs it by
    creating a replacement session and patching the conversation record
 7. The browser opens the ACP connection for that conversation and sends
@@ -174,7 +174,7 @@ For OpenClaw specifically, the expected behavior is:
 ## Implemented Flow
 
 The current Spritz implementation now follows this model for OpenClaw-backed
-workspaces:
+instances:
 
 1. Spritz routes by `SpritzConversation.metadata.name`
 2. Spritz API bootstraps the selected conversation before the UI connects

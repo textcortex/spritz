@@ -527,7 +527,7 @@ export function ChatPage() {
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex size-9 items-center justify-center rounded-[10px] border border-[#e5e5e5] bg-white text-black transition-colors hover:bg-[#f5f5f5] hover:border-[#ccc] dark:border-border dark:bg-background dark:text-foreground"
-                  title="Open workspace"
+                  title="Open instance"
                 >
                   <ExternalLinkIcon className="size-4" />
                 </a>
@@ -561,7 +561,7 @@ export function ChatPage() {
         <div className="flex flex-1 flex-col overflow-auto px-6 pt-7 pb-3" style={{ scrollbarGutter: 'stable' }}>
           {!selectedConversation ? (
             <div className="m-auto max-w-[420px] text-center text-sm opacity-70">
-              Select a conversation or create a new workspace.
+              Select a conversation or create a new instance.
             </div>
           ) : transcript.messages.length === 0 ? (
             <div className="m-auto max-w-[540px] text-center">

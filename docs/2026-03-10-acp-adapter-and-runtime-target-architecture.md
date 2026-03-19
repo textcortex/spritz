@@ -8,13 +8,13 @@ tags: [spritz, acp, adapter, runtime, architecture]
 ## Overview
 
 This document defines the target runtime architecture for ACP-backed
-workspaces in Spritz.
+instances in Spritz.
 
 The goal is a control plane that stays simple:
 
-- Spritz creates and manages workspaces
-- Spritz routes authenticated ACP traffic to those workspaces
-- the workspace exposes one stable ACP endpoint on port `2529`
+- Spritz creates and manages instances
+- Spritz routes authenticated ACP traffic to those instances
+- the instance exposes one stable ACP endpoint on port `2529`
 - the backend behind that endpoint remains replaceable
 
 Spritz must stay backend-agnostic. OpenClaw is one backend, not a special case
@@ -40,9 +40,9 @@ The target architecture is to separate those responsibilities cleanly.
 
 Spritz owns:
 
-- workspace provisioning
+- instance provisioning
 - user authentication and authorization
-- workspace discovery and metadata
+- instance discovery and metadata
 - conversation records
 - browser-facing ACP gatewaying
 
@@ -54,10 +54,10 @@ Spritz does not own:
 
 ### ACP adapter
 
-Each ACP-capable workspace should expose one long-lived ACP service on
+Each ACP-capable instance should expose one long-lived ACP service on
 port `2529`.
 
-If the backend is not natively ACP, the workspace should run an ACP adapter.
+If the backend is not natively ACP, the instance should run an ACP adapter.
 
 The ACP adapter owns:
 
@@ -90,7 +90,7 @@ Examples of the desired command-side interface:
 - `claude-agent-acp`
 - any other command that speaks ACP over stdio
 
-This keeps the workspace contract stable even when the backend changes.
+This keeps the instance contract stable even when the backend changes.
 
 The shared harness should own:
 
@@ -161,12 +161,12 @@ Adding `acpx` session management as a second runtime control layer would make
 session ownership harder to reason about.
 
 The preferred use of `acpx` here is as a design reference for backend command
-registration and stdio ACP integration, not as the deployed workspace session
+registration and stdio ACP integration, not as the deployed instance session
 manager.
 
-## Target Workspace Contract
+## Target Instance Contract
 
-Every ACP-capable workspace should provide exactly one stable internal ACP
+Every ACP-capable instance should provide exactly one stable internal ACP
 contract:
 
 - port: `2529`
@@ -205,7 +205,7 @@ The Spritz API should remain the only browser-facing ACP gateway.
 
 The path should stay:
 
-`browser -> spritz-api -> workspace ACP endpoint`
+`browser -> spritz-api -> instance ACP endpoint`
 
 The API should own:
 
@@ -241,7 +241,7 @@ It should not:
 
 The ACP adapter is the key runtime boundary.
 
-It should be implemented as one long-lived process per workspace, not as a new
+It should be implemented as one long-lived process per instance, not as a new
 process spawned for every websocket connection.
 
 Required behavior:
@@ -292,7 +292,7 @@ Rules:
 - remove browser-side session repair logic once API bootstrap is authoritative
 - keep one cache format for ACP thread rendering
 
-The target is one clear path from browser to workspace ACP runtime.
+The target is one clear path from browser to instance ACP runtime.
 
 ## Implementation Direction
 
@@ -300,7 +300,7 @@ The current cutover in Spritz implements the first step of this architecture:
 
 - the OpenClaw example image now runs one long-lived ACP server process on `2529`
 - the operator now uses HTTP health and metadata instead of periodic ACP websocket probes
-- workspace pod readiness and liveness use the ACP health endpoint
+- instance pod readiness and liveness use the ACP health endpoint
 
 Remaining implementation work should focus on these changes:
 
@@ -328,7 +328,7 @@ That refactor should end with these repository rules:
 The target architecture is considered correct when all of the following are
 true:
 
-- a workspace exposes one stable ACP endpoint on `2529`
+- an instance exposes one stable ACP endpoint on `2529`
 - repeated readiness and metadata refresh cycles do not create runtime churn
 - disconnecting one ACP client does not produce abnormal backend websocket
   reset loops

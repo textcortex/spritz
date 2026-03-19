@@ -31,7 +31,7 @@ func TestStartSSHActivityLoopRefreshesWhileSessionIsOpen(t *testing.T) {
 	}
 	spritz := &spritzv1.Spritz{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "ssh-workspace",
+			Name:      "ssh-instance",
 			Namespace: "spritz-test",
 		},
 		Spec: spritzv1.SpritzSpec{IdleTTL: "80ms"},

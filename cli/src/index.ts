@@ -407,7 +407,7 @@ const audienceGuidanceByAudience: Record<Audience, AudienceGuidance> = {
       'If provider, subject, preset, or tenant context is unclear, clarify it before running the create command.',
     ],
     reportingGuidance: [
-      'After create succeeds, use the returned workspace name and URLs as the source of truth when reporting the result back to the caller.',
+      'After create succeeds, use the returned instance name and URLs as the source of truth when reporting the result back to the caller.',
     ],
     missingOwnerInputGuidance: [
       'owner input is required.',
@@ -429,9 +429,9 @@ const audienceGuidanceByAudience: Record<Audience, AudienceGuidance> = {
       'If external owner resolution fails, tell the caller the user needs to connect their account, then retry with the same platform user ID.',
     ],
     reportingGuidance: [
-      'When replying in a messaging app, tag the person who requested the workspace.',
-      'Say what was created and how to open it, using the returned workspace name and URLs from the create response.',
-      'Do not construct workspace URLs yourself.',
+      'When replying in a messaging app, tag the person who requested the instance.',
+      'Say what was created and how to open it, using the returned instance name and URLs from the create response.',
+      'Do not construct instance URLs yourself.',
     ],
     missingOwnerInputGuidance: [
       'owner input is required.',

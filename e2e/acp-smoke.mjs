@@ -12,8 +12,8 @@ import {
   resolveSpzCommand,
   runCommand,
 } from './acp-smoke-lib.mjs';
-import { runACPWorkspacePrompt } from './acp-client.mjs';
-import { waitForWorkspace } from './workspace-waiter.mjs';
+import { runACPInstancePrompt } from './acp-client.mjs';
+import { waitForInstance } from './instance-waiter.mjs';
 
 const defaultPromptTemplate = 'Reply with the exact token {{token}} and nothing else.';
 
@@ -24,10 +24,10 @@ function printUsage(code) {
     'Options:',
     '  --namespace <ns>         Override the target namespace (defaults to spz profile or env)',
     '  --presets <a,b>          Comma-separated preset ids to test (required; no built-in defaults)',
-    '  --timeout-seconds <n>    Timeout per workspace readiness/prompt cycle (default: 300)',
+    '  --timeout-seconds <n>    Timeout per instance readiness/prompt cycle (default: 300)',
     '  --prompt <template>      Prompt template, use {{token}} placeholder for the expected token',
     '  --idempotency-prefix <s> Prefix used to derive idempotency keys for smoke creates',
-    '  --keep                   Keep created workspaces instead of deleting them',
+    '  --keep                   Keep created instances instead of deleting them',
     '  --help                   Show this message',
     '',
     'Environment:',
@@ -73,7 +73,7 @@ async function ensureProvisionerDeny(spzCommand, env, namespace, createdName) {
   }
 }
 
-async function createWorkspace(spzCommand, env, options) {
+async function createInstance(spzCommand, env, options) {
   const args = [
     'create',
     '--preset', options.presetId,
@@ -94,7 +94,7 @@ async function createWorkspace(spzCommand, env, options) {
   return parseJSONOutput(result, `spz create (${options.presetId})`);
 }
 
-async function createWorkspaceMismatch(spzCommand, env, options) {
+async function createInstanceMismatch(spzCommand, env, options) {
   const args = [
     'create',
     '--preset', options.presetId,
@@ -111,7 +111,7 @@ async function createWorkspaceMismatch(spzCommand, env, options) {
   return runSpz(spzCommand, args, { env });
 }
 
-async function cleanupWorkspace(namespace, name) {
+async function cleanupInstance(namespace, name) {
   const result = await runCommand('kubectl', ['-n', namespace, 'delete', 'spritz', name, '--ignore-not-found=true', '--wait=false']);
   if (result.code !== 0) {
     throw new Error(`failed to delete ${name}:\n${result.stderr || result.stdout}`);
@@ -130,43 +130,43 @@ async function main() {
     bearerToken: options.bearerToken,
     namespace: options.namespace,
   });
-  const createdWorkspaces = [];
+  const createdInstances = [];
 
   try {
     for (let index = 0; index < options.presets.length; index += 1) {
       const presetId = options.presets[index];
       const idempotencyKey = buildIdempotencyKey(options.idempotencyPrefix, presetId);
-      const createResponse = await createWorkspace(spzCommand, env, {
+      const createResponse = await createInstance(spzCommand, env, {
         presetId,
         ownerId: options.ownerId,
         namespace: options.namespace,
         idempotencyKey,
       });
-      const workspaceName = assertSmokeCreateResponse(createResponse, options.ownerId, presetId);
+      const instanceName = assertSmokeCreateResponse(createResponse, options.ownerId, presetId);
       const namespace = createResponse.namespace || options.namespace;
       if (!namespace) {
-        throw new Error(`create response for ${workspaceName} did not include a namespace and no namespace was configured`);
+        throw new Error(`create response for ${instanceName} did not include a namespace and no namespace was configured`);
       }
-      createdWorkspaces.push({ namespace, name: workspaceName });
+      createdInstances.push({ namespace, name: instanceName });
 
-      const replayResponse = await createWorkspace(spzCommand, env, {
+      const replayResponse = await createInstance(spzCommand, env, {
         presetId,
         ownerId: options.ownerId,
         namespace,
         idempotencyKey,
       });
-      if (replayResponse?.spritz?.metadata?.name !== workspaceName || replayResponse?.replayed !== true) {
+      if (replayResponse?.spritz?.metadata?.name !== instanceName || replayResponse?.replayed !== true) {
         throw new Error(`idempotent replay failed for ${presetId}: ${JSON.stringify(replayResponse, null, 2)}`);
       }
 
       if (index === 0) {
-        await ensureProvisionerDeny(spzCommand, env, namespace, workspaceName);
+        await ensureProvisionerDeny(spzCommand, env, namespace, instanceName);
       }
 
       if (index === 0 && options.presets.length > 1) {
         const mismatchPreset = options.presets.find((value) => value !== presetId);
         if (mismatchPreset) {
-          const mismatch = await createWorkspaceMismatch(spzCommand, env, {
+          const mismatch = await createInstanceMismatch(spzCommand, env, {
             presetId: mismatchPreset,
             ownerId: options.ownerId,
             namespace,
@@ -182,16 +182,16 @@ async function main() {
         }
       }
 
-      const workspaceState = await waitForWorkspace({
+      const instanceState = await waitForInstance({
         namespace,
-        name: workspaceName,
+        name: instanceName,
         timeoutSeconds: options.timeoutSeconds,
       });
-      const acpEndpoint = workspaceState.acpEndpoint;
+      const acpEndpoint = instanceState.acpEndpoint;
       const token = buildSmokeToken(presetId);
-      const acpResult = await runACPWorkspacePrompt({
+      const acpResult = await runACPInstancePrompt({
         namespace,
-        workspaceName,
+        instanceName,
         endpoint: acpEndpoint,
         timeoutSeconds: options.timeoutSeconds,
         promptText: buildPromptText(options.promptTemplate, token),
@@ -204,10 +204,10 @@ async function main() {
       }
       emitSmokeResult({
         presetId,
-        workspaceName,
+        instanceName,
         namespace,
         chatUrl: createResponse.chatUrl,
-        workspaceUrl: createResponse.workspaceUrl,
+        instanceUrl: createResponse.instanceUrl,
         acpEndpoint,
         stopReason: acpResult.stopReason,
         assistantText: acpResult.assistantText,
@@ -215,9 +215,9 @@ async function main() {
     }
   } finally {
     if (!options.keep) {
-      for (const workspace of createdWorkspaces.reverse()) {
+      for (const instance of createdInstances.reverse()) {
         try {
-          await cleanupWorkspace(workspace.namespace, workspace.name);
+          await cleanupInstance(instance.namespace, instance.name);
         } catch (error) {
           console.error(`[cleanup] ${error.message}`);
         }

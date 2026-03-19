@@ -38,10 +38,10 @@ test('skillflag show returns the bundled spz skill body', async () => {
   const result = await runCli(['--skill', 'show', 'spz']);
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /# spz/);
-  assert.match(result.stdout, /Use the spz CLI to spawn, provision, inspect, and access Spritz workspaces/i);
+  assert.match(result.stdout, /Use the spz CLI to spawn, provision, inspect, and access Spritz instances/i);
   assert.match(result.stdout, /service-principal create flow/i);
   assert.match(result.stdout, /--owner-provider discord/i);
-  assert.match(result.stdout, /spawn a new agent workspace from a preset/i);
+  assert.match(result.stdout, /spawn a new agent instance from a preset/i);
   assert.match(result.stdout, /never pass a Discord, Slack, or Teams user ID through `--owner-id`/i);
   assert.match(result.stdout, /connect their account/i);
   assert.match(result.stdout, /ask for\s+clarification instead of guessing/i);

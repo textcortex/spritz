@@ -234,7 +234,7 @@ Required behavior:
 ## ACP Defaults
 
 - ACP is enabled by default.
-- Every workspace reserves internal port `2529` for ACP over WebSocket.
+- Every instance reserves internal port `2529` for ACP over WebSocket.
 - The operator probes ACP and writes canonical readiness to `status.acp`.
 - The browser connects to ACP only through `spritz-api`.
 - ACP network restriction is available through `acp.networkPolicy.enabled`.

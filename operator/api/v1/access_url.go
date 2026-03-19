@@ -8,9 +8,9 @@ import (
 
 const defaultWebPort = int32(8080)
 
-// WorkspaceURLForSpritz returns the canonical workspace URL for a spritz based
+// InstanceURLForSpritz returns the canonical instance URL for a spritz based
 // on its ingress or primary service port configuration.
-func WorkspaceURLForSpritz(spritz *Spritz) string {
+func InstanceURLForSpritz(spritz *Spritz) string {
 	if spritz == nil {
 		return ""
 	}
@@ -41,13 +41,13 @@ func WorkspaceURLForSpritz(spritz *Spritz) string {
 }
 
 // ChatURLForSpritz returns the canonical agent chat URL for a spritz when the
-// workspace is exposed through a web surface.
+// instance is exposed through a web surface.
 func ChatURLForSpritz(spritz *Spritz) string {
-	workspaceURL := WorkspaceURLForSpritz(spritz)
-	if workspaceURL == "" {
+	instanceURL := InstanceURLForSpritz(spritz)
+	if instanceURL == "" {
 		return ""
 	}
-	parsed, err := url.Parse(workspaceURL)
+	parsed, err := url.Parse(instanceURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return ""
 	}
@@ -60,12 +60,12 @@ func ChatURLForSpritz(spritz *Spritz) string {
 
 // AccessURLForSpritz returns the canonical primary access URL for a spritz.
 // Human-facing clients should use the chat URL when available, and otherwise
-// fall back to the workspace URL.
+// fall back to the instance URL.
 func AccessURLForSpritz(spritz *Spritz) string {
 	if chatURL := ChatURLForSpritz(spritz); chatURL != "" {
 		return chatURL
 	}
-	return WorkspaceURLForSpritz(spritz)
+	return InstanceURLForSpritz(spritz)
 }
 
 // IsWebEnabled reports whether the web surface should be exposed for a spritz.

@@ -152,17 +152,17 @@ test('resolveWebSocketConstructor returns a usable client constructor', () => {
 });
 
 test('assertSmokeCreateResponse accepts canonicalized preset ids from the API', () => {
-  const workspaceName = assertSmokeCreateResponse({
+  const instanceName = assertSmokeCreateResponse({
     spritz: { metadata: { name: 'openclaw-calm-ridge' } },
     ownerId: 'user-123',
     actorType: 'service',
     presetId: 'openclaw',
     chatUrl: 'https://example.com/#chat/openclaw-calm-ridge',
-    workspaceUrl: 'https://example.com/w/openclaw-calm-ridge/',
+    instanceUrl: 'https://example.com/w/openclaw-calm-ridge/',
     accessUrl: 'https://example.com/#chat/openclaw-calm-ridge',
   }, 'user-123', 'OPENCLAW');
 
-  assert.equal(workspaceName, 'openclaw-calm-ridge');
+  assert.equal(instanceName, 'openclaw-calm-ridge');
 });
 
 test('isForbiddenFailure only accepts explicit forbidden command failures', () => {

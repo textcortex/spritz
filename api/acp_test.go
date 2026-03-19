@@ -536,7 +536,7 @@ func TestBootstrapACPConversationLoadsStoredSessionWithoutMutatingIdentity(t *te
 	})
 
 	s := newACPTestServer(t, spritz, conversation)
-	s.acp.workspaceURL = func(namespace, name string) string { return fakeACP.url }
+	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
 
 	e := echo.New()
 	secured := e.Group("", s.authMiddleware())
@@ -600,7 +600,7 @@ func TestBootstrapACPConversationRepairsMissingSessionExplicitly(t *testing.T) {
 	})
 
 	s := newACPTestServer(t, spritz, conversation)
-	s.acp.workspaceURL = func(namespace, name string) string { return fakeACP.url }
+	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
 
 	e := echo.New()
 	secured := e.Group("", s.authMiddleware())
@@ -661,7 +661,7 @@ func TestBootstrapACPConversationRepairsResourceNotFoundSession(t *testing.T) {
 	})
 
 	s := newACPTestServer(t, spritz, conversation)
-	s.acp.workspaceURL = func(namespace, name string) string { return fakeACP.url }
+	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
 
 	e := echo.New()
 	secured := e.Group("", s.authMiddleware())
@@ -709,7 +709,7 @@ func TestBootstrapACPConversationUsesDefaultNamespaceWhenRequestOmitsIt(t *testi
 
 	s := newACPTestServer(t, spritz, conversation)
 	s.namespace = ""
-	s.acp.workspaceURL = func(namespace, name string) string { return fakeACP.url }
+	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
 
 	e := echo.New()
 	secured := e.Group("", s.authMiddleware())
@@ -732,7 +732,7 @@ func TestBootstrapACPConversationAdvertisesRichClientCapabilities(t *testing.T) 
 	fakeACP := newFakeACPBootstrapServer(t, fakeACPBootstrapServerOptions{})
 
 	s := newACPTestServer(t, spritz, conversation)
-	s.acp.workspaceURL = func(namespace, name string) string { return fakeACP.url }
+	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
 
 	e := echo.New()
 	secured := e.Group("", s.authMiddleware())

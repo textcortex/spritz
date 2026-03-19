@@ -44,7 +44,7 @@ function createRPCError(payload: Record<string, unknown> | null): ACPError {
  *
  * The server handles the ACP bootstrap (initialize + session/load) via
  * POST /acp/conversations/:id/bootstrap before we connect.
- * The WebSocket at /acp/conversations/:id/connect is a raw proxy to the workspace.
+ * The WebSocket at /acp/conversations/:id/connect is a raw proxy to the instance.
  * We just need to send session/prompt over it — no client-side bootstrap needed.
  */
 export function createACPClient(options: ACPClientOptions): ACPClient {
@@ -162,7 +162,7 @@ export function createACPClient(options: ACPClientOptions): ACPClient {
         ws.onopen = async () => {
           try {
             // Initialize the ACP connection on *this* WebSocket so the
-            // workspace runtime knows about us.
+            // instance runtime knows about us.
             onStatus?.('Initializing…');
             await requestRPC('initialize', {
               protocolVersion: 1,
@@ -171,7 +171,7 @@ export function createACPClient(options: ACPClientOptions): ACPClient {
             });
 
             // Load the session to replay any past conversation history.
-            // The workspace runtime streams the transcript back as
+            // The instance runtime streams the transcript back as
             // session/update notifications which the onUpdate handler
             // already processes.  Mark replaying=true so updates are
             // tagged as historical.

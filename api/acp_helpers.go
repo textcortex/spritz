@@ -191,9 +191,9 @@ func (s *server) requestNamespace(c echo.Context) string {
 	return namespace
 }
 
-func (s *server) acpWorkspaceURL(namespace, name string) string {
-	if s.acp.workspaceURL != nil {
-		return s.acp.workspaceURL(namespace, name)
+func (s *server) acpInstanceURL(namespace, name string) string {
+	if s.acp.instanceURL != nil {
+		return s.acp.instanceURL(namespace, name)
 	}
 	return (&url.URL{
 		Scheme: "ws",

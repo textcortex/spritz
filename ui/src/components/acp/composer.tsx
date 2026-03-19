@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { SendIcon, SquareIcon } from 'lucide-react';
 
-const TERMINAL_STATUSES = ['connected', 'completed', 'disconnected', 'no acp-ready workspaces'];
+const TERMINAL_STATUSES = ['connected', 'completed', 'disconnected', 'no acp-ready instances'];
 
 export interface ComposerHandle {
   fillText: (value: string) => void;

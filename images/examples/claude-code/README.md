@@ -1,6 +1,6 @@
 # Claude Code Example Image
 
-Example Spritz workspace image that starts Claude Code plus a workspace-local ACP websocket server on
+Example Spritz instance image that starts Claude Code plus an instance-local ACP websocket server on
 port `2529`.
 
 It stays generic:

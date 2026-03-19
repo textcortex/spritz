@@ -88,12 +88,12 @@ export function describeChatAction(spritz: Spritz): { label: string; title: stri
     return { label: 'Chat', title: 'Open agent chat.', disabled: false };
   }
   if (phase === 'ready') {
-    return { label: 'Preparing chat…', title: 'Workspace is ready, but chat services are still starting.', disabled: true };
+    return { label: 'Preparing chat…', title: 'Instance is ready, but chat services are still starting.', disabled: true };
   }
   if (phase === 'failed' || phase === 'error') {
-    return { label: 'Chat status', title: 'Open the chat page to inspect the current workspace state.', disabled: false };
+    return { label: 'Chat status', title: 'Open the chat page to inspect the current instance state.', disabled: false };
   }
-  return { label: 'Starting…', title: 'Workspace is still provisioning.', disabled: true };
+  return { label: 'Starting…', title: 'Instance is still provisioning.', disabled: true };
 }
 
 export function terminalPath(name: string): string {
