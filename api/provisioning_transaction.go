@@ -171,6 +171,13 @@ func (tx *provisionerCreateTransaction) prepare() error {
 	}
 	tx.body.Spec.Owner = owner
 	tx.resolvedExternalOwner = resolvedExternalOwner
+	if err := tx.server.resolveCreateAdmission(tx.ctx, tx.principal, tx.namespace, tx.body); err != nil {
+		var admissionErr *admissionError
+		if errors.As(err, &admissionErr) {
+			return newProvisionerCreateErrorWithData(admissionErr.status, admissionErr.message, admissionErr.data, err)
+		}
+		return newProvisionerCreateError(http.StatusInternalServerError, err)
+	}
 
 	if err := tx.server.validateProvisionerCreate(tx.ctx, tx.principal, tx.namespace, tx.body, tx.requestedImage, tx.requestedRepo, tx.requestedNamespace); err != nil {
 		if errors.Is(err, errForbidden) {
@@ -215,6 +222,8 @@ func (tx *provisionerCreateTransaction) restoreStoredPayload(raw string) error {
 	tx.body.Source = payload.Source
 	tx.body.RequestID = payload.RequestID
 	tx.body.Spec = payload.Spec
+	tx.body.Labels = cloneStringMap(payload.Labels)
+	tx.body.Annotations = cloneStringMap(payload.Annotations)
 	tx.resolvedExternalOwner = payload.ExternalOwner.resolution()
 	return nil
 }

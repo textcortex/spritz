@@ -74,6 +74,11 @@ func (s *server) normalizeCreateRequest(_ context.Context, principal principal, 
 	body.Name = strings.TrimSpace(body.Name)
 	body.NamePrefix = strings.TrimSpace(body.NamePrefix)
 	applyTopLevelCreateFields(&body)
+	normalizedPresetInputs, err := normalizePresetInputs(body.PresetInputs)
+	if err != nil {
+		return nil, newCreateRequestError(http.StatusBadRequest, err)
+	}
+	body.PresetInputs = normalizedPresetInputs
 	if strings.TrimSpace(body.Spec.ServiceAccountName) != "" && !principalCanUseProvisionerFlow(principal) {
 		return nil, newCreateRequestError(http.StatusForbidden, errors.New("spec.serviceAccountName is reserved for provisioner use"))
 	}
@@ -111,6 +116,9 @@ func (s *server) normalizeCreateRequest(_ context.Context, principal principal, 
 	s.applyProvisionerDefaultPreset(&body, principal)
 	if _, err := s.applyCreatePreset(&body); err != nil {
 		return nil, newCreateRequestError(http.StatusBadRequest, err)
+	}
+	if body.PresetInputs != nil && strings.TrimSpace(body.PresetID) == "" {
+		return nil, newCreateRequestError(http.StatusBadRequest, errors.New("presetInputs requires presetId"))
 	}
 
 	userConfigKeys, userConfigPayload, err := parseUserConfig(body.UserConfig)

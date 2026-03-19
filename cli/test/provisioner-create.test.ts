@@ -88,6 +88,82 @@ test('create uses bearer auth and provisioner fields for preset-based creation',
   assert.equal(payload.presetId, 'openclaw');
 });
 
+test('create sends preset inputs when requested', async (t) => {
+  let requestBody: any = null;
+
+  const server = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+    req.on('end', () => {
+      requestBody = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'success',
+        data: {
+          accessUrl: 'https://console.example.com/#chat/zeno-tide-wind',
+          chatUrl: 'https://console.example.com/#chat/zeno-tide-wind',
+          instanceUrl: 'https://console.example.com/w/zeno-tide-wind/',
+          ownerId: 'user-123',
+          presetId: 'zeno',
+        },
+      }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    server.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+
+  const child = spawn(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      cliPath,
+      'create',
+      '--preset',
+      'zeno',
+      '--preset-input',
+      'agentId=ag-123',
+      '--preset-input',
+      'mode=default',
+      '--owner-id',
+      'user-123',
+      '--idempotency-key',
+      'req-zeno-1',
+    ],
+    {
+      env: {
+        ...process.env,
+        SPRITZ_API_URL: `http://127.0.0.1:${address.port}/api`,
+        SPRITZ_BEARER_TOKEN: 'service-token',
+        SPRITZ_CONFIG_DIR: mkdtempSync(path.join(os.tmpdir(), 'spz-config-')),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+
+  let stderr = '';
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  const exitCode = await new Promise<number | null>((resolve) => child.on('exit', resolve));
+  assert.equal(exitCode, 0, `spz create should succeed: ${stderr}`);
+  assert.deepEqual(requestBody, {
+    presetId: 'zeno',
+    presetInputs: {
+      agentId: 'ag-123',
+      mode: 'default',
+    },
+    ownerId: 'user-123',
+    idempotencyKey: 'req-zeno-1',
+    spec: {},
+  });
+});
+
 test('create sends external owner identity when requested', async (t) => {
   let requestBody: any = null;
   let requestHeaders: http.IncomingHttpHeaders | null = null;

@@ -55,28 +55,30 @@ var (
 )
 
 type runtimePreset struct {
-	ID          string          `json:"id,omitempty"`
-	Name        string          `json:"name,omitempty"`
-	Description string          `json:"description,omitempty"`
-	Image       string          `json:"image,omitempty"`
-	RepoURL     string          `json:"repoUrl,omitempty"`
-	Branch      string          `json:"branch,omitempty"`
-	TTL         string          `json:"ttl,omitempty"`
-	IdleTTL     string          `json:"idleTtl,omitempty"`
-	NamePrefix  string          `json:"namePrefix,omitempty"`
-	Env         []corev1.EnvVar `json:"env,omitempty"`
+	ID            string          `json:"id,omitempty"`
+	Name          string          `json:"name,omitempty"`
+	Description   string          `json:"description,omitempty"`
+	Image         string          `json:"image,omitempty"`
+	RepoURL       string          `json:"repoUrl,omitempty"`
+	Branch        string          `json:"branch,omitempty"`
+	TTL           string          `json:"ttl,omitempty"`
+	IdleTTL       string          `json:"idleTtl,omitempty"`
+	NamePrefix    string          `json:"namePrefix,omitempty"`
+	InstanceClass string          `json:"instanceClass,omitempty"`
+	Env           []corev1.EnvVar `json:"env,omitempty"`
 }
 
 type publicPreset struct {
-	ID          string `json:"id,omitempty"`
-	Name        string `json:"name,omitempty"`
-	Description string `json:"description,omitempty"`
-	Image       string `json:"image,omitempty"`
-	RepoURL     string `json:"repoUrl,omitempty"`
-	Branch      string `json:"branch,omitempty"`
-	TTL         string `json:"ttl,omitempty"`
-	IdleTTL     string `json:"idleTtl,omitempty"`
-	NamePrefix  string `json:"namePrefix,omitempty"`
+	ID            string `json:"id,omitempty"`
+	Name          string `json:"name,omitempty"`
+	Description   string `json:"description,omitempty"`
+	Image         string `json:"image,omitempty"`
+	RepoURL       string `json:"repoUrl,omitempty"`
+	Branch        string `json:"branch,omitempty"`
+	TTL           string `json:"ttl,omitempty"`
+	IdleTTL       string `json:"idleTtl,omitempty"`
+	NamePrefix    string `json:"namePrefix,omitempty"`
+	InstanceClass string `json:"instanceClass,omitempty"`
 }
 
 type presetCatalog struct {
@@ -133,6 +135,8 @@ type idempotentCreatePayload struct {
 	Source        string                          `json:"source,omitempty"`
 	RequestID     string                          `json:"requestId,omitempty"`
 	Spec          spritzv1.SpritzSpec             `json:"spec"`
+	Labels        map[string]string               `json:"labels,omitempty"`
+	Annotations   map[string]string               `json:"annotations,omitempty"`
 	ExternalOwner *idempotentExternalOwnerPayload `json:"externalOwner,omitempty"`
 }
 
@@ -516,6 +520,7 @@ func createRequestFingerprintWithIssuer(body createRequest, externalIssuer, name
 		body.Spec.Owner.ID,
 		externalIssuer,
 		sanitizeSpritzNameToken(body.PresetID),
+		body.PresetInputs,
 		strings.TrimSpace(name),
 		sanitizeSpritzNameToken(namePrefix),
 		namespace,
@@ -532,6 +537,8 @@ func createResolvedProvisionerPayload(body createRequest, resolvedNamePrefix str
 		Source:        provisionerSource(&body),
 		RequestID:     strings.TrimSpace(body.RequestID),
 		Spec:          body.Spec,
+		Labels:        cloneStringMap(body.Labels),
+		Annotations:   cloneStringMap(body.Annotations),
 		ExternalOwner: newIdempotentExternalOwnerPayload(resolvedExternalOwner),
 	}
 	encoded, err := json.Marshal(payload)
@@ -550,6 +557,17 @@ func decodeResolvedProvisionerPayload(raw string) (idempotentCreatePayload, erro
 		return idempotentCreatePayload{}, err
 	}
 	return payload, nil
+}
+
+func cloneStringMap(input map[string]string) map[string]string {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
 }
 
 func newPresetCatalog() (presetCatalog, error) {
@@ -572,6 +590,7 @@ func newPresetCatalog() (presetCatalog, error) {
 		item.Description = strings.TrimSpace(item.Description)
 		item.TTL = strings.TrimSpace(item.TTL)
 		item.IdleTTL = strings.TrimSpace(item.IdleTTL)
+		item.InstanceClass = sanitizeSpritzNameToken(item.InstanceClass)
 		item.NamePrefix = resolveSpritzNamePrefix(item.NamePrefix, item.Image)
 		item.ID = normalizePresetID(item)
 		if item.ID == "" {
@@ -620,15 +639,16 @@ func publicPresetList(items []runtimePreset) []publicPreset {
 	publicItems := make([]publicPreset, 0, len(items))
 	for _, item := range items {
 		publicItems = append(publicItems, publicPreset{
-			ID:          item.ID,
-			Name:        item.Name,
-			Description: item.Description,
-			Image:       item.Image,
-			RepoURL:     item.RepoURL,
-			Branch:      item.Branch,
-			TTL:         item.TTL,
-			IdleTTL:     item.IdleTTL,
-			NamePrefix:  item.NamePrefix,
+			ID:            item.ID,
+			Name:          item.Name,
+			Description:   item.Description,
+			Image:         item.Image,
+			RepoURL:       item.RepoURL,
+			Branch:        item.Branch,
+			TTL:           item.TTL,
+			IdleTTL:       item.IdleTTL,
+			NamePrefix:    item.NamePrefix,
+			InstanceClass: item.InstanceClass,
 		})
 	}
 	return publicItems
@@ -697,6 +717,7 @@ func (s *server) resolvedCreateFingerprint(body createRequest, namespace, explic
 		body.Spec.Owner.ID,
 		"",
 		sanitizeSpritzNameToken(body.PresetID),
+		body.PresetInputs,
 		strings.TrimSpace(body.Name),
 		sanitizeSpritzNameToken(namePrefix),
 		namespace,
@@ -844,7 +865,7 @@ func hashLabelValue(prefix, value string) string {
 	return fmt.Sprintf("%s-%x", prefix, sum[:12])
 }
 
-func createFingerprint(ownerID string, ref *ownerRef, resolvedOwnerID, externalIssuer, presetID, name, namePrefix, namespace, source string, spec spritzv1.SpritzSpec, userConfig json.RawMessage) (string, error) {
+func createFingerprint(ownerID string, ref *ownerRef, resolvedOwnerID, externalIssuer, presetID string, presetInputs json.RawMessage, name, namePrefix, namespace, source string, spec spritzv1.SpritzSpec, userConfig json.RawMessage) (string, error) {
 	specCopy := spec
 	specCopy.Annotations = nil
 	specCopy.Labels = nil
@@ -853,25 +874,27 @@ func createFingerprint(ownerID string, ref *ownerRef, resolvedOwnerID, externalI
 		return "", err
 	}
 	payload := struct {
-		OwnerID    string              `json:"ownerId,omitempty"`
-		Owner      any                 `json:"owner,omitempty"`
-		PresetID   string              `json:"presetId,omitempty"`
-		Name       string              `json:"name,omitempty"`
-		NamePrefix string              `json:"namePrefix,omitempty"`
-		Namespace  string              `json:"namespace,omitempty"`
-		Source     string              `json:"source,omitempty"`
-		Spec       spritzv1.SpritzSpec `json:"spec"`
-		UserConfig json.RawMessage     `json:"userConfig,omitempty"`
+		OwnerID      string              `json:"ownerId,omitempty"`
+		Owner        any                 `json:"owner,omitempty"`
+		PresetID     string              `json:"presetId,omitempty"`
+		PresetInputs json.RawMessage     `json:"presetInputs,omitempty"`
+		Name         string              `json:"name,omitempty"`
+		NamePrefix   string              `json:"namePrefix,omitempty"`
+		Namespace    string              `json:"namespace,omitempty"`
+		Source       string              `json:"source,omitempty"`
+		Spec         spritzv1.SpritzSpec `json:"spec"`
+		UserConfig   json.RawMessage     `json:"userConfig,omitempty"`
 	}{
-		OwnerID:    canonicalOwnerID,
-		Owner:      ownerPayload,
-		PresetID:   presetID,
-		Name:       name,
-		NamePrefix: strings.TrimSpace(namePrefix),
-		Namespace:  namespace,
-		Source:     source,
-		Spec:       specCopy,
-		UserConfig: userConfig,
+		OwnerID:      canonicalOwnerID,
+		Owner:        ownerPayload,
+		PresetID:     presetID,
+		PresetInputs: presetInputs,
+		Name:         name,
+		NamePrefix:   strings.TrimSpace(namePrefix),
+		Namespace:    namespace,
+		Source:       source,
+		Spec:         specCopy,
+		UserConfig:   userConfig,
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

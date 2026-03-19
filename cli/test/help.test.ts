@@ -39,6 +39,7 @@ test('create help for agent audience prefers external owner guidance', async () 
   const result = await runCli(['create', '--help'], { ...process.env, AUDIENCE: 'agent' });
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /AUDIENCE \(current: agent\)/);
+  assert.match(result.stdout, /--preset-input <key=value>/);
   assert.match(result.stdout, /use the platform-native user ID with --owner-provider and --owner-subject/i);
   assert.match(result.stdout, /Never pass a messaging-platform user ID through --owner-id/i);
   assert.match(result.stdout, /connect their account/i);
