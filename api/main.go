@@ -238,6 +238,9 @@ func (s *server) registerRoutes(e *echo.Echo) {
 	group := e.Group("/api")
 	group.GET("/healthz", s.handleHealthz)
 	internal := group.Group("/internal/v1", s.internalAuthMiddleware())
+	if s.internalAuth.enabled {
+		internal.GET("/runtime-bindings/:namespace/:instanceId", s.getRuntimeBinding)
+	}
 	internal.GET("/shared-mounts/owner/:owner/:mount/latest", s.getSharedMountLatest)
 	internal.GET("/shared-mounts/owner/:owner/:mount/revisions/:revision", s.getSharedMountRevision)
 	internal.PUT("/shared-mounts/owner/:owner/:mount/revisions/:revision", s.putSharedMountRevision)
