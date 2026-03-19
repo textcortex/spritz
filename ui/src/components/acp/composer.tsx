@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { SendIcon, SquareIcon } from 'lucide-react';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 
 const TERMINAL_STATUSES = ['connected', 'completed', 'disconnected', 'no acp-ready instances'];
 
@@ -79,19 +80,25 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             className="block w-full min-h-[24px] max-h-[180px] resize-none border-none bg-transparent rounded-t-[28px] px-5 pt-4 pb-1 font-inherit text-sm leading-[1.55] outline-none placeholder:text-[#999] focus:outline-none focus:ring-0 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] overflow-y-auto"
           />
           <div className="relative z-[1] -mt-4 flex items-center justify-end gap-2 rounded-b-[28px] bg-[linear-gradient(to_bottom,transparent,white_60%)] px-3 pb-3 pt-5">
-            <button
-              type="button"
-              className="flex size-9 items-center justify-center rounded-full border-none bg-black p-0 text-white transition-opacity will-change-[opacity] hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
-              onClick={promptInFlight ? onCancel : handleSubmit}
-              disabled={!promptInFlight && (disabled || !text.trim())}
-              title={promptInFlight ? 'Stop' : 'Send'}
-            >
-              {promptInFlight ? (
-                <SquareIcon className="size-3.5 fill-current" />
-              ) : (
-                <SendIcon className="size-4" />
-              )}
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    className="flex size-9 items-center justify-center rounded-full border-none bg-black p-0 text-white transition-opacity will-change-[opacity] hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
+                    onClick={promptInFlight ? onCancel : handleSubmit}
+                    disabled={!promptInFlight && (disabled || !text.trim())}
+                  >
+                    {promptInFlight ? (
+                      <SquareIcon className="size-3.5 fill-current" />
+                    ) : (
+                      <SendIcon className="size-4" />
+                    )}
+                  </button>
+                }
+              />
+              <TooltipContent>{promptInFlight ? 'Stop' : 'Send'}</TooltipContent>
+            </Tooltip>
           </div>
         </div>
 
