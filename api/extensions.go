@@ -112,7 +112,6 @@ type extensionResolverResponseEnvelope struct {
 }
 
 type extensionResolverMutations struct {
-	OwnerID     string                         `json:"ownerId,omitempty"`
 	Spec        *extensionResolverSpecMutation `json:"spec,omitempty"`
 	Annotations map[string]string              `json:"annotations,omitempty"`
 	Labels      map[string]string              `json:"labels,omitempty"`
@@ -203,7 +202,10 @@ func newExtensionRegistry() (extensionRegistry, error) {
 		if kind != extensionKindResolver {
 			return extensionRegistry{}, fmt.Errorf("invalid %s: extensions[%d].kind %q is not yet supported", extensionsEnvKey, index, kind)
 		}
-		match := normalizeExtensionMatch(input.Match)
+		match, err := normalizeExtensionMatch(input.Match)
+		if err != nil {
+			return extensionRegistry{}, fmt.Errorf("invalid %s: extensions[%d].match %v", extensionsEnvKey, index, err)
+		}
 		transport, err := normalizeExtensionTransport(input.Transport)
 		if err != nil {
 			return extensionRegistry{}, fmt.Errorf("invalid %s: extensions[%d].transport %v", extensionsEnvKey, index, err)
@@ -249,29 +251,43 @@ func normalizeExtensionOperation(raw string) extensionOperation {
 	}
 }
 
-func normalizeExtensionMatch(input extensionMatchInput) extensionMatchRule {
+func normalizeExtensionMatch(input extensionMatchInput) (extensionMatchRule, error) {
+	presetIDs, err := normalizePresetIDSet(input.PresetIDs)
+	if err != nil {
+		return extensionMatchRule{}, err
+	}
 	return extensionMatchRule{
 		principalIDs: normalizeStringTokenSet(input.PrincipalIDs),
-		presetIDs:    normalizePresetIDSet(input.PresetIDs),
-	}
+		presetIDs:    presetIDs,
+	}, nil
 }
 
-func normalizePresetIDSet(values []string) map[string]struct{} {
+func normalizePresetIDSet(values []string) (map[string]struct{}, error) {
 	if len(values) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make(map[string]struct{}, len(values))
+	invalid := make([]string, 0, len(values))
 	for _, value := range values {
+		raw := strings.TrimSpace(value)
+		if raw == "" {
+			continue
+		}
 		token := sanitizeSpritzNameToken(value)
 		if token == "" {
+			invalid = append(invalid, raw)
 			continue
 		}
 		out[token] = struct{}{}
 	}
-	if len(out) == 0 {
-		return nil
+	if len(invalid) > 0 {
+		sort.Strings(invalid)
+		return nil, fmt.Errorf("presetIds contains invalid ids: %s", strings.Join(invalid, ", "))
 	}
-	return out
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }
 
 func normalizeExtensionTransport(input extensionTransportInput) (configuredHTTPTransport, error) {

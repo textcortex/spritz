@@ -40,11 +40,32 @@ func TestNewExtensionRegistryRejectsUnknownOperation(t *testing.T) {
 }
 
 func TestNormalizeExtensionMatchSanitizesPresetIDs(t *testing.T) {
-	match := normalizeExtensionMatch(extensionMatchInput{PresetIDs: []string{"Zeno", "my_preset"}})
+	match, err := normalizeExtensionMatch(extensionMatchInput{PresetIDs: []string{"Zeno", "my_preset"}})
+	if err != nil {
+		t.Fatalf("normalizeExtensionMatch failed: %v", err)
+	}
 	if _, ok := match.presetIDs["zeno"]; !ok {
 		t.Fatalf("expected sanitized preset id to include zeno, got %#v", match.presetIDs)
 	}
 	if _, ok := match.presetIDs["my-preset"]; !ok {
 		t.Fatalf("expected sanitized preset id to include my-preset, got %#v", match.presetIDs)
+	}
+}
+
+func TestNewExtensionRegistryRejectsInvalidSanitizedPresetID(t *testing.T) {
+	t.Setenv(extensionsEnvKey, `[{
+		"id": "runtime-binding",
+		"kind": "resolver",
+		"operation": "preset.create.resolve",
+		"match": {"presetIds": ["!!!"]},
+		"transport": {"url": "https://example.com/internal/extensions/preset-create"}
+	}]`)
+
+	_, err := newExtensionRegistry()
+	if err == nil {
+		t.Fatal("expected invalid preset id error")
+	}
+	if !strings.Contains(err.Error(), "presetIds contains invalid ids") {
+		t.Fatalf("expected invalid preset id error, got %v", err)
 	}
 }

@@ -438,6 +438,57 @@ func TestNormalizePresetInputsPreservesLargeIntegers(t *testing.T) {
 	}
 }
 
+func TestPresetCreateResolverMayNotMutateOwner(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	var received map[string]any
+	resolver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatalf("failed to decode resolver request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "resolved",
+			"mutations": map[string]any{
+				"ownerId": "user-999",
+				"spec": map[string]any{
+					"serviceAccountName": "zeno-agent-ag-123",
+				},
+			},
+		})
+	}))
+	defer resolver.Close()
+	configurePresetResolverTestServer(s, resolver.URL)
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	body := []byte(`{
+		"name":"zeno-lake",
+		"presetId":"zeno",
+		"presetInputs":{"agentId":"ag-123"},
+		"spec":{}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	stored := &spritzv1.Spritz{}
+	if err := s.client.Get(context.Background(), client.ObjectKey{Name: "zeno-lake", Namespace: s.namespace}, stored); err != nil {
+		t.Fatalf("expected created spritz resource: %v", err)
+	}
+	if stored.Spec.Owner.ID != "user-1" {
+		t.Fatalf("expected resolver owner mutation to be ignored, got %q", stored.Spec.Owner.ID)
+	}
+}
+
 func TestProvisionerRestoreStoredPayloadRestoresResolverMetadata(t *testing.T) {
 	tx := &provisionerCreateTransaction{body: &createRequest{}}
 	raw, err := createResolvedProvisionerPayload(createRequest{

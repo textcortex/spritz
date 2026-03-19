@@ -581,7 +581,7 @@ func newPresetCatalog() (presetCatalog, error) {
 	}
 	normalized := make([]runtimePreset, 0, len(items))
 	seen := map[string]struct{}{}
-	for _, item := range items {
+	for index, item := range items {
 		item.Image = strings.TrimSpace(item.Image)
 		if item.Image == "" {
 			continue
@@ -590,7 +590,11 @@ func newPresetCatalog() (presetCatalog, error) {
 		item.Description = strings.TrimSpace(item.Description)
 		item.TTL = strings.TrimSpace(item.TTL)
 		item.IdleTTL = strings.TrimSpace(item.IdleTTL)
+		rawInstanceClass := strings.TrimSpace(item.InstanceClass)
 		item.InstanceClass = sanitizeSpritzNameToken(item.InstanceClass)
+		if rawInstanceClass != "" && item.InstanceClass == "" {
+			return presetCatalog{}, fmt.Errorf("invalid SPRITZ_PRESETS: presets[%d].instanceClass is invalid", index)
+		}
 		item.NamePrefix = resolveSpritzNamePrefix(item.NamePrefix, item.Image)
 		item.ID = normalizePresetID(item)
 		if item.ID == "" {

@@ -155,9 +155,6 @@ func applyPresetCreateResolverMutations(body *createRequest, response extensionR
 	if body == nil {
 		return nil
 	}
-	if response.Mutations.OwnerID != "" {
-		return errors.New("preset create resolver may not mutate ownerId")
-	}
 	if response.Mutations.Spec != nil {
 		resolvedServiceAccount := strings.TrimSpace(response.Mutations.Spec.ServiceAccountName)
 		if resolvedServiceAccount != "" {
