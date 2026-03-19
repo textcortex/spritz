@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { PlusIcon, DicesIcon, ChevronDownIcon } from 'lucide-react';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { request } from '@/lib/api';
 import { useConfig, type Preset } from '@/lib/config';
 import { usePresets } from '@/lib/presets';
@@ -208,16 +209,22 @@ export function CreateForm({ onCreated }: CreateFormProps) {
             placeholder="Auto-generated name"
             className="h-11"
           />
-          <Button
-            type="button"
-            variant="outline"
-            className="size-11 shrink-0 p-0"
-            onClick={() => generateName()}
-            disabled={generatingName}
-            title="Generate random name"
-          >
-            <DicesIcon className={`size-4 ${generatingName ? 'animate-spin' : ''}`} />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="size-11 shrink-0 p-0"
+                  onClick={() => generateName()}
+                  disabled={generatingName}
+                />
+              }
+            >
+              <DicesIcon className={`size-4 ${generatingName ? 'animate-spin' : ''}`} />
+            </TooltipTrigger>
+            <TooltipContent>Generate random name</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 

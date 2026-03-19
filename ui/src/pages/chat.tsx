@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { MenuIcon, RotateCwIcon, ExternalLinkIcon } from 'lucide-react';
+import { AlertDialog } from '@base-ui/react/alert-dialog';
 import { request } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useConfig } from '@/lib/config';
@@ -17,6 +18,7 @@ import type { ComposerHandle } from '@/components/acp/composer';
 import { PermissionDialog } from '@/components/acp/permission-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import type { ACPClient, ACPTranscript, ConversationInfo, PermissionEntry } from '@/types/acp';
 import type { Spritz } from '@/types/spritz';
 
@@ -43,6 +45,7 @@ export function ChatPage() {
   const [permissionQueue, setPermissionQueue] = useState<PermissionEntry[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   const clientRef = useRef<ACPClient | null>(null);
   const transcriptRef = useRef<ACPTranscript>(transcript);
@@ -454,6 +457,40 @@ export function ChatPage() {
     setPermissionQueue((prev) => prev.slice(1));
   }, []);
 
+  const handleDeleteConversation = useCallback(
+    (conversationId: string) => {
+      setPendingDeleteId(conversationId);
+    },
+    [],
+  );
+
+  const confirmDeleteConversation = useCallback(async () => {
+    const conversationId = pendingDeleteId;
+    if (!conversationId) return;
+    setPendingDeleteId(null);
+    try {
+      await request(`/acp/conversations/${encodeURIComponent(conversationId)}`, {
+        method: 'DELETE',
+      });
+      evictCachedTranscript(conversationId);
+      setAgents((prev) =>
+        prev.map((group) => ({
+          ...group,
+          conversations: group.conversations.filter(
+            (c) => c.metadata.name !== conversationId,
+          ),
+        })),
+      );
+      if (selectedConversation?.metadata?.name === conversationId) {
+        setSelectedConversation(null);
+        navigate('/', { replace: true });
+      }
+      toast.info('Conversation deleted.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete conversation.');
+    }
+  }, [pendingDeleteId, selectedConversation, navigate]);
+
   if (loading) {
     return (
       <div className="grid h-dvh grid-cols-[1fr] md:grid-cols-[260px_minmax(0,1fr)] overflow-hidden">
@@ -489,6 +526,7 @@ export function ChatPage() {
         selectedConversationId={selectedConversation?.metadata?.name || null}
         onSelectConversation={handleSelectConversation}
         onNewConversation={handleNewConversation}
+        onDeleteConversation={handleDeleteConversation}
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
         mobileOpen={mobileMenuOpen}
@@ -520,24 +558,36 @@ export function ChatPage() {
               })()}
             </div>
             <div className="flex shrink-0 gap-2">
-              <button
-                type="button"
-                className="inline-flex size-9 items-center justify-center rounded-[10px] border border-[#e5e5e5] bg-white text-black transition-colors hover:bg-[#f5f5f5] hover:border-[#ccc] dark:border-border dark:bg-background dark:text-foreground"
-                onClick={() => fetchAgents()}
-                title="Refresh"
-              >
-                <RotateCwIcon className="size-4" />
-              </button>
-              {name && (
-                <a
-                  href={`/terminal/${encodeURIComponent(name)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex size-9 items-center justify-center rounded-[10px] border border-[#e5e5e5] bg-white text-black transition-colors hover:bg-[#f5f5f5] hover:border-[#ccc] dark:border-border dark:bg-background dark:text-foreground"
-                  title="Open instance"
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      className="inline-flex size-9 items-center justify-center rounded-[10px] border border-[#e5e5e5] bg-white text-black transition-colors hover:bg-[#f5f5f5] hover:border-[#ccc] dark:border-border dark:bg-background dark:text-foreground"
+                      onClick={() => fetchAgents()}
+                    />
+                  }
                 >
-                  <ExternalLinkIcon className="size-4" />
-                </a>
+                  <RotateCwIcon className="size-4" />
+                </TooltipTrigger>
+                <TooltipContent>Refresh</TooltipContent>
+              </Tooltip>
+              {name && (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <a
+                        href={`/terminal/${encodeURIComponent(name)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex size-9 items-center justify-center rounded-[10px] border border-[#e5e5e5] bg-white text-black transition-colors hover:bg-[#f5f5f5] hover:border-[#ccc] dark:border-border dark:bg-background dark:text-foreground"
+                      />
+                    }
+                  >
+                    <ExternalLinkIcon className="size-4" />
+                  </TooltipTrigger>
+                  <TooltipContent>Open instance</TooltipContent>
+                </Tooltip>
               )}
             </div>
           </div>
@@ -632,6 +682,35 @@ export function ChatPage() {
           </div>
         )}
       </div>
+
+      {/* Delete conversation confirmation */}
+      <AlertDialog.Root open={!!pendingDeleteId} onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}>
+        <AlertDialog.Portal>
+          <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-black/30" />
+          <AlertDialog.Popup className="fixed left-1/2 top-1/2 z-50 w-[90vw] max-w-[360px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-[#e5e5e5] bg-white p-6 shadow-xl dark:border-border dark:bg-popover">
+            <AlertDialog.Title className="text-[15px] font-semibold">
+              Delete conversation?
+            </AlertDialog.Title>
+            <AlertDialog.Description className="mt-2 text-sm text-muted-foreground">
+              This will permanently delete this conversation and its history. This action cannot be undone.
+            </AlertDialog.Description>
+            <div className="mt-5 flex justify-end gap-2">
+              <AlertDialog.Close
+                className="rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2 text-[13px] font-medium transition-colors hover:bg-[#f5f5f5] dark:border-border dark:bg-muted dark:hover:bg-muted/80"
+              >
+                Cancel
+              </AlertDialog.Close>
+              <button
+                type="button"
+                className="rounded-lg bg-red-600 px-3.5 py-2 text-[13px] font-medium text-white transition-colors hover:bg-red-700"
+                onClick={confirmDeleteConversation}
+              >
+                Delete
+              </button>
+            </div>
+          </AlertDialog.Popup>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
     </div>
   );
 }

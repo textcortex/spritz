@@ -4,13 +4,21 @@ import {
   PlusIcon,
   PencilIcon,
   LayoutGridIcon,
-  MessageSquareIcon,
+  Trash2Icon,
+  EllipsisIcon,
+  ChevronRightIcon,
 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import type { ConversationInfo } from '@/types/acp';
 import type { Spritz } from '@/types/spritz';
 
-/* Sidebar collapse/expand toggle icon matching the original acp-sidebar-toggle */
 function SidebarToggleIcon({ collapsed }: { collapsed: boolean }) {
   return collapsed ? (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
@@ -29,6 +37,7 @@ interface SidebarProps {
   selectedConversationId: string | null;
   onSelectConversation: (conversation: ConversationInfo) => void;
   onNewConversation: (spritzName: string) => void;
+  onDeleteConversation: (conversationId: string) => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
   mobileOpen: boolean;
@@ -40,6 +49,7 @@ export function Sidebar({
   selectedConversationId,
   onSelectConversation,
   onNewConversation,
+  onDeleteConversation,
   collapsed,
   onToggleCollapse,
   mobileOpen,
@@ -47,56 +57,94 @@ export function Sidebar({
 }: SidebarProps) {
   const firstAgentName = agents.length > 0 ? agents[0].spritz.metadata.name : null;
 
-  function renderSidebarInner(isCollapsed: boolean, closeMobile?: () => void) {
+  /* ── Collapsed desktop sidebar ── */
+  function renderCollapsed() {
+    return (
+      <aside className="flex h-full min-h-0 flex-col items-center gap-1 overflow-hidden bg-[#f9f9f9] py-3 dark:bg-sidebar">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={onToggleCollapse}
+                className="flex size-9 items-center justify-center rounded-lg text-foreground/70 transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50"
+              />
+            }
+          >
+            <SidebarToggleIcon collapsed />
+          </TooltipTrigger>
+          <TooltipContent side="right">Expand sidebar</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                className="flex size-9 items-center justify-center rounded-lg text-foreground/70 transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50"
+                onClick={() => { if (firstAgentName) onNewConversation(firstAgentName); }}
+              />
+            }
+          >
+            <PencilIcon className="size-4" />
+          </TooltipTrigger>
+          <TooltipContent side="right">New chat</TooltipContent>
+        </Tooltip>
+      </aside>
+    );
+  }
+
+  /* ── Expanded sidebar (desktop + mobile) ── */
+  function renderExpanded(closeMobile?: () => void) {
     const close = closeMobile ?? (() => {});
 
     return (
-      <aside
-        className="flex h-full min-h-0 flex-col overflow-hidden border-r border-[#e5e5e5] bg-[#fafafa] dark:border-border dark:bg-sidebar"
-      >
-        {/* Top section matching original acp-sidebar-top */}
-        <div className="flex shrink-0 flex-col gap-2 border-b border-[#e5e5e5] bg-[#fafafa] p-3 dark:border-border dark:bg-sidebar">
-          {/* Select row: just the toggle button */}
-          <div className={cn('flex items-center gap-2', isCollapsed && 'justify-center')}>
-            <button
-              type="button"
-              onClick={onToggleCollapse}
-              className="flex size-9 items-center justify-center rounded-[10px] border border-[#e5e5e5] bg-white text-black transition-colors hover:bg-[#f5f5f5] hover:border-[#ccc] dark:border-border dark:bg-muted dark:hover:bg-muted/80"
-              title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      <aside className="flex h-full min-h-0 flex-col overflow-hidden bg-[#f9f9f9] dark:bg-sidebar">
+        {/* Header */}
+        <div className="flex shrink-0 items-center justify-between px-3 pt-3 pb-1">
+          <span className="text-[15px] font-semibold tracking-tight">Spritz</span>
+          {/* Hide collapse toggle on mobile — only show on desktop */}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  onClick={onToggleCollapse}
+                  className="hidden size-8 items-center justify-center rounded-lg text-foreground/60 transition-colors hover:bg-[#ececec] md:flex dark:hover:bg-muted/50"
+                />
+              }
             >
-              <SidebarToggleIcon collapsed={isCollapsed} />
-            </button>
-          </div>
-
-          {/* Actions: New chat + Spritzes link */}
-          {!isCollapsed && (
-            <div className="flex flex-col gap-2">
-              <button
-                type="button"
-                className="flex w-full items-center gap-2.5 rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-2 text-[13px] font-medium transition-colors hover:bg-[#f5f5f5] hover:border-[#ccc] dark:border-border dark:bg-muted dark:hover:bg-muted/80"
-                onClick={() => {
-                  if (firstAgentName) onNewConversation(firstAgentName);
-                  close();
-                }}
-              >
-                <PencilIcon className="size-4 shrink-0" />
-                <span>New chat</span>
-              </button>
-              <Link
-                to="/create"
-                onClick={close}
-                className="flex w-full items-center gap-2.5 rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-2 text-[13px] font-medium text-black no-underline transition-colors hover:bg-[#f5f5f5] hover:border-[#ccc] dark:border-border dark:bg-muted dark:text-foreground dark:hover:bg-muted/80"
-              >
-                <LayoutGridIcon className="size-4 shrink-0" />
-                <span>Spritzes</span>
-              </Link>
-            </div>
-          )}
+              <SidebarToggleIcon collapsed={false} />
+            </TooltipTrigger>
+            <TooltipContent side="right">Collapse sidebar</TooltipContent>
+          </Tooltip>
         </div>
 
-        {/* Thread list */}
-        <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-2">
-          {agents.length === 0 && !isCollapsed && (
+        {/* Nav items */}
+        <div className="flex flex-col gap-0.5 px-2 pt-2">
+          <button
+            type="button"
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[14px] text-foreground/80 transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50"
+            onClick={() => {
+              if (firstAgentName) onNewConversation(firstAgentName);
+              close();
+            }}
+          >
+            <PencilIcon className="size-[18px] shrink-0" />
+            <span>New chat</span>
+          </button>
+          <Link
+            to="/create"
+            onClick={close}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[14px] text-foreground/80 no-underline transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50"
+          >
+            <LayoutGridIcon className="size-[18px] shrink-0" />
+            <span>Spritzes</span>
+          </Link>
+        </div>
+
+        {/* Conversation list */}
+        <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-3">
+          {agents.length === 0 && (
             <div className="px-3 py-6 text-center text-xs text-muted-foreground">
               No ACP-ready instances found.
             </div>
@@ -106,12 +154,9 @@ export function Sidebar({
               key={group.spritz.metadata.name}
               group={group}
               selectedConversationId={selectedConversationId}
-              onSelectConversation={(conv) => {
-                onSelectConversation(conv);
-                close();
-              }}
+              onSelectConversation={(conv) => { onSelectConversation(conv); close(); }}
               onNewConversation={onNewConversation}
-              collapsed={isCollapsed}
+              onDeleteConversation={onDeleteConversation}
             />
           ))}
         </div>
@@ -121,20 +166,17 @@ export function Sidebar({
 
   return (
     <>
-      {/* Desktop sidebar — fills grid cell */}
+      {/* Desktop sidebar */}
       <div className="hidden h-full min-h-0 md:block">
-        {renderSidebarInner(collapsed)}
+        {collapsed ? renderCollapsed() : renderExpanded()}
       </div>
 
-      {/* Mobile drawer with backdrop */}
+      {/* Mobile drawer — always expanded */}
       {mobileOpen && (
         <div className="fixed inset-0 z-40 md:hidden">
-          <div
-            className="absolute inset-0 bg-black/30"
-            onClick={onCloseMobile}
-          />
-          <div className="relative z-50 h-full w-[260px]">
-            {renderSidebarInner(false, onCloseMobile)}
+          <div className="absolute inset-0 bg-black/30" onClick={onCloseMobile} />
+          <div className="relative z-50 h-full w-[280px]">
+            {renderExpanded(onCloseMobile)}
           </div>
         </div>
       )}
@@ -142,95 +184,111 @@ export function Sidebar({
   );
 }
 
+/* ── Agent section with animated expand/collapse ── */
+
 function AgentSection({
   group,
   selectedConversationId,
   onSelectConversation,
   onNewConversation,
-  collapsed,
+  onDeleteConversation,
 }: {
   group: AgentGroup;
   selectedConversationId: string | null;
   onSelectConversation: (conversation: ConversationInfo) => void;
   onNewConversation: (spritzName: string) => void;
-  collapsed: boolean;
+  onDeleteConversation: (conversationId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const name = group.spritz.metadata.name;
 
-  if (collapsed) {
-    return (
-      <div className="flex flex-col items-center gap-1 py-1">
-        <button
-          type="button"
-          className="flex size-8 items-center justify-center rounded-lg transition-colors hover:bg-[#f0f0f0] dark:hover:bg-muted/50"
-          onClick={() => onNewConversation(name)}
-          title={`New conversation with ${name}`}
-        >
-          <MessageSquareIcon className="size-3.5" />
-        </button>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex flex-col">
       {/* Agent header */}
-      <div className="group flex items-center">
+      <div className="group flex items-center pr-1">
         <button
           type="button"
-          className="flex flex-1 items-center gap-2 rounded-lg border-0 bg-transparent px-3 py-2 text-left text-[13px] font-medium transition-colors hover:bg-[#f0f0f0] dark:hover:bg-muted/50"
+          className="flex flex-1 items-center gap-2 rounded-lg px-3 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50"
           onClick={() => setExpanded(!expanded)}
         >
-          {/* Chevron */}
-          <span
+          <ChevronRightIcon
             className={cn(
-              'inline-block h-[5px] w-[5px] shrink-0 border-b-[1.5px] border-r-[1.5px] border-[#999] transition-transform duration-150 will-change-transform',
-              expanded ? 'rotate-45' : '-rotate-45',
+              'size-3 shrink-0 transition-transform duration-200 will-change-transform',
+              expanded && 'rotate-90',
             )}
           />
           <span className="truncate">{name}</span>
         </button>
-        <button
-          type="button"
-          className="flex size-6 items-center justify-center rounded bg-transparent text-[#999] opacity-0 transition-opacity will-change-[opacity] hover:text-foreground group-hover:opacity-100"
-          onClick={() => onNewConversation(name)}
-          title="New conversation"
-        >
-          <PlusIcon className="size-3.5" />
-        </button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                className="flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                onClick={() => onNewConversation(name)}
+              />
+            }
+          >
+            <PlusIcon className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipContent side="right">New conversation</TooltipContent>
+        </Tooltip>
       </div>
 
-      {/* Conversation items */}
-      {expanded && (
-        <div className="flex flex-col gap-0.5 pl-2">
-          {group.conversations.length === 0 && (
-            <div className="px-3 py-1 text-[11px] text-muted-foreground">
-              No conversations
-            </div>
-          )}
-          {group.conversations.map((conv) => {
-            const id = conv.metadata.name;
-            const isActive = id === selectedConversationId;
-            const title = conv.spec?.title || 'New conversation';
-            return (
-              <button
-                key={id}
-                type="button"
-                className={cn(
-                  'block w-full cursor-pointer rounded-md px-3 py-1.5 text-left text-[13px] transition-colors hover:bg-[#f0f0f0] dark:hover:bg-muted/50',
-                  isActive
-                    ? 'bg-white dark:bg-muted'
-                    : 'bg-transparent',
-                )}
-                onClick={() => onSelectConversation(conv)}
-              >
-                <span className="block truncate">{title}</span>
-              </button>
-            );
-          })}
+      {/* Animated collapsible body */}
+      <div
+        className="grid transition-[grid-template-rows] duration-200 ease-in-out will-change-[grid-template-rows]"
+        style={{ gridTemplateRows: expanded ? '1fr' : '0fr' }}
+      >
+        <div className="overflow-hidden min-h-0">
+          <div className="flex flex-col gap-0.5">
+            {group.conversations.length === 0 && (
+              <div className="px-3 py-2 text-xs text-muted-foreground">
+                No conversations
+              </div>
+            )}
+            {group.conversations.map((conv) => {
+              const id = conv.metadata.name;
+              const isActive = id === selectedConversationId;
+              const title = conv.spec?.title || 'New conversation';
+              return (
+                <div key={id} className="group/conv relative">
+                  <button
+                    type="button"
+                    className={cn(
+                      'block w-full cursor-pointer rounded-lg px-3 py-2 text-left text-[14px] transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50',
+                      isActive
+                        ? 'bg-[#ececec] dark:bg-muted'
+                        : 'bg-transparent',
+                    )}
+                    onClick={() => onSelectConversation(conv)}
+                  >
+                    <span className="block truncate pr-6">{title}</span>
+                  </button>
+                  <div className="absolute right-1 top-0 flex h-full items-center">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        className="flex size-7 shrink-0 items-center justify-center rounded-md bg-transparent text-foreground/40 opacity-0 transition-opacity hover:text-foreground group-hover/conv:opacity-100 data-[popup-open]:opacity-100"
+                      >
+                        <EllipsisIcon className="size-4" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent side="bottom" align="start">
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onClick={() => onDeleteConversation(id)}
+                        >
+                          <Trash2Icon className="size-3.5" />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
