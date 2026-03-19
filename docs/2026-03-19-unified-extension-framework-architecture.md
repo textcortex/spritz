@@ -83,6 +83,10 @@ Deployments should decide the business answer to extension questions such as:
 - which login URL or refresh URL should be presented,
 - which identity-link status is valid.
 
+Spritz should still own the enforcement model for workspace creation, access,
+discovery, credentials, and lifecycle. Deployment-owned systems may resolve
+facts, but Spritz should apply those facts through a stable policy model.
+
 ### Extensions are operation-based
 
 Extensions should attach to a small set of named operations instead of being
@@ -101,6 +105,23 @@ Examples:
 `spz`, UI callers, and service integrations should submit normal Spritz
 requests. They should not reproduce fallback rules, runtime binding logic, or
 owner lookup logic locally.
+
+### Facts and policy must stay separate
+
+Extensions should resolve facts.
+
+Examples:
+
+- which owner was resolved,
+- which runtime or agent binding applies,
+- which collaboration context was selected,
+- which identity or team mapping is authoritative.
+
+Policy should decide what those resolved facts mean for creation, discovery,
+read access, interactive use, collaboration, credentials, and lifecycle.
+
+This separation keeps extension logic narrow and prevents deployment-specific
+permission behavior from leaking into arbitrary resolver code.
 
 ### Mutations are explicit and limited
 
@@ -127,6 +148,17 @@ High-level model:
 - Spritz validates and applies allowed mutations.
 
 This turns feature-specific hooks into data-driven extension configuration.
+
+Spritz should also introduce a first-class policy layer for workspace behavior.
+
+The unified model should therefore have two parts:
+
+- extensions resolve facts and provide bounded mutations,
+- policy profiles decide how a workspace may be created, discovered, shared,
+  accessed, credentialed, and operated.
+
+Both parts are needed. Extensions alone are not enough for long-term security
+or collaboration requirements.
 
 ## Extension Kinds
 
@@ -164,6 +196,82 @@ Typical uses:
 
 Resolvers are the most important initial kind because they cover the existing
 external owner flow and the create-time preset binding problem.
+
+## Policy Profiles
+
+Spritz should define a first-class policy profile or runtime class concept for
+workspace behavior.
+
+A policy profile is attached to a preset and governs how a created workspace is
+meant to behave.
+
+Examples:
+
+- `personal-agent`
+- `internal-collab`
+- `privileged-dev`
+- `restricted-runtime`
+
+Each profile should be versioned and treated as part of the canonical workspace
+state.
+
+Suggested stored fields on each workspace:
+
+- owner
+- profile ID
+- profile version
+- resolved extension context
+- materialized access control entries
+
+This gives Spritz a portable way to support very different workspace types
+without encoding behavior into image names or one-off feature flags.
+
+## Policy Facets
+
+Each policy profile should define a small, stable set of behavior facets.
+
+Suggested facets:
+
+- `creationPolicy`
+- `ownershipPolicy`
+- `discoveryPolicy`
+- `accessPolicy`
+- `sessionPolicy`
+- `credentialPolicy`
+- `lifecyclePolicy`
+- `auditPolicy`
+
+This is a better long-term shape than introducing a new boolean every time a
+new security or collaboration requirement appears.
+
+## Access Verbs
+
+Spritz should model access as explicit verbs instead of a single generic access
+bit.
+
+Suggested verbs:
+
+- `discover`
+- `read`
+- `use`
+- `chat`
+- `terminal`
+- `share`
+- `manage`
+
+Expected meanings:
+
+- `discover`: see that the workspace exists in lists, search, or discovery
+  surfaces
+- `read`: view metadata, ownership, and non-secret state
+- `use`: open the workspace and interact with its primary runtime
+- `chat`: send normal ACP or chat input
+- `terminal`: open shell-like or terminal-style access
+- `share`: grant other principals additional access
+- `manage`: mutate config, restart, delete, or reassign allowed state
+
+These verbs should be enforced by Spritz regardless of which extension resolved
+the create-time facts.
 
 ## Standard Extension Configuration
 
@@ -297,6 +405,8 @@ Initial allowed surface:
 - selected spec fields such as `serviceAccountName`
 - selected annotations
 - selected labels
+- selected policy-facing resolved metadata such as collaboration context or
+  binding identity
 - normalized preset metadata returned in response payloads
 
 Not allowed initially:
@@ -304,9 +414,67 @@ Not allowed initially:
 - arbitrary namespace rewrite,
 - arbitrary image rewrite unless explicitly allowed by preset policy,
 - arbitrary owner change after create,
-- arbitrary post-create permission grants.
+- arbitrary post-create permission grants,
+- arbitrary credential attachment that bypasses the workspace policy profile.
 
 Mutation allowlists should be enforced in code per operation.
+
+## Presets, Images, and Policy
+
+Security behavior should not be keyed directly off image names.
+
+Instead:
+
+- presets should reference policy profiles,
+- policy profiles should define allowed behavior,
+- profiles may optionally restrict which images are valid for that preset or
+  profile.
+
+This matters because two workspaces may use similar runtime images but require
+very different collaboration and credential rules.
+
+For example:
+
+- a personal assistant runtime may need private ownership and restricted
+  credentials,
+- a privileged internal development runtime may need broad internal discovery,
+  shared interaction, and stronger audit requirements.
+
+Those differences belong in policy, not in image-name checks.
+
+## Example Policy Shapes
+
+### Personal agent runtime
+
+Example intent:
+
+- owned by one human,
+- may require a create-time runtime binding,
+- private by default,
+- not broadly discoverable,
+- restricted runtime credentials,
+- collaboration disabled or narrowly scoped.
+
+This is a typical fit for a `personal-agent` policy profile.
+
+### Internal collaborative developer runtime
+
+Example intent:
+
+- owned by one human for accountability,
+- discoverable to a trusted internal population,
+- readable by a broader internal audience,
+- usable by an explicitly allowed collaboration group,
+- simultaneous interaction allowed,
+- privileged credentials allowed only through this policy profile,
+- stronger audit and session controls.
+
+This is a typical fit for a `privileged-dev` or `internal-collab` policy
+profile.
+
+The important point is that ownership and collaboration do not have to be the
+same thing. Spritz can preserve a single owner while still allowing multi-user
+read and use access through policy.
 
 ## Native Preset Create Resolution
 
@@ -326,6 +494,17 @@ That enables native flows such as:
 
 This keeps the CLI thin and guarantees that create-time binding logic is always
 enforced server-side.
+
+The create resolver should return facts such as:
+
+- resolved owner,
+- resolved runtime or agent binding,
+- required `serviceAccountName`,
+- normalized collaboration context,
+- classification annotations.
+
+It should not directly decide final permissions. Those should still be derived
+from the selected policy profile.
 
 ## CLI Contract
 
@@ -377,6 +556,17 @@ This follows the same principle already used for external owner resolution.
 - Spritz should reject unconfigured extension references,
 - resolver outputs must be validated before any mutation is applied.
 
+Additional policy requirements:
+
+- the selected policy profile must be part of the canonical request,
+- create must fail if required profile inputs or required resolver outputs are
+  missing,
+- credentials attached to a workspace must be allowed by the policy profile,
+- discovery and collaboration rules must be enforced by Spritz even when a
+  resolver suggests additional context,
+- post-create reads and interactions must use the same owner plus ACL plus
+  policy evaluation path regardless of how the workspace was created.
+
 For HTTP extensions:
 
 - require explicit timeouts,
@@ -424,13 +614,21 @@ Suggested metrics:
 - add `preset.create.resolve`,
 - allow presets to require resolver-produced fields before create succeeds.
 
-### Phase 4: Move login metadata under the same roof
+### Phase 4: Add policy profiles
+
+- add first-class policy profile configuration,
+- let presets reference policy profiles,
+- store profile ID and version on created workspaces,
+- enforce access verbs, discovery, credential policy, and lifecycle through the
+  profile engine.
+
+### Phase 5: Move login metadata under the same roof
 
 - represent deployment-specific login and refresh metadata as an auth-provider
   extension,
 - keep UI config behavior backward-compatible during migration.
 
-### Phase 5: Add future identity-link and lifecycle operations
+### Phase 6: Add future identity-link and lifecycle operations
 
 - reuse the same framework for linking and post-create hooks instead of adding
   new one-off config paths.
@@ -443,6 +641,12 @@ Validation should include:
 - resolver transport tests,
 - create-path tests proving resolver mutations affect idempotency,
 - preset create tests proving `presetInputs` are passed through and validated,
+- policy-profile tests for discover, read, use, chat, terminal, share, and
+  manage behavior,
+- tests proving credentials and privileged runtime features are gated by
+  profile policy,
+- tests proving multiple principals can collaborate when allowed while owner
+  metadata remains stable,
 - compatibility tests for existing external owner resolution,
 - CLI tests proving `spz` remains a thin request builder,
 - auth/UI tests for migrated login metadata behavior.
