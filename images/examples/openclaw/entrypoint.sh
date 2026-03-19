@@ -15,6 +15,17 @@ server_bin="${SPRITZ_OPENCLAW_SERVER_BIN:-/usr/local/bin/spritz-openclaw-acp-ser
 spritz_entrypoint_bin="${SPRITZ_OPENCLAW_MAIN_ENTRYPOINT:-/usr/local/bin/spritz-entrypoint}"
 auth_store_path="${OPENCLAW_AUTH_PROFILES_PATH:-${config_dir}/agents/main/agent/auth-profiles.json}"
 
+uses_runtime_anthropic_bridge() {
+  case "${ANTHROPIC_BASE_URL:-}" in
+    http://127.0.0.1:8091|http://127.0.0.1:8091/|http://localhost:8091|http://localhost:8091/)
+      [[ "${ANTHROPIC_API_KEY:-}" == "tc-runtime-bridge" || "${ANTHROPIC_AUTH_TOKEN:-}" == "tc-runtime-bridge" ]]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 detect_bridge_gateway_host() {
   if [[ -n "${SPRITZ_OPENCLAW_ACP_GATEWAY_HOST:-}" ]]; then
     printf '%s\n' "${SPRITZ_OPENCLAW_ACP_GATEWAY_HOST}"
@@ -115,6 +126,11 @@ NODE
 }
 
 seed_env_auth_profiles() {
+  if uses_runtime_anthropic_bridge; then
+    rm -f "${auth_store_path}"
+    return 0
+  fi
+
   local auth_store_dir
   auth_store_dir="$(dirname "${auth_store_path}")"
   mkdir -p "${auth_store_dir}"

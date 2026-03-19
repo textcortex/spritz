@@ -70,6 +70,23 @@ type normalizedCreateRequest struct {
 	requestedNamePrefix  string
 }
 
+func validateReservedCreateAnnotations(annotations map[string]string) error {
+	if len(annotations) == 0 {
+		return nil
+	}
+	reservedKeys := []string{
+		presetIDAnnotationKey,
+		instanceClassAnnotationKey,
+		instanceClassVersionAnnotationKey,
+	}
+	for _, key := range reservedKeys {
+		if strings.TrimSpace(annotations[key]) != "" {
+			return errors.New("annotations contain reserved control-plane keys")
+		}
+	}
+	return nil
+}
+
 func (s *server) normalizeCreateRequest(_ context.Context, principal principal, body createRequest) (*normalizedCreateRequest, error) {
 	body.Name = strings.TrimSpace(body.Name)
 	body.NamePrefix = strings.TrimSpace(body.NamePrefix)
@@ -81,6 +98,11 @@ func (s *server) normalizeCreateRequest(_ context.Context, principal principal, 
 	body.PresetInputs = normalizedPresetInputs
 	if strings.TrimSpace(body.Spec.ServiceAccountName) != "" && !principalCanUseProvisionerFlow(principal) {
 		return nil, newCreateRequestError(http.StatusForbidden, errors.New("spec.serviceAccountName is reserved for provisioner use"))
+	}
+	if !principal.isService() {
+		if err := validateReservedCreateAnnotations(body.Annotations); err != nil {
+			return nil, newCreateRequestError(http.StatusForbidden, err)
+		}
 	}
 	if principal.isService() {
 		if err := validateProvisionerRequestSurface(&body); err != nil {
