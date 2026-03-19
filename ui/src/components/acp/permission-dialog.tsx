@@ -32,7 +32,7 @@ export function PermissionDialog({ entry, onRespond }: PermissionDialogProps) {
   };
 
   return (
-    <div className="flex flex-col gap-2.5 rounded-2xl border border-[#e5e5e5] bg-[#fafafa] px-4 py-3.5 text-sm">
+    <div role="alertdialog" aria-label={`${toolTitle} permission request`} className="flex flex-col gap-2.5 rounded-2xl border border-[#e5e5e5] bg-[#fafafa] px-4 py-3.5 text-sm">
       <p className="m-0 text-sm">{toolTitle} is requesting permission.</p>
       <div className="flex flex-wrap gap-1.5">
         {options.length > 0 ? (

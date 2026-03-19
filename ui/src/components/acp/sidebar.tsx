@@ -21,9 +21,9 @@ import type { Spritz } from '@/types/spritz';
 
 function SidebarToggleIcon({ collapsed }: { collapsed: boolean }) {
   return collapsed ? (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
   ) : (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
   );
 }
 
@@ -60,12 +60,13 @@ export function Sidebar({
   /* ── Collapsed desktop sidebar ── */
   function renderCollapsed() {
     return (
-      <aside className="flex h-full min-h-0 flex-col items-center gap-1 overflow-hidden bg-[#f9f9f9] py-3 dark:bg-sidebar">
+      <aside aria-label="Sidebar" className="flex h-full min-h-0 flex-col items-center gap-1 overflow-hidden bg-[#f9f9f9] py-3 dark:bg-sidebar">
         <Tooltip>
           <TooltipTrigger
             render={
               <button
                 type="button"
+                aria-label="Expand sidebar"
                 onClick={onToggleCollapse}
                 className="flex size-9 items-center justify-center rounded-lg text-foreground/70 transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50"
               />
@@ -80,12 +81,13 @@ export function Sidebar({
             render={
               <button
                 type="button"
+                aria-label="New chat"
                 className="flex size-9 items-center justify-center rounded-lg text-foreground/70 transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50"
                 onClick={() => { if (firstAgentName) onNewConversation(firstAgentName); }}
               />
             }
           >
-            <PencilIcon className="size-4" />
+            <PencilIcon aria-hidden="true" className="size-4" />
           </TooltipTrigger>
           <TooltipContent side="right">New chat</TooltipContent>
         </Tooltip>
@@ -98,7 +100,7 @@ export function Sidebar({
     const close = closeMobile ?? (() => {});
 
     return (
-      <aside className="flex h-full min-h-0 flex-col overflow-hidden bg-[#f9f9f9] dark:bg-sidebar">
+      <aside aria-label="Sidebar" className="flex h-full min-h-0 flex-col overflow-hidden bg-[#f9f9f9] dark:bg-sidebar">
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between px-3 pt-3 pb-1">
           <span className="text-[15px] font-semibold tracking-tight">Spritz</span>
@@ -108,6 +110,7 @@ export function Sidebar({
               render={
                 <button
                   type="button"
+                  aria-label="Collapse sidebar"
                   onClick={onToggleCollapse}
                   className="hidden size-8 items-center justify-center rounded-lg text-foreground/60 transition-colors hover:bg-[#ececec] md:flex dark:hover:bg-muted/50"
                 />
@@ -120,7 +123,7 @@ export function Sidebar({
         </div>
 
         {/* Nav items */}
-        <div className="flex flex-col gap-0.5 px-2 pt-2">
+        <nav aria-label="Sidebar navigation" className="flex flex-col gap-0.5 px-2 pt-2">
           <button
             type="button"
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[14px] text-foreground/80 transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50"
@@ -129,7 +132,7 @@ export function Sidebar({
               close();
             }}
           >
-            <PencilIcon className="size-[18px] shrink-0" />
+            <PencilIcon aria-hidden="true" className="size-[18px] shrink-0" />
             <span>New chat</span>
           </button>
           <Link
@@ -137,13 +140,13 @@ export function Sidebar({
             onClick={close}
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[14px] text-foreground/80 no-underline transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50"
           >
-            <LayoutGridIcon className="size-[18px] shrink-0" />
+            <LayoutGridIcon aria-hidden="true" className="size-[18px] shrink-0" />
             <span>Spritzes</span>
           </Link>
-        </div>
+        </nav>
 
         {/* Conversation list */}
-        <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-3">
+        <div role="list" aria-label="Conversations" className="mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-3">
           {agents.length === 0 && (
             <div className="px-3 py-6 text-center text-xs text-muted-foreground">
               No ACP-ready instances found.
@@ -173,8 +176,14 @@ export function Sidebar({
 
       {/* Mobile drawer — always expanded */}
       {mobileOpen && (
-        <div className="fixed inset-0 z-40 md:hidden">
-          <div className="absolute inset-0 bg-black/30" onClick={onCloseMobile} />
+        <div
+          role="dialog"
+          aria-label="Sidebar navigation"
+          aria-modal="true"
+          className="fixed inset-0 z-40 md:hidden"
+          onKeyDown={(e) => { if (e.key === 'Escape') onCloseMobile(); }}
+        >
+          <div className="absolute inset-0 bg-black/30" aria-hidden="true" onClick={onCloseMobile} />
           <div className="relative z-50 h-full w-[280px]">
             {renderExpanded(onCloseMobile)}
           </div>
@@ -203,15 +212,18 @@ function AgentSection({
   const name = group.spritz.metadata.name;
 
   return (
-    <div className="flex flex-col">
+    <div role="listitem" className="flex flex-col">
       {/* Agent header */}
       <div className="group flex items-center pr-1">
         <button
           type="button"
+          aria-expanded={expanded}
+          aria-label={`${name} conversations`}
           className="flex flex-1 items-center gap-2 rounded-lg px-3 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50"
           onClick={() => setExpanded(!expanded)}
         >
           <ChevronRightIcon
+            aria-hidden="true"
             className={cn(
               'size-3 shrink-0 transition-transform duration-200 will-change-transform',
               expanded && 'rotate-90',
@@ -224,12 +236,13 @@ function AgentSection({
             render={
               <button
                 type="button"
+                aria-label={`New conversation for ${name}`}
                 className="flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
                 onClick={() => onNewConversation(name)}
               />
             }
           >
-            <PlusIcon className="size-3.5" />
+            <PlusIcon aria-hidden="true" className="size-3.5" />
           </TooltipTrigger>
           <TooltipContent side="right">New conversation</TooltipContent>
         </Tooltip>
@@ -255,6 +268,7 @@ function AgentSection({
                 <div key={id} className="group/conv relative">
                   <button
                     type="button"
+                    aria-current={isActive ? 'true' : undefined}
                     className={cn(
                       'block w-full cursor-pointer rounded-lg px-3 py-2 text-left text-[14px] transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50',
                       isActive
@@ -268,9 +282,10 @@ function AgentSection({
                   <div className="absolute right-1 top-0 flex h-full items-center">
                     <DropdownMenu>
                       <DropdownMenuTrigger
+                        aria-label={`Actions for ${title}`}
                         className="flex size-7 shrink-0 items-center justify-center rounded-md bg-transparent text-foreground/40 opacity-0 transition-opacity hover:text-foreground group-hover/conv:opacity-100 data-[popup-open]:opacity-100"
                       >
-                        <EllipsisIcon className="size-4" />
+                        <EllipsisIcon aria-hidden="true" className="size-4" />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent side="bottom" align="start">
                         <DropdownMenuItem

@@ -25,10 +25,10 @@ function isProvisioning(phase: string): boolean {
 
 function PhaseIcon({ phase }: { phase: string }) {
   const p = phase.toLowerCase();
-  if (p === 'ready') return <CircleCheckIcon className="size-3.5 text-green-500" />;
-  if (p === 'failed' || p === 'error') return <CircleXIcon className="size-3.5 text-destructive" />;
-  if (isProvisioning(p)) return <LoaderIcon className="size-3.5 animate-spin text-primary" />;
-  return <CircleDotIcon className="size-3.5 text-muted-foreground" />;
+  if (p === 'ready') return <CircleCheckIcon aria-hidden="true" className="size-3.5 text-green-500" />;
+  if (p === 'failed' || p === 'error') return <CircleXIcon aria-hidden="true" className="size-3.5 text-destructive" />;
+  if (isProvisioning(p)) return <LoaderIcon aria-hidden="true" className="size-3.5 animate-spin text-primary" />;
+  return <CircleDotIcon aria-hidden="true" className="size-3.5 text-muted-foreground" />;
 }
 
 function SpritzSkeleton() {
@@ -110,6 +110,7 @@ function SpritzItem({ spritz, onDelete, deleting }: SpritzItemProps) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <PhaseIcon phase={phase} />
+          <span className="sr-only">{`Status: ${phase}`}</span>
           <span className="font-medium">{name}</span>
           <Badge variant={phaseBadgeVariant(phase)} className="text-[10px]">
             {phase}

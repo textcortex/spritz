@@ -127,6 +127,10 @@
     @apply font-sans;
     scrollbar-gutter: stable;
     }
+  /* Ensure visible focus indicators for keyboard navigation */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
 }
 
 /* Shimmer text animation — metallic gradient sweep for thinking labels */
@@ -203,6 +207,14 @@
   .word-exit,
   .word-enter {
     animation: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
 
