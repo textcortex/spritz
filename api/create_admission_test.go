@@ -438,7 +438,21 @@ func TestNormalizePresetInputsPreservesLargeIntegers(t *testing.T) {
 	}
 }
 
-func TestPresetCreateResolverMayNotMutateOwner(t *testing.T) {
+func TestNormalizePresetInputsCanonicalizesNestedObjects(t *testing.T) {
+	first, err := normalizePresetInputs(json.RawMessage(`{"cfg":{"a":1,"b":2}}`))
+	if err != nil {
+		t.Fatalf("normalizePresetInputs failed: %v", err)
+	}
+	second, err := normalizePresetInputs(json.RawMessage(`{"cfg":{"b":2,"a":1}}`))
+	if err != nil {
+		t.Fatalf("normalizePresetInputs failed: %v", err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("expected nested objects to canonicalize equally, got %s vs %s", string(first), string(second))
+	}
+}
+
+func TestPresetCreateResolverIgnoresOwnerMutation(t *testing.T) {
 	s := newCreateSpritzTestServer(t)
 	var received map[string]any
 	resolver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -486,6 +500,59 @@ func TestPresetCreateResolverMayNotMutateOwner(t *testing.T) {
 	}
 	if stored.Spec.Owner.ID != "user-1" {
 		t.Fatalf("expected resolver owner mutation to be ignored, got %q", stored.Spec.Owner.ID)
+	}
+}
+
+func TestCreateSpritzProvisionerRejectsManualServiceAccountForResolverRequiredField(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	s.presets = presetCatalog{
+		byID: []runtimePreset{{
+			ID:            "zeno",
+			Name:          "Zeno",
+			Image:         "example.com/zeno:latest",
+			NamePrefix:    "zeno",
+			InstanceClass: "personal-agent",
+		}},
+	}
+	s.provisioners.allowedPresetIDs = map[string]struct{}{"zeno": {}}
+	s.instanceClasses = instanceClassCatalog{
+		byID: map[string]instanceClass{
+			"personal-agent": {
+				ID:      "personal-agent",
+				Version: "v1",
+				Creation: instanceClassCreationPolicy{
+					RequireOwner:           true,
+					RequiredResolvedFields: []string{requiredResolvedFieldServiceAccountName},
+				},
+			},
+		},
+	}
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	body := []byte(`{
+		"presetId":"zeno",
+		"ownerId":"user-123",
+		"idempotencyKey":"manual-service-account",
+		"spec":{"serviceAccountName":"manual-sa"}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "zenobot")
+	req.Header.Set("X-Spritz-Principal-Type", "service")
+	req.Header.Set("X-Spritz-Principal-Scopes", "spritz.instances.create,spritz.instances.assign_owner")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "resolver-produced field") {
+		t.Fatalf("expected resolver-produced field error, got %s", rec.Body.String())
 	}
 }
 

@@ -146,3 +146,12 @@ func (c instanceClass) validateResolvedCreate(body *createRequest) error {
 	}
 	return nil
 }
+
+func (c instanceClass) requiresResolvedField(field string) bool {
+	for _, candidate := range c.Creation.RequiredResolvedFields {
+		if candidate == field {
+			return true
+		}
+	}
+	return false
+}

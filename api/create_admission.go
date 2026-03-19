@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	spritzv1 "spritz.sh/operator/api/v1"
@@ -26,7 +27,8 @@ func normalizePresetInputs(raw json.RawMessage) (json.RawMessage, error) {
 		return nil, nil
 	}
 	decoder := json.NewDecoder(bytes.NewReader(trimmed))
-	var value map[string]json.RawMessage
+	decoder.UseNumber()
+	var value any
 	if err := decoder.Decode(&value); err != nil {
 		return nil, errors.New("presetInputs must be valid JSON")
 	}
@@ -34,11 +36,67 @@ func normalizePresetInputs(raw json.RawMessage) (json.RawMessage, error) {
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return nil, errors.New("presetInputs must be valid JSON")
 	}
-	normalized, err := json.Marshal(value)
+	objectValue, ok := value.(map[string]any)
+	if !ok {
+		return nil, errors.New("presetInputs must be a JSON object")
+	}
+	normalized, err := marshalCanonicalPresetInputValue(objectValue)
 	if err != nil {
 		return nil, errors.New("presetInputs must be valid JSON")
 	}
 	return normalized, nil
+}
+
+func marshalCanonicalPresetInputValue(value any) (json.RawMessage, error) {
+	switch typed := value.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		var buffer bytes.Buffer
+		buffer.WriteByte('{')
+		for index, key := range keys {
+			if index > 0 {
+				buffer.WriteByte(',')
+			}
+			encodedKey, err := json.Marshal(key)
+			if err != nil {
+				return nil, err
+			}
+			buffer.Write(encodedKey)
+			buffer.WriteByte(':')
+			encodedValue, err := marshalCanonicalPresetInputValue(typed[key])
+			if err != nil {
+				return nil, err
+			}
+			buffer.Write(encodedValue)
+		}
+		buffer.WriteByte('}')
+		return buffer.Bytes(), nil
+	case []any:
+		var buffer bytes.Buffer
+		buffer.WriteByte('[')
+		for index, item := range typed {
+			if index > 0 {
+				buffer.WriteByte(',')
+			}
+			encodedValue, err := marshalCanonicalPresetInputValue(item)
+			if err != nil {
+				return nil, err
+			}
+			buffer.Write(encodedValue)
+		}
+		buffer.WriteByte(']')
+		return buffer.Bytes(), nil
+	case json.Number:
+		return []byte(typed.String()), nil
+	case string, bool, nil:
+		return json.Marshal(typed)
+	default:
+		return json.Marshal(typed)
+	}
 }
 
 func mergeMetadataStrict(existing, resolved map[string]string, fieldName string) (map[string]string, error) {
@@ -100,9 +158,11 @@ func (s *server) resolveCreateAdmission(ctx context.Context, principal principal
 		Namespace: namespace,
 		PresetID:  body.PresetID,
 	}
+	requestedServiceAccount := strings.TrimSpace(body.Spec.ServiceAccountName)
 	if selectedClass != nil {
 		requestContext.InstanceClassID = selectedClass.ID
 	}
+	serviceAccountResolved := false
 	resolver, response, err := s.extensions.resolve(
 		ctx,
 		extensionOperationPresetCreateResolve,
@@ -124,9 +184,12 @@ func (s *server) resolveCreateAdmission(ctx context.Context, principal principal
 			return newAdmissionError(http.StatusBadRequest, "presetInputs require a matching preset create resolver", nil, errors.New("presetInputs require a matching preset create resolver"))
 		}
 	} else {
-		if err := applyPresetCreateResolverMutations(body, response); err != nil {
+		var mutationResult presetCreateMutationResult
+		mutationResult, err = applyPresetCreateResolverMutations(body, response)
+		if err != nil {
 			return newAdmissionError(http.StatusBadRequest, err.Error(), nil, err)
 		}
+		serviceAccountResolved = mutationResult.serviceAccountResolved
 		switch response.Status {
 		case "", extensionStatusResolved:
 		case extensionStatusUnresolved:
@@ -144,6 +207,10 @@ func (s *server) resolveCreateAdmission(ctx context.Context, principal principal
 		}
 	}
 	if selectedClass != nil {
+		if selectedClass.requiresResolvedField(requiredResolvedFieldServiceAccountName) && requestedServiceAccount != "" && !serviceAccountResolved {
+			err := fmt.Errorf("instance class %q requires resolver-produced field %q", selectedClass.ID, requiredResolvedFieldServiceAccountName)
+			return newAdmissionError(http.StatusBadRequest, err.Error(), nil, err)
+		}
 		if err := selectedClass.validateResolvedCreate(body); err != nil {
 			return newAdmissionError(http.StatusBadRequest, err.Error(), nil, err)
 		}
@@ -151,28 +218,34 @@ func (s *server) resolveCreateAdmission(ctx context.Context, principal principal
 	return nil
 }
 
-func applyPresetCreateResolverMutations(body *createRequest, response extensionResolverResponseEnvelope) error {
+type presetCreateMutationResult struct {
+	serviceAccountResolved bool
+}
+
+func applyPresetCreateResolverMutations(body *createRequest, response extensionResolverResponseEnvelope) (presetCreateMutationResult, error) {
 	if body == nil {
-		return nil
+		return presetCreateMutationResult{}, nil
 	}
+	result := presetCreateMutationResult{}
 	if response.Mutations.Spec != nil {
 		resolvedServiceAccount := strings.TrimSpace(response.Mutations.Spec.ServiceAccountName)
 		if resolvedServiceAccount != "" {
 			if current := strings.TrimSpace(body.Spec.ServiceAccountName); current != "" && current != resolvedServiceAccount {
-				return errors.New("preset create resolver attempted to overwrite spec.serviceAccountName")
+				return presetCreateMutationResult{}, errors.New("preset create resolver attempted to overwrite spec.serviceAccountName")
 			}
 			body.Spec.ServiceAccountName = resolvedServiceAccount
+			result.serviceAccountResolved = true
 		}
 	}
 	annotations, err := mergeMetadataStrict(body.Annotations, response.Mutations.Annotations, "annotation")
 	if err != nil {
-		return err
+		return presetCreateMutationResult{}, err
 	}
 	body.Annotations = annotations
 	labels, err := mergeMetadataStrict(body.Labels, response.Mutations.Labels, "label")
 	if err != nil {
-		return err
+		return presetCreateMutationResult{}, err
 	}
 	body.Labels = labels
-	return nil
+	return result, nil
 }
