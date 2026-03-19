@@ -32,9 +32,9 @@ type runtimeBindingResponse struct {
 }
 
 func (s *server) getRuntimeBinding(c echo.Context) error {
-	namespace := strings.TrimSpace(c.Param("namespace"))
-	if namespace == "" {
-		return writeError(c, http.StatusBadRequest, "namespace required")
+	namespace, err := s.resolveSpritzNamespace(strings.TrimSpace(c.Param("namespace")))
+	if err != nil {
+		return writeError(c, http.StatusForbidden, err.Error())
 	}
 	instanceID := strings.TrimSpace(c.Param("instanceId"))
 	if instanceID == "" {
@@ -80,7 +80,7 @@ func buildRuntimeBindingResponse(spritz *spritzv1.Spritz) (runtimeBindingRespons
 
 	serviceAccountName := strings.TrimSpace(spritz.Spec.ServiceAccountName)
 	if serviceAccountName == "" {
-		return runtimeBindingResponse{}, fmt.Errorf("spec.serviceAccountName is required")
+		serviceAccountName = "default"
 	}
 
 	annotations := spritz.GetAnnotations()

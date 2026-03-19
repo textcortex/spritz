@@ -81,6 +81,38 @@ func TestGetRuntimeBindingReturnsCanonicalFacts(t *testing.T) {
 	}
 }
 
+func TestGetRuntimeBindingUsesDefaultServiceAccountWhenUnset(t *testing.T) {
+	spritz := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "openclaw-morning-sky",
+			Namespace: "spritz-production",
+			Annotations: map[string]string{
+				presetIDAnnotationKey:      "openclaw",
+				instanceClassAnnotationKey: "assistant-runtime",
+			},
+		},
+		Spec: spritzv1.SpritzSpec{
+			Owner: spritzv1.SpritzOwner{ID: "user-123"},
+		},
+	}
+	s := newRuntimeBindingsTestServer(t, spritz)
+	e := echo.New()
+	s.registerRoutes(e)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/internal/v1/runtime-bindings/spritz-production/openclaw-morning-sky", nil)
+	req.Header.Set("Authorization", "Bearer spritz-internal-token")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected runtime binding lookup to return 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"serviceAccountName":"default"`) {
+		t.Fatalf("expected response body to use default service account, got %s", rec.Body.String())
+	}
+}
+
 func TestGetRuntimeBindingRejectsIncompleteBinding(t *testing.T) {
 	spritz := &spritzv1.Spritz{
 		ObjectMeta: metav1.ObjectMeta{
@@ -106,6 +138,37 @@ func TestGetRuntimeBindingRejectsIncompleteBinding(t *testing.T) {
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected incomplete runtime binding to return 422, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGetRuntimeBindingRejectsNamespaceOutsideServerScope(t *testing.T) {
+	spritz := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "zeno-delta-breeze",
+			Namespace: "spritz-production",
+			Annotations: map[string]string{
+				presetIDAnnotationKey:      "zeno",
+				instanceClassAnnotationKey: "personal-agent",
+			},
+		},
+		Spec: spritzv1.SpritzSpec{
+			Owner:              spritzv1.SpritzOwner{ID: "user-123"},
+			ServiceAccountName: "zeno-agent-abcd1234",
+		},
+	}
+	s := newRuntimeBindingsTestServer(t, spritz)
+	s.namespace = "spritz-production"
+	e := echo.New()
+	s.registerRoutes(e)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/internal/v1/runtime-bindings/spritz-staging/zeno-delta-breeze", nil)
+	req.Header.Set("Authorization", "Bearer spritz-internal-token")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected namespace mismatch to return 403, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
