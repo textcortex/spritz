@@ -16,7 +16,7 @@ Spritz is built to stay runtime-agnostic. [OpenClaw](https://docs.openclaw.ai/) 
 
 > Spritz is in active development and should be treated as alpha software. APIs, CRDs, Helm values, and UI details may still change while the deployment model is being hardened.
 
-[Quick Start](#quick-start) · [What It Feels Like](#what-it-feels-like) · [Architecture](#architecture) · [Deployment Spec](docs/2026-02-24-simplest-spritz-deployment-spec.md) · [ACP Architecture](docs/2026-03-09-acp-port-and-agent-chat-architecture.md) · [External Provisioners](docs/2026-03-11-external-provisioner-and-service-principal-architecture.md) · [External Identity Resolution](docs/2026-03-12-external-identity-resolution-api-architecture.md) · [Spawn Vocabulary](docs/2026-03-13-spawn-language-for-agent-instances.md) · [OpenClaw Integration](docs/2026-03-13-openclaw-integration.md)
+[Quick Start](#quick-start) · [What It Feels Like](#what-it-feels-like) · [Architecture](#architecture) · [UI Branding](docs/2026-03-20-ui-branding-customization.md) · [Deployment Spec](docs/2026-02-24-simplest-spritz-deployment-spec.md) · [ACP Architecture](docs/2026-03-09-acp-port-and-agent-chat-architecture.md) · [External Provisioners](docs/2026-03-11-external-provisioner-and-service-principal-architecture.md) · [External Identity Resolution](docs/2026-03-12-external-identity-resolution-api-architecture.md) · [Spawn Vocabulary](docs/2026-03-13-spawn-language-for-agent-instances.md) · [OpenClaw Integration](docs/2026-03-13-openclaw-integration.md)
 
 ## What Spritz is for
 
@@ -213,6 +213,20 @@ After install:
 2. create an instance from the UI or API
 3. open the instance directly or use the built-in ACP chat surface if the runtime exposes ACP on `2529`
 
+## UI branding
+
+Spritz supports deployment-wide UI branding for operators that want a white-label presentation without adding a separate settings service.
+
+The v1 path is a small `ui.branding` Helm values block that flows into the built-in UI at startup. It supports:
+
+- product name
+- logo URL
+- favicon URL
+- a single app theme palette
+- terminal colors
+
+See [Deployment-Wide UI Branding](docs/2026-03-20-ui-branding-customization.md) for the exact values shape and an example override file.
+
 ## Design constraints
 
 Spritz is intended to remain portable and standalone:
@@ -244,3 +258,4 @@ Spritz is intended to remain portable and standalone:
 - [Spawn Language for Agent Instances](docs/2026-03-13-spawn-language-for-agent-instances.md)
 - [OpenClaw Integration](docs/2026-03-13-openclaw-integration.md)
 - [Local kind Development Guide](docs/2026-03-14-local-kind-development-guide.md)
+- [Deployment-Wide UI Branding](docs/2026-03-20-ui-branding-customization.md)

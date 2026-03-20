@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type CSSProperties } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { useConfig } from '@/lib/config';
 import { getAuthToken, authBearerTokenParam } from '@/lib/api';
+import { buildTerminalTheme } from '@/lib/branding';
 import { chatPath } from '@/lib/urls';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -26,6 +27,7 @@ function buildTerminalWsUrl(apiBaseUrl: string, name: string): string {
 export function TerminalPage() {
   const { name } = useParams<{ name: string }>();
   const config = useConfig();
+  const terminalTheme = buildTerminalTheme(config.branding.terminal);
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -41,8 +43,9 @@ export function TerminalPage() {
       fontSize: 14,
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       theme: {
-        background: '#000000',
-        foreground: '#f0f0f0',
+        background: terminalTheme.background,
+        foreground: terminalTheme.foreground,
+        cursor: terminalTheme.cursor,
       },
     });
     const fitAddon = new FitAddon();
@@ -122,7 +125,7 @@ export function TerminalPage() {
       fitAddonRef.current = null;
       wsRef.current = null;
     };
-  }, [name, config.apiBaseUrl]);
+  }, [name, config.apiBaseUrl, terminalTheme.background, terminalTheme.cursor, terminalTheme.foreground]);
 
   if (!name) {
     return (
@@ -133,16 +136,34 @@ export function TerminalPage() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-black">
-      <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-2">
+    <div
+      className="flex h-full flex-col bg-[var(--terminal-shell-background)] text-[var(--terminal-shell-foreground)]"
+      style={
+        {
+          '--terminal-shell-background': terminalTheme.background,
+          '--terminal-shell-foreground': terminalTheme.foreground,
+          '--terminal-shell-border': `color-mix(in srgb, ${terminalTheme.foreground} 16%, transparent)`,
+        } as CSSProperties
+      }
+    >
+      <div className="flex items-center justify-between border-b border-[var(--terminal-shell-border)] px-4 py-2">
         <div className="flex items-center gap-3">
           <Link to={chatPath(name)}>
-            <Button variant="outline" size="sm" className="gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 border-[var(--terminal-shell-border)] bg-transparent text-[var(--terminal-shell-foreground)] hover:bg-white/10 hover:text-[var(--terminal-shell-foreground)]"
+            >
               <ArrowLeftIcon className="size-3.5" />
               Back
             </Button>
           </Link>
-          <code className="text-sm text-zinc-400">{name}</code>
+          <code
+            className="text-sm"
+            style={{ color: `color-mix(in srgb, ${terminalTheme.foreground} 70%, transparent)` }}
+          >
+            {name}
+          </code>
         </div>
         <div className="flex items-center gap-2">
           <span
@@ -150,11 +171,16 @@ export function TerminalPage() {
               'inline-block size-2 rounded-full',
               status === 'connected' && 'bg-green-500',
               status === 'connecting' && 'animate-pulse bg-yellow-500',
-              status === 'disconnected' && 'bg-zinc-500',
+              status === 'disconnected' && 'bg-muted-foreground',
               status === 'error' && 'bg-red-500',
             )}
           />
-          <span className="text-xs capitalize text-zinc-400">{status}</span>
+          <span
+            className="text-xs capitalize"
+            style={{ color: `color-mix(in srgb, ${terminalTheme.foreground} 70%, transparent)` }}
+          >
+            {status}
+          </span>
         </div>
       </div>
       <div ref={terminalRef} className="flex-1 overflow-hidden p-1" />

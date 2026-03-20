@@ -296,6 +296,24 @@ ui:
     hideInputs: false
   launch:
     queryParams: {}
+  branding:
+    productName: ""
+    logoUrl: ""
+    faviconUrl: ""
+    theme:
+      background: ""
+      foreground: ""
+      muted: ""
+      mutedForeground: ""
+      primary: ""
+      primaryForeground: ""
+      border: ""
+      destructive: ""
+      radius: ""
+    terminal:
+      background: ""
+      foreground: ""
+      cursor: ""
   auth:
     mode: none
     tokenStorage: localStorage

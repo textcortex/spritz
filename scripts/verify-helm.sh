@@ -93,6 +93,7 @@ expect_not_contains "${default_render}" "name: SPRITZ_AUTH_BEARER_DEFAULT_TYPE" 
 expect_contains "${default_render}" "name: SPRITZ_PROVISIONER_DEFAULT_IDLE_TTL" "default provisioner idle ttl wiring"
 expect_contains "${default_render}" "name: SPRITZ_PROVISIONER_DEFAULT_TTL" "default provisioner ttl wiring"
 expect_contains "${default_render}" "name: SPRITZ_TERMINAL_ACTIVITY_DEBOUNCE" "terminal activity debounce wiring"
+expect_contains "${default_render}" "name: SPRITZ_UI_BRANDING" "UI branding env wiring"
 expect_contains "${default_render}" 'resources: ["configmaps"]' "configmap RBAC for idempotency reservations"
 
 expect_failure \

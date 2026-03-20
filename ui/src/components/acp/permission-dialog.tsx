@@ -32,7 +32,7 @@ export function PermissionDialog({ entry, onRespond }: PermissionDialogProps) {
   };
 
   return (
-    <div role="alertdialog" aria-label={`${toolTitle} permission request`} className="flex flex-col gap-2.5 rounded-2xl border border-[#e5e5e5] bg-[#fafafa] px-4 py-3.5 text-sm">
+    <div role="alertdialog" aria-label={`${toolTitle} permission request`} className="flex flex-col gap-2.5 rounded-[var(--radius-xl)] border border-border bg-surface-subtle px-4 py-3.5 text-sm">
       <p className="m-0 text-sm">{toolTitle} is requesting permission.</p>
       <div className="flex flex-wrap gap-1.5">
         {options.length > 0 ? (
@@ -42,8 +42,8 @@ export function PermissionDialog({ entry, onRespond }: PermissionDialogProps) {
               type="button"
               className={
                 i === 0
-                  ? 'rounded-full border border-transparent bg-black px-4 py-2 text-[13px] text-white hover:opacity-80'
-                  : 'rounded-full border border-[#e5e5e5] bg-white px-4 py-2 text-[13px] text-black hover:border-[#ccc] hover:bg-[#f5f5f5]'
+                  ? 'rounded-[var(--radius-lg)] border border-transparent bg-primary px-4 py-2 text-[13px] text-primary-foreground hover:opacity-85'
+                  : 'rounded-[var(--radius-lg)] border border-border bg-background px-4 py-2 text-[13px] text-foreground hover:bg-muted'
               }
               onClick={() => handleOption(option)}
             >
@@ -54,14 +54,14 @@ export function PermissionDialog({ entry, onRespond }: PermissionDialogProps) {
           <>
             <button
               type="button"
-              className="rounded-full border border-transparent bg-black px-4 py-2 text-[13px] text-white hover:opacity-80"
+              className="rounded-[var(--radius-lg)] border border-transparent bg-primary px-4 py-2 text-[13px] text-primary-foreground hover:opacity-85"
               onClick={() => { entry.respond({ allow: true }); onRespond(); }}
             >
               Allow
             </button>
             <button
               type="button"
-              className="rounded-full border border-[#e5e5e5] bg-white px-4 py-2 text-[13px] text-black hover:border-[#ccc] hover:bg-[#f5f5f5]"
+              className="rounded-[var(--radius-lg)] border border-border bg-background px-4 py-2 text-[13px] text-foreground hover:bg-muted"
               onClick={handleDeny}
             >
               Deny

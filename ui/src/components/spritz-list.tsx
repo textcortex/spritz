@@ -121,7 +121,7 @@ function SpritzItem({ spritz, onDelete, deleting }: SpritzItemProps) {
         </p>
       </div>
       <div className="flex flex-wrap gap-1.5">
-        <Button variant="outline" size="sm" className="rounded-full" onClick={handleOpen} title="Open">
+        <Button variant="outline" size="sm" className="rounded-[var(--radius-lg)]" onClick={handleOpen} title="Open">
           <ExternalLinkIcon className="size-3.5" />
           Open
         </Button>
@@ -129,7 +129,7 @@ function SpritzItem({ spritz, onDelete, deleting }: SpritzItemProps) {
           <Button
             variant="outline"
             size="sm"
-            className="rounded-full"
+            className="rounded-[var(--radius-lg)]"
             disabled={!terminalReady}
             title={terminalReady ? 'Open terminal' : 'Terminal is available once provisioning completes.'}
           >
@@ -141,7 +141,7 @@ function SpritzItem({ spritz, onDelete, deleting }: SpritzItemProps) {
           <Button
             variant="outline"
             size="sm"
-            className="rounded-full"
+            className="rounded-[var(--radius-lg)]"
             disabled={chatAction.disabled}
             title={chatAction.title}
           >
@@ -150,7 +150,7 @@ function SpritzItem({ spritz, onDelete, deleting }: SpritzItemProps) {
           </Button>
         </Link>
         {hasSSH && (
-          <Button variant="outline" size="sm" className="rounded-full" onClick={handleSSH} title="Copy SSH command">
+          <Button variant="outline" size="sm" className="rounded-[var(--radius-lg)]" onClick={handleSSH} title="Copy SSH command">
             <CopyIcon className="size-3.5" />
             SSH
           </Button>
@@ -158,7 +158,7 @@ function SpritzItem({ spritz, onDelete, deleting }: SpritzItemProps) {
         <Button
           variant="destructive"
           size="sm"
-          className="rounded-full"
+          className="rounded-[var(--radius-lg)]"
           onClick={() => onDelete(name)}
           disabled={isDeleting}
         >
@@ -231,10 +231,10 @@ export const SpritzList = forwardRef<SpritzListHandle>(function SpritzList(_, re
     try {
       await request(`/spritzes/${encodeURIComponent(name)}`, { method: 'DELETE' });
       setSpritzes((prev) => prev.filter((s) => s.metadata?.name !== name));
-      toast.info('Spritz deleted.');
+      toast.info('Instance deleted.');
       setTimeout(() => fetchSpritzes(), 250);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to delete Spritz.';
+      const message = err instanceof Error ? err.message : 'Failed to delete instance.';
       showNotice(message);
     } finally {
       setDeleting(null);
@@ -244,7 +244,7 @@ export const SpritzList = forwardRef<SpritzListHandle>(function SpritzList(_, re
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">Active Spritzes</h2>
+        <h2 className="text-xl font-semibold">Active Instances</h2>
         <Button
           variant="ghost"
           size="sm"
@@ -255,7 +255,7 @@ export const SpritzList = forwardRef<SpritzListHandle>(function SpritzList(_, re
           Refresh
         </Button>
       </div>
-      <div className="divide-y rounded-[20px] border border-[#e5e5e5] bg-card text-card-foreground dark:border-border">
+      <div className="divide-y rounded-[var(--radius-xl)] border border-border bg-card text-card-foreground">
         {loading ? (
           <>
             <SpritzSkeleton />
@@ -264,7 +264,7 @@ export const SpritzList = forwardRef<SpritzListHandle>(function SpritzList(_, re
           </>
         ) : spritzes.length === 0 ? (
           <div className="px-6 py-8 text-center">
-            <p className="text-muted-foreground">No Spritzes yet</p>
+            <p className="text-muted-foreground">No instances yet</p>
             <p className="text-sm text-muted-foreground">Create one above to get started.</p>
           </div>
         ) : (

@@ -508,17 +508,17 @@ export function ChatPage() {
   if (loading) {
     return (
       <div className="grid h-dvh grid-cols-[1fr] md:grid-cols-[260px_minmax(0,1fr)] overflow-hidden">
-        <div className="hidden md:flex flex-col gap-2 border-r border-[#e5e5e5] bg-[#fafafa] p-3 dark:border-border dark:bg-sidebar">
-          <Skeleton className="h-9 w-full rounded-lg" />
-          <Skeleton className="h-9 w-full rounded-lg" />
+        <div className="hidden border-r border-sidebar-border bg-sidebar p-3 md:flex md:flex-col md:gap-2">
+          <Skeleton className="h-9 w-full rounded-[var(--radius-lg)]" />
+          <Skeleton className="h-9 w-full rounded-[var(--radius-lg)]" />
           <div className="flex flex-col gap-1">
-            <Skeleton className="h-8 w-full rounded-[10px]" />
-            <Skeleton className="h-8 w-full rounded-[10px]" />
-            <Skeleton className="h-8 w-full rounded-[10px]" />
+            <Skeleton className="h-8 w-full rounded-[var(--radius-md)]" />
+            <Skeleton className="h-8 w-full rounded-[var(--radius-md)]" />
+            <Skeleton className="h-8 w-full rounded-[var(--radius-md)]" />
           </div>
         </div>
         <div className="flex flex-col">
-          <div className="shrink-0 border-b border-[#e5e5e5] bg-[#fafafa] px-5 py-3 dark:border-border dark:bg-muted/10">
+          <div className="shrink-0 border-b border-border bg-surface-subtle px-5 py-3">
             <Skeleton className="h-4 w-48" />
           </div>
           <div className="flex-1 p-8" />
@@ -547,14 +547,14 @@ export function ChatPage() {
         onCloseMobile={() => setMobileMenuOpen(false)}
       />
 
-      <div className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-white dark:bg-background">
+      <div className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-background">
         {/* Header — matches original acp-main-header */}
-        <div className="shrink-0 bg-linear-to-b from-white to-transparent px-5 py-3">
+        <div className="shrink-0 border-b border-border bg-linear-to-b from-background via-background to-transparent px-5 py-3">
           <div className="flex items-center justify-between gap-3">
             <button
               type="button"
               aria-label="Open sidebar menu"
-              className="inline-flex size-9 items-center justify-center rounded-[10px] border border-[#e5e5e5] bg-white text-black transition-colors hover:bg-[#f5f5f5] hover:border-[#ccc] md:hidden dark:border-border dark:bg-background dark:text-foreground"
+              className="inline-flex size-9 items-center justify-center rounded-[var(--radius-md)] border border-border bg-background text-foreground transition-colors hover:bg-muted md:hidden"
               onClick={() => setMobileMenuOpen(true)}
             >
               <MenuIcon aria-hidden="true" className="size-4" />
@@ -580,7 +580,7 @@ export function ChatPage() {
                     <button
                       type="button"
                       aria-label="Refresh conversations"
-                      className="inline-flex size-9 items-center justify-center rounded-[10px] border border-[#e5e5e5] bg-white text-black transition-colors hover:bg-[#f5f5f5] hover:border-[#ccc] dark:border-border dark:bg-background dark:text-foreground"
+                      className="inline-flex size-9 items-center justify-center rounded-[var(--radius-md)] border border-border bg-background text-foreground transition-colors hover:bg-muted"
                       onClick={() => fetchAgents()}
                     />
                   }
@@ -598,7 +598,7 @@ export function ChatPage() {
                         target="_blank"
                         rel="noopener noreferrer"
                         aria-label="Open instance in new tab"
-                        className="inline-flex size-9 items-center justify-center rounded-[10px] border border-[#e5e5e5] bg-white text-black transition-colors hover:bg-[#f5f5f5] hover:border-[#ccc] dark:border-border dark:bg-background dark:text-foreground"
+                        className="inline-flex size-9 items-center justify-center rounded-[var(--radius-md)] border border-border bg-background text-foreground transition-colors hover:bg-muted"
                       />
                     }
                   >
@@ -620,7 +620,7 @@ export function ChatPage() {
                   <button
                     key={name}
                     type="button"
-                    className="inline-flex items-center gap-1.5 rounded-full border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs cursor-pointer transition-colors hover:bg-[#f5f5f5] hover:border-[#ccc] shrink-0"
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-[var(--radius-2xl)] border border-border bg-background px-2.5 py-1.5 text-xs transition-colors hover:bg-muted"
                     title={description}
                     onClick={() => composerRef.current?.fillText(`/${name} `)}
                   >
@@ -641,7 +641,7 @@ export function ChatPage() {
           ) : transcript.messages.length === 0 ? (
             <div className="m-auto flex max-w-[540px] flex-col gap-1.5 text-center">
               <strong className="block text-base font-medium">Start a conversation</strong>
-              <p className="m-0 text-sm text-[#999]">Send a message to begin.</p>
+              <p className="m-0 text-sm text-muted-foreground">Send a message to begin.</p>
             </div>
           ) : (
             <div className="mx-auto w-full max-w-[880px] flex flex-col gap-6 flex-1">

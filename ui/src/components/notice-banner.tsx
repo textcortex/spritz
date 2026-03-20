@@ -64,7 +64,7 @@ export function NoticeBanner() {
         type="button"
         aria-label="Dismiss notice"
         onClick={clearNotice}
-        className="shrink-0 rounded p-0.5 hover:bg-black/10"
+        className="shrink-0 rounded p-0.5 hover:bg-foreground/10"
       >
         <XIcon aria-hidden="true" className="size-3.5" />
       </button>
