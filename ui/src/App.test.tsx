@@ -31,7 +31,6 @@ function renderAtRoute(path: string) {
             <Route path="create" element={<div data-testid="create-page">Create Page</div>} />
             <Route path="terminal/:name" element={<div data-testid="terminal-page">Terminal Page</div>} />
             <Route path="c/:name?" element={<div data-testid="chat-page">Chat Page</div>} />
-            <Route path="chat/:name?" element={<div data-testid="chat-page">Chat Page</div>} />
           </Routes>
         </NoticeProvider>
       </ConfigProvider>
