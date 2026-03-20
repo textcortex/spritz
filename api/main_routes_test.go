@@ -62,3 +62,31 @@ func TestRegisterRoutesAppliesAuthToRootAndAPIPrefix(t *testing.T) {
 		t.Fatalf("expected /spritzes to return 404, got %d", rootRec.Code)
 	}
 }
+
+func TestRegisterRoutesAppliesAuthToInstanceProxyPrefix(t *testing.T) {
+	s := &server{
+		auth: authConfig{
+			mode:     authModeHeader,
+			headerID: "X-Spritz-User-Id",
+		},
+		internalAuth: internalAuthConfig{enabled: false},
+		terminal:     terminalConfig{enabled: false},
+		routeModel:   spritzRouteModelFromEnv(),
+		instanceProxy: instanceProxyConfig{
+			enabled:     true,
+			stripPrefix: true,
+		},
+	}
+	e := echo.New()
+	s.registerRoutes(e)
+
+	req := httptest.NewRequest(http.MethodGet, "/i/openclaw-tide-wind", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected /i/openclaw-tide-wind to return 401 without auth, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "unauthenticated") {
+		t.Fatalf("expected /i/openclaw-tide-wind response to mention unauthenticated, got %q", rec.Body.String())
+	}
+}

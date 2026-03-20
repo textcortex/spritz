@@ -31,7 +31,7 @@ spec:
           {{- end }}
           env:
             - name: SPRITZ_API_BASE_URL
-              value: {{ .Values.ui.apiBaseUrl | default "/api" | quote }}
+              value: {{ .Values.ui.apiBaseUrl | default (include "spritz.routeModel.apiPathPrefix" .) | quote }}
             - name: SPRITZ_UI_OWNER_ID
               value: {{ .Values.ui.ownerId | quote }}
             - name: SPRITZ_UI_AUTH_MODE

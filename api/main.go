@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path"
@@ -29,32 +30,36 @@ import (
 )
 
 type server struct {
-	client               client.Client
-	clientset            *kubernetes.Clientset
-	restConfig           *rest.Config
-	scheme               *runtime.Scheme
-	namespace            string
-	controlNamespace     string
-	auth                 authConfig
-	internalAuth         internalAuthConfig
-	ingressDefaults      ingressDefaults
-	terminal             terminalConfig
-	sshGateway           sshGatewayConfig
-	sshDefaults          sshDefaults
-	sshMintLimiter       *sshMintLimiter
-	acp                  acpConfig
-	extensions           extensionRegistry
-	instanceClasses      instanceClassCatalog
-	presets              presetCatalog
-	provisioners         provisionerPolicy
-	externalOwners       externalOwnerConfig
-	defaultMetadata      map[string]string
-	sharedMounts         sharedMountsConfig
-	sharedMountsStore    *sharedMountsStore
-	sharedMountsLive     *sharedMountsLatestNotifier
-	userConfigPolicy     userConfigPolicy
-	nameGeneratorFactory func(context.Context, string, string) (func() string, error)
-	activityRecorder     func(context.Context, string, string, time.Time) error
+	client                      client.Client
+	clientset                   *kubernetes.Clientset
+	restConfig                  *rest.Config
+	scheme                      *runtime.Scheme
+	namespace                   string
+	controlNamespace            string
+	auth                        authConfig
+	internalAuth                internalAuthConfig
+	ingressDefaults             ingressDefaults
+	routeModel                  spritzv1.SharedHostRouteModel
+	instanceProxy               instanceProxyConfig
+	terminal                    terminalConfig
+	sshGateway                  sshGatewayConfig
+	sshDefaults                 sshDefaults
+	sshMintLimiter              *sshMintLimiter
+	acp                         acpConfig
+	extensions                  extensionRegistry
+	instanceClasses             instanceClassCatalog
+	presets                     presetCatalog
+	provisioners                provisionerPolicy
+	externalOwners              externalOwnerConfig
+	defaultMetadata             map[string]string
+	sharedMounts                sharedMountsConfig
+	sharedMountsStore           *sharedMountsStore
+	sharedMountsLive            *sharedMountsLatestNotifier
+	userConfigPolicy            userConfigPolicy
+	instanceProxyTargetResolver func(*spritzv1.Spritz) (*url.URL, error)
+	instanceProxyTransport      http.RoundTripper
+	nameGeneratorFactory        func(context.Context, string, string) (func() string, error)
+	activityRecorder            func(context.Context, string, string, time.Time) error
 }
 
 func main() {
@@ -101,6 +106,8 @@ func main() {
 		os.Exit(1)
 	}
 	ingressDefaults := newIngressDefaults()
+	routeModel := spritzRouteModelFromEnv()
+	instanceProxy := newInstanceProxyConfig()
 	terminal := newTerminalConfig()
 	acp := newACPConfig()
 	extensions, err := newExtensionRegistry()
@@ -170,6 +177,8 @@ func main() {
 		auth:              auth,
 		internalAuth:      internalAuth,
 		ingressDefaults:   ingressDefaults,
+		routeModel:        routeModel,
+		instanceProxy:     instanceProxy,
 		terminal:          terminal,
 		sshGateway:        sshGateway,
 		sshDefaults:       sshDefaults,
@@ -264,6 +273,12 @@ func (s *server) registerRoutes(e *echo.Echo) {
 	if s.terminal.enabled {
 		secured.GET("/spritzes/:name/terminal", s.openTerminal)
 		secured.GET("/spritzes/:name/terminal/sessions", s.listTerminalSessions)
+	}
+	if s.instanceProxy.enabled {
+		rootSecured := e.Group("", s.authMiddleware())
+		prefix := s.instanceProxy.pathPrefix(s.routeModel)
+		rootSecured.Any(prefix+"/:name", s.proxyInstanceWeb)
+		rootSecured.Any(prefix+"/:name/*", s.proxyInstanceWeb)
 	}
 }
 

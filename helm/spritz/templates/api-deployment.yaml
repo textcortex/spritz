@@ -192,6 +192,22 @@ spec:
             {{- end }}
             - name: SPRITZ_CORS_ALLOW_CREDENTIALS
               value: {{ .Values.api.cors.allowCredentials | quote }}
+            - name: SPRITZ_ROUTE_MODEL_TYPE
+              value: {{ include "spritz.routeModel.type" . | quote }}
+            - name: SPRITZ_ROUTE_HOST
+              value: {{ ternary .Values.global.host "" .Values.ui.ingress.enabled | quote }}
+            - name: SPRITZ_ROUTE_API_PATH_PREFIX
+              value: {{ include "spritz.routeModel.apiPathPrefix" . | quote }}
+            - name: SPRITZ_ROUTE_AUTH_PATH_PREFIX
+              value: {{ include "spritz.routeModel.authPathPrefix" . | quote }}
+            - name: SPRITZ_ROUTE_INSTANCE_PATH_PREFIX
+              value: {{ include "spritz.routeModel.instancePathPrefix" . | quote }}
+            - name: SPRITZ_ROUTE_CHAT_PATH_PREFIX
+              value: {{ include "spritz.routeModel.chatPathPrefix" . | quote }}
+            - name: SPRITZ_INSTANCE_PROXY_ENABLED
+              value: {{ .Values.api.instanceProxy.enabled | quote }}
+            - name: SPRITZ_INSTANCE_PROXY_STRIP_PREFIX
+              value: {{ .Values.api.instanceProxy.stripPrefix | quote }}
             {{- if .Values.api.defaultIngress.mode }}
             - name: SPRITZ_DEFAULT_INGRESS_MODE
               value: {{ .Values.api.defaultIngress.mode | quote }}

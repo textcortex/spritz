@@ -65,6 +65,7 @@ auth_render="${tmp_dir}/auth.yaml"
 auth_annotations_render="${tmp_dir}/auth-annotations.yaml"
 acp_network_policy_render="${tmp_dir}/acp-network-policy.yaml"
 api_ha_render="${tmp_dir}/api-ha.yaml"
+gateway_render="${tmp_dir}/gateway.yaml"
 
 helm lint "${chart_dir}"
 helm template spritz "${chart_dir}" >"${default_render}"
@@ -72,9 +73,14 @@ helm template spritz "${chart_dir}" -f "${example_values}" >"${auth_render}"
 helm template spritz "${chart_dir}" -f "${example_values}" --set authGateway.ingress.annotations.authonly=enabled >"${auth_annotations_render}"
 helm template spritz "${chart_dir}" --set acp.networkPolicy.enabled=true >"${acp_network_policy_render}"
 helm template spritz "${chart_dir}" --set api.replicaCount=2 --set api.podDisruptionBudget.enabled=true >"${api_ha_render}"
+helm template spritz "${chart_dir}" \
+  --set global.routing.mode=gateway-api \
+  --set global.routing.gateway.className=example-gateway \
+  --set authGateway.enabled=false >"${gateway_render}"
 
 expect_contains "${default_render}" "name: spritz-web" "spritz-web ingress in default render"
 expect_not_contains "${default_render}" "name: spritz-auth" "spritz-auth ingress when auth gateway is disabled"
+expect_contains "${default_render}" "path: /i" "instance proxy ingress path in default render"
 
 expect_contains "${auth_render}" "name: spritz-auth" "spritz-auth ingress in auth render"
 expect_contains "${auth_render}" "path: /oauth2" "oauth2 ingress path in auth render"
@@ -95,6 +101,10 @@ expect_contains "${default_render}" "name: SPRITZ_PROVISIONER_DEFAULT_TTL" "defa
 expect_contains "${default_render}" "name: SPRITZ_TERMINAL_ACTIVITY_DEBOUNCE" "terminal activity debounce wiring"
 expect_contains "${default_render}" "name: SPRITZ_UI_BRANDING" "UI branding env wiring"
 expect_contains "${default_render}" 'resources: ["configmaps"]' "configmap RBAC for idempotency reservations"
+expect_contains "${default_render}" "name: SPRITZ_ROUTE_INSTANCE_PATH_PREFIX" "instance path route model env wiring"
+expect_contains "${gateway_render}" "kind: Gateway" "gateway resource in gateway-api mode"
+expect_contains "${gateway_render}" "kind: HTTPRoute" "http route in gateway-api mode"
+expect_contains "${gateway_render}" "value: /i" "instance path route model env wiring in gateway mode"
 
 expect_failure \
   "api.auth.mode must be header or auto when authGateway.enabled=true" \
@@ -103,6 +113,10 @@ expect_failure \
 expect_failure \
   "global.ingress.className must be nginx when authGateway.enabled=true" \
   helm template spritz "${chart_dir}" -f "${example_values}" --set global.ingress.className=traefik
+
+expect_failure \
+  "authGateway.enabled is not supported when global.routing.mode=gateway-api because the generic chart only implements oauth2-proxy external auth for ingress mode" \
+  helm template spritz "${chart_dir}" -f "${example_values}" --set global.routing.mode=gateway-api --set global.routing.gateway.className=example-gateway
 
 expect_failure \
   "operator.homePVC has been removed; use operator.homeSizeLimit and sharedMounts instead" \
