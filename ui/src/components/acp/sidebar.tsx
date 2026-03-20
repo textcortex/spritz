@@ -4,16 +4,8 @@ import {
   PlusIcon,
   PencilIcon,
   LayoutGridIcon,
-  Trash2Icon,
-  EllipsisIcon,
   ChevronRightIcon,
 } from 'lucide-react';
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from '@/components/ui/dropdown-menu';
 import { cn, timeAgo } from '@/lib/utils';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import type { ConversationInfo } from '@/types/acp';
@@ -38,7 +30,6 @@ interface SidebarProps {
   onSelectConversation: (conversation: ConversationInfo) => void;
   onNewConversation: (spritzName: string) => void;
   creatingConversationFor?: string | null;
-  onDeleteConversation: (conversationId: string) => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
   mobileOpen: boolean;
@@ -51,7 +42,6 @@ export function Sidebar({
   onSelectConversation,
   onNewConversation,
   creatingConversationFor,
-  onDeleteConversation,
   collapsed,
   onToggleCollapse,
   mobileOpen,
@@ -164,7 +154,6 @@ export function Sidebar({
               onSelectConversation={(conv) => { onSelectConversation(conv); close(); }}
               onNewConversation={onNewConversation}
               creatingConversationFor={creatingConversationFor}
-              onDeleteConversation={onDeleteConversation}
             />
           ))}
         </div>
@@ -206,14 +195,12 @@ function AgentSection({
   onSelectConversation,
   onNewConversation,
   creatingConversationFor,
-  onDeleteConversation,
 }: {
   group: AgentGroup;
   selectedConversationId: string | null;
   onSelectConversation: (conversation: ConversationInfo) => void;
   onNewConversation: (spritzName: string) => void;
   creatingConversationFor?: string | null;
-  onDeleteConversation: (conversationId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const name = group.spritz.metadata.name;
@@ -275,7 +262,7 @@ function AgentSection({
               const title = conv.spec?.title || 'New conversation';
               const activity = conv.status?.lastActivityAt;
               return (
-                <div key={id} className="group/conv relative flex items-center">
+                <div key={id} className="group/conv flex items-center">
                   <button
                     type="button"
                     aria-current={isActive ? 'true' : undefined}
@@ -294,26 +281,6 @@ function AgentSection({
                       </span>
                     )}
                   </button>
-                  <div className="absolute right-1 top-0 flex h-full items-center">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        aria-label={`Actions for ${title}`}
-                        className="flex size-6 shrink-0 items-center justify-center rounded-md bg-transparent text-foreground/40 opacity-0 transition-opacity hover:text-foreground group-hover/conv:opacity-100 data-[popup-open]:opacity-100"
-                      >
-                        <EllipsisIcon aria-hidden="true" className="size-4" />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent side="bottom" align="start">
-                        <DropdownMenuItem
-                          variant="destructive"
-                          className={"text-xs"}
-                          onClick={() => onDeleteConversation(id)}
-                        >
-                          <Trash2Icon className="size-3.5" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
                 </div>
               );
             })}

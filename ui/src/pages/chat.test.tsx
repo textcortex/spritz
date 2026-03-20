@@ -46,12 +46,10 @@ vi.mock('@/components/acp/sidebar', () => ({
     agents,
     selectedConversationId,
     onSelectConversation,
-    onDeleteConversation,
   }: {
     agents: Array<{ spritz: { metadata: { name: string } }; conversations: Array<{ metadata: { name: string }; spec?: { title?: string } }> }>;
     selectedConversationId: string | null;
     onSelectConversation: (conversation: { metadata: { name: string } }) => void;
-    onDeleteConversation: (conversationId: string) => void;
   }) => (
     <div>
       {agents.flatMap((group) =>
@@ -59,9 +57,6 @@ vi.mock('@/components/acp/sidebar', () => ({
           <div key={conversation.metadata.name}>
             <button type="button" onClick={() => onSelectConversation(conversation)}>
               {conversation.spec?.title || conversation.metadata.name}
-            </button>
-            <button type="button" onClick={() => onDeleteConversation(conversation.metadata.name)}>
-              Delete {conversation.metadata.name}
             </button>
           </div>
         )),
@@ -130,12 +125,6 @@ function setupRequestMock() {
     }
     if (path === '/acp/conversations?spritz=covo') {
       return Promise.resolve({ items: CONVERSATIONS });
-    }
-    if (path === '/acp/conversations/conv-1' && options?.method === 'DELETE') {
-      return Promise.resolve({});
-    }
-    if (path === '/acp/conversations/conv-2' && options?.method === 'DELETE') {
-      return Promise.resolve({});
     }
     return Promise.resolve({});
   });
@@ -264,21 +253,5 @@ describe('ChatPage draft persistence', () => {
 
     await waitFor(() => expect(localStorage.getItem('spritz:chat-drafts') || '').toContain('retry me later'));
     expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).value).toBe('');
-  });
-
-  it('clears the stored draft when deleting a conversation', async () => {
-    const user = userEvent.setup();
-    await renderChat('/chat/covo/conv-1');
-
-    await user.type(screen.getByLabelText('Message input'), 'delete me');
-    await waitFor(() => expect(localStorage.getItem('spritz:chat-drafts') || '').toContain('delete me'));
-
-    await user.click(screen.getByRole('button', { name: 'Delete conv-1' }));
-    await user.click(screen.getByRole('button', { name: 'Delete' }));
-
-    await waitFor(() =>
-      expect(requestMock).toHaveBeenCalledWith('/acp/conversations/conv-1', { method: 'DELETE' }),
-    );
-    expect(localStorage.getItem('spritz:chat-drafts')).toBeNull();
   });
 });

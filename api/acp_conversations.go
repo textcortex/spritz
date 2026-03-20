@@ -177,27 +177,6 @@ func (s *server) updateACPConversation(c echo.Context) error {
 	return writeJSON(c, http.StatusOK, conversation)
 }
 
-func (s *server) deleteACPConversation(c echo.Context) error {
-	if !s.acp.enabled {
-		return writeError(c, http.StatusNotFound, "acp disabled")
-	}
-	principal, ok := principalFromContext(c)
-	if s.auth.enabled() && (!ok || principal.ID == "") {
-		return writeError(c, http.StatusUnauthorized, "unauthenticated")
-	}
-	if err := authorizeHumanOnly(principal, s.auth.enabled()); err != nil {
-		return writeForbidden(c)
-	}
-	conversation, err := s.getAuthorizedConversation(c.Request().Context(), principal, s.requestNamespace(c), c.Param("id"))
-	if err != nil {
-		return s.writeACPConversationError(c, err)
-	}
-	if err := s.client.Delete(c.Request().Context(), conversation); err != nil {
-		return writeError(c, http.StatusInternalServerError, err.Error())
-	}
-	return c.NoContent(http.StatusNoContent)
-}
-
 func decodeACPBody(c echo.Context, target any) error {
 	if c.Request().Body == nil || c.Request().ContentLength == 0 {
 		return nil

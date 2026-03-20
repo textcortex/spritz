@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { MenuIcon, RotateCwIcon, ExternalLinkIcon } from 'lucide-react';
-import { AlertDialog } from '@base-ui/react/alert-dialog';
 import { request } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useConfig } from '@/lib/config';
@@ -47,7 +46,6 @@ export function ChatPage() {
   const [permissionQueue, setPermissionQueue] = useState<PermissionEntry[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [creatingConversationFor, setCreatingConversationFor] = useState<string | null>(null);
   const [composerText, setComposerText] = useState('');
 
@@ -507,47 +505,6 @@ export function ChatPage() {
     setPermissionQueue((prev) => prev.slice(1));
   }, []);
 
-  const handleDeleteConversation = useCallback(
-    (conversationId: string) => {
-      setPendingDeleteId(conversationId);
-    },
-    [],
-  );
-
-  const confirmDeleteConversation = useCallback(async () => {
-    const conversationId = pendingDeleteId;
-    if (!conversationId) return;
-    setPendingDeleteId(null);
-    try {
-      await request(`/acp/conversations/${encodeURIComponent(conversationId)}`, {
-        method: 'DELETE',
-      });
-      evictCachedTranscript(conversationId);
-      const deletedConversation = agents
-        .flatMap((group) => group.conversations)
-        .find((conversation) => conversation.metadata.name === conversationId);
-      const deletedSpritzName = deletedConversation?.spec?.spritzName || '';
-      if (deletedSpritzName) {
-        clearChatDraft(deletedSpritzName, conversationId);
-      }
-      setAgents((prev) =>
-        prev.map((group) => ({
-          ...group,
-          conversations: group.conversations.filter(
-            (c) => c.metadata.name !== conversationId,
-          ),
-        })),
-      );
-      if (selectedConversation?.metadata?.name === conversationId) {
-        setSelectedConversation(null);
-        navigate('/', { replace: true });
-      }
-      toast.info('Conversation deleted.');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to delete conversation.');
-    }
-  }, [pendingDeleteId, selectedConversation, navigate, agents]);
-
   if (loading) {
     return (
       <div className="grid h-dvh grid-cols-[1fr] md:grid-cols-[260px_minmax(0,1fr)] overflow-hidden">
@@ -584,7 +541,6 @@ export function ChatPage() {
           onSelectConversation={handleSelectConversation}
           onNewConversation={handleNewConversation}
           creatingConversationFor={creatingConversationFor}
-          onDeleteConversation={handleDeleteConversation}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
         mobileOpen={mobileMenuOpen}
@@ -747,34 +703,6 @@ export function ChatPage() {
         )}
       </div>
 
-      {/* Delete conversation confirmation */}
-      <AlertDialog.Root open={!!pendingDeleteId} onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}>
-        <AlertDialog.Portal>
-          <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-black/30" />
-          <AlertDialog.Popup className="fixed left-1/2 top-1/2 z-50 w-[90vw] max-w-[360px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-[#e5e5e5] bg-white p-6 shadow-xl dark:border-border dark:bg-popover">
-            <AlertDialog.Title className="text-[15px] font-medium">
-              Delete conversation?
-            </AlertDialog.Title>
-            <AlertDialog.Description className="mt-2 text-sm text-muted-foreground">
-              This will permanently delete this conversation and its history. This action cannot be undone.
-            </AlertDialog.Description>
-            <div className="mt-5 flex justify-end gap-2">
-              <AlertDialog.Close
-                className="rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2 text-[13px] font-medium transition-colors hover:bg-[#f5f5f5] dark:border-border dark:bg-muted dark:hover:bg-muted/80"
-              >
-                Cancel
-              </AlertDialog.Close>
-              <button
-                type="button"
-                className="rounded-lg bg-red-600 px-3.5 py-2 text-[13px] font-medium text-white transition-colors hover:bg-red-700"
-                onClick={confirmDeleteConversation}
-              >
-                Delete
-              </button>
-            </div>
-          </AlertDialog.Popup>
-        </AlertDialog.Portal>
-      </AlertDialog.Root>
     </div>
   );
 }
