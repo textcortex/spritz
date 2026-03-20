@@ -405,7 +405,7 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 				FailureThreshold:    3,
 			}
 		}
-		podSpec.SecurityContext = buildPodSecurityContext(sharedMountsSettings.enabled, len(repoInitContainers) > 0)
+		podSpec.SecurityContext = buildPodSecurityContext(len(sharedMountRuntime.volumeMounts) > 0, len(repoInitContainers) > 0)
 		initContainers := []corev1.Container{}
 		if sharedMountRuntime.initContainer != nil {
 			initContainers = append(initContainers, *sharedMountRuntime.initContainer)

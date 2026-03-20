@@ -22,14 +22,7 @@ interface CreateFormProps {
   onCreated?: () => void;
 }
 
-const USER_CONFIG_PLACEHOLDER = `sharedMounts:
-  - name: config
-    mountPath: /home/dev/.config
-    scope: owner
-    mode: snapshot
-    syncMode: poll
-    pollSeconds: 30
-ttl: 8h`;
+const USER_CONFIG_PLACEHOLDER = `ttl: 8h`;
 
 export function CreateForm({ onCreated }: CreateFormProps) {
   const config = useConfig();
@@ -320,7 +313,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
               className="font-mono text-sm"
             />
             <p className="text-xs text-muted-foreground">
-              Provide shared mounts, ttl, repo, env, or resources. JSON is also accepted.
+              Provide ttl, repo, env, or resources. JSON is also accepted.
             </p>
           </div>
             </div>

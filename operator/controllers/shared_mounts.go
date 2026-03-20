@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -49,6 +50,7 @@ func loadSharedMountsSettings() (sharedMountsSettings, error) {
 	if tokenSecretKey == "" {
 		tokenSecretKey = "token"
 	}
+	apiURL = normalizeSharedMountsAPIURL(apiURL, spritzv1.SharedHostRouteModelFromEnv().APIPathPrefix)
 	syncerImage := strings.TrimSpace(os.Getenv("SPRITZ_SHARED_MOUNTS_SYNCER_IMAGE"))
 	enabled := apiURL != "" || tokenSecretName != "" || syncerImage != "" || len(mounts) > 0
 	if !enabled {
@@ -77,6 +79,28 @@ func loadSharedMountsSettings() (sharedMountsSettings, error) {
 		syncerImage:           syncerImage,
 		syncerImagePullPolicy: pullPolicy,
 	}, nil
+}
+
+func normalizeSharedMountsAPIURL(rawURL, apiPathPrefix string) string {
+	trimmedURL := strings.TrimSpace(rawURL)
+	if trimmedURL == "" {
+		return ""
+	}
+	trimmedPrefix := strings.TrimSpace(apiPathPrefix)
+	if trimmedPrefix == "" || trimmedPrefix == "/" {
+		return trimmedURL
+	}
+	parsed, err := url.Parse(trimmedURL)
+	if err != nil {
+		return trimmedURL
+	}
+	switch strings.TrimRight(parsed.Path, "/") {
+	case "", "/":
+		parsed.Path = trimmedPrefix
+	default:
+		return trimmedURL
+	}
+	return parsed.String()
 }
 
 func validateSharedMountSpecs(mounts []sharedmounts.MountSpec) error {
