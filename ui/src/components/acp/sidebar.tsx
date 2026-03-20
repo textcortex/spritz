@@ -7,6 +7,7 @@ import {
   ChevronRightIcon,
 } from 'lucide-react';
 import { cn, timeAgo } from '@/lib/utils';
+import { BrandHeader } from '@/components/brand-header';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import type { ConversationInfo } from '@/types/acp';
 import type { Spritz } from '@/types/spritz';
@@ -52,7 +53,8 @@ export function Sidebar({
   /* ── Collapsed desktop sidebar ── */
   function renderCollapsed() {
     return (
-      <aside aria-label="Sidebar" className="flex h-full min-h-0 flex-col items-center gap-1 overflow-hidden bg-[#f9f9f9] p-3 dark:bg-sidebar">
+      <aside aria-label="Sidebar" className="flex h-full min-h-0 flex-col items-center gap-3 overflow-hidden border-r border-sidebar-border bg-sidebar p-3">
+        <BrandHeader compact />
         <Tooltip>
           <TooltipTrigger
             render={
@@ -60,7 +62,7 @@ export function Sidebar({
                 type="button"
                 aria-label="Expand sidebar"
                 onClick={onToggleCollapse}
-                className="flex size-9 items-center justify-center rounded-lg text-foreground/70 transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50"
+                className="flex size-9 items-center justify-center rounded-[var(--radius-lg)] text-foreground/70 transition-colors hover:bg-sidebar-accent"
               />
             }
           >
@@ -75,7 +77,7 @@ export function Sidebar({
                 type="button"
                 aria-label="New chat"
                 disabled={!firstAgentName || creatingConversationFor === firstAgentName}
-                className="flex size-9 items-center justify-center rounded-lg text-foreground/70 transition-colors hover:bg-[#ececec] disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-muted/50"
+                className="flex size-9 items-center justify-center rounded-[var(--radius-lg)] text-foreground/70 transition-colors hover:bg-sidebar-accent disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => { if (firstAgentName && creatingConversationFor !== firstAgentName) onNewConversation(firstAgentName); }}
               />
             }
@@ -93,22 +95,22 @@ export function Sidebar({
     const close = closeMobile ?? (() => {});
 
     return (
-      <aside aria-label="Sidebar" className="flex h-full min-h-0 flex-col gap-4 overflow-hidden bg-[#f9f9f9] p-3 dark:bg-sidebar">
+      <aside aria-label="Sidebar" className="flex h-full min-h-0 flex-col gap-4 overflow-hidden border-r border-sidebar-border bg-sidebar p-3">
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between">
-          <span className="text-[15px] font-semibold tracking-tight">Spritz</span>
+          <BrandHeader />
           {/* Hide collapse toggle on mobile — only show on desktop */}
           <Tooltip>
             <TooltipTrigger
               render={
                 <button
-                  type="button"
-                  aria-label="Collapse sidebar"
-                  onClick={onToggleCollapse}
-                  className="hidden size-8 items-center justify-center rounded-lg text-foreground/60 transition-colors hover:bg-[#ececec] md:flex dark:hover:bg-muted/50"
-                />
-              }
-            >
+                type="button"
+                aria-label="Collapse sidebar"
+                onClick={onToggleCollapse}
+                className="hidden size-8 items-center justify-center rounded-[var(--radius-lg)] text-foreground/60 transition-colors hover:bg-sidebar-accent md:flex"
+              />
+            }
+          >
               <SidebarToggleIcon collapsed={false} />
             </TooltipTrigger>
             <TooltipContent side="right">Collapse sidebar</TooltipContent>
@@ -120,7 +122,7 @@ export function Sidebar({
           <button
             type="button"
             disabled={!firstAgentName || creatingConversationFor === firstAgentName}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[14px] text-foreground/80 transition-colors hover:bg-[#ececec] disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-muted/50"
+            className="flex w-full items-center gap-3 rounded-[var(--radius-lg)] px-3 py-2 text-[14px] text-foreground/80 transition-colors hover:bg-sidebar-accent disabled:cursor-not-allowed disabled:opacity-50"
             onClick={() => {
               if (firstAgentName && creatingConversationFor !== firstAgentName) onNewConversation(firstAgentName);
               close();
@@ -132,10 +134,10 @@ export function Sidebar({
           <Link
             to="/create"
             onClick={close}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[14px] text-foreground/80 no-underline transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50"
+            className="flex w-full items-center gap-3 rounded-[var(--radius-lg)] px-3 py-2 text-[14px] text-foreground/80 no-underline transition-colors hover:bg-sidebar-accent"
           >
             <LayoutGridIcon aria-hidden="true" className="size-[18px] shrink-0" />
-            <span>Spritzes</span>
+            <span>Instances</span>
           </Link>
         </nav>
 
@@ -214,7 +216,7 @@ function AgentSection({
           type="button"
           aria-expanded={expanded}
           aria-label={`${name} conversations`}
-          className="flex flex-1 items-center gap-2 rounded-lg px-3 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50"
+          className="flex flex-1 items-center gap-2 rounded-[var(--radius-lg)] px-3 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent"
           onClick={() => setExpanded(!expanded)}
         >
           <ChevronRightIcon
@@ -233,7 +235,7 @@ function AgentSection({
                 type="button"
                 aria-label={`New conversation for ${name}`}
                 disabled={creatingForThisAgent}
-                className="flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex size-6 items-center justify-center rounded-[var(--radius-md)] text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => { if (!creatingForThisAgent) onNewConversation(name); }}
               />
             }
@@ -267,9 +269,9 @@ function AgentSection({
                     type="button"
                     aria-current={isActive ? 'true' : undefined}
                     className={cn(
-                      'flex w-full items-center gap-2 rounded-lg px-8 py-1.5 text-left text-[13px] transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50',
+                      'flex w-full items-center gap-2 rounded-[var(--radius-lg)] px-8 py-1.5 text-left text-[13px] transition-colors hover:bg-sidebar-accent',
                       isActive
-                        ? 'bg-[#ececec] dark:bg-muted'
+                        ? 'bg-sidebar-accent'
                         : 'bg-transparent',
                     )}
                     onClick={() => onSelectConversation(conv)}

@@ -73,11 +73,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     : true;
 
   return (
-    <div className="shrink-0 bg-white dark:bg-background">
+    <div className="shrink-0 bg-background">
       <div className="mx-auto flex w-[90%] max-w-[880px] flex-col gap-2.5 px-0 py-3 sm:py-4">
         {/* Composer input */}
         <div
-          className="mx-3 flex cursor-text flex-col rounded-[28px] border border-[#e5e5e5] bg-white shadow-[0_2px_8px_rgba(99,99,99,0.09)] focus-within:border-[#cccccc] sm:mx-0"
+          className="mx-3 flex cursor-text flex-col rounded-[var(--radius-2xl)] border border-border bg-background shadow-[0_2px_8px_rgba(15,23,42,0.08)] focus-within:border-primary sm:mx-0"
           onClick={(e) => {
             if ((e.target as HTMLElement).closest('button')) return;
             textareaRef.current?.focus();
@@ -92,16 +92,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             placeholder={promptInFlight ? 'Waiting for response\u2026' : 'Message the agent\u2026'}
             disabled={disabled || promptInFlight}
             rows={1}
-            className="block w-full min-h-[24px] max-h-[180px] resize-none border-none bg-transparent rounded-t-[28px] px-5 pt-4 pb-1 font-inherit text-sm leading-[1.55] outline-none placeholder:text-[#999] focus:outline-none focus:ring-0 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] overflow-y-auto"
+            className="block w-full min-h-[24px] max-h-[180px] resize-none rounded-t-[var(--radius-2xl)] border-none bg-transparent px-5 pt-4 pb-1 font-inherit text-sm leading-[1.55] outline-none placeholder:text-muted-foreground focus:outline-none focus:ring-0 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] overflow-y-auto"
           />
-          <div className="relative z-[1] -mt-4 flex items-center justify-end gap-2 rounded-b-[28px] bg-[linear-gradient(to_bottom,transparent,white_60%)] px-3 pb-3">
+          <div className="relative z-[1] -mt-4 flex items-center justify-end gap-2 rounded-b-[var(--radius-2xl)] bg-[linear-gradient(to_bottom,transparent,var(--background)_60%)] px-3 pb-3">
             <Tooltip>
               <TooltipTrigger
                 render={
                   <button
                     type="button"
                     aria-label={promptInFlight ? 'Stop response' : 'Send message'}
-                    className="flex size-9 items-center justify-center rounded-full border-none bg-black p-0 text-white transition-opacity will-change-[opacity] hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="flex size-9 items-center justify-center rounded-[var(--radius-lg)] border-none bg-primary p-0 text-primary-foreground transition-opacity will-change-[opacity] hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-40"
                     onClick={promptInFlight ? onCancel : handleSubmit}
                     disabled={!promptInFlight && (disabled || !value.trim())}
                   >
@@ -141,7 +141,7 @@ function GridLoader() {
       {Array.from({ length: 9 }).map((_, i) => (
         <span
           key={i}
-          className="rounded-[1px] bg-[#d4d4d4]"
+          className="rounded-[1px] bg-muted"
           style={{
             animation: `grid-pulse 1.2s ease-in-out infinite ${[0, 0.1, 0.2, 0.7, 0.8, 0.3, 0.6, 0.5, 0.4][i]}s`,
             willChange: 'background-color',

@@ -11,6 +11,7 @@ window.SPRITZ_CONFIG = {
   launch: {
     queryParams: '__SPRITZ_UI_LAUNCH_QUERY_PARAMS__',
   },
+  branding: __SPRITZ_UI_BRANDING__,
   auth: {
     mode: '__SPRITZ_UI_AUTH_MODE__',
     tokenStorage: '__SPRITZ_UI_AUTH_TOKEN_STORAGE__',

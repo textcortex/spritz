@@ -76,6 +76,8 @@ spec:
               value: {{ .Values.ui.repoDefaults.hideInputs | quote }}
             - name: SPRITZ_UI_LAUNCH_QUERY_PARAMS
               value: {{ .Values.ui.launch.queryParams | toJson | quote }}
+            - name: SPRITZ_UI_BRANDING
+              value: {{ .Values.ui.branding | toJson | quote }}
             {{- if .Values.ui.assetVersion }}
             - name: SPRITZ_UI_ASSET_VERSION
               value: {{ .Values.ui.assetVersion | quote }}

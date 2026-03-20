@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { ConfigProvider, config } from '@/lib/config';
+import { BrandingEffects } from '@/components/branding-effects';
 import { NoticeProvider } from '@/components/notice-banner';
 import { Layout } from '@/components/layout';
 import { ChatPage } from '@/pages/chat';
@@ -37,6 +38,7 @@ export function App() {
   return (
     <BrowserRouter>
       <ConfigProvider value={config}>
+        <BrandingEffects />
         <NoticeProvider>
           <HashRedirect />
           <Routes>

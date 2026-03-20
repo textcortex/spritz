@@ -70,29 +70,29 @@ function ThoughtStep({ chunk }: { chunk: ThinkingChunk }) {
   return (
     <div className="flex items-start gap-2.5 relative pb-1.5" style={{ paddingLeft: 0 }}>
       {/* dot */}
-      <div className="w-[7px] h-[7px] rounded-full bg-[#60a5fa] shrink-0 mt-[5px] relative z-[1]" />
+      <div className="relative z-[1] mt-[5px] h-[7px] w-[7px] shrink-0 rounded-full bg-primary" />
       <div className="flex-1 min-w-0">
         {isLong && !showFull ? (
           <div>
             <span
-              className="text-xs text-[#666] leading-1 cursor-pointer"
+              className="cursor-pointer text-xs leading-1 text-muted-foreground"
               onClick={() => setShowFull(true)}
             >
               {excerpt(text, 120)}
-              <span className="text-[#999] text-[11px] ml-0.5"> ...more</span>
+              <span className="ml-0.5 text-[11px] text-muted-foreground/80"> ...more</span>
             </span>
           </div>
         ) : isLong ? (
           <div>
             <span
-              className="text-xs text-[#555] leading-[1.5] whitespace-pre-wrap break-words cursor-pointer"
+              className="cursor-pointer whitespace-pre-wrap break-words text-xs leading-[1.5] text-foreground/80"
               onClick={() => setShowFull(false)}
             >
               {text}
             </span>
           </div>
         ) : (
-          <span className="text-xs text-[#666] leading-[1.4]">{text}</span>
+          <span className="text-xs leading-[1.4] text-muted-foreground">{text}</span>
         )}
       </div>
     </div>
@@ -111,17 +111,16 @@ function SearchStep({ items }: { items: ThinkingChunk[] }) {
 
   return (
     <div className="flex items-start gap-2.5 relative pb-1.5">
-      <div className="w-[7px] h-[7px] rounded-full bg-[#a3a3a3] shrink-0 mt-[5px] relative z-[1]" />
+      <div className="relative z-[1] mt-[5px] h-[7px] w-[7px] shrink-0 rounded-full bg-muted-foreground" />
       <div className="flex flex-1 flex-col gap-1.5 min-w-0">
-        <span className="block text-xs text-[#999]">Searching</span>
+        <span className="block text-xs text-muted-foreground">Searching</span>
         <div className="flex flex-wrap gap-1.5">
           {pills.map((text, i) => (
             <span
               key={i}
-              className="inline-flex items-center gap-1 py-0.5 px-2 pl-1.5 rounded-full text-[11px] text-[#525252] leading-[1.3] max-w-[280px] overflow-hidden text-ellipsis whitespace-nowrap"
-              style={{ background: 'rgba(0,0,0,0.05)' }}
+              className="inline-flex max-w-[280px] items-center gap-1 overflow-hidden rounded-[var(--radius-2xl)] bg-muted px-2 py-0.5 pl-1.5 text-[11px] leading-[1.3] text-foreground/80 text-ellipsis whitespace-nowrap"
             >
-              <span className="shrink-0 text-[#999] inline-flex"><SearchIcon /></span>
+              <span className="inline-flex shrink-0 text-muted-foreground"><SearchIcon /></span>
               <span>{text}</span>
             </span>
           ))}
@@ -140,18 +139,18 @@ function FetchStep({ items }: { items: ThinkingChunk[] }) {
 
   return (
     <div className="flex items-start gap-2.5 relative pb-1.5">
-      <div className="w-[7px] h-[7px] rounded-full bg-[#a3a3a3] shrink-0 mt-[5px] relative z-[1]" />
+      <div className="relative z-[1] mt-[5px] h-[7px] w-[7px] shrink-0 rounded-full bg-muted-foreground" />
       <div className="flex flex-1 flex-col gap-1.5 min-w-0">
-        <span className="block text-xs text-[#999]">Reviewing sources</span>
+        <span className="block text-xs text-muted-foreground">Reviewing sources</span>
         <div
-          className="flex flex-col rounded-lg overflow-hidden"
-          style={{ background: 'rgba(0,0,0,0.02)', border: '1px solid rgba(0,0,0,0.06)' }}
+          className="flex flex-col overflow-hidden rounded-[var(--radius-lg)]"
+          style={{ background: 'color-mix(in srgb, var(--muted) 40%, transparent)', border: '1px solid color-mix(in srgb, var(--border) 80%, transparent)' }}
         >
           {sources.map((src, i) => (
             <div
               key={i}
               className="flex items-center gap-2 px-3 py-2"
-              style={{ borderBottom: i < sources.length - 1 ? '1px solid rgba(0,0,0,0.06)' : 'none' }}
+              style={{ borderBottom: i < sources.length - 1 ? '1px solid color-mix(in srgb, var(--border) 80%, transparent)' : 'none' }}
             >
               <img
                 src={`https://www.google.com/s2/favicons?domain=${src.domain}&sz=32`}
@@ -164,11 +163,11 @@ function FetchStep({ items }: { items: ThinkingChunk[] }) {
                 href={src.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex-1 text-xs text-[#333] no-underline hover:underline whitespace-nowrap overflow-hidden text-ellipsis"
+                className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-xs text-foreground no-underline hover:underline"
               >
                 {src.url}
               </a>
-              <span className="shrink-0 text-[11px] text-[#999]">{src.domain}</span>
+              <span className="shrink-0 text-[11px] text-muted-foreground">{src.domain}</span>
             </div>
           ))}
         </div>
@@ -200,11 +199,11 @@ function GenericToolStep({ chunk }: { chunk: ThinkingChunk }) {
       <div className={`w-[7px] h-[7px] rounded-full ${dotColor} shrink-0 mt-[5px] relative z-[1]`} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="inline-flex text-[#999] shrink-0"><ToolIcon /></span>
-          <span className="text-xs text-[#999]">{name}</span>
+          <span className="inline-flex shrink-0 text-muted-foreground"><ToolIcon /></span>
+          <span className="text-xs text-muted-foreground">{name}</span>
           {chunk.status && chunk.status !== 'pending' && (
             <span
-              className="inline-block text-[10px] py-[1px] px-1.5 rounded-full capitalize"
+              className="inline-block rounded-[var(--radius-2xl)] px-1.5 py-[1px] text-[10px] capitalize"
               style={statusBadgeStyle}
             >
               {chunk.status.replace(/_/g, ' ')}
@@ -217,7 +216,7 @@ function GenericToolStep({ chunk }: { chunk: ThinkingChunk }) {
               type="button"
               aria-expanded={detailsOpen}
               onClick={() => setDetailsOpen(!detailsOpen)}
-              className="border-none bg-transparent p-0 text-[11px] text-[#999] cursor-pointer select-none w-fit"
+              className="w-fit cursor-pointer select-none border-none bg-transparent p-0 text-[11px] text-muted-foreground"
             >
               <span aria-hidden="true">{detailsOpen ? '▾' : '▸'}</span> Details
             </button>
@@ -225,16 +224,16 @@ function GenericToolStep({ chunk }: { chunk: ThinkingChunk }) {
               <div className="flex flex-col gap-1.5">
                 {chunk.input && (
                   <div className="flex flex-col gap-0.5">
-                    <div className="text-[10px] font-semibold text-[#999] uppercase tracking-[0.5px]">Input</div>
-                    <pre className="m-0 max-h-[200px] overflow-auto rounded-md p-2 text-[11px]" style={{ background: 'rgba(0,0,0,0.03)' }}>
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-muted-foreground">Input</div>
+                    <pre className="m-0 max-h-[200px] overflow-auto rounded-[var(--radius-md)] bg-muted/60 p-2 text-[11px]">
                       {chunk.input}
                     </pre>
                   </div>
                 )}
                 {chunk.result && (
                   <div className="flex flex-col gap-0.5">
-                    <div className="text-[10px] font-semibold text-[#999] uppercase tracking-[0.5px]">Result</div>
-                    <pre className="m-0 max-h-[200px] overflow-auto rounded-md p-2 text-[11px]" style={{ background: 'rgba(0,0,0,0.03)' }}>
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-muted-foreground">Result</div>
+                    <pre className="m-0 max-h-[200px] overflow-auto rounded-[var(--radius-md)] bg-muted/60 p-2 text-[11px]">
                       {chunk.result}
                     </pre>
                   </div>
@@ -251,9 +250,9 @@ function GenericToolStep({ chunk }: { chunk: ThinkingChunk }) {
 function FinishedStep() {
   return (
     <div className="flex items-start gap-2.5 relative pb-0">
-      <div className="w-[7px] h-[7px] rounded-full bg-[#525252] shrink-0 mt-[5px] relative z-[1]" />
+      <div className="relative z-[1] mt-[5px] h-[7px] w-[7px] shrink-0 rounded-full bg-foreground/70" />
       <div className="flex-1 min-w-0">
-        <span className="text-[13px] text-[#525252] font-medium leading-[1.4]">Finished</span>
+        <span className="text-[13px] font-medium leading-[1.4] text-foreground/80">Finished</span>
       </div>
     </div>
   );
@@ -374,14 +373,14 @@ export function ThinkingBlock({ chunks, active, elapsedSeconds }: ThinkingBlockP
       {/* Header button */}
       <button
         type="button"
-        className="inline-flex items-center gap-2 py-1 px-0 border-none bg-transparent cursor-pointer text-[13px] font-medium leading-none hover:text-[#333]"
-        style={{ color: isDone ? '#999' : '#666', fontFamily: 'inherit' }}
+        className="inline-flex cursor-pointer items-center gap-2 border-none bg-transparent px-0 py-1 text-[13px] font-medium leading-none text-muted-foreground hover:text-foreground"
+        style={{ color: isDone ? 'var(--muted-foreground)' : 'var(--muted-foreground)', fontFamily: 'inherit' }}
         onClick={() => setExpanded(!expanded)}
         aria-expanded={expanded}
       >
         {/* Morph SVG icon — hidden when done */}
         {!isDone && (
-          <span className="inline-flex items-center justify-center shrink-0 text-[#999]">
+          <span className="inline-flex shrink-0 items-center justify-center text-muted-foreground">
             {MORPH_SVG}
           </span>
         )}
@@ -407,7 +406,7 @@ export function ThinkingBlock({ chunks, active, elapsedSeconds }: ThinkingBlockP
 
         {/* Chevron */}
         <span
-          className="inline-flex items-center justify-center shrink-0 text-[#999] transition-transform duration-200 will-change-transform"
+          className="inline-flex shrink-0 items-center justify-center text-muted-foreground transition-transform duration-200 will-change-transform"
           style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
         >
           <ChevronIcon />
@@ -424,7 +423,7 @@ export function ThinkingBlock({ chunks, active, elapsedSeconds }: ThinkingBlockP
           <div className="relative pl-3 pt-1.5 pb-0.5">
             {/* Vertical line */}
             <div
-              className="absolute top-1.5 bottom-0.5 w-px bg-[#e0e0e0]"
+              className="absolute top-1.5 bottom-0.5 w-px bg-border"
               style={{ left: 15 /* 12px padding + 3px to center on 7px dot */ }}
             />
             {timeline.map((group, i) => {

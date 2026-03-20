@@ -25,7 +25,7 @@ function BlockRenderer({ block, streaming }: { block: ACPBlock; streaming?: bool
     return (
       <ol className="m-0 flex list-decimal flex-col gap-1 pl-5 text-sm">
         {(block.entries || []).map((entry, i) => (
-          <li key={i} className={entry.done ? 'text-[#999] line-through' : ''}>
+          <li key={i} className={entry.done ? 'text-muted-foreground line-through' : ''}>
             {entry.done && <span className="sr-only">(completed) </span>}
             {entry.text}
           </li>
@@ -60,7 +60,7 @@ function BlockRenderer({ block, streaming }: { block: ACPBlock; streaming?: bool
         {(block.items || []).map((item, i) => (
           <span
             key={i}
-            className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] bg-[rgba(0,0,0,0.05)] text-[#525252]"
+            className="inline-flex items-center rounded-[var(--radius-2xl)] bg-muted px-2.5 py-0.5 text-[11px] text-foreground/80"
             title={item.title || undefined}
           >
             {item.label || item.name || ''}
@@ -92,7 +92,7 @@ function DetailsBlock({ title, text, defaultOpen }: { title: string; text: strin
         {title}
       </button>
       {open && (
-        <pre className="m-0 max-h-[300px] overflow-auto rounded-md bg-[rgba(0,0,0,0.03)] p-2 text-xs leading-[1.55] font-[SFMono-Regular,JetBrains_Mono,Menlo,monospace]">
+        <pre className="m-0 max-h-[300px] overflow-auto rounded-[var(--radius-md)] bg-muted/60 p-2 text-xs leading-[1.55] font-[SFMono-Regular,JetBrains_Mono,Menlo,monospace]">
           {text}
         </pre>
       )}
@@ -112,7 +112,7 @@ function StatusPill({ status, tone }: { status: string; tone?: string }) {
         : 'bg-[rgba(55,130,255,0.12)] text-[#1c3f8a]';
 
   return (
-    <span className={cn('inline-flex items-center rounded-full px-2 py-1 text-[11px] capitalize', colors)}>
+    <span className={cn('inline-flex items-center rounded-[var(--radius-2xl)] px-2 py-1 text-[11px] capitalize', colors)}>
       {status.replace(/_/g, ' ')}
     </span>
   );
@@ -223,7 +223,7 @@ function MessageActions({ text, align = 'left' }: { text: string; align?: 'left'
             <button
               type="button"
               aria-label={copied ? 'Message copied' : 'Copy message'}
-              className="inline-flex size-8 items-center justify-center rounded-full text-[#6b6b6b] transition-colors duration-150 hover:bg-[#f3f3f1] hover:text-[#222] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black"
+              className="inline-flex size-8 items-center justify-center rounded-[var(--radius-md)] text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
               onClick={() => {
                 handleCopy().catch(() => {});
               }}
@@ -262,7 +262,7 @@ function UserBubble({ message }: { message: ACPMessage }) {
 
   return (
     <article aria-label="Your message" className="group/message flex max-w-[min(820px,86%)] flex-col gap-2 self-end">
-      <div className="rounded-[20px] rounded-br-[6px] border border-transparent bg-black px-4 py-2 text-white">
+      <div className="rounded-[var(--radius-2xl)] rounded-br-[var(--radius-sm)] border border-transparent bg-primary px-4 py-2 text-primary-foreground">
         {message.blocks.map((block, i) => (
           <BlockRenderer key={i} block={block} />
         ))}
@@ -288,7 +288,7 @@ function AssistantMessage({ message }: { message: ACPMessage }) {
           ))}
         </div>
         {message.streaming && (
-          <span role="status" aria-label="Generating response" className="mt-1 inline-block size-1.5 animate-pulse will-change-[opacity] rounded-full bg-black" />
+          <span role="status" aria-label="Generating response" className="mt-1 inline-block size-1.5 animate-pulse rounded-full bg-primary will-change-[opacity]" />
         )}
       </div>
       {copyText && <MessageActions text={copyText} />}
@@ -304,7 +304,7 @@ function EventCard({ message }: { message: ACPMessage }) {
   const label = message.title || (message.role === 'tool' ? 'Tool result' : message.role === 'plan' ? 'Plan' : 'System update');
   return (
     <article aria-label={label} className="flex flex-col gap-2 self-start max-w-[min(820px,86%)]">
-      <div className="flex flex-col gap-1.5 rounded-[20px] border border-[#f0f0f0] bg-[#fafafa] px-4 py-3 text-[13px]">
+      <div className="flex flex-col gap-1.5 rounded-[var(--radius-xl)] border border-border bg-surface-subtle px-4 py-3 text-[13px]">
         {/* Header: title + status pill */}
         {(message.title || message.status) && (
           <div className="flex items-center justify-between gap-3">
@@ -328,7 +328,7 @@ function EventCard({ message }: { message: ACPMessage }) {
           ))}
         </div>
         {message.streaming && (
-          <span role="status" aria-label="Processing" className="mt-2 inline-block size-1.5 animate-pulse will-change-[opacity] rounded-full bg-[#3782ff]" />
+          <span role="status" aria-label="Processing" className="mt-2 inline-block size-1.5 animate-pulse rounded-full bg-primary will-change-[opacity]" />
         )}
       </div>
     </article>

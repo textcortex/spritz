@@ -1,5 +1,13 @@
 import { createContext, useContext } from 'react';
 
+type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends Array<infer U>
+    ? Array<DeepPartial<U>>
+    : T[K] extends object
+      ? DeepPartial<T[K]>
+      : T[K];
+};
+
 export interface AuthRefreshConfig {
   enabled: string;
   url: string;
@@ -34,6 +42,32 @@ export interface LaunchConfig {
   queryParams: string;
 }
 
+export interface BrandingThemeConfig {
+  background: string;
+  foreground: string;
+  muted: string;
+  mutedForeground: string;
+  primary: string;
+  primaryForeground: string;
+  border: string;
+  destructive: string;
+  radius: string;
+}
+
+export interface BrandingTerminalConfig {
+  background: string;
+  foreground: string;
+  cursor: string;
+}
+
+export interface BrandingConfig {
+  productName: string;
+  logoUrl: string;
+  faviconUrl: string;
+  theme: BrandingThemeConfig;
+  terminal: BrandingTerminalConfig;
+}
+
 export interface Preset {
   name: string;
   image: string;
@@ -50,17 +84,19 @@ export interface SpritzConfig {
   presets: Preset[] | string;
   repoDefaults: RepoDefaults;
   launch: LaunchConfig;
+  branding: BrandingConfig;
   auth: AuthConfig;
 }
 
+export type RawSpritzConfig = DeepPartial<SpritzConfig>;
+
 declare global {
   interface Window {
-    SPRITZ_CONFIG?: Partial<SpritzConfig>;
+    SPRITZ_CONFIG?: RawSpritzConfig;
   }
 }
 
-function loadConfig(): SpritzConfig {
-  const raw = window.SPRITZ_CONFIG || {};
+export function resolveConfig(raw: RawSpritzConfig = {}): SpritzConfig {
   return {
     apiBaseUrl: raw.apiBaseUrl || '',
     ownerId: raw.ownerId || '',
@@ -75,6 +111,30 @@ function loadConfig(): SpritzConfig {
     launch: {
       queryParams: '',
       ...(raw.launch || {}),
+    },
+    branding: {
+      productName: '',
+      logoUrl: '',
+      faviconUrl: '',
+      ...(raw.branding || {}),
+      theme: {
+        background: '',
+        foreground: '',
+        muted: '',
+        mutedForeground: '',
+        primary: '',
+        primaryForeground: '',
+        border: '',
+        destructive: '',
+        radius: '',
+        ...(raw.branding?.theme || {}),
+      },
+      terminal: {
+        background: '',
+        foreground: '',
+        cursor: '',
+        ...(raw.branding?.terminal || {}),
+      },
     },
     auth: {
       mode: '',
@@ -99,6 +159,10 @@ function loadConfig(): SpritzConfig {
       },
     },
   };
+}
+
+function loadConfig(): SpritzConfig {
+  return resolveConfig(window.SPRITZ_CONFIG || {});
 }
 
 const config = loadConfig();

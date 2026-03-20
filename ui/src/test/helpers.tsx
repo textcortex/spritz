@@ -1,45 +1,19 @@
 import { type ReactElement } from 'react';
 import { render } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { ConfigProvider, type SpritzConfig } from '@/lib/config';
+import { ConfigProvider, type RawSpritzConfig, type SpritzConfig, resolveConfig } from '@/lib/config';
 import { NoticeProvider } from '@/components/notice-banner';
 
-const DEFAULT_TEST_CONFIG: SpritzConfig = {
-  apiBaseUrl: '',
-  ownerId: '',
-  presets: [],
-  repoDefaults: { url: '', dir: '', branch: '', hideInputs: '' },
-  launch: { queryParams: '' },
-  auth: {
-    mode: '',
-    tokenStorage: 'localStorage',
-    tokenStorageKeys: '',
-    bearerTokenParam: 'token',
-    loginUrl: '',
-    returnToMode: 'auto',
-    returnToParam: '',
-    redirectOnUnauthorized: 'true',
-    refresh: {
-      enabled: 'false',
-      url: '',
-      method: 'POST',
-      credentials: 'include',
-      tokenStorageKeys: '',
-      timeoutMs: '5000',
-      cooldownMs: '30000',
-      headers: '',
-    },
-  },
-};
+const DEFAULT_TEST_CONFIG: SpritzConfig = resolveConfig();
 
 export function renderWithProviders(
   ui: ReactElement,
   options?: {
-    config?: Partial<SpritzConfig>;
+    config?: RawSpritzConfig;
     initialEntries?: string[];
   },
 ) {
-  const config = { ...DEFAULT_TEST_CONFIG, ...options?.config };
+  const config = resolveConfig({ ...DEFAULT_TEST_CONFIG, ...options?.config });
   return render(
     <MemoryRouter initialEntries={options?.initialEntries || ['/']}>
       <ConfigProvider value={config}>

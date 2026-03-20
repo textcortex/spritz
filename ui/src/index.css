@@ -6,38 +6,55 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
+    --brand-background: oklch(1 0 0);
+    --brand-foreground: oklch(0.145 0 0);
+    --brand-muted: oklch(0.97 0 0);
+    --brand-muted-foreground: oklch(0.556 0 0);
+    --brand-primary: oklch(0.205 0 0);
+    --brand-primary-foreground: oklch(0.985 0 0);
+    --brand-border: oklch(0.922 0 0);
+    --brand-destructive: oklch(0.577 0.245 27.325);
+    --brand-radius: 0.625rem;
+    --background: var(--brand-background);
+    --foreground: var(--brand-foreground);
+    --card: var(--brand-background);
+    --card-foreground: var(--brand-foreground);
+    --popover: var(--brand-background);
+    --popover-foreground: var(--brand-foreground);
+    --primary: var(--brand-primary);
+    --primary-foreground: var(--brand-primary-foreground);
+    --secondary: var(--brand-muted);
+    --secondary-foreground: var(--brand-foreground);
+    --muted: var(--brand-muted);
+    --muted-foreground: var(--brand-muted-foreground);
+    --accent: var(--brand-muted);
+    --accent-foreground: var(--brand-foreground);
+    --destructive: var(--brand-destructive);
+    --border: var(--brand-border);
+    --input: var(--brand-border);
+    --ring: var(--brand-primary);
     --chart-1: oklch(0.809 0.105 251.813);
     --chart-2: oklch(0.623 0.214 259.815);
     --chart-3: oklch(0.546 0.245 262.881);
     --chart-4: oklch(0.488 0.243 264.376);
     --chart-5: oklch(0.424 0.199 265.638);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --radius: var(--brand-radius);
+    --sidebar: var(--brand-muted);
+    --sidebar-foreground: var(--brand-foreground);
+    --sidebar-primary: var(--brand-primary);
+    --sidebar-primary-foreground: var(--brand-primary-foreground);
+    --sidebar-accent: var(--brand-background);
+    --sidebar-accent-foreground: var(--brand-foreground);
+    --sidebar-border: var(--brand-border);
+    --sidebar-ring: var(--brand-primary);
+    --surface: var(--brand-background);
+    --surface-muted: color-mix(in srgb, var(--brand-muted) 70%, var(--brand-background) 30%);
+    --surface-subtle: color-mix(in srgb, var(--brand-background) 92%, var(--brand-border) 8%);
+    --surface-emphasis: color-mix(in srgb, var(--brand-primary) 10%, var(--brand-background) 90%);
+    --terminal-shell-background: #000000;
+    --terminal-shell-foreground: #f0f0f0;
+    --terminal-shell-cursor: #f0f0f0;
+    --terminal-shell-border: color-mix(in srgb, var(--terminal-shell-foreground) 16%, transparent);
 }
 
 .dark {
@@ -119,6 +136,10 @@
     --color-border-light: oklch(from var(--border) l c h / 0.6);
 
     --color-scrollbar: var(--muted-foreground);
+    --color-surface: var(--surface);
+    --color-surface-muted: var(--surface-muted);
+    --color-surface-subtle: var(--surface-subtle);
+    --color-surface-emphasis: var(--surface-emphasis);
 }
 
 @layer base {
@@ -184,8 +205,8 @@
 
 /* Grid pulse animation for 3x3 dot loader */
 @keyframes grid-pulse {
-  0%, 60%, 100% { background: #d4d4d4; }
-  20% { background: #000000; }
+  0%, 60%, 100% { background: var(--muted); }
+  20% { background: var(--primary); }
 }
 
 @keyframes copy-action-copy-out {

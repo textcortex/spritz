@@ -185,7 +185,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
       showNotice('', 'info');
       onCreated?.();
     } catch (err: unknown) {
-      showNotice(err instanceof Error ? err.message : 'Failed to create Spritz.');
+      showNotice(err instanceof Error ? err.message : 'Failed to create instance.');
     } finally {
       setSubmitting(false);
     }
@@ -328,13 +328,13 @@ export function CreateForm({ onCreated }: CreateFormProps) {
         </div>
       </div>
 
-      <Button type="submit" disabled={submitting} aria-busy={submitting} className="w-fit rounded-full h-11 cursor-pointer px-4">
+      <Button type="submit" disabled={submitting} aria-busy={submitting} className="h-11 w-fit cursor-pointer px-4">
         {submitting ? (
           'Creating…'
         ) : (
           <>
             <PlusIcon aria-hidden="true" className="size-4" />
-            Create Spritz
+            Create instance
           </>
         )}
       </Button>
