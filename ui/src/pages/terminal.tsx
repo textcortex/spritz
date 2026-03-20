@@ -1,25 +1,163 @@
+import { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
+import { useConfig } from '@/lib/config';
+import { getAuthToken, authBearerTokenParam } from '@/lib/api';
+import { chatPath } from '@/lib/urls';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { ArrowLeftIcon } from 'lucide-react';
+
+type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
+
+function buildTerminalWsUrl(apiBaseUrl: string, name: string): string {
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsHost = window.location.host;
+  const apiBase = apiBaseUrl || '';
+  const token = getAuthToken();
+  const params = new URLSearchParams();
+  if (token) params.set(authBearerTokenParam, token);
+  const qs = params.toString();
+  return `${wsProtocol}//${wsHost}${apiBase}/spritzes/${encodeURIComponent(name)}/terminal${qs ? `?${qs}` : ''}`;
+}
 
 export function TerminalPage() {
   const { name } = useParams<{ name: string }>();
+  const config = useConfig();
+  const terminalRef = useRef<HTMLDivElement>(null);
+  const xtermRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [status, setStatus] = useState<ConnectionStatus>('connecting');
+
+  useEffect(() => {
+    if (!name || !terminalRef.current) return;
+
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: 14,
+      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      theme: {
+        background: '#000000',
+        foreground: '#f0f0f0',
+      },
+    });
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(terminalRef.current);
+    fitAddon.fit();
+    xtermRef.current = term;
+    fitAddonRef.current = fitAddon;
+
+    function connect() {
+      setStatus('connecting');
+      const ws = new WebSocket(buildTerminalWsUrl(config.apiBaseUrl, name!));
+      ws.binaryType = 'arraybuffer';
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setStatus('connected');
+        const dims = fitAddon.proposeDimensions();
+        const cols = dims?.cols ?? 80;
+        const rows = dims?.rows ?? 24;
+        ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+      };
+
+      ws.onmessage = (event) => {
+        if (event.data instanceof ArrayBuffer) {
+          term.write(new Uint8Array(event.data));
+        } else {
+          term.write(event.data);
+        }
+      };
+
+      ws.onclose = () => {
+        setStatus('disconnected');
+        term.write('\r\n\x1b[33m--- Connection closed. Reconnecting in 3s... ---\x1b[0m\r\n');
+        reconnectTimerRef.current = setTimeout(connect, 3000);
+      };
+
+      ws.onerror = () => {
+        setStatus('error');
+      };
+    }
+
+    connect();
+
+    const inputDisposable = term.onData((data) => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(data);
+      }
+    });
+
+    const binaryDisposable = term.onBinary((data) => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        const buffer = new Uint8Array(data.length);
+        for (let i = 0; i < data.length; i++) buffer[i] = data.charCodeAt(i);
+        wsRef.current.send(buffer);
+      }
+    });
+
+    const resizeDisposable = term.onResize(({ cols, rows }) => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'resize', cols, rows }));
+      }
+    });
+
+    const handleWindowResize = () => fitAddon.fit();
+    window.addEventListener('resize', handleWindowResize);
+
+    return () => {
+      inputDisposable.dispose();
+      binaryDisposable.dispose();
+      resizeDisposable.dispose();
+      window.removeEventListener('resize', handleWindowResize);
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      wsRef.current?.close();
+      term.dispose();
+      xtermRef.current = null;
+      fitAddonRef.current = null;
+      wsRef.current = null;
+    };
+  }, [name, config.apiBaseUrl]);
+
+  if (!name) {
+    return (
+      <div className="flex items-center justify-center p-6">
+        <p className="text-muted-foreground">No instance specified.</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6">
-      <div className="flex flex-col gap-1">
-        <h2 className="text-2xl font-bold">Terminal</h2>
-        <p className="text-muted-foreground">
-          Connected to: <code className="rounded bg-muted px-1.5 py-0.5 text-sm">{name}</code>
-        </p>
+    <div className="flex h-full flex-col bg-black">
+      <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-2">
+        <div className="flex items-center gap-3">
+          <Link to={chatPath(name)}>
+            <Button variant="outline" size="sm" className="gap-1.5">
+              <ArrowLeftIcon className="size-3.5" />
+              Back
+            </Button>
+          </Link>
+          <code className="text-sm text-zinc-400">{name}</code>
+        </div>
+        <div className="flex items-center gap-2">
+          <span
+            className={cn(
+              'inline-block size-2 rounded-full',
+              status === 'connected' && 'bg-green-500',
+              status === 'connecting' && 'animate-pulse bg-yellow-500',
+              status === 'disconnected' && 'bg-zinc-500',
+              status === 'error' && 'bg-red-500',
+            )}
+          />
+          <span className="text-xs capitalize text-zinc-400">{status}</span>
+        </div>
       </div>
-      <div className="rounded-lg border bg-card p-6 text-card-foreground">
-        <p className="text-sm text-muted-foreground">Terminal will be implemented in Phase 5.</p>
-      </div>
-      <div>
-        <Link to="/">
-          <Button variant="outline">Back to Chat</Button>
-        </Link>
-      </div>
+      <div ref={terminalRef} className="flex-1 overflow-hidden p-1" />
     </div>
   );
 }
