@@ -22,7 +22,7 @@ This document is the source of truth for the ACP chat route, list actions, and i
 
 The bad UX we need to eliminate is:
 
-- a user opens `#chat/<instance>` while that instance is still provisioning
+- a user opens `/c/<instance>` while that instance is still provisioning
 - the UI cannot find an ACP-ready agent for that instance yet
 - instead of staying anchored to the requested instance, it falls back to a previously ready agent or stale chat state
 - the user sees the wrong transcript or a misleading empty chat
@@ -37,8 +37,8 @@ An instance route must never silently switch to a different instance just becaus
 
 For chat routes, the URL is the identity anchor.
 
-- `#chat/<instance>` means: show the chat surface for that instance
-- `#chat/<instance>/<conversation>` means: show that exact conversation for that instance
+- `/c/<instance>` means: show the chat surface for that instance
+- `/c/<instance>/<conversation>` means: show that exact conversation for that instance
 
 If the instance is not ready, the route still remains valid. The UI should show the instance state, not redirect elsewhere.
 
@@ -177,8 +177,7 @@ Behavior by state:
 - `provisioning`: label `Starting…`
 - `failed`: label `Chat status`
 
-Clicking any of these should route to `#chat/<instance>`.
-
+Clicking any of these should route to `/c/<instance>`.
 The route itself is responsible for rendering the correct state shell.
 
 ### Terminal action
@@ -345,7 +344,7 @@ Add tests for:
 
 A correct implementation should satisfy all of the following:
 
-- opening `#chat/<instance>` for a provisioning instance shows a loading shell for that instance
+- opening `/c/<instance>` for a provisioning instance shows a loading shell for that instance
 - the route does not redirect to a different ready agent
 - the previous transcript is not shown while the new instance is still starting
 - once ACP becomes ready, the same route turns into a usable chat screen

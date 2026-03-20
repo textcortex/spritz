@@ -146,8 +146,8 @@ async function renderChat(route: string) {
       <ConfigProvider value={config}>
         <NoticeProvider>
           <Routes>
-            <Route path="/chat/:name/:conversationId" element={<ChatPage />} />
-            <Route path="/chat/:name" element={<ChatPage />} />
+            <Route path="/c/:name/:conversationId" element={<ChatPage />} />
+            <Route path="/c/:name" element={<ChatPage />} />
             <Route path="/" element={<ChatPage />} />
           </Routes>
         </NoticeProvider>
@@ -175,11 +175,11 @@ describe('ChatPage draft persistence', () => {
   it('restores the draft after remounting the same conversation route', async () => {
     const user = userEvent.setup();
     const firstRender = render(
-      <MemoryRouter initialEntries={['/chat/covo/conv-1']}>
+      <MemoryRouter initialEntries={['/c/covo/conv-1']}>
         <ConfigProvider value={config}>
           <NoticeProvider>
             <Routes>
-              <Route path="/chat/:name/:conversationId" element={<ChatPage />} />
+              <Route path="/c/:name/:conversationId" element={<ChatPage />} />
             </Routes>
           </NoticeProvider>
         </ConfigProvider>
@@ -194,18 +194,18 @@ describe('ChatPage draft persistence', () => {
 
     firstRender.unmount();
 
-    await renderChat('/chat/covo/conv-1');
+    await renderChat('/c/covo/conv-1');
     expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).value).toBe('unsent draft');
   });
 
   it('keeps drafts isolated between conversations', async () => {
     const user = userEvent.setup();
     const firstRender = render(
-      <MemoryRouter initialEntries={['/chat/covo/conv-1']}>
+      <MemoryRouter initialEntries={['/c/covo/conv-1']}>
         <ConfigProvider value={config}>
           <NoticeProvider>
             <Routes>
-              <Route path="/chat/:name/:conversationId" element={<ChatPage />} />
+              <Route path="/c/:name/:conversationId" element={<ChatPage />} />
             </Routes>
           </NoticeProvider>
         </ConfigProvider>
@@ -217,13 +217,13 @@ describe('ChatPage draft persistence', () => {
     await user.type(screen.getByLabelText('Message input'), 'conversation one draft');
     firstRender.unmount();
 
-    await renderChat('/chat/covo/conv-2');
+    await renderChat('/c/covo/conv-2');
     expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).value).toBe('');
   });
 
   it('clears the visible and stored draft after a successful send', async () => {
     const user = userEvent.setup();
-    await renderChat('/chat/covo/conv-1');
+    await renderChat('/c/covo/conv-1');
 
     await user.type(screen.getByLabelText('Message input'), 'send me');
     await waitFor(() => expect((screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement).disabled).toBe(false));
@@ -239,7 +239,7 @@ describe('ChatPage draft persistence', () => {
     const deferred = createDeferred<unknown>();
     sendPromptMock.mockReturnValueOnce(deferred.promise);
 
-    await renderChat('/chat/covo/conv-1');
+    await renderChat('/c/covo/conv-1');
 
     await user.type(screen.getByLabelText('Message input'), 'retry me later');
     await user.click(screen.getByRole('button', { name: 'Send message' }));

@@ -10,11 +10,11 @@ func TestInstanceURLIngressAddsTrailingSlash(t *testing.T) {
 	spritz := &spritzv1.Spritz{}
 	spritz.Spec.Ingress = &spritzv1.SpritzIngress{
 		Host: "console.example.com",
-		Path: "/instances/i/tidy-fjord",
+		Path: "/i/tidy-fjord",
 	}
 
 	got := spritzv1.InstanceURLForSpritz(spritz)
-	want := "https://console.example.com/instances/i/tidy-fjord/"
+	want := "https://console.example.com/i/tidy-fjord/"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -38,11 +38,11 @@ func TestInstanceURLIngressKeepsExistingTrailingSlash(t *testing.T) {
 	spritz := &spritzv1.Spritz{}
 	spritz.Spec.Ingress = &spritzv1.SpritzIngress{
 		Host: "console.example.com",
-		Path: "/instances/i/tidy-fjord/",
+		Path: "/i/tidy-fjord/",
 	}
 
 	got := spritzv1.InstanceURLForSpritz(spritz)
-	want := "https://console.example.com/instances/i/tidy-fjord/"
+	want := "https://console.example.com/i/tidy-fjord/"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -53,11 +53,11 @@ func TestSpritzURLPrefersChatURLWhenInstanceIsWebAccessible(t *testing.T) {
 	spritz.Name = "tidy-fjord"
 	spritz.Spec.Ingress = &spritzv1.SpritzIngress{
 		Host: "console.example.com",
-		Path: "/instances/i/tidy-fjord",
+		Path: "/i/tidy-fjord",
 	}
 
 	got := spritzURL(spritz)
-	want := "https://console.example.com/#chat/tidy-fjord"
+	want := "https://console.example.com/c/tidy-fjord"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}

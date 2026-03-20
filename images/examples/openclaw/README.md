@@ -86,7 +86,7 @@ entrypoint automatically:
 - rewrites the upstream gateway `connect` handshake to the Control UI operator profile without a
   device identity, so the adapter does not trigger device pairing
 
-This keeps `/w/{name}` tokenless for browser users while allowing the internal ACP adapter to
+This keeps `/i/{name}` tokenless for browser users while allowing the internal ACP adapter to
 authenticate cleanly without using pod-IP workarounds.
 
 ## Generic Config Support

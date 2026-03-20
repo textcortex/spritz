@@ -12,7 +12,7 @@ This document is the single source of truth for OpenClaw-related behavior in thi
 ## Scope
 
 Spritz supports running OpenClaw as a per-devbox application surface.
-Each devbox runs its own OpenClaw process and is opened through its own `/w/{name}` route.
+Each devbox runs its own OpenClaw process and is opened through its own `/i/{name}` route.
 When OpenClaw is used as an ACP backend inside Spritz, it should also expose ACP on
 the reserved internal port `2529`.
 
@@ -53,7 +53,7 @@ The OpenClaw example entrypoint does the following:
    upstream gateway `connect` handshake into a Control UI operator session without device identity.
 9. Auto-starts OpenClaw when command is default (`sleep infinity`), unless `OPENCLAW_AUTO_START=false`.
 
-Key implication: direct `/w/{name}` access with `bind=lan` expects real gateway auth.
+Key implication: direct `/i/{name}` access with `bind=lan` expects real gateway auth.
 
 ## ACP contract in Spritz
 
@@ -106,7 +106,7 @@ Required OpenClaw config:
 
 Required platform behavior:
 
-- All `/w/{name}` traffic must pass through an auth proxy.
+- All `/i/{name}` traffic must pass through an auth proxy.
 - Proxy must authenticate users and overwrite identity headers.
 - No bypass path to the instance service.
 

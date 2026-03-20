@@ -49,7 +49,7 @@ Example:
 Responsibilities:
 
 - identifies the chat thread in Spritz
-- appears in the URL as `#chat/<spritz>/<conversation>`
+- appears in the URL as `/c/<spritz>/<conversation>`
 - keys browser-local transcript cache
 - owns thread metadata such as title, owner, instance, and cwd
 
@@ -132,7 +132,7 @@ It must not be required for correctness.
 
 The correct restore flow is:
 
-1. User opens `#chat/<spritz>/<conversation>`
+1. User opens `/c/<spritz>/<conversation>`
 2. Spritz loads `SpritzConversation`
 3. Spritz API bootstraps the selected conversation
 4. Spritz API reads `spec.sessionId`
