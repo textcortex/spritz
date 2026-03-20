@@ -14,7 +14,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
-import { cn } from '@/lib/utils';
+import { cn, timeAgo } from '@/lib/utils';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import type { ConversationInfo } from '@/types/acp';
 import type { Spritz } from '@/types/spritz';
@@ -60,7 +60,7 @@ export function Sidebar({
   /* ── Collapsed desktop sidebar ── */
   function renderCollapsed() {
     return (
-      <aside aria-label="Sidebar" className="flex h-full min-h-0 flex-col items-center gap-1 overflow-hidden bg-[#f9f9f9] py-3 dark:bg-sidebar">
+      <aside aria-label="Sidebar" className="flex h-full min-h-0 flex-col items-center gap-1 overflow-hidden bg-[#f9f9f9] p-3 dark:bg-sidebar">
         <Tooltip>
           <TooltipTrigger
             render={
@@ -100,9 +100,9 @@ export function Sidebar({
     const close = closeMobile ?? (() => {});
 
     return (
-      <aside aria-label="Sidebar" className="flex h-full min-h-0 flex-col overflow-hidden bg-[#f9f9f9] dark:bg-sidebar">
+      <aside aria-label="Sidebar" className="flex h-full min-h-0 flex-col gap-4 overflow-hidden bg-[#f9f9f9] p-3 dark:bg-sidebar">
         {/* Header */}
-        <div className="flex shrink-0 items-center justify-between px-3 pt-3 pb-1">
+        <div className="flex shrink-0 items-center justify-between">
           <span className="text-[15px] font-semibold tracking-tight">Spritz</span>
           {/* Hide collapse toggle on mobile — only show on desktop */}
           <Tooltip>
@@ -123,7 +123,7 @@ export function Sidebar({
         </div>
 
         {/* Nav items */}
-        <nav aria-label="Sidebar navigation" className="flex flex-col gap-0.5 px-2 pt-2">
+        <nav aria-label="Sidebar navigation" className="flex shrink-0 flex-col gap-0.5">
           <button
             type="button"
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[14px] text-foreground/80 transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50"
@@ -146,9 +146,9 @@ export function Sidebar({
         </nav>
 
         {/* Conversation list */}
-        <div role="list" aria-label="Conversations" className="mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-3">
+        <div role="list" aria-label="Conversations" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
           {agents.length === 0 && (
-            <div className="px-3 py-6 text-center text-xs text-muted-foreground">
+            <div className="p-6 text-center text-xs text-muted-foreground">
               No ACP-ready instances found.
             </div>
           )}
@@ -212,9 +212,9 @@ function AgentSection({
   const name = group.spritz.metadata.name;
 
   return (
-    <div role="listitem" className="flex flex-col">
+    <div role="listitem" className="flex flex-col gap-0.5">
       {/* Agent header */}
-      <div className="group flex items-center pr-1">
+      <div className="group flex items-center gap-1">
         <button
           type="button"
           aria-expanded={expanded}
@@ -256,7 +256,7 @@ function AgentSection({
         <div className="overflow-hidden min-h-0">
           <div className="flex flex-col gap-0.5">
             {group.conversations.length === 0 && (
-              <div className="px-3 py-2 text-xs text-muted-foreground">
+              <div className="p-3 text-xs text-muted-foreground">
                 No conversations
               </div>
             )}
@@ -264,26 +264,32 @@ function AgentSection({
               const id = conv.metadata.name;
               const isActive = id === selectedConversationId;
               const title = conv.spec?.title || 'New conversation';
+              const activity = conv.status?.lastActivityAt;
               return (
-                <div key={id} className="group/conv relative">
+                <div key={id} className="group/conv relative flex items-center">
                   <button
                     type="button"
                     aria-current={isActive ? 'true' : undefined}
                     className={cn(
-                      'block w-full cursor-pointer rounded-lg px-3 py-2 text-left text-[14px] transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50',
+                      'flex w-full items-center gap-2 rounded-lg px-8 py-1.5 text-left text-[13px] transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50',
                       isActive
                         ? 'bg-[#ececec] dark:bg-muted'
                         : 'bg-transparent',
                     )}
                     onClick={() => onSelectConversation(conv)}
                   >
-                    <span className="block truncate pr-6">{title}</span>
+                    <span className="min-w-0 flex-1 truncate">{title}</span>
+                    {activity && (
+                      <span className="shrink-0 text-[11px] text-muted-foreground">
+                        {timeAgo(activity)}
+                      </span>
+                    )}
                   </button>
                   <div className="absolute right-1 top-0 flex h-full items-center">
                     <DropdownMenu>
                       <DropdownMenuTrigger
                         aria-label={`Actions for ${title}`}
-                        className="flex size-7 shrink-0 items-center justify-center rounded-md bg-transparent text-foreground/40 opacity-0 transition-opacity hover:text-foreground group-hover/conv:opacity-100 data-[popup-open]:opacity-100"
+                        className="flex size-6 shrink-0 items-center justify-center rounded-md bg-transparent text-foreground/40 opacity-0 transition-opacity hover:text-foreground group-hover/conv:opacity-100 data-[popup-open]:opacity-100"
                       >
                         <EllipsisIcon aria-hidden="true" className="size-4" />
                       </DropdownMenuTrigger>

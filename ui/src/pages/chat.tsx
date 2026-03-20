@@ -535,7 +535,7 @@ export function ChatPage() {
 
       <div className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-white dark:bg-background">
         {/* Header — matches original acp-main-header */}
-        <div className="shrink-0 border-b border-[#e5e5e5] bg-[#fafafa] px-5 py-3 dark:border-border dark:bg-muted/10">
+        <div className="shrink-0 bg-linear-to-b from-white to-transparent px-5 py-3">
           <div className="flex items-center justify-between gap-3">
             <button
               type="button"

@@ -66,9 +66,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   return (
     <div className="shrink-0 bg-white dark:bg-background">
-      <div className="mx-auto flex w-full max-w-[880px] flex-col gap-2.5 px-0 py-3 sm:py-4">
+      <div className="mx-auto flex w-[90%] max-w-[880px] flex-col gap-2.5 px-0 py-3 sm:py-4">
         {/* Composer input */}
-        <div className="mx-3 flex flex-col rounded-[28px] border border-[#e5e5e5] bg-white shadow-[0_2px_8px_rgba(99,99,99,0.19)] focus-within:border-[#cccccc] sm:mx-0">
+        <div
+          className="mx-3 flex cursor-text flex-col rounded-[28px] border border-[#e5e5e5] bg-white shadow-[0_2px_8px_rgba(99,99,99,0.09)] focus-within:border-[#cccccc] sm:mx-0"
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest('button')) return;
+            textareaRef.current?.focus();
+          }}
+        >
           <textarea
             ref={textareaRef}
             value={text}
@@ -80,7 +86,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             rows={1}
             className="block w-full min-h-[24px] max-h-[180px] resize-none border-none bg-transparent rounded-t-[28px] px-5 pt-4 pb-1 font-inherit text-sm leading-[1.55] outline-none placeholder:text-[#999] focus:outline-none focus:ring-0 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] overflow-y-auto"
           />
-          <div className="relative z-[1] -mt-4 flex items-center justify-end gap-2 rounded-b-[28px] bg-[linear-gradient(to_bottom,transparent,white_60%)] px-3 pb-3 pt-5">
+          <div className="relative z-[1] -mt-4 flex items-center justify-end gap-2 rounded-b-[28px] bg-[linear-gradient(to_bottom,transparent,white_60%)] px-3 pb-3">
             <Tooltip>
               <TooltipTrigger
                 render={

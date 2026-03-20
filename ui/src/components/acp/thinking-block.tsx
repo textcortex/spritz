@@ -217,7 +217,7 @@ function GenericToolStep({ chunk }: { chunk: ThinkingChunk }) {
               type="button"
               aria-expanded={detailsOpen}
               onClick={() => setDetailsOpen(!detailsOpen)}
-              className="border-none bg-transparent p-0 text-[11px] text-[#999] cursor-pointer select-none"
+              className="border-none bg-transparent p-0 text-[11px] text-[#999] cursor-pointer select-none w-fit"
             >
               <span aria-hidden="true">{detailsOpen ? '▾' : '▸'}</span> Details
             </button>
