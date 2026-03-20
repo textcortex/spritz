@@ -163,6 +163,31 @@ The gateway layer must:
 - set secure, HTTP-only, same-site cookies,
 - preserve host/proto headers required by upstream routing.
 
+### Shared-Host Gateway State Isolation
+
+If one browser host is protected by more than one auth gateway instance, those
+gateways must not share browser auth state accidentally.
+
+Examples:
+
+- `/` routed through one gateway instance,
+- `/api` routed through a second gateway instance,
+- `/w/*` or another instance-facing path routed through a third gateway
+  instance.
+
+For that topology:
+
+- each gateway instance should use a distinct cookie namespace,
+- each gateway instance should isolate CSRF and PKCE state per request,
+- or each gateway instance should use a distinct callback path if the chosen
+  gateway product models callback state at the path level,
+- background unauthenticated polling on one path must not be able to overwrite
+  the login state for another path.
+
+This matters because otherwise one gateway can start a fresh login flow that
+clobbers the callback verifier state needed by another gateway on the same host,
+which typically surfaces as redirect loops or PKCE verification failures.
+
 ## Route Design
 
 Recommended route structure:
@@ -208,6 +233,13 @@ For any OIDC provider, configure:
 - allowed callback paths in gateway config,
 - scopes (at minimum `openid`, plus `email`/`profile` if needed),
 - claim mapping for subject/email/groups.
+
+If a deployment uses more than one auth gateway instance on the same host, also
+configure:
+
+- distinct cookie names or cookie namespaces per gateway instance,
+- per-request CSRF/PKCE state isolation,
+- callback paths and cookie scopes that do not collide across instances.
 
 ## Optional Bearer/JWT Mode
 
@@ -261,4 +293,3 @@ In environment overlays (outside Spritz core):
 - provide a first-class "OIDC gateway profile" example manifest set in Spritz,
 - add an integration test profile for header-auth mode,
 - add explicit docs for non-browser service account auth patterns.
-

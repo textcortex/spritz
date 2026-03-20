@@ -57,6 +57,8 @@ front-end hosting, and backward-compatibility branches.
 - No cross-origin CORS/env drift for standard installs.
 - No edge-worker route forwarding required.
 - Easier debugging: one host, one ingress path map.
+- One auth gateway instance is enough for the default path, which avoids
+  cross-gateway cookie and PKCE state collisions on the same host.
 
 ## Required Operator Inputs
 
@@ -256,6 +258,16 @@ Advanced mode can support:
 
 These are explicitly optional and should be documented separately from the
 default install flow.
+
+If advanced mode puts multiple auth gateway instances on the same public host,
+the deployment must isolate their browser auth state. At minimum:
+
+- use a distinct cookie namespace per gateway instance,
+- isolate CSRF and PKCE state per request,
+- or use distinct callback paths that do not share verifier state.
+
+Do not rely on different upstream services alone. If the gateways still share
+the same browser host and callback state, one login flow can invalidate another.
 
 ## Backward Compatibility Policy
 
