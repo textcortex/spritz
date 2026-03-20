@@ -9,6 +9,8 @@ import { useConfig } from '@/lib/config';
 import { createACPClient } from '@/lib/acp-client';
 import { createTranscript, applySessionUpdate, finalizeStreaming, finalizeHistoricalThinking, getPreviewText, isTranscriptBearingUpdate } from '@/lib/acp-transcript';
 import { readCachedTranscript, writeCachedTranscript, evictCachedTranscript } from '@/lib/acp-cache';
+import { readChatDraft, writeChatDraft, clearChatDraft } from '@/lib/chat-draft';
+import { buildFallbackConversationTitle, hasDurableConversationTitle } from '@/lib/conversation-title';
 import { useNotice } from '@/components/notice-banner';
 import { Sidebar } from '@/components/acp/sidebar';
 import { ChatMessage } from '@/components/acp/message';
@@ -46,6 +48,8 @@ export function ChatPage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [creatingConversationFor, setCreatingConversationFor] = useState<string | null>(null);
+  const [composerText, setComposerText] = useState('');
 
   const clientRef = useRef<ACPClient | null>(null);
   const transcriptRef = useRef<ACPTranscript>(transcript);
@@ -59,6 +63,9 @@ export function ChatPage() {
 
   transcriptRef.current = transcript;
   selectedConversationRef.current = selectedConversation;
+
+  const selectedSpritzName = selectedConversation?.spec?.spritzName || name || '';
+  const selectedConversationId = selectedConversation?.metadata?.name || '';
 
   // Fetch agents and conversations
   const fetchAgents = useCallback(async () => {
@@ -354,6 +361,19 @@ export function ChatPage() {
     };
   }, [selectedConversation?.metadata?.name, config.apiBaseUrl]);
 
+  useEffect(() => {
+    if (!selectedSpritzName || !selectedConversationId) {
+      setComposerText('');
+      return;
+    }
+    setComposerText(readChatDraft(selectedSpritzName, selectedConversationId) || '');
+  }, [selectedSpritzName, selectedConversationId]);
+
+  useEffect(() => {
+    if (!selectedSpritzName || !selectedConversationId) return;
+    writeChatDraft(selectedSpritzName, selectedConversationId, composerText);
+  }, [selectedSpritzName, selectedConversationId, composerText]);
+
   // Auto-focus composer when conversation becomes ready or agent finishes responding
   useEffect(() => {
     if (clientReady && !promptInFlight) {
@@ -366,10 +386,34 @@ export function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transcript.messages.length]);
 
+  const applyConversationTitle = useCallback((conversationId: string, title?: string | null) => {
+    const normalized = String(title || '').trim();
+    if (!conversationId || !normalized) return;
+    setSelectedConversation((prev) =>
+      prev && prev.metadata.name === conversationId
+        ? { ...prev, spec: { ...prev.spec, title: normalized } }
+        : prev,
+    );
+    setAgents((prev) =>
+      prev.map((group) => ({
+        ...group,
+        conversations: group.conversations.map((conv) =>
+          conv.metadata.name === conversationId
+            ? { ...conv, spec: { ...conv.spec, title: normalized } }
+            : conv,
+        ),
+      })),
+    );
+  }, []);
+
   const handleSend = useCallback(
     async (text: string) => {
       const client = clientRef.current;
       if (!client || !client.isReady()) return;
+      const activeConversation = selectedConversationRef.current;
+      const activeConversationId = activeConversation?.metadata?.name || '';
+      const activeSpritzName = activeConversation?.spec?.spritzName || name || '';
+      const previousComposerText = composerText;
 
       // Optimistically add user message
       const t = transcriptRef.current;
@@ -382,41 +426,39 @@ export function ChatPage() {
 
       // Set title from first message if conversation has no real title
       const currentTitle = selectedConversationRef.current?.spec?.title || '';
-      if (!currentTitle || currentTitle === 'New conversation') {
-        const nextTitle = text.slice(0, 80);
+      if (!hasDurableConversationTitle(currentTitle)) {
+        const fallbackTitle = buildFallbackConversationTitle(text);
         const convId = selectedConversationRef.current?.metadata?.name || '';
-        const spritzN = selectedConversationRef.current?.spec?.spritzName || '';
-        setSelectedConversation((prev) =>
-          prev ? { ...prev, spec: { ...prev.spec, title: nextTitle } } : prev,
-        );
-        setAgents((prev) =>
-          prev.map((group) => ({
-            ...group,
-            conversations: group.conversations.map((conv) =>
-              conv.metadata.name === convId
-                ? { ...conv, spec: { ...conv.spec, title: nextTitle } }
-                : conv,
-            ),
-          })),
-        );
-        if (convId) {
-          request(`/acp/conversations/${encodeURIComponent(convId)}`, {
+        if (convId && fallbackTitle) {
+          applyConversationTitle(convId, fallbackTitle);
+          request<ConversationInfo>(`/acp/conversations/${encodeURIComponent(convId)}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title: nextTitle }),
-          }).catch(() => {});
+            body: JSON.stringify({ title: fallbackTitle }),
+          })
+            .catch(() => {});
         }
       }
 
+      if (activeConversationId && activeSpritzName) {
+        clearChatDraft(activeSpritzName, activeConversationId);
+      }
+      setComposerText('');
       setStatus('Waiting for agent\u2026');
       try {
         await client.sendPrompt(text);
         setStatus('Completed');
       } catch (err) {
+        if (activeConversationId && activeSpritzName) {
+          writeChatDraft(activeSpritzName, activeConversationId, previousComposerText);
+          if (selectedConversationRef.current?.metadata?.name === activeConversationId) {
+            setComposerText(previousComposerText);
+          }
+        }
         toast.error(err instanceof Error ? err.message : 'Failed to send message.');
       }
     },
-    [],
+    [applyConversationTitle, composerText, name],
   );
 
   const handleCancel = useCallback(() => {
@@ -434,23 +476,31 @@ export function ChatPage() {
 
   const handleNewConversation = useCallback(
     async (spritzName: string) => {
+      const normalizedSpritzName = String(spritzName || '').trim();
+      if (!normalizedSpritzName) return;
+      if (creatingConversationFor === normalizedSpritzName) {
+        return;
+      }
+      setCreatingConversationFor(normalizedSpritzName);
       try {
         const conv = await request<ConversationInfo>('/acp/conversations', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ spritzName }),
+          body: JSON.stringify({ spritzName: normalizedSpritzName }),
         });
         if (conv) {
           setSelectedConversation(conv);
-          navigate(`/chat/${encodeURIComponent(spritzName)}/${encodeURIComponent(conv.metadata.name)}`, { replace: true });
+          navigate(`/chat/${encodeURIComponent(normalizedSpritzName)}/${encodeURIComponent(conv.metadata.name)}`, { replace: true });
           // Refresh agent list
           fetchAgents();
         }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Failed to create conversation.');
+      } finally {
+        setCreatingConversationFor((current) => (current === normalizedSpritzName ? null : current));
       }
     },
-    [fetchAgents, navigate],
+    [creatingConversationFor, fetchAgents, navigate],
   );
 
   const handlePermissionRespond = useCallback(() => {
@@ -473,6 +523,13 @@ export function ChatPage() {
         method: 'DELETE',
       });
       evictCachedTranscript(conversationId);
+      const deletedConversation = agents
+        .flatMap((group) => group.conversations)
+        .find((conversation) => conversation.metadata.name === conversationId);
+      const deletedSpritzName = deletedConversation?.spec?.spritzName || '';
+      if (deletedSpritzName) {
+        clearChatDraft(deletedSpritzName, conversationId);
+      }
       setAgents((prev) =>
         prev.map((group) => ({
           ...group,
@@ -489,7 +546,7 @@ export function ChatPage() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to delete conversation.');
     }
-  }, [pendingDeleteId, selectedConversation, navigate]);
+  }, [pendingDeleteId, selectedConversation, navigate, agents]);
 
   if (loading) {
     return (
@@ -521,14 +578,15 @@ export function ChatPage() {
         sidebarCollapsed && 'md:grid-cols-[56px_minmax(0,1fr)]',
       )}
     >
-      <Sidebar
-        agents={agents}
-        selectedConversationId={selectedConversation?.metadata?.name || null}
-        onSelectConversation={handleSelectConversation}
-        onNewConversation={handleNewConversation}
-        onDeleteConversation={handleDeleteConversation}
-        collapsed={sidebarCollapsed}
-        onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+        <Sidebar
+          agents={agents}
+          selectedConversationId={selectedConversation?.metadata?.name || null}
+          onSelectConversation={handleSelectConversation}
+          onNewConversation={handleNewConversation}
+          creatingConversationFor={creatingConversationFor}
+          onDeleteConversation={handleDeleteConversation}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
       />
@@ -677,6 +735,8 @@ export function ChatPage() {
             )}
             <Composer
               ref={composerRef}
+              value={composerText}
+              onValueChange={setComposerText}
               onSend={handleSend}
               onCancel={handleCancel}
               disabled={!clientReady}
@@ -692,7 +752,7 @@ export function ChatPage() {
         <AlertDialog.Portal>
           <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-black/30" />
           <AlertDialog.Popup className="fixed left-1/2 top-1/2 z-50 w-[90vw] max-w-[360px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-[#e5e5e5] bg-white p-6 shadow-xl dark:border-border dark:bg-popover">
-            <AlertDialog.Title className="text-[15px] font-semibold">
+            <AlertDialog.Title className="text-[15px] font-medium">
               Delete conversation?
             </AlertDialog.Title>
             <AlertDialog.Description className="mt-2 text-sm text-muted-foreground">
@@ -718,4 +778,3 @@ export function ChatPage() {
     </div>
   );
 }
-

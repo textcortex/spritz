@@ -114,6 +114,11 @@
     --radius-2xl: calc(var(--radius) * 1.8);
     --radius-3xl: calc(var(--radius) * 2.2);
     --radius-4xl: calc(var(--radius) * 2.6);
+
+    --color-border-subtle: var(--border);
+    --color-border-light: oklch(from var(--border) l c h / 0.6);
+
+    --color-scrollbar: var(--muted-foreground);
 }
 
 @layer base {
@@ -312,7 +317,7 @@
 .prose hr {
   border: none;
   border-top: 1px solid var(--color-border-light);
-  margin: 2rem 0;
+  margin: 1rem 0;
 }
 
 .prose img {
