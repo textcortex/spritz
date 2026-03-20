@@ -90,3 +90,30 @@ func TestRegisterRoutesAppliesAuthToInstanceProxyPrefix(t *testing.T) {
 		t.Fatalf("expected /i/openclaw-tide-wind response to mention unauthenticated, got %q", rec.Body.String())
 	}
 }
+
+func TestRegisterRoutesUsesConfiguredAPIPrefix(t *testing.T) {
+	t.Setenv("SPRITZ_ROUTE_API_PATH_PREFIX", "/control-api")
+
+	s := &server{
+		auth:         authConfig{mode: authModeNone},
+		internalAuth: internalAuthConfig{enabled: false},
+		terminal:     terminalConfig{enabled: false},
+		routeModel:   spritzRouteModelFromEnv(),
+	}
+	e := echo.New()
+	s.registerRoutes(e)
+
+	customReq := httptest.NewRequest(http.MethodGet, "/control-api/healthz", nil)
+	customRec := httptest.NewRecorder()
+	e.ServeHTTP(customRec, customReq)
+	if customRec.Code != http.StatusOK {
+		t.Fatalf("expected configured api prefix to return 200, got %d", customRec.Code)
+	}
+
+	legacyReq := httptest.NewRequest(http.MethodGet, "/api/healthz", nil)
+	legacyRec := httptest.NewRecorder()
+	e.ServeHTTP(legacyRec, legacyReq)
+	if legacyRec.Code != http.StatusNotFound {
+		t.Fatalf("expected legacy /api/healthz to return 404 when a custom prefix is configured, got %d", legacyRec.Code)
+	}
+}

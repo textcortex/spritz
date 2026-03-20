@@ -14,6 +14,9 @@ func InstanceURLForSpritz(spritz *Spritz) string {
 	if spritz == nil {
 		return ""
 	}
+	if !IsWebEnabled(spritz.Spec) {
+		return ""
+	}
 	if spritz.Spec.Ingress != nil && spritz.Spec.Ingress.Host != "" {
 		path := spritz.Spec.Ingress.Path
 		if path == "" {

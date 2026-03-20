@@ -58,4 +58,17 @@ describe('App routing', () => {
     renderAtRoute('/terminal/my-spritz');
     expect(screen.getByTestId('terminal-page')).toBeDefined();
   });
+
+  it('renders ChatPage at the configured chat prefix', async () => {
+    vi.resetModules();
+    window.SPRITZ_CONFIG = {
+      chatPathPrefix: '/chat',
+    };
+    window.history.pushState({}, '', '/chat/some-name');
+
+    const { App } = await import('@/App');
+    render(<App />);
+
+    expect(screen.getByTestId('chat-page')).toBeDefined();
+  });
 });

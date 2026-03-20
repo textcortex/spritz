@@ -109,6 +109,31 @@ func TestAccessURLForSpritzPrefersExplicitIngressOverSharedHostRouteModel(t *tes
 	}
 }
 
+func TestSharedHostURLsAreEmptyWhenWebIsDisabled(t *testing.T) {
+	t.Setenv("SPRITZ_ROUTE_MODEL_TYPE", SharedHostRouteModelType)
+	t.Setenv("SPRITZ_ROUTE_HOST", "console.example.com")
+
+	webDisabled := false
+	spritz := &Spritz{
+		ObjectMeta: metav1ObjectMeta("headless-agent", "spritz-test"),
+		Spec: SpritzSpec{
+			Features: &SpritzFeatures{
+				Web: &webDisabled,
+			},
+		},
+	}
+
+	if got := InstanceURLForSpritz(spritz); got != "" {
+		t.Fatalf("expected no instance url for web-disabled spritz, got %q", got)
+	}
+	if got := ChatURLForSpritz(spritz); got != "" {
+		t.Fatalf("expected no chat url for web-disabled spritz, got %q", got)
+	}
+	if got := AccessURLForSpritz(spritz); got != "" {
+		t.Fatalf("expected no access url for web-disabled spritz, got %q", got)
+	}
+}
+
 func metav1ObjectMeta(name, namespace string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{
 		Name:      name,

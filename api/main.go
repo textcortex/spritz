@@ -244,7 +244,7 @@ func main() {
 }
 
 func (s *server) registerRoutes(e *echo.Echo) {
-	group := e.Group("/api")
+	group := e.Group(s.apiPathPrefix())
 	group.GET("/healthz", s.handleHealthz)
 	internal := group.Group("/internal/v1", s.internalAuthMiddleware())
 	if s.internalAuth.enabled {
@@ -280,6 +280,23 @@ func (s *server) registerRoutes(e *echo.Echo) {
 		rootSecured.Any(prefix+"/:name", s.proxyInstanceWeb)
 		rootSecured.Any(prefix+"/:name/*", s.proxyInstanceWeb)
 	}
+}
+
+func (s *server) apiPathPrefix() string {
+	prefix := strings.TrimSpace(s.routeModel.APIPathPrefix)
+	if prefix == "" {
+		return "/api"
+	}
+	if !strings.HasPrefix(prefix, "/") {
+		prefix = "/" + prefix
+	}
+	if len(prefix) > 1 {
+		prefix = strings.TrimRight(prefix, "/")
+	}
+	if prefix == "" {
+		return "/api"
+	}
+	return prefix
 }
 
 func (s *server) handleHealthz(c echo.Context) error {

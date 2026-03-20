@@ -1,6 +1,18 @@
 import type { Spritz } from '@/types/spritz';
 import { config } from './config';
 
+/** Returns the canonical chat path prefix for the active Spritz UI config. */
+export function normalizeChatPathPrefix(raw: string | undefined = config.chatPathPrefix): string {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed || trimmed === '/') return '/c';
+  const prefixed = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+  return prefixed.length > 1 ? prefixed.replace(/\/+$/, '') : '/c';
+}
+
+function chatRoutePrefixSegment(): string {
+  return normalizeChatPathPrefix().replace(/^\/+/, '');
+}
+
 function parseBoolean(value: unknown, fallback: boolean): boolean {
   if (value === undefined || value === null || value === '') return fallback;
   if (typeof value === 'boolean') return value;
@@ -102,13 +114,24 @@ export function terminalPath(name: string): string {
 
 /** Returns the canonical chat route for an instance, or the chat landing page when omitted. */
 export function chatPath(name?: string): string {
-  if (!name) return '/c';
-  return `/c/${encodeURIComponent(name)}`;
+  const prefix = normalizeChatPathPrefix();
+  if (!name) return prefix;
+  return `${prefix}/${encodeURIComponent(name)}`;
 }
 
 /** Returns the canonical chat route for a specific instance conversation. */
 export function chatConversationPath(name: string, conversationId: string): string {
   return `${chatPath(name)}/${encodeURIComponent(conversationId)}`;
+}
+
+/** Returns the React Router path fragment for the canonical chat prefix. */
+export function chatRoutePath(optionalName: boolean): string {
+  return `${chatRoutePrefixSegment()}/:name${optionalName ? "?" : ""}`;
+}
+
+/** Returns the React Router path fragment for the canonical conversation route. */
+export function chatConversationRoutePath(): string {
+  return `${chatRoutePrefixSegment()}/:name/:conversationId`;
 }
 
 export const hideRepoInputs = parseBoolean(config.repoDefaults.hideInputs, false);
