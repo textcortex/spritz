@@ -195,7 +195,7 @@ spec:
             - name: SPRITZ_ROUTE_MODEL_TYPE
               value: {{ include "spritz.routeModel.type" . | quote }}
             - name: SPRITZ_ROUTE_HOST
-              value: {{ ternary .Values.global.host "" .Values.ui.ingress.enabled | quote }}
+              value: {{ include "spritz.routeHost" . | quote }}
             - name: SPRITZ_ROUTE_API_PATH_PREFIX
               value: {{ include "spritz.routeModel.apiPathPrefix" . | quote }}
             - name: SPRITZ_ROUTE_AUTH_PATH_PREFIX

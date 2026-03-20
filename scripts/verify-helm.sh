@@ -66,6 +66,7 @@ auth_annotations_render="${tmp_dir}/auth-annotations.yaml"
 acp_network_policy_render="${tmp_dir}/acp-network-policy.yaml"
 api_ha_render="${tmp_dir}/api-ha.yaml"
 gateway_render="${tmp_dir}/gateway.yaml"
+route_only_render="${tmp_dir}/route-only.yaml"
 
 helm lint "${chart_dir}"
 helm template spritz "${chart_dir}" >"${default_render}"
@@ -73,6 +74,7 @@ helm template spritz "${chart_dir}" -f "${example_values}" >"${auth_render}"
 helm template spritz "${chart_dir}" -f "${example_values}" --set authGateway.ingress.annotations.authonly=enabled >"${auth_annotations_render}"
 helm template spritz "${chart_dir}" --set acp.networkPolicy.enabled=true >"${acp_network_policy_render}"
 helm template spritz "${chart_dir}" --set api.replicaCount=2 --set api.podDisruptionBudget.enabled=true >"${api_ha_render}"
+helm template spritz "${chart_dir}" --set ui.ingress.enabled=false >"${route_only_render}"
 helm template spritz "${chart_dir}" \
   --set global.routing.mode=gateway-api \
   --set global.routing.gateway.className=example-gateway \
@@ -105,6 +107,9 @@ expect_contains "${default_render}" "name: SPRITZ_ROUTE_INSTANCE_PATH_PREFIX" "i
 expect_contains "${gateway_render}" "kind: Gateway" "gateway resource in gateway-api mode"
 expect_contains "${gateway_render}" "kind: HTTPRoute" "http route in gateway-api mode"
 expect_contains "${gateway_render}" "value: /i" "instance path route model env wiring in gateway mode"
+expect_not_contains "${route_only_render}" "kind: Ingress" "UI/API ingress resources when ui.ingress is disabled"
+expect_contains "${route_only_render}" "name: SPRITZ_ROUTE_HOST" "shared-host route host env wiring when ingress is disabled"
+expect_contains "${route_only_render}" 'value: "spritz.example.com"' "shared-host route host value when ingress is disabled"
 
 expect_failure \
   "api.auth.mode must be header or auto when authGateway.enabled=true" \
