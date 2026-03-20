@@ -1,8 +1,9 @@
 {{- if .Values.authGateway.enabled }}
 {{- include "spritz.validate.authGatewayCore" . }}
+{{- include "spritz.validate.routeModel" . }}
 {{- $serviceName := default "spritz-auth-gateway" .Values.authGateway.service.name }}
 {{- $servicePort := default 4180 .Values.authGateway.service.port }}
-{{- $pathPrefix := default "/oauth2" .Values.authGateway.ingress.pathPrefix }}
+{{- $pathPrefix := include "spritz.routeModel.authPathPrefix" . }}
 {{- $redirectURL := default (printf "https://%s%s/callback" .Values.global.host $pathPrefix) .Values.authGateway.oauth2Proxy.redirectURL }}
 apiVersion: apps/v1
 kind: Deployment

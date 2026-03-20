@@ -556,7 +556,7 @@ func (r *SpritzReconciler) reconcileGatewayRoute(ctx context.Context, spritz *sp
 			parent.SectionName = gatewaySectionNamePtr(spritz.Spec.Ingress.GatewaySectionName)
 		}
 
-		port := gatewayv1.PortNumber(httpServicePortNumber(spritz))
+		port := gatewayv1.PortNumber(spritzv1.HTTPServicePortForSpritz(spritz))
 		route.Spec.ParentRefs = []gatewayv1.ParentReference{parent}
 		route.Spec.Hostnames = []gatewayv1.Hostname{gatewayv1.Hostname(spritz.Spec.Ingress.Host)}
 		rule := gatewayv1.HTTPRouteRule{
@@ -1456,22 +1456,7 @@ func httpPortName(spritz *spritzv1.Spritz) string {
 }
 
 func httpServicePortNumber(spritz *spritzv1.Spritz) int32 {
-	if len(spritz.Spec.Ports) == 0 {
-		return defaultWebPort
-	}
-	for _, port := range spritz.Spec.Ports {
-		if port.Name == "http" {
-			if port.ServicePort != 0 {
-				return port.ServicePort
-			}
-			return port.ContainerPort
-		}
-	}
-	port := spritz.Spec.Ports[0]
-	if port.ServicePort != 0 {
-		return port.ServicePort
-	}
-	return port.ContainerPort
+	return spritzv1.HTTPServicePortForSpritz(spritz)
 }
 
 func ingressMode(spritz *spritzv1.Spritz) string {

@@ -1,0 +1,70 @@
+{{- if and .Values.ui.ingress.enabled (eq (include "spritz.routing.mode" .) "gateway-api") }}
+{{- include "spritz.validate.uiApiIngress" . }}
+{{- include "spritz.validate.routeModel" . }}
+{{- include "spritz.validate.gatewayAPI" . }}
+{{- $gatewayNamespace := default .Values.ui.namespace .Values.global.routing.gateway.namespace }}
+{{- $gatewayName := default "spritz-shared-host" .Values.global.routing.gateway.name }}
+{{- $listenerName := default "https" .Values.global.routing.gateway.listenerName }}
+{{- $tlsEnabled := and .Values.global.ingress.tls.enabled (ne .Values.global.ingress.tls.secretName "") }}
+{{- $listenerPort := default (ternary 443 80 $tlsEnabled) .Values.global.routing.gateway.port }}
+{{- $apiPathPrefix := include "spritz.routeModel.apiPathPrefix" . }}
+{{- $instancePathPrefix := include "spritz.routeModel.instancePathPrefix" . }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ $gatewayName }}
+  namespace: {{ $gatewayNamespace }}
+spec:
+  gatewayClassName: {{ .Values.global.routing.gateway.className }}
+  listeners:
+    - name: {{ $listenerName }}
+      hostname: {{ .Values.global.host }}
+      port: {{ $listenerPort }}
+      protocol: {{ ternary "HTTPS" "HTTP" $tlsEnabled }}
+      allowedRoutes:
+        namespaces:
+          from: All
+      {{- if $tlsEnabled }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - group: ""
+            kind: Secret
+            name: {{ .Values.global.ingress.tls.secretName }}
+      {{- end }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: spritz-web
+  namespace: {{ .Values.ui.namespace }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+      namespace: {{ $gatewayNamespace }}
+      sectionName: {{ $listenerName }}
+  hostnames:
+    - {{ .Values.global.host }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: {{ $apiPathPrefix }}
+      backendRefs:
+        - name: spritz-api
+          port: {{ .Values.api.service.port }}
+    - matches:
+        - path:
+            type: PathPrefix
+            value: {{ $instancePathPrefix }}
+      backendRefs:
+        - name: spritz-api
+          port: {{ .Values.api.service.port }}
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: spritz-ui
+          port: {{ .Values.ui.service.port }}
+{{- end }}

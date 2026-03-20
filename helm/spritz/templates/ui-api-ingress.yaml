@@ -1,10 +1,13 @@
-{{- if .Values.ui.ingress.enabled }}
+{{- if and .Values.ui.ingress.enabled (eq (include "spritz.routing.mode" .) "ingress") }}
 {{- include "spritz.validate.uiApiIngress" . }}
+{{- include "spritz.validate.routeModel" . }}
 {{- include "spritz.validate.authGatewayCore" . }}
 {{- include "spritz.validate.authGatewayIngress" . }}
 {{- $serviceName := default "spritz-auth-gateway" .Values.authGateway.service.name }}
 {{- $servicePort := default 4180 .Values.authGateway.service.port }}
-{{- $pathPrefix := default "/oauth2" .Values.authGateway.ingress.pathPrefix }}
+{{- $pathPrefix := include "spritz.routeModel.authPathPrefix" . }}
+{{- $apiPathPrefix := include "spritz.routeModel.apiPathPrefix" . }}
+{{- $instancePathPrefix := include "spritz.routeModel.instancePathPrefix" . }}
 {{- $authURL := default (printf "http://%s.%s.svc.cluster.local:%v%s/auth" $serviceName .Values.ui.namespace $servicePort $pathPrefix) .Values.authGateway.ingress.authURL }}
 {{- $authSigninURL := default (printf "https://$host%s/start?rd=$escaped_request_uri" $pathPrefix) .Values.authGateway.ingress.authSigninURL }}
 {{- $authIngressAnnotations := dict }}
@@ -77,7 +80,14 @@ spec:
     - host: {{ .Values.global.host }}
       http:
         paths:
-          - path: /api
+          - path: {{ $apiPathPrefix }}
+            pathType: Prefix
+            backend:
+              service:
+                name: spritz-api
+                port:
+                  number: {{ .Values.api.service.port }}
+          - path: {{ $instancePathPrefix }}
             pathType: Prefix
             backend:
               service:

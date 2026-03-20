@@ -80,6 +80,7 @@ export interface Preset {
 
 export interface SpritzConfig {
   apiBaseUrl: string;
+  chatPathPrefix: string;
   ownerId: string;
   presets: Preset[] | string;
   repoDefaults: RepoDefaults;
@@ -99,6 +100,7 @@ declare global {
 export function resolveConfig(raw: RawSpritzConfig = {}): SpritzConfig {
   return {
     apiBaseUrl: raw.apiBaseUrl || '',
+    chatPathPrefix: raw.chatPathPrefix || '/c',
     ownerId: raw.ownerId || '',
     presets: raw.presets || [],
     repoDefaults: {

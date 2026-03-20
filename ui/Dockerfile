@@ -21,6 +21,7 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chown -R 101:101 /usr/share/nginx/html /entrypoint.sh /etc/nginx/conf.d/default.conf
 
 ENV SPRITZ_API_BASE_URL=/api
+ENV SPRITZ_UI_CHAT_PATH_PREFIX=/c
 
 USER 101:101
 EXPOSE 8080

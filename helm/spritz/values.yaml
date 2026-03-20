@@ -6,6 +6,20 @@ global:
     tls:
       enabled: true
       secretName: ""
+  routing:
+    mode: ingress
+    gateway:
+      name: spritz-shared-host
+      namespace: ""
+      className: ""
+      listenerName: https
+      port: 0
+  routeModel:
+    type: shared-host
+    apiPathPrefix: /api
+    authPathPrefix: /oauth2
+    instancePathPrefix: /i
+    chatPathPrefix: /c
 
 acp:
   enabled: true
@@ -22,6 +36,7 @@ acp:
 authGateway:
   enabled: false
   provider: oauth2-proxy
+  mode: single-host
   service:
     name: spritz-auth-gateway
     port: 4180
@@ -203,6 +218,9 @@ api:
     gatewayName: ""
     gatewayNamespace: ""
     gatewaySectionName: ""
+  instanceProxy:
+    enabled: true
+    stripPrefix: true
   terminal:
     enabled: true
     container: spritz

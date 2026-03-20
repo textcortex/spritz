@@ -14,6 +14,9 @@ func InstanceURLForSpritz(spritz *Spritz) string {
 	if spritz == nil {
 		return ""
 	}
+	if !IsWebEnabled(spritz.Spec) {
+		return ""
+	}
 	if spritz.Spec.Ingress != nil && spritz.Spec.Ingress.Host != "" {
 		path := spritz.Spec.Ingress.Path
 		if path == "" {
@@ -25,19 +28,11 @@ func InstanceURLForSpritz(spritz *Spritz) string {
 		return fmt.Sprintf("https://%s%s", spritz.Spec.Ingress.Host, path)
 	}
 
-	if len(spritz.Spec.Ports) == 0 {
-		if !IsWebEnabled(spritz.Spec) {
-			return ""
-		}
-		return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", spritz.Name, spritz.Namespace, defaultWebPort)
+	if routeModel := SharedHostRouteModelFromEnv(); routeModel.Enabled() {
+		return routeModel.InstanceURL(spritz.Name)
 	}
 
-	port := spritz.Spec.Ports[0]
-	servicePort := port.ContainerPort
-	if port.ServicePort != 0 {
-		servicePort = port.ServicePort
-	}
-	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", spritz.Name, spritz.Namespace, servicePort)
+	return WebServiceURLForSpritz(spritz)
 }
 
 // ChatURLForSpritz returns the canonical agent chat URL for a spritz when the
@@ -52,15 +47,22 @@ func ChatURLForSpritz(spritz *Spritz) string {
 		return ""
 	}
 	name := url.PathEscape(strings.TrimSpace(spritz.Name))
+	chatPath := fmt.Sprintf("/c/%s", name)
+	if routeModel := SharedHostRouteModelFromEnv(); routeModel.Enabled() {
+		chatPath = routeModel.ChatPath(spritz.Name)
+	}
 	if spritz.Spec.Ingress != nil && spritz.Spec.Ingress.Host != "" {
-		parsed.Path = fmt.Sprintf("/c/%s", name)
+		parsed.Path = chatPath
 		parsed.RawPath = parsed.Path
 		parsed.RawQuery = ""
 		parsed.Fragment = ""
 		return parsed.String()
 	}
+	if routeModel := SharedHostRouteModelFromEnv(); routeModel.Enabled() {
+		return routeModel.ChatURL(spritz.Name)
+	}
 
-	parsed.Path = fmt.Sprintf("/c/%s", name)
+	parsed.Path = chatPath
 	parsed.RawPath = parsed.Path
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
