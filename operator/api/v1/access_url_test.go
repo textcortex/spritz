@@ -12,28 +12,28 @@ func TestInstanceURLForSpritzUsesIngressPath(t *testing.T) {
 		Spec: SpritzSpec{
 			Ingress: &SpritzIngress{
 				Host: "console.example.com",
-				Path: "/w/openclaw-tide-wind",
+				Path: "/i/openclaw-tide-wind",
 			},
 		},
 	}
 
-	if got := InstanceURLForSpritz(spritz); got != "https://console.example.com/w/openclaw-tide-wind/" {
+	if got := InstanceURLForSpritz(spritz); got != "https://console.example.com/i/openclaw-tide-wind/" {
 		t.Fatalf("expected instance url, got %q", got)
 	}
 }
 
-func TestChatURLForSpritzUsesRootHashRoute(t *testing.T) {
+func TestChatURLForSpritzUsesCanonicalPathRoute(t *testing.T) {
 	spritz := &Spritz{
 		ObjectMeta: metav1ObjectMeta("openclaw-tide-wind", "spritz-test"),
 		Spec: SpritzSpec{
 			Ingress: &SpritzIngress{
 				Host: "console.example.com",
-				Path: "/w/openclaw-tide-wind",
+				Path: "/i/openclaw-tide-wind",
 			},
 		},
 	}
 
-	if got := ChatURLForSpritz(spritz); got != "https://console.example.com/#chat/openclaw-tide-wind" {
+	if got := ChatURLForSpritz(spritz); got != "https://console.example.com/c/openclaw-tide-wind" {
 		t.Fatalf("expected chat url, got %q", got)
 	}
 }
@@ -44,17 +44,17 @@ func TestAccessURLForSpritzPromotesChatURL(t *testing.T) {
 		Spec: SpritzSpec{
 			Ingress: &SpritzIngress{
 				Host: "console.example.com",
-				Path: "/w/openclaw-tide-wind",
+				Path: "/i/openclaw-tide-wind",
 			},
 		},
 	}
 
-	if got := AccessURLForSpritz(spritz); got != "https://console.example.com/#chat/openclaw-tide-wind" {
+	if got := AccessURLForSpritz(spritz); got != "https://console.example.com/c/openclaw-tide-wind" {
 		t.Fatalf("expected access url to prefer chat url, got %q", got)
 	}
 }
 
-func TestAccessURLForSpritzFallsBackToInstanceURL(t *testing.T) {
+func TestAccessURLForSpritzUsesCanonicalChatPathWithoutIngress(t *testing.T) {
 	spritz := &Spritz{
 		ObjectMeta: metav1ObjectMeta("openclaw-tide-wind", "spritz-test"),
 		Spec: SpritzSpec{
@@ -62,7 +62,7 @@ func TestAccessURLForSpritzFallsBackToInstanceURL(t *testing.T) {
 		},
 	}
 
-	want := "http://openclaw-tide-wind.spritz-test.svc.cluster.local:8080/#chat/openclaw-tide-wind"
+	want := "http://openclaw-tide-wind.spritz-test.svc.cluster.local:8080/c/openclaw-tide-wind"
 	if got := AccessURLForSpritz(spritz); got != want {
 		t.Fatalf("expected access url %q, got %q", want, got)
 	}

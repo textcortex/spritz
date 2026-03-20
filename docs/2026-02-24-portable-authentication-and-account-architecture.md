@@ -172,7 +172,7 @@ Examples:
 
 - `/` routed through one gateway instance,
 - `/api` routed through a second gateway instance,
-- `/w/*` or another instance-facing path routed through a third gateway
+- `/i/*` or another instance-facing path routed through a third gateway
   instance.
 
 For that topology:

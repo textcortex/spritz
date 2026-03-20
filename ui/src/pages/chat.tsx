@@ -10,6 +10,7 @@ import { createTranscript, applySessionUpdate, finalizeStreaming, finalizeHistor
 import { readCachedTranscript, writeCachedTranscript, evictCachedTranscript } from '@/lib/acp-cache';
 import { readChatDraft, writeChatDraft, clearChatDraft } from '@/lib/chat-draft';
 import { buildFallbackConversationTitle, hasDurableConversationTitle } from '@/lib/conversation-title';
+import { chatConversationPath } from '@/lib/urls';
 import { useNotice } from '@/components/notice-banner';
 import { Sidebar } from '@/components/acp/sidebar';
 import { ChatMessage } from '@/components/acp/message';
@@ -104,7 +105,7 @@ export function ChatPage() {
             if (group.conversations.length > 0) {
               const conv = group.conversations[0];
               setSelectedConversation(conv);
-              navigate(`/chat/${encodeURIComponent(name)}/${encodeURIComponent(conv.metadata.name)}`, { replace: true });
+              navigate(chatConversationPath(name, conv.metadata.name), { replace: true });
             } else {
               // Auto-create a conversation for this spritz
               try {
@@ -116,7 +117,7 @@ export function ChatPage() {
                 if (conv) {
                   group.conversations.push(conv);
                   setSelectedConversation(conv);
-                  navigate(`/chat/${encodeURIComponent(name)}/${encodeURIComponent(conv.metadata.name)}`, { replace: true });
+                  navigate(chatConversationPath(name, conv.metadata.name), { replace: true });
                 }
               } catch {
                 // Failed to auto-create, user can do it manually
@@ -468,7 +469,7 @@ export function ChatPage() {
     setPermissionQueue([]);
     const spritzName = conv.spec?.spritzName || name || '';
     if (spritzName) {
-      navigate(`/chat/${encodeURIComponent(spritzName)}/${encodeURIComponent(conv.metadata.name)}`, { replace: true });
+      navigate(chatConversationPath(spritzName, conv.metadata.name), { replace: true });
     }
   }, [name, navigate]);
 
@@ -488,7 +489,7 @@ export function ChatPage() {
         });
         if (conv) {
           setSelectedConversation(conv);
-          navigate(`/chat/${encodeURIComponent(normalizedSpritzName)}/${encodeURIComponent(conv.metadata.name)}`, { replace: true });
+          navigate(chatConversationPath(normalizedSpritzName, conv.metadata.name), { replace: true });
           // Refresh agent list
           fetchAgents();
         }

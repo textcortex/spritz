@@ -157,9 +157,9 @@ test('assertSmokeCreateResponse accepts canonicalized preset ids from the API', 
     ownerId: 'user-123',
     actorType: 'service',
     presetId: 'openclaw',
-    chatUrl: 'https://example.com/#chat/openclaw-calm-ridge',
-    instanceUrl: 'https://example.com/w/openclaw-calm-ridge/',
-    accessUrl: 'https://example.com/#chat/openclaw-calm-ridge',
+    chatUrl: 'https://example.com/c/openclaw-calm-ridge',
+    instanceUrl: 'https://example.com/i/openclaw-calm-ridge/',
+    accessUrl: 'https://example.com/c/openclaw-calm-ridge',
   }, 'user-123', 'OPENCLAW');
 
   assert.equal(instanceName, 'openclaw-calm-ridge');

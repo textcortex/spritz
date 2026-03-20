@@ -14,7 +14,7 @@ describe('chat draft storage', () => {
     expect(readChatDraft('covo', 'conv-1')).toBeNull();
   });
 
-  it('writes and restores a draft for a workspace/conversation pair', () => {
+  it('writes and restores a draft for an instance/conversation pair', () => {
     writeChatDraft('covo', 'conv-1', 'draft text');
     expect(readChatDraft('covo', 'conv-1')).toBe('draft text');
   });
@@ -31,7 +31,7 @@ describe('chat draft storage', () => {
     expect(localStorage.getItem('spritz:chat-drafts')).toBeNull();
   });
 
-  it('does not cross-read another workspace or conversation draft', () => {
+  it('does not cross-read another instance or conversation draft', () => {
     writeChatDraft('covo', 'conv-1', 'first');
     writeChatDraft('other', 'conv-1', 'second');
     writeChatDraft('covo', 'conv-2', 'third');

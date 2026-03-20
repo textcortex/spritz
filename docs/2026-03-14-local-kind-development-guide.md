@@ -295,7 +295,7 @@ api:
   defaultIngress:
     mode: ingress
     hostTemplate: console.example.com
-    path: /w/{name}
+    path: /i/{name}
     className: nginx
 ```
 

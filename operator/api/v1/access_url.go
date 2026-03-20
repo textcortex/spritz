@@ -51,10 +51,10 @@ func ChatURLForSpritz(spritz *Spritz) string {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return ""
 	}
-	parsed.Path = "/"
-	parsed.RawPath = "/"
+	parsed.Path = fmt.Sprintf("/c/%s", strings.TrimSpace(spritz.Name))
+	parsed.RawPath = parsed.Path
 	parsed.RawQuery = ""
-	parsed.Fragment = fmt.Sprintf("chat/%s", url.PathEscape(strings.TrimSpace(spritz.Name)))
+	parsed.Fragment = ""
 	return parsed.String()
 }
 

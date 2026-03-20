@@ -100,8 +100,15 @@ export function terminalPath(name: string): string {
   return `/terminal/${encodeURIComponent(name)}`;
 }
 
-export function chatPath(name: string): string {
-  return `/chat/${encodeURIComponent(name)}`;
+/** Returns the canonical chat route for an instance, or the chat landing page when omitted. */
+export function chatPath(name?: string): string {
+  if (!name) return '/c';
+  return `/c/${encodeURIComponent(name)}`;
+}
+
+/** Returns the canonical chat route for a specific instance conversation. */
+export function chatConversationPath(name: string, conversationId: string): string {
+  return `${chatPath(name)}/${encodeURIComponent(conversationId)}`;
 }
 
 export const hideRepoInputs = parseBoolean(config.repoDefaults.hideInputs, false);

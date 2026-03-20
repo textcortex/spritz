@@ -30,6 +30,7 @@ function renderAtRoute(path: string) {
             <Route index element={<div data-testid="chat-page">Chat Page</div>} />
             <Route path="create" element={<div data-testid="create-page">Create Page</div>} />
             <Route path="terminal/:name" element={<div data-testid="terminal-page">Terminal Page</div>} />
+            <Route path="c/:name?" element={<div data-testid="chat-page">Chat Page</div>} />
             <Route path="chat/:name?" element={<div data-testid="chat-page">Chat Page</div>} />
           </Routes>
         </NoticeProvider>
@@ -49,8 +50,8 @@ describe('App routing', () => {
     expect(screen.getByTestId('create-page')).toBeDefined();
   });
 
-  it('renders ChatPage at /chat/some-name', () => {
-    renderAtRoute('/chat/some-name');
+  it('renders ChatPage at /c/some-name', () => {
+    renderAtRoute('/c/some-name');
     expect(screen.getByTestId('chat-page')).toBeDefined();
   });
 
