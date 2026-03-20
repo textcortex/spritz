@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { CheckIcon, CopyIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Markdown } from './markdown';
 import { ThinkingBlock } from './thinking-block';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { ACPMessage, ACPBlock } from '@/types/acp';
 
 /* ── Block renderer matching main's renderBlock() ── */
@@ -116,18 +118,156 @@ function StatusPill({ status, tone }: { status: string; tone?: string }) {
   );
 }
 
+function extractCopyText(blocks: ACPBlock[]): string {
+  return blocks
+    .flatMap((block) => {
+      if (block.type === 'text') return [String(block.text || '').trim()];
+      if (block.type === 'details') {
+        return [block.title, block.text]
+          .map((value) => String(value || '').trim())
+          .filter(Boolean);
+      }
+      if (block.type === 'plan') {
+        return (block.entries || [])
+          .map((entry) => String(entry.text || '').trim())
+          .filter(Boolean);
+      }
+      if (block.type === 'keyValue') {
+        if (block.entries?.length) {
+          return block.entries
+            .map((entry) => {
+              const label = String(entry.label || '').trim();
+              const value = String(entry.value || '').trim();
+              return label && value ? `${label}: ${value}` : label || value;
+            })
+            .filter(Boolean);
+        }
+        const label = String(block.key || '').trim();
+        const value = String(block.value || '').trim();
+        return [label && value ? `${label}: ${value}` : label || value].filter(Boolean);
+      }
+      if (block.type === 'tags') {
+        return (block.items || [])
+          .map((item) => String(item.label || item.name || '').trim())
+          .filter(Boolean);
+      }
+      return [];
+    })
+    .join('\n\n')
+    .trim();
+}
+
+async function copyTextToClipboard(text: string) {
+  if (!text) return;
+
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall through to the DOM-based copy path for insecure/local contexts.
+    }
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', 'true');
+  textarea.setAttribute('aria-hidden', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.top = '0';
+  textarea.style.left = '0';
+  textarea.style.width = '1px';
+  textarea.style.height = '1px';
+  textarea.style.padding = '0';
+  textarea.style.border = '0';
+  textarea.style.opacity = '0';
+
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+
+  const copied = document.execCommand('copy');
+  document.body.removeChild(textarea);
+
+  if (!copied) {
+    throw new Error('Copy failed');
+  }
+}
+
+function MessageActions({ text, align = 'left' }: { text: string; align?: 'left' | 'right' }) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return undefined;
+    const timer = window.setTimeout(() => setCopied(false), 1800);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  async function handleCopy() {
+    if (!text) return;
+    await copyTextToClipboard(text);
+    setCopied(true);
+  }
+
+  return (
+    <div
+      className={cn(
+        'mt-1 flex items-center opacity-0 transition-all duration-200 group-hover/message:translate-y-0 group-hover/message:opacity-100 group-focus-within/message:translate-y-0 group-focus-within/message:opacity-100',
+        align === 'right' ? 'justify-end' : 'justify-start',
+      )}
+    >
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label={copied ? 'Message copied' : 'Copy message'}
+              className="inline-flex size-8 items-center justify-center rounded-full text-[#6b6b6b] transition-colors duration-150 hover:bg-[#f3f3f1] hover:text-[#222] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black"
+              onClick={() => {
+                handleCopy().catch(() => {});
+              }}
+            />
+          }
+        >
+          <span className="relative size-[14px]" aria-hidden="true">
+            <CopyIcon
+              className={cn(
+                'absolute inset-0 size-[14px] copy-action-icon copy-action-icon--copy',
+                copied ? 'copy-action-icon-hidden' : 'copy-action-icon-visible',
+              )}
+            />
+            <CheckIcon
+              className={cn(
+                'absolute inset-0 size-[14px] copy-action-icon copy-action-icon--check',
+                copied ? 'copy-action-icon-visible' : 'copy-action-icon-hidden',
+              )}
+            />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" sideOffset={8}>
+          {copied ? 'Copied' : 'Copy'}
+        </TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
 /* ── User bubble — right-aligned, black background ── */
 /* Main: .acp-message--user { align-self: flex-end } */
 /* Main: .acp-message--user .acp-bubble { background: #000; color: white; border-bottom-right-radius: 6px } */
 
 function UserBubble({ message }: { message: ACPMessage }) {
+  const copyText = useMemo(() => extractCopyText(message.blocks), [message.blocks]);
+
   return (
-    <article aria-label="Your message" className="flex flex-col gap-2 max-w-[min(820px,86%)] self-end">
+    <article aria-label="Your message" className="group/message flex max-w-[min(820px,86%)] flex-col gap-2 self-end">
       <div className="rounded-[20px] rounded-br-[6px] border border-transparent bg-black px-4 py-2 text-white">
         {message.blocks.map((block, i) => (
           <BlockRenderer key={i} block={block} />
         ))}
       </div>
+      {copyText && <MessageActions text={copyText} align="right" />}
     </article>
   );
 }
@@ -137,8 +277,10 @@ function UserBubble({ message }: { message: ACPMessage }) {
 /* Main: .acp-message--assistant .acp-bubble { background: transparent; border: none; padding: 4px 0; border-radius: 0 } */
 
 function AssistantMessage({ message }: { message: ACPMessage }) {
+  const copyText = useMemo(() => extractCopyText(message.blocks), [message.blocks]);
+
   return (
-    <article aria-label="Assistant message" className="flex flex-col gap-2 self-stretch w-full">
+    <article aria-label="Assistant message" className="group/message flex w-full flex-col gap-2 self-stretch">
       <div className="py-1 px-0">
         <div className="flex flex-col gap-3">
           {message.blocks.map((block, i) => (
@@ -149,6 +291,7 @@ function AssistantMessage({ message }: { message: ACPMessage }) {
           <span role="status" aria-label="Generating response" className="mt-1 inline-block size-1.5 animate-pulse will-change-[opacity] rounded-full bg-black" />
         )}
       </div>
+      {copyText && <MessageActions text={copyText} />}
     </article>
   );
 }
