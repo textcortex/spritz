@@ -54,7 +54,7 @@ func TestAccessURLForSpritzPromotesChatURL(t *testing.T) {
 	}
 }
 
-func TestAccessURLForSpritzUsesCanonicalChatPathWithoutIngress(t *testing.T) {
+func TestAccessURLForSpritzPreservesFragmentChatRouteWithoutIngress(t *testing.T) {
 	spritz := &Spritz{
 		ObjectMeta: metav1ObjectMeta("openclaw-tide-wind", "spritz-test"),
 		Spec: SpritzSpec{
@@ -62,7 +62,7 @@ func TestAccessURLForSpritzUsesCanonicalChatPathWithoutIngress(t *testing.T) {
 		},
 	}
 
-	want := "http://openclaw-tide-wind.spritz-test.svc.cluster.local:8080/c/openclaw-tide-wind"
+	want := "http://openclaw-tide-wind.spritz-test.svc.cluster.local:8080/#chat/openclaw-tide-wind"
 	if got := AccessURLForSpritz(spritz); got != want {
 		t.Fatalf("expected access url %q, got %q", want, got)
 	}
