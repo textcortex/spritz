@@ -41,6 +41,15 @@ Canonical shared-host route values.
 {{- end }}
 
 {{/*
+Public host to use for shared-host route generation.
+*/}}
+{{- define "spritz.routeHost" -}}
+{{- if and (eq (include "spritz.routeModel.type" .) "shared-host") .Values.global.host -}}
+{{- .Values.global.host -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Shared-host route model validation.
 */}}
 {{- define "spritz.validate.routeModel" -}}
