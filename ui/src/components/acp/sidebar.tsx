@@ -37,6 +37,7 @@ interface SidebarProps {
   selectedConversationId: string | null;
   onSelectConversation: (conversation: ConversationInfo) => void;
   onNewConversation: (spritzName: string) => void;
+  creatingConversationFor?: string | null;
   onDeleteConversation: (conversationId: string) => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -49,6 +50,7 @@ export function Sidebar({
   selectedConversationId,
   onSelectConversation,
   onNewConversation,
+  creatingConversationFor,
   onDeleteConversation,
   collapsed,
   onToggleCollapse,
@@ -82,8 +84,9 @@ export function Sidebar({
               <button
                 type="button"
                 aria-label="New chat"
-                className="flex size-9 items-center justify-center rounded-lg text-foreground/70 transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50"
-                onClick={() => { if (firstAgentName) onNewConversation(firstAgentName); }}
+                disabled={!firstAgentName || creatingConversationFor === firstAgentName}
+                className="flex size-9 items-center justify-center rounded-lg text-foreground/70 transition-colors hover:bg-[#ececec] disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-muted/50"
+                onClick={() => { if (firstAgentName && creatingConversationFor !== firstAgentName) onNewConversation(firstAgentName); }}
               />
             }
           >
@@ -126,9 +129,10 @@ export function Sidebar({
         <nav aria-label="Sidebar navigation" className="flex shrink-0 flex-col gap-0.5">
           <button
             type="button"
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[14px] text-foreground/80 transition-colors hover:bg-[#ececec] dark:hover:bg-muted/50"
+            disabled={!firstAgentName || creatingConversationFor === firstAgentName}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[14px] text-foreground/80 transition-colors hover:bg-[#ececec] disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-muted/50"
             onClick={() => {
-              if (firstAgentName) onNewConversation(firstAgentName);
+              if (firstAgentName && creatingConversationFor !== firstAgentName) onNewConversation(firstAgentName);
               close();
             }}
           >
@@ -146,7 +150,7 @@ export function Sidebar({
         </nav>
 
         {/* Conversation list */}
-        <div role="list" aria-label="Conversations" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
+      <div role="list" aria-label="Conversations" className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
           {agents.length === 0 && (
             <div className="p-6 text-center text-xs text-muted-foreground">
               No ACP-ready instances found.
@@ -159,6 +163,7 @@ export function Sidebar({
               selectedConversationId={selectedConversationId}
               onSelectConversation={(conv) => { onSelectConversation(conv); close(); }}
               onNewConversation={onNewConversation}
+              creatingConversationFor={creatingConversationFor}
               onDeleteConversation={onDeleteConversation}
             />
           ))}
@@ -200,16 +205,19 @@ function AgentSection({
   selectedConversationId,
   onSelectConversation,
   onNewConversation,
+  creatingConversationFor,
   onDeleteConversation,
 }: {
   group: AgentGroup;
   selectedConversationId: string | null;
   onSelectConversation: (conversation: ConversationInfo) => void;
   onNewConversation: (spritzName: string) => void;
+  creatingConversationFor?: string | null;
   onDeleteConversation: (conversationId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const name = group.spritz.metadata.name;
+  const creatingForThisAgent = creatingConversationFor === name;
 
   return (
     <div role="listitem" className="flex flex-col gap-0.5">
@@ -237,8 +245,9 @@ function AgentSection({
               <button
                 type="button"
                 aria-label={`New conversation for ${name}`}
-                className="flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
-                onClick={() => onNewConversation(name)}
+                disabled={creatingForThisAgent}
+                className="flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => { if (!creatingForThisAgent) onNewConversation(name); }}
               />
             }
           >
@@ -296,6 +305,7 @@ function AgentSection({
                       <DropdownMenuContent side="bottom" align="start">
                         <DropdownMenuItem
                           variant="destructive"
+                          className={"text-xs"}
                           onClick={() => onDeleteConversation(id)}
                         >
                           <Trash2Icon className="size-3.5" />

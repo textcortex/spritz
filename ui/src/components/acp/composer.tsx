@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
+import { useRef, useCallback, useImperativeHandle, forwardRef, useLayoutEffect } from 'react';
 import { SendIcon, SquareIcon } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 
@@ -10,6 +10,8 @@ export interface ComposerHandle {
 }
 
 interface ComposerProps {
+  value: string;
+  onValueChange: (value: string) => void;
   onSend: (text: string) => void;
   onCancel: () => void;
   disabled: boolean;
@@ -17,30 +19,38 @@ interface ComposerProps {
   status?: string;
 }
 
-export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer({ onSend, onCancel, disabled, promptInFlight, status }, ref) {
-  const [text, setText] = useState('');
+function syncTextareaHeight(textarea: HTMLTextAreaElement | null) {
+  if (!textarea) return;
+  textarea.style.height = 'auto';
+  textarea.style.height = Math.min(textarea.scrollHeight, 180) + 'px';
+}
+
+export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer({ value, onValueChange, onSend, onCancel, disabled, promptInFlight, status }, ref) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useImperativeHandle(ref, () => ({
     fillText(value: string) {
-      setText(value);
+      onValueChange(value);
       setTimeout(() => textareaRef.current?.focus(), 0);
     },
     focus() {
       textareaRef.current?.focus();
     },
-  }));
+  }), [onValueChange]);
+
+  useLayoutEffect(() => {
+    syncTextareaHeight(textareaRef.current);
+  }, [value]);
 
   const handleSubmit = useCallback(() => {
-    const trimmed = text.trim();
+    const trimmed = value.trim();
     if (!trimmed || disabled) return;
     onSend(trimmed);
-    setText('');
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
       textareaRef.current.focus();
     }
-  }, [text, disabled, onSend]);
+  }, [value, disabled, onSend]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -54,11 +64,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   );
 
   const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setText(e.target.value);
-    const el = e.target;
-    el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 180) + 'px';
-  }, []);
+    onValueChange(e.target.value);
+    syncTextareaHeight(e.target);
+  }, [onValueChange]);
 
   const isTerminal = status
     ? TERMINAL_STATUSES.some((s) => status.toLowerCase().startsWith(s))
@@ -77,7 +85,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         >
           <textarea
             ref={textareaRef}
-            value={text}
+            value={value}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
             aria-label="Message input"
@@ -95,7 +103,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     aria-label={promptInFlight ? 'Stop response' : 'Send message'}
                     className="flex size-9 items-center justify-center rounded-full border-none bg-black p-0 text-white transition-opacity will-change-[opacity] hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
                     onClick={promptInFlight ? onCancel : handleSubmit}
-                    disabled={!promptInFlight && (disabled || !text.trim())}
+                    disabled={!promptInFlight && (disabled || !value.trim())}
                   >
                     {promptInFlight ? (
                       <SquareIcon aria-hidden="true" className="size-3.5 fill-current" />
