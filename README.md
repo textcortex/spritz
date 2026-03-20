@@ -207,6 +207,10 @@ helm upgrade --install spritz ./helm/spritz \
 
 For an authenticated install, enable the in-cluster auth gateway and provide OIDC values with [helm/spritz/examples/portable-oidc-auth.values.yaml](helm/spritz/examples/portable-oidc-auth.values.yaml).
 
+If a deployment uses multiple auth gateway instances on the same browser host,
+give each instance its own cookie namespace and isolate CSRF/PKCE state. See
+[Portable Authentication and Account Architecture](docs/2026-02-24-portable-authentication-and-account-architecture.md).
+
 After install:
 
 1. open the configured host
