@@ -263,3 +263,7 @@ Spritz is intended to remain portable and standalone:
 - [OpenClaw Integration](docs/2026-03-13-openclaw-integration.md)
 - [Local kind Development Guide](docs/2026-03-14-local-kind-development-guide.md)
 - [Deployment-Wide UI Branding](docs/2026-03-20-ui-branding-customization.md)
+
+## License
+
+Spritz is available under the [MIT License](LICENSE).
