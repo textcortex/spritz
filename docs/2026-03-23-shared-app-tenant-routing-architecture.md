@@ -8,7 +8,7 @@ tags: [spritz, integrations, routing, slack, discord, teams, concierge, architec
 ## Overview
 
 This document defines a Spritz-native architecture for serving many
-tenant-dedicated agent instances behind one shared external app integration.
+tenant-dedicated agent runtimes behind one shared external app integration.
 
 Examples:
 
@@ -16,46 +16,43 @@ Examples:
 - one shared Discord app installed into many guilds
 - one shared Teams app installed into many tenants or teams
 
-In this model, each external tenant gets its own Spritz concierge, but all
+In this model, each external tenant gets its own concierge instance, but all
 tenants still talk through the same provider app registration. Spritz routes
-each inbound event to the correct concierge by looking up the external tenant
-binding instead of assuming one shared runtime per app.
+each inbound event to the correct concierge instance by looking up the
+instance's routing identity instead of assuming one shared runtime per app.
 
-The design must reuse the existing Spritz control-plane concepts:
+The key design choice is:
 
-- service principals
-- owner references
-- presets
-- instance classes
-- admission resolvers
-- normal instance lifecycle
+- `concierge` is a first-class Spritz concept semantically
+- but structurally it is still just an instance
+- specifically, an instance with a concierge-oriented instance class and
+  routing metadata
 
-Spritz may expose `Concierge` as a first-class native concept, but it should be
-implemented using the same underlying primitives instead of creating a second
-runtime model.
+That keeps the system elegant because Spritz does not need a second resource
+type, a wrapper record, or a separate runtime model.
 
 ## Goals
 
 - Support one shared Slack, Discord, or Teams app serving many tenants.
-- Route each tenant to its own dedicated Spritz concierge.
-- Make `Concierge` a first-class Spritz concept.
-- Reuse normal Spritz instance creation instead of inventing a separate
-  concierge runtime system.
-- Let deployments keep using existing owner-resolution and preset-resolution
-  flows during install or bootstrap.
-- Keep the inbound routing contract portable enough to work across Slack,
-  Discord, Teams, and future shared-app providers.
+- Route each external tenant to its own dedicated concierge instance.
+- Let Spritz talk about concierge as a first-class product concept.
+- Implement concierge using existing primitives:
+  - instance
+  - preset
+  - instance class
+  - admission resolvers
+  - normal lifecycle
+- Keep ownership and create-time binding flows compatible with the current
+  extension framework.
 
 ## Non-goals
 
-- Making Spritz responsible for account linking outside the existing
-  resolver-based model.
+- Introducing a separate `Concierge` resource that wraps a backing instance.
 - Introducing a second runtime or materialization stack separate from
   instances.
-- Encoding billing, agent selection policy, or deployment-specific ownership
-  rules in Spritz core.
-- Replacing normal instance creation with a separate bot-only provisioning
-  path.
+- Making Spritz responsible for deployment-specific billing, pricing, or
+  ownership policy.
+- Replacing normal instance creation with a special bot-only provisioning path.
 
 ## Problem Statement
 
@@ -69,73 +66,65 @@ That breaks down when:
 - the same Teams app serves many organizations
 
 In those cases, the provider app identity is not enough to decide which
-concierge should handle an event. The missing key is the external tenant scope.
+instance should handle an event. The missing key is the external tenant scope.
 
-Spritz therefore needs a first-class way to bind:
+Spritz therefore needs a first-class way to model:
 
-- a provider integration
-- plus an external tenant identifier
-- to one target concierge
+- one shared integration principal
+- many external tenants behind that principal
+- one concierge instance per external tenant
 
 ## Design Principles
 
-### Concierge is first-class, but not special under the hood
+### Concierge is an instance-class pattern
 
-Spritz may expose `Concierge` as a named product concept because many
-deployments will use it.
+Spritz may expose concierge as a named concept in API, docs, and UI.
 
-But `Concierge` should still be implemented as a thin control-plane wrapper
-around the existing instance model.
+But under the hood, concierge should be represented as:
 
-Creating a concierge should internally:
+- an ordinary instance
+- with `instanceClassId=concierge`
+- and explicit routing metadata attached to the instance
 
-- resolve owner and preset inputs through the normal admission framework
-- create a normal instance from a preset and instance class
-- store a concierge record that points to that instance
-- store the tenant routing identity for inbound events
+This is the cleanest model because there is only one real control-plane object.
 
-### Reuse instance creation as-is
-
-Tenant-specific app entry points should still be materialized as normal
-instances created from presets and instance classes.
-
-The install flow may resolve owners, selectors, or preset inputs through the
-existing admission framework, but the runtime that actually executes must still
-be an ordinary Spritz instance.
-
-### Owner resolution and tenant routing are different
-
-The owner tells Spritz who should own or administer the concierge and its
-backing instance.
-
-The external tenant identifier tells Spritz which concierge should receive an
-inbound provider event.
-
-These concerns must remain separate. Routing must not depend on recomputing
-owner identity on every inbound event.
-
-### One active concierge exists per external tenant
-
-The routing contract should be deterministic.
+### One active concierge instance per tenant
 
 For a given combination of:
 
-- integration principal
-- provider
-- external tenant identifier
+- `principalId`
+- `provider`
+- `externalScopeType`
+- `externalTenantId`
 
-Spritz should have exactly one active concierge at a time.
+Spritz should have exactly one active concierge instance at a time.
 
-### Concierge should survive runtime replacement
+That should be enforced as a real uniqueness invariant, not just doc guidance.
 
-The tenant-facing identity should not be the same thing as the current runtime
-instance.
+### Ownership and routing are different
 
-That lets Spritz:
+The owner tells Spritz who should own or administer the instance.
 
-- replace or recreate the runtime
-- keep the same external tenant binding
-- preserve stable operational references for the tenant entry point
+The routing identity tells Spritz which instance should receive an inbound
+provider event.
+
+These concerns must remain separate. Routing must not depend on recomputing
+owner identity for every inbound event.
+
+### Concierge identity should survive runtime replacement
+
+The elegant version of this system does not introduce a separate wrapper
+resource. Instead, the instance system itself should support stable logical
+identity with replaceable runtime revisions.
+
+That means:
+
+- the concierge instance remains the stable object
+- Spritz may roll its runtime forward internally
+- routing still targets the same concierge instance identity
+
+If Spritz does not yet support instance revisions, that should be added to the
+instance lifecycle instead of creating a separate concierge wrapper type.
 
 ## Canonical Terms
 
@@ -152,89 +141,83 @@ Examples:
 
 - Slack workspace ID
 - Discord guild ID
-- Teams tenant or tenant-plus-team key
+- Teams tenant ID
 
-Spritz should treat this as an opaque provider-scoped identifier.
+### External scope type
 
-For providers that need more than one dimension of scope, Spritz should store
-an explicit `externalScopeType` next to the ID instead of overloading the ID
-field itself.
+The provider-specific scope kind for the tenant ID.
 
-### Concierge
+Examples:
 
-A first-class Spritz control-plane object representing one tenant-facing entry
-agent for an external tenant.
+- `workspace`
+- `guild`
+- `tenant`
+- `team`
 
-A concierge is stable across runtime replacements. It owns the tenant binding
-and points at the current backing instance.
+This keeps the routing model explicit without overloading the tenant ID field.
 
-### Backing instance
+### Concierge instance
 
-The normal Spritz instance that implements the concierge runtime.
+A normal Spritz instance whose class and routing metadata declare that it is
+the tenant entry point for a shared external app integration.
 
-This may host OpenClaw or any other preset.
+There is no separate backing-instance resource in this model.
 
-### Routing index
+### Routing identity
 
-An index over concierge state used to resolve inbound events quickly.
+The tuple:
 
-This is derived state. `Concierge` remains the source of truth.
+- `principalId`
+- `provider`
+- `externalScopeType`
+- `externalTenantId`
+
+This tuple uniquely identifies which concierge instance should receive an
+inbound event.
 
 ## Proposed Architecture
 
-The native Spritz model should add two things:
+The native Spritz model should add:
 
-- a first-class `Concierge` resource
-- inbound routing as a new integration layer
+- a `concierge` instance class
+- explicit routing metadata on instances
+- an inbound route-resolution path that resolves directly to an instance
 
 The control-plane pieces become:
 
 - existing service principal authentication for the shared app
-- a concierge store
-- existing create flow for instance creation
-- a routing index over concierge state
-- a new inbound route-resolution step
-- a provider webhook or event ingress surface that resolves the concierge
-  before forwarding to the concierge's backing instance
+- existing create flow for instances
+- a concierge-oriented instance class
+- a uniqueness constraint or derived index on routing identity
+- a provider ingress surface that resolves routing identity to an instance
 
-### Concierge model
+### Concierge instance model
 
-Spritz should persist a concierge record with at least:
+Concierge should be expressed on the instance itself.
 
-- `id`
-- `principalId`
-- `provider`
-- `externalTenantId`
-- `externalScopeType`
-- `ownerId`
-- `presetId`
-- `instanceClassId`
-- `instanceId`
-- `status`
-- `createdAt`
-- `updatedAt`
+Recommended shape:
 
-Optional but useful fields:
+- normal owner fields
+- normal preset fields
+- `instanceClassId=concierge`
+- routing metadata:
+  - `principalId`
+  - `provider`
+  - `externalScopeType`
+  - `externalTenantId`
 
-- `displayName`
-- provider installation metadata
-- deployment annotations
-- reconnect or reinstall metadata
+This routing metadata may live in one of these places:
 
-The important split is:
+- structured instance spec fields
+- structured resolved-facts fields
+- structured annotations materialized from create-time resolution
 
-- `Concierge` is the stable tenant-facing control-plane record
-- `instanceId` is the replaceable runtime implementation
-- `principalId + provider + externalScopeType + externalTenantId` is the
-  durable concierge identity
+The preferred direction is explicit structured fields rather than opaque
+annotations, because routing is core control-plane behavior.
 
-Spritz should enforce a real uniqueness constraint for active concierge rows on:
+### Concierge instance lifecycle states
 
-- `principalId + provider + externalScopeType + externalTenantId`
-
-### Concierge lifecycle states
-
-At minimum, concierge state should support:
+At minimum, concierge instances should support:
 
 - `provisioning`
 - `ready`
@@ -242,51 +225,41 @@ At minimum, concierge state should support:
 - `disconnected`
 - `failed`
 
-Routing should only target concierges in `ready`.
+Routing should only target concierge instances in `ready`.
 
-### Routing index model
+### Routing invariant
 
-Spritz may maintain a separate routing index for fast lookup, but it should be
-derived from concierge state instead of being a peer source of truth.
-
-That index should map:
+Spritz should enforce a real uniqueness rule for active concierge instances on:
 
 - `principalId + provider + externalScopeType + externalTenantId`
 
-to:
+If a separate index is used for performance, it should be derived from instance
+state rather than acting as a peer source of truth.
 
-- `conciergeId`
-- `instanceId`
-- current routable status
-
-### Install flow
+## Install Flow
 
 The install or bootstrap flow should work like this:
 
 1. A shared provider app is installed into an external tenant.
 2. The integration calls Spritz with:
-   - provider
-   - external tenant ID
-   - external scope type
-   - owner reference or resolved owner
-   - preset and preset inputs
-3. Spritz performs a deterministic upsert keyed by:
-   - `principalId`
    - `provider`
    - `externalScopeType`
    - `externalTenantId`
-4. If no active concierge exists, Spritz creates one and runs the normal create path under the
-   hood:
+   - owner reference or resolved owner
+   - preset and preset inputs
+3. Spritz performs a deterministic upsert keyed by the routing identity.
+4. If no active concierge instance exists, Spritz creates a normal instance:
    - owner resolution if needed
    - preset create resolvers if configured
    - instance class policy
    - instance materialization
-5. If an active concierge already exists for the same key, Spritz returns or
-   updates that concierge instead of creating a duplicate.
-6. Spritz updates the derived routing index from concierge state.
+5. Spritz marks the instance as `instanceClassId=concierge` and persists the
+   routing metadata on that instance.
+6. If an active concierge instance already exists for the same routing
+   identity, Spritz returns or updates that instance instead of creating a
+   duplicate.
 
-This keeps provisioning and routing aligned around one canonical concierge
-object while still reusing the canonical instance runtime underneath.
+This keeps provisioning aligned with the canonical instance model.
 
 ### Reinstall and retry behavior
 
@@ -294,65 +267,73 @@ Reinstall, reconnect, and retried create requests must be idempotent.
 
 Rules:
 
-- if the same active concierge already exists, return or update it
-- if a disconnected concierge exists, reconnect it or replace its backing
-  instance deterministically
-- concurrent install attempts for the same key must converge on one concierge
-  record
+- if the same active concierge instance already exists, return or update it
+- if a disconnected concierge instance exists, reconnect it or roll it forward
+  deterministically
+- concurrent install attempts for the same routing identity must converge on
+  one instance
 
-### Inbound event flow
+## Inbound Event Flow
 
 The inbound routing flow should work like this:
 
 1. Spritz receives a webhook or normalized event from a shared app principal.
 2. Spritz authenticates the principal.
-3. Spritz extracts the provider, external scope type, and external tenant ID
-   from the event.
-4. Spritz resolves the active concierge through the routing index.
-5. Spritz loads the bound concierge.
-6. Spritz forwards the event to the concierge's backing instance.
-7. The backing instance handles the event through its normal runtime surface.
+3. Spritz extracts:
+   - `provider`
+   - `externalScopeType`
+   - `externalTenantId`
+4. Spritz resolves the active concierge instance directly from the routing
+   identity.
+5. Spritz forwards the event to that instance.
+6. The instance handles the event through its normal runtime surface.
 
-Routing must be based on concierge identity, not on repeated owner lookup.
+Routing must be based on the instance's routing identity, not on owner lookup.
 
-### Concierge replacement flow
+## Runtime Replacement Flow
 
-Because concierge and instance are separate, Spritz can replace a broken or
-upgraded runtime without changing the tenant-facing identity.
+If a concierge runtime needs replacement, the instance model itself should own
+that replacement.
 
-That flow should work like this:
+The desired behavior is:
 
-1. Spritz creates a new backing instance for the existing concierge.
-2. Spritz waits until the new instance is healthy.
-3. Spritz atomically updates `concierge.instanceId`.
-4. Spritz refreshes the derived routing index.
-5. Spritz drains and removes the old instance afterward.
+1. Spritz prepares a new runtime revision for the same concierge instance.
+2. Spritz waits until the new revision is healthy.
+3. Spritz atomically flips the active revision for that instance.
+4. Routing continues to target the same concierge instance identity.
+5. Spritz drains and removes the previous revision afterward.
+
+This is more elegant than introducing a separate concierge resource that points
+to a backing instance.
 
 ## API Direction
 
-Spritz should add a `Concierge` API, but it does not need a new runtime type.
-It needs:
+Spritz does not need a separate concierge resource API.
 
-- a concierge lifecycle API
-- an inbound routing API
+Instead, it should:
+
+- extend instance create/update flows to support concierge-class instances
+- expose concierge semantics through instance class and routing metadata
+- add provider ingress endpoints that resolve directly to concierge instances
 
 Possible native surfaces:
 
-- a concierge create or upsert API
-- a concierge lookup API
+- normal instance create or upsert API with concierge routing fields
+- concierge-filtered list and lookup views over instances
 - provider-specific ingress endpoints that normalize incoming events and resolve
-  the bound concierge
+  the target instance
 
 The exact REST shape may vary, but the control-plane contract should be:
 
-- create concierge
-- materialize backing instance through normal create
-- route inbound event by external tenant ID
+- create or upsert concierge instance
+- materialize it through the normal instance path
+- route inbound event by routing identity
 
 Example create shape:
 
 ```json
 {
+  "instanceClassId": "concierge",
   "provider": "discord",
   "externalScopeType": "guild",
   "externalTenantId": "123456789012345678",
@@ -373,60 +354,68 @@ feature-specific hook family.
 Recommended split:
 
 - existing `owner.resolve` and `preset.create.resolve` style resolvers remain
-  responsible for create-time concierge facts
-- a new inbound routing operation resolves the target concierge from
-  `principal + provider + externalScopeType + externalTenantId`
+  responsible for create-time facts
+- a new inbound routing operation resolves the target instance from:
+  - `principalId`
+  - `provider`
+  - `externalScopeType`
+  - `externalTenantId`
 
 This keeps the lifecycle clean:
 
-- create-time extensions answer "which concierge backing instance should
-  exist?"
-- inbound routing answers "which existing concierge should receive this event?"
+- create-time extensions answer "which concierge instance should exist?"
+- inbound routing answers "which existing concierge instance should receive
+  this event?"
 
-## Why This Avoids Concept Duplication
+## Why This Is More Elegant
 
-This design does not duplicate:
+This design avoids:
 
-- concierge runtime behavior
-- owner semantics
-- preset semantics
-- instance class semantics
-- runtime instance semantics
+- a separate `Concierge` table
+- a wrapper-to-backing-instance split
+- duplicated lifecycle state
+- duplicated routing state
+- duplicated replacement semantics
 
-It adds only two missing control-plane concepts:
+There is only one real object:
 
-- `Concierge` as the stable tenant-facing entry object
-- a derived routing index for shared-app ingress
+- the instance
 
-Both compile down to the existing runtime primitives instead of introducing a
-parallel execution model.
+Concierge is simply:
+
+- a semantic role
+- an instance class
+- routing metadata
+
+That is the cleanest long-term shape because it keeps Spritz's core model small
+while still making concierge a first-class concept for users and deployments.
 
 ## Validation
 
 Validation for this architecture should include:
 
 1. Install the same shared provider app into two different external tenants.
-2. Create or bootstrap one concierge for each tenant.
-3. Verify each concierge materializes a normal backing instance.
-4. Verify Spritz stores two distinct concierge identities keyed by
-   `principalId + provider + externalScopeType + externalTenantId`.
+2. Create or bootstrap one concierge instance for each tenant.
+3. Verify each concierge instance is a normal instance with
+   `instanceClassId=concierge`.
+4. Verify Spritz stores two distinct routing identities keyed by:
+   - `principalId + provider + externalScopeType + externalTenantId`
 5. Send inbound events from both tenants through the same app integration.
-6. Verify each event routes to the correct concierge and backing instance.
-7. Verify concierge replacement updates `instanceId` without changing the
-   concierge identity.
-8. Verify reinstall or reconnect updates the binding deterministically.
+6. Verify each event routes to the correct concierge instance.
+7. Verify reinstall or reconnect returns the same concierge instance identity.
+8. Verify runtime replacement preserves concierge instance identity.
 9. Verify uninstall or disconnect disables routing for that tenant.
 
 ## Follow-ups
 
-- Define the concierge storage model and API contract.
-- Define whether the routing index is persisted or rebuilt from concierge rows.
+- Define the exact instance field shape for routing metadata.
+- Define whether routing lookup reads directly from instance storage or from a
+  derived index.
 - Define the normalized `externalScopeType` and `externalTenantId` shapes for
   Slack, Discord, and Teams.
 - Define the inbound routing operation contract in the unified extension
   framework.
-- Decide whether provider ingress normalization lives in core or in optional
-  provider integration packages.
+- Define how instance revisioning should work for concierge-class instances.
 
 ## References
 
