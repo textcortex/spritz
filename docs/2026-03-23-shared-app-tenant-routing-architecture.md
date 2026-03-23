@@ -222,8 +222,8 @@ surfaces up front, Spritz should use the primitives it already has today:
 - `presetId`
 - preset-to-instance-class mapping
 - create-time admission resolvers
-- metadata annotations
-- metadata labels
+- the unified extension resolver envelope
+- existing lifecycle notifications
 
 Important current constraints:
 
@@ -238,11 +238,19 @@ So the first implementation should work like this:
 
 - create or reuse a concierge preset whose preset catalog entry resolves to
   `instanceClass=concierge`
-- have the create-time resolver materialize concierge routing metadata into
-  reserved annotations
-- have Spritz maintain one derived lookup label for fast route resolution
+- keep create-time ownership and binding logic on the existing resolver path:
+  - `owner.resolve`
+  - `preset.create.resolve`
+- introduce one new resolver operation for inbound routing:
+  - `channel.route.resolve`
+- let deployment-specific systems persist installation records however they
+  want and expose them through that resolver contract
+- optionally mirror route metadata onto instance annotations or labels for
+  observability, but not as the only source of truth when an external routing
+  registry is configured
 
-That lets implementation start without adding a new CRD field surface first.
+That lets implementation start without adding a new CRD field surface first and
+without hardcoding a storage engine such as SQL into Spritz.
 
 If this proves too limiting later, Spritz can promote the same routing metadata
 into an explicit structured instance field in a follow-up change.
@@ -476,6 +484,10 @@ Possible native surfaces:
 - channel gateway ingress endpoints that normalize incoming events and resolve
   the target instance
 
+If a deployment wants installation records to live outside Spritz, Spritz
+should call that external system through the same extension-style resolver
+contract it already uses elsewhere.
+
 The exact REST shape may vary, but the control-plane contract should be:
 
 - create or upsert concierge instance
@@ -523,12 +535,104 @@ This keeps the lifecycle clean:
 - inbound routing answers "which existing concierge instance should receive
   this event?"
 
-For the first implementation in the current repo:
+## External Routing Registry Contract
 
-- create-time resolvers should materialize routing metadata via annotations and
-  labels
-- inbound routing should resolve by route-hash label and verify annotations
-- no new extension mutation surface is required before implementation begins
+Spritz should not require installation records to live inside Kubernetes
+metadata or inside a Spritz-owned SQL schema.
+
+Instead, if a deployment wants external persistence, it should implement an
+external routing registry behind the same extension transport style Spritz
+already uses for owner and preset resolution.
+
+The recommended read path is:
+
+- `operation = "channel.route.resolve"`
+- input:
+  - `provider`
+  - `externalScopeType`
+  - `externalTenantId`
+- output:
+  - `instanceId`
+  - optional normalized route metadata
+  - optional lifecycle state such as `ready` or `disconnected`
+
+Example request envelope:
+
+```json
+{
+  "version": "v1",
+  "extensionId": "channel-routing",
+  "kind": "resolver",
+  "operation": "channel.route.resolve",
+  "requestId": "req-123",
+  "principal": {
+    "id": "shared-discord-bot",
+    "type": "service",
+    "scopes": ["spritz.channel.route.resolve"]
+  },
+  "context": {
+    "namespace": "instances",
+    "instanceClassId": "concierge"
+  },
+  "input": {
+    "provider": "discord",
+    "externalScopeType": "guild",
+    "externalTenantId": "123456789012345678"
+  }
+}
+```
+
+Example response envelope:
+
+```json
+{
+  "status": "resolved",
+  "output": {
+    "instanceId": "zeno-acme",
+    "state": "ready"
+  }
+}
+```
+
+Supported statuses should follow the existing extension pattern:
+
+- `resolved`
+- `unresolved`
+- `forbidden`
+- `ambiguous`
+- `invalid`
+- `unavailable`
+
+For write-back, Spritz should not invent a second custom sync API. It should
+reuse `instance.lifecycle.notify` so an external registry can observe:
+
+- instance created
+- instance ready
+- instance updated
+- instance disconnected
+- instance deleted
+
+That gives deployments one consistent way to keep external install state in
+sync without teaching Spritz how that state is persisted.
+
+## Deployment Boundary
+
+Spritz should own:
+
+- concierge-as-instance semantics
+- channel gateway ingress surfaces
+- extension contracts for route resolution
+- routing an inbound event to a resolved instance
+
+Deployments should own:
+
+- where installation records are persisted
+- how owner and billing identity are chosen
+- provider-specific installation state
+- audit semantics for external senders
+
+This keeps Spritz reusable while still letting deployments implement
+Slack-, Discord-, and Teams-specific behavior.
 
 ## Why This Is More Elegant
 
@@ -561,7 +665,8 @@ Validation for this architecture should include:
 2. Create or bootstrap one concierge instance for each tenant.
 3. Verify each concierge instance is a normal instance with
    `instanceClassId=concierge`.
-4. Verify Spritz stores two distinct routing identities keyed by:
+4. Verify the configured routing registry resolves two distinct routing
+   identities keyed by:
    - `principalId + provider + externalScopeType + externalTenantId`
 5. Send inbound events from both tenants through the same app integration.
 6. Verify each event routes to the correct concierge instance.
@@ -578,15 +683,14 @@ Disconnect and uninstall behavior should be explicit:
 ## Follow-ups
 
 - Define the exact instance field shape for routing metadata.
-- Define whether routing lookup reads directly from instance storage or from a
-  derived index.
+- Decide whether instance metadata is only mirrored for debugging or also used
+  as a fallback cache when an external registry is configured.
 - Define the normalized `externalScopeType` and `externalTenantId` shapes for
   Slack, Discord, and Teams.
-- Define the inbound routing operation contract in the unified extension
-  framework.
+- Add `channel.route.resolve` to the unified extension framework.
 - Define how instance revisioning should work for concierge-class instances.
 - Decide whether structured routing fields should be added after the initial
-  annotations-and-labels implementation.
+  extension-driven implementation.
 
 ## References
 
