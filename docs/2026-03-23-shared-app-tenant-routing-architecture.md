@@ -21,6 +21,17 @@ tenants still talk through the same shared channel gateway. Spritz routes
 each inbound event to the correct concierge instance by looking up the
 instance's routing identity instead of assuming one shared runtime per app.
 
+In plain language:
+
+- one shared Slack app, Discord app, or Teams app receives all events
+- the shared channel gateway checks which workspace, guild, server, or tenant
+  the event came from
+- Spritz routes that event to the concierge instance bound to that external
+  tenant
+- the concierge decides what to do
+- replies go back out through the same shared channel gateway and the same
+  shared app
+
 The key design choice is:
 
 - `concierge` is a first-class Spritz concept semantically
@@ -380,10 +391,21 @@ The inbound routing flow should work like this:
    - `externalTenantId`
 4. Spritz resolves the active concierge instance directly from the routing
    identity.
-5. Spritz forwards the event to that instance.
-6. The instance handles the event through its normal runtime surface.
+5. Spritz forwards the event to that concierge instance.
+6. The concierge handles the event through its normal runtime surface.
+7. If the concierge wants to reply or perform a channel action, the outbound
+   request goes back through the shared channel gateway.
+8. The shared channel gateway sends the actual reply or action through the same
+   shared Slack app, Discord app, or Teams app.
 
 Routing must be based on the instance's routing identity, not on owner lookup.
+
+The practical consequence is:
+
+- one shared app receives traffic for many external tenants
+- Spritz does not create one app per tenant
+- Spritz routes to different concierge instances based on the server,
+  workspace, guild, or tenant the event came from
 
 Normalized ingress envelope:
 
