@@ -634,6 +634,78 @@ Deployments should own:
 This keeps Spritz reusable while still letting deployments implement
 Slack-, Discord-, and Teams-specific behavior.
 
+## Operational Defaults
+
+The intended default behavior should be:
+
+- installation happens when the shared app is connected to an external tenant,
+  not on first inbound message
+- install handling should be idempotent
+- disconnect should stop routing immediately
+- reconnect should reuse the same concierge instance identity when the
+  deployment still considers that installation valid
+- outbound channel actions should go back through the shared channel gateway,
+  not directly from the concierge runtime to the provider
+
+Spritz does not need to own the install database for these rules to hold. It
+only needs to expose the routing contract cleanly enough that a deployment can
+implement them predictably.
+
+### Install
+
+The deployment should create or upsert the installation record before normal
+message routing begins.
+
+Spritz should then either:
+
+- create a concierge instance through the normal instance flow, or
+- reuse the existing concierge instance already bound to that routing identity
+
+This gives each tenant a stable concierge before the first real conversation.
+
+### Disconnect and reconnect
+
+When an installation is disconnected:
+
+- the external registry should mark it disconnected
+- `channel.route.resolve` should return `unresolved`
+- the concierge instance may remain in place for later reuse, depending on
+  deployment policy
+
+When an installation reconnects:
+
+- the external registry should upsert it back to an active state
+- the same concierge instance identity should be reused when possible
+- only if policy requires a clean replacement should a new concierge be
+  created
+
+### Outbound action path
+
+The clean path is:
+
+1. shared channel gateway receives the inbound event
+2. Spritz routes it to the concierge instance
+3. concierge decides what to send
+4. concierge asks the deployment-owned channel gateway to send it
+5. channel gateway performs the real provider API call
+
+That keeps provider credentials out of concierge runtimes and preserves one
+controlled egress path for Slack, Discord, and Teams.
+
+### Teams v1 scope
+
+The default v1 assumption should be:
+
+- `provider = msteams`
+- `externalScopeType = tenant`
+
+If product requirements later need a separate concierge per team rather than
+per tenant, the same routing model can support:
+
+- `externalScopeType = team`
+
+without changing the rest of the architecture.
+
 ## Why This Is More Elegant
 
 This design avoids:
