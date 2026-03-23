@@ -36,6 +36,7 @@ const (
 	extensionOperationAuthLoginMetadata   extensionOperation = "auth.login.metadata"
 	extensionOperationIdentityLinkResolve extensionOperation = "identity.link.resolve"
 	extensionOperationInstanceNotify      extensionOperation = "instance.lifecycle.notify"
+	extensionOperationChannelRouteResolve extensionOperation = "channel.route.resolve"
 )
 
 type extensionResolverStatus string
@@ -246,6 +247,8 @@ func normalizeExtensionOperation(raw string) extensionOperation {
 		return extensionOperationIdentityLinkResolve
 	case extensionOperationInstanceNotify:
 		return extensionOperationInstanceNotify
+	case extensionOperationChannelRouteResolve:
+		return extensionOperationChannelRouteResolve
 	default:
 		return ""
 	}

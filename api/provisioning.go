@@ -27,6 +27,7 @@ const (
 	scopePresetsRead              = "spritz.presets.read"
 	scopeInstancesSuggestName     = "spritz.instances.suggest_name"
 	scopeExternalResolveViaCreate = "spritz.external_identities.resolve_via_create"
+	scopeChannelRouteResolve      = "spritz.channel.route.resolve"
 
 	actorIDAnnotationKey          = "spritz.sh/actor.id"
 	actorTypeAnnotationKey        = "spritz.sh/actor.type"
