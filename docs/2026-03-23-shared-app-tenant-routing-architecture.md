@@ -8,7 +8,7 @@ tags: [spritz, integrations, routing, slack, discord, teams, concierge, architec
 ## Overview
 
 This document defines a Spritz-native architecture for serving many
-tenant-dedicated agent runtimes behind one shared external app integration.
+tenant-dedicated agent runtimes behind one shared channel gateway integration.
 
 Examples:
 
@@ -17,7 +17,7 @@ Examples:
 - one shared Teams app installed into many tenants or teams
 
 In this model, each external tenant gets its own concierge instance, but all
-tenants still talk through the same provider app registration. Spritz routes
+tenants still talk through the same shared channel gateway. Spritz routes
 each inbound event to the correct concierge instance by looking up the
 instance's routing identity instead of assuming one shared runtime per app.
 
@@ -56,7 +56,7 @@ type, a wrapper record, or a separate runtime model.
 
 ## Problem Statement
 
-Today, a shared external app identity naturally maps to one integration entry
+Today, a shared channel gateway identity naturally maps to one integration entry
 point, but not to one tenant.
 
 That breaks down when:
@@ -65,7 +65,7 @@ That breaks down when:
 - the same Discord app is present in many guilds
 - the same Teams app serves many organizations
 
-In those cases, the provider app identity is not enough to decide which
+In those cases, the shared channel gateway identity is not enough to decide which
 instance should handle an event. The missing key is the external tenant scope.
 
 Spritz therefore needs a first-class way to model:
@@ -128,10 +128,9 @@ instance lifecycle instead of creating a separate concierge wrapper type.
 
 ## Canonical Terms
 
-### Shared app principal
+### Channel gateway principal
 
-The authenticated Spritz principal representing the shared provider app
-integration.
+The authenticated Spritz principal representing the shared channel gateway.
 
 ### External tenant ID
 
@@ -171,7 +170,7 @@ model.
 ### Concierge instance
 
 A normal Spritz instance whose class and routing metadata declare that it is
-the tenant entry point for a shared external app integration.
+the tenant entry point behind a shared channel gateway.
 
 There is no separate backing-instance resource in this model.
 
@@ -197,11 +196,12 @@ The native Spritz model should add:
 
 The control-plane pieces become:
 
-- existing service principal authentication for the shared app
+- existing service principal authentication for the shared channel gateway
 - existing create flow for instances
 - a concierge-oriented instance class
 - a uniqueness constraint or derived index on routing identity
-- a provider ingress surface that resolves routing identity to an instance
+- a channel gateway ingress surface that resolves routing identity to an
+  instance
 
 ### Current-repo implementation path
 
@@ -318,7 +318,7 @@ truncated form for lookup.
 
 The install or bootstrap flow should work like this:
 
-1. A shared provider app is installed into an external tenant.
+1. A shared channel gateway is connected to an external tenant.
 2. The integration calls Spritz with:
    - `provider`
    - `externalScopeType`
@@ -371,7 +371,8 @@ Concrete current-repo upsert algorithm:
 
 The inbound routing flow should work like this:
 
-1. Spritz receives a webhook or normalized event from a shared app principal.
+1. Spritz receives a webhook or normalized event from a shared channel gateway
+   principal.
 2. Spritz authenticates the principal.
 3. Spritz extracts:
    - `provider`
@@ -397,10 +398,10 @@ Normalized ingress envelope:
 }
 ```
 
-The provider-specific ingress adapter should normalize Slack, Discord, and
-Teams payloads into this shape before route resolution.
+The channel gateway should normalize Slack, Discord, and Teams payloads into
+this shape before route resolution.
 
-Ingress adapters should extract tenant identity like this:
+The channel gateway should extract tenant identity like this:
 
 - Slack:
   - `provider=slack`
@@ -443,13 +444,14 @@ Instead, it should:
 
 - extend instance create/update flows to support concierge-class instances
 - expose concierge semantics through instance class and routing metadata
-- add provider ingress endpoints that resolve directly to concierge instances
+- add channel gateway ingress endpoints that resolve directly to concierge
+  instances
 
 Possible native surfaces:
 
 - normal instance create or upsert API with concierge routing fields
 - concierge-filtered list and lookup views over instances
-- provider-specific ingress endpoints that normalize incoming events and resolve
+- channel gateway ingress endpoints that normalize incoming events and resolve
   the target instance
 
 The exact REST shape may vary, but the control-plane contract should be:
@@ -533,7 +535,7 @@ while still making concierge a first-class concept for users and deployments.
 
 Validation for this architecture should include:
 
-1. Install the same shared provider app into two different external tenants.
+1. Connect the same shared channel gateway to two different external tenants.
 2. Create or bootstrap one concierge instance for each tenant.
 3. Verify each concierge instance is a normal instance with
    `instanceClassId=concierge`.
