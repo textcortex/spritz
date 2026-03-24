@@ -38,10 +38,20 @@ type slackGateway struct {
 }
 
 type dedupeStore struct {
-	ttl  time.Duration
-	now  func() time.Time
-	mu   sync.Mutex
-	seen map[string]time.Time
+	ttl     time.Duration
+	now     func() time.Time
+	mu      sync.Mutex
+	entries map[string]dedupeEntry
+}
+
+type dedupeEntry struct {
+	seenAt   time.Time
+	inFlight bool
+}
+
+type dedupeLease struct {
+	store *dedupeStore
+	key   string
 }
 
 type slackOAuthAccessResponse struct {
@@ -140,31 +150,50 @@ type acpRPCMessage struct {
 
 func newDedupeStore(ttl time.Duration) *dedupeStore {
 	return &dedupeStore{
-		ttl:  ttl,
-		now:  time.Now,
-		seen: map[string]time.Time{},
+		ttl:     ttl,
+		now:     time.Now,
+		entries: map[string]dedupeEntry{},
 	}
 }
 
-func (d *dedupeStore) markSeen(key string) bool {
+func (d *dedupeStore) begin(key string) (*dedupeLease, bool) {
 	key = strings.TrimSpace(key)
 	if key == "" {
-		return false
+		return nil, false
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	now := d.now().UTC()
 	cutoff := now.Add(-d.ttl)
-	for candidate, seenAt := range d.seen {
-		if seenAt.Before(cutoff) {
-			delete(d.seen, candidate)
+	for candidate, entry := range d.entries {
+		if entry.seenAt.Before(cutoff) {
+			delete(d.entries, candidate)
 		}
 	}
-	if seenAt, ok := d.seen[key]; ok && now.Sub(seenAt) <= d.ttl {
-		return true
+	if entry, ok := d.entries[key]; ok && now.Sub(entry.seenAt) <= d.ttl {
+		return nil, true
 	}
-	d.seen[key] = now
-	return false
+	d.entries[key] = dedupeEntry{seenAt: now, inFlight: true}
+	return &dedupeLease{store: d, key: key}, false
+}
+
+func (l *dedupeLease) finish(success bool) {
+	if l == nil || l.store == nil || l.key == "" {
+		return
+	}
+	l.store.mu.Lock()
+	defer l.store.mu.Unlock()
+	entry, ok := l.store.entries[l.key]
+	if !ok || !entry.inFlight {
+		return
+	}
+	if !success {
+		delete(l.store.entries, l.key)
+		return
+	}
+	entry.inFlight = false
+	entry.seenAt = l.store.now().UTC()
+	l.store.entries[l.key] = entry
 }
 
 func newSlackGateway(cfg config, logger *slog.Logger) *slackGateway {
@@ -317,12 +346,21 @@ func (g *slackGateway) processMessageEvent(ctx context.Context, envelope slackEn
 		return nil
 	}
 
-	if eventID := strings.TrimSpace(envelope.EventID); eventID != "" && g.dedupe.markSeen("event:"+eventID) {
+	messageKey := strings.Join([]string{envelope.TeamID, event.Channel, event.TS}, ":")
+	messageLease, duplicated := g.dedupe.begin("message:" + messageKey)
+	if duplicated {
 		return nil
 	}
-	messageKey := strings.Join([]string{envelope.TeamID, event.Channel, event.TS}, ":")
-	if g.dedupe.markSeen("message:" + messageKey) {
-		return nil
+	success := false
+	defer messageLease.finish(success)
+
+	var eventLease *dedupeLease
+	if eventID := strings.TrimSpace(envelope.EventID); eventID != "" {
+		eventLease, duplicated = g.dedupe.begin("event:" + eventID)
+		if duplicated {
+			return nil
+		}
+		defer eventLease.finish(success)
 	}
 
 	installation, ok, err := g.installations.GetByTeamID(envelope.TeamID)
@@ -358,7 +396,11 @@ func (g *slackGateway) processMessageEvent(ctx context.Context, envelope slackEn
 		reply = "I hit an internal error while processing that request."
 		g.logger.Error("acp prompt failed", "error", err, "conversation_id", conversationID)
 	}
-	return g.postSlackMessage(ctx, installation.BotAccessToken, event.Channel, reply, slackReplyThreadTS(event))
+	if err := g.postSlackMessage(ctx, installation.BotAccessToken, event.Channel, reply, slackReplyThreadTS(event)); err != nil {
+		return err
+	}
+	success = true
+	return nil
 }
 
 func normalizeSlackPromptText(eventType, text string) string {

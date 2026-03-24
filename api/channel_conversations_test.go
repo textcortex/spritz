@@ -76,6 +76,20 @@ func TestUpsertChannelConversationCreatesConversation(t *testing.T) {
 	if payload.Data.Conversation.Spec.Owner.ID != "owner-123" {
 		t.Fatalf("expected owner owner-123, got %q", payload.Data.Conversation.Spec.Owner.ID)
 	}
+	expectedName := channelConversationName(
+		"zeno-acme",
+		normalizedChannelConversationIdentity{
+			principalID:            "shared-slack-gateway",
+			provider:               "slack",
+			externalScopeType:      "workspace",
+			externalTenantID:       "T_workspace_1",
+			externalChannelID:      "C_channel_1",
+			externalConversationID: "1711387375.000100",
+		},
+	)
+	if payload.Data.Conversation.Name != expectedName {
+		t.Fatalf("expected deterministic conversation name %q, got %q", expectedName, payload.Data.Conversation.Name)
+	}
 	if payload.Data.Conversation.Annotations[channelConversationPrincipalAnnotationKey] != "shared-slack-gateway" {
 		t.Fatalf("expected principal annotation, got %#v", payload.Data.Conversation.Annotations[channelConversationPrincipalAnnotationKey])
 	}

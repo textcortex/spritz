@@ -341,6 +341,32 @@ func TestUpsertChannelConversationUsesChannelForDirectMessages(t *testing.T) {
 	}
 }
 
+func TestDedupeStoreAllowsRetryAfterFailure(t *testing.T) {
+	store := newDedupeStore(time.Minute)
+	now := time.Date(2026, 3, 24, 14, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+
+	firstLease, duplicated := store.begin("message:T_workspace_1:C_1:1711387375.000100")
+	if duplicated || firstLease == nil {
+		t.Fatalf("expected first delivery to acquire a lease")
+	}
+	if secondLease, duplicated := store.begin("message:T_workspace_1:C_1:1711387375.000100"); !duplicated || secondLease != nil {
+		t.Fatalf("expected in-flight duplicate to be suppressed")
+	}
+
+	firstLease.finish(false)
+
+	retryLease, duplicated := store.begin("message:T_workspace_1:C_1:1711387375.000100")
+	if duplicated || retryLease == nil {
+		t.Fatalf("expected retry after failure to reacquire the lease")
+	}
+	retryLease.finish(true)
+
+	if duplicateLease, duplicated := store.begin("message:T_workspace_1:C_1:1711387375.000100"); !duplicated || duplicateLease != nil {
+		t.Fatalf("expected successful delivery to suppress duplicates within the TTL")
+	}
+}
+
 func signSlackRequest(header http.Header, signingSecret string, body []byte, now time.Time) {
 	timestamp := fmt.Sprintf("%d", now.Unix())
 	base := "v0:" + timestamp + ":" + string(body)

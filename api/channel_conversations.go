@@ -3,10 +3,12 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/labstack/echo/v4"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	spritzv1 "spritz.sh/operator/api/v1"
@@ -104,6 +106,30 @@ func channelConversationRouteHash(identity normalizedChannelConversationIdentity
 		strings.TrimSpace(instanceID),
 	}, "\n")))
 	return hex.EncodeToString(sum[:16])
+}
+
+func channelConversationName(spritzName string, identity normalizedChannelConversationIdentity) string {
+	prefix := strings.ToLower(strings.TrimSpace(spritzName))
+	prefix = strings.Trim(prefix, "-")
+	if prefix == "" {
+		prefix = "conversation"
+	}
+	suffix := "channel-" + channelConversationRouteHash(identity, spritzName)
+	maxPrefixLen := 63 - len(suffix) - 1
+	if maxPrefixLen < 1 {
+		maxPrefixLen = 1
+	}
+	if len(prefix) > maxPrefixLen {
+		prefix = prefix[:maxPrefixLen]
+		prefix = strings.TrimRight(prefix, "-")
+		if prefix == "" {
+			prefix = "conversation"
+			if len(prefix) > maxPrefixLen {
+				prefix = prefix[:maxPrefixLen]
+			}
+		}
+	}
+	return fmt.Sprintf("%s-%s", prefix, suffix)
 }
 
 func channelConversationMatchesIdentity(conversation *spritzv1.SpritzConversation, identity normalizedChannelConversationIdentity) bool {
@@ -253,8 +279,33 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 	if err != nil {
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
+	conversation.Name = channelConversationName(spritz.Name, identity)
 	applyChannelConversationMetadata(conversation, identity, normalizedBody.RequestID, spritz)
 	if err := s.client.Create(c.Request().Context(), conversation); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			existing := &spritzv1.SpritzConversation{}
+			if getErr := s.client.Get(c.Request().Context(), clientKey(namespace, conversation.Name), existing); getErr != nil {
+				return writeError(c, http.StatusInternalServerError, getErr.Error())
+			}
+			if !channelConversationMatchesIdentity(existing, identity) {
+				return writeError(c, http.StatusConflict, "channel conversation is ambiguous")
+			}
+			changed := false
+			if normalizedBody.Title != "" && existing.Spec.Title != normalizedBody.Title {
+				existing.Spec.Title = normalizedBody.Title
+				changed = true
+			}
+			if existing.Spec.CWD != normalizedBody.CWD {
+				existing.Spec.CWD = normalizedBody.CWD
+				changed = true
+			}
+			if changed {
+				if updateErr := s.client.Update(c.Request().Context(), existing); updateErr != nil {
+					return writeError(c, http.StatusInternalServerError, updateErr.Error())
+				}
+			}
+			return writeJSON(c, http.StatusOK, map[string]any{"created": false, "conversation": existing})
+		}
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
 	return writeJSON(c, http.StatusCreated, map[string]any{"created": true, "conversation": conversation})
