@@ -21,6 +21,14 @@ func newInternalAuthConfig() internalAuthConfig {
 }
 
 func (s *server) internalAuthMiddleware() echo.MiddlewareFunc {
+	return s.internalAuthMiddlewareWithBearerFallback(true)
+}
+
+func (s *server) internalAuthHeaderMiddleware() echo.MiddlewareFunc {
+	return s.internalAuthMiddlewareWithBearerFallback(false)
+}
+
+func (s *server) internalAuthMiddlewareWithBearerFallback(allowBearerFallback bool) echo.MiddlewareFunc {
 	if !s.internalAuth.enabled {
 		return func(next echo.HandlerFunc) echo.HandlerFunc {
 			return func(c echo.Context) error {
@@ -31,7 +39,7 @@ func (s *server) internalAuthMiddleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			token := strings.TrimSpace(c.Request().Header.Get(internalTokenHeader))
-			if token == "" {
+			if token == "" && allowBearerFallback {
 				value := c.Request().Header.Get("Authorization")
 				if strings.HasPrefix(value, "Bearer ") {
 					token = strings.TrimSpace(strings.TrimPrefix(value, "Bearer "))

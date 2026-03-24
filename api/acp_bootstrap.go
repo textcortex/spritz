@@ -420,8 +420,12 @@ func (s *server) bootstrapACPConversationBinding(ctx context.Context, conversati
 		return nil, err
 	}
 
+	return s.bootstrapACPConversationBindingWithClient(ctx, conversation, client, initResult)
+}
+
+func (s *server) bootstrapACPConversationBindingWithClient(ctx context.Context, conversation *spritzv1.SpritzConversation, client *acpBootstrapInstanceClient, initResult *acpBootstrapInitializeResult) (*acpBootstrapResponse, error) {
 	if !initResult.AgentCapabilities.LoadSession {
-		err = errors.New("agent does not support session/load")
+		err := errors.New("agent does not support session/load")
 		s.recordConversationBindingError(ctx, conversation.Namespace, conversation.Name, "", err)
 		return nil, err
 	}
@@ -434,6 +438,7 @@ func (s *server) bootstrapACPConversationBinding(ctx context.Context, conversati
 	replaced := false
 	loaded := false
 	var replayMessageCount int32
+	var err error
 
 	if effectiveSessionID != "" {
 		replayMessageCount, err = client.loadSession(ctx, effectiveSessionID, normalizeConversationCWD(conversation.Spec.CWD))

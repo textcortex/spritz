@@ -88,7 +88,7 @@ func (c *acpBootstrapInstanceClient) drainSessionUpdates(ctx context.Context, se
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
 		case <-timer.C:
 			return nil
 		case err, ok := <-c.readErrCh:

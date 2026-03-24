@@ -22,9 +22,12 @@ type fakeACPDebugChatServerOptions struct {
 	SessionID           string
 	LoadReplay          []map[string]any
 	LoadReplayAfter     []map[string]any
+	LoadError           *acpBootstrapJSONRPCError
 	HoldPrompt          bool
 	PermissionRequestID any
 	PromptChunks        []string
+	PromptChunksAfter   []string
+	PromptChunkDelay    time.Duration
 	PromptError         *acpBootstrapJSONRPCError
 	StopReason          string
 }
@@ -120,6 +123,16 @@ func newFakeACPDebugChatServer(t *testing.T, options fakeACPDebugChatServerOptio
 				fakeServer.mu.Lock()
 				fakeServer.loadSessionIDs = append(fakeServer.loadSessionIDs, params.SessionID)
 				fakeServer.mu.Unlock()
+				if options.LoadError != nil {
+					if err := conn.WriteJSON(map[string]any{
+						"jsonrpc": "2.0",
+						"id":      message.ID,
+						"error":   options.LoadError,
+					}); err != nil {
+						t.Fatalf("failed to write load error: %v", err)
+					}
+					continue
+				}
 				for _, update := range options.LoadReplay {
 					if err := conn.WriteJSON(map[string]any{
 						"jsonrpc": "2.0",
@@ -233,6 +246,26 @@ func newFakeACPDebugChatServer(t *testing.T, options fakeACPDebugChatServerOptio
 				}); err != nil {
 					t.Fatalf("failed to write prompt result: %v", err)
 				}
+				if options.PromptChunkDelay > 0 {
+					time.Sleep(options.PromptChunkDelay)
+				}
+				for _, chunk := range options.PromptChunksAfter {
+					if err := conn.WriteJSON(map[string]any{
+						"jsonrpc": "2.0",
+						"method":  "session/update",
+						"params": map[string]any{
+							"update": map[string]any{
+								"sessionUpdate": "agent_message_chunk",
+								"content": map[string]any{
+									"type": "text",
+									"text": chunk,
+								},
+							},
+						},
+					}); err != nil {
+						return
+					}
+				}
 			case "session/cancel":
 				var params struct {
 					SessionID string `json:"sessionId"`
@@ -267,7 +300,7 @@ func TestInternalDebugChatSendCreatesConversationAndReturnsAssistantText(t *test
 	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
 
 	e := echo.New()
-	internal := e.Group("", s.internalAuthMiddleware(), s.authMiddleware())
+	internal := e.Group("", s.internalAuthHeaderMiddleware(), s.authMiddleware())
 	internal.POST("/api/internal/v1/debug/chat/send", s.sendInternalDebugChat)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{
@@ -324,8 +357,8 @@ func TestInternalDebugChatSendCreatesConversationAndReturnsAssistantText(t *test
 	if fakeACP.newCalls != 1 {
 		t.Fatalf("expected one session/new call, got %d", fakeACP.newCalls)
 	}
-	if len(fakeACP.loadSessionIDs) != 1 || fakeACP.loadSessionIDs[0] != "session-fresh" {
-		t.Fatalf("expected prompt-side session/load for session-fresh, got %#v", fakeACP.loadSessionIDs)
+	if len(fakeACP.loadSessionIDs) != 0 {
+		t.Fatalf("expected no session/load for a fresh conversation, got %#v", fakeACP.loadSessionIDs)
 	}
 	if len(fakeACP.promptTexts) != 1 || fakeACP.promptTexts[0] != "  hello from cli  " {
 		t.Fatalf("expected one prompt with original message, got %#v", fakeACP.promptTexts)
@@ -356,7 +389,7 @@ func TestInternalDebugChatSendTargetsExistingConversation(t *testing.T) {
 	s.acp.promptSettleTimeout = 100 * time.Millisecond
 
 	e := echo.New()
-	internal := e.Group("", s.internalAuthMiddleware(), s.authMiddleware())
+	internal := e.Group("", s.internalAuthHeaderMiddleware(), s.authMiddleware())
 	internal.POST("/api/internal/v1/debug/chat/send", s.sendInternalDebugChat)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{
@@ -407,11 +440,8 @@ func TestInternalDebugChatSendTargetsExistingConversation(t *testing.T) {
 	if fakeACP.newCalls != 0 {
 		t.Fatalf("expected no session/new call, got %d", fakeACP.newCalls)
 	}
-	if len(fakeACP.loadSessionIDs) != 2 {
-		t.Fatalf("expected bootstrap and prompt-side session/load calls, got %#v", fakeACP.loadSessionIDs)
-	}
-	if fakeACP.loadSessionIDs[0] != "session-existing" || fakeACP.loadSessionIDs[1] != "session-existing" {
-		t.Fatalf("expected both loads to target session-existing, got %#v", fakeACP.loadSessionIDs)
+	if len(fakeACP.loadSessionIDs) != 1 || fakeACP.loadSessionIDs[0] != "session-existing" {
+		t.Fatalf("expected one session/load for session-existing, got %#v", fakeACP.loadSessionIDs)
 	}
 }
 
@@ -422,7 +452,7 @@ func TestInternalDebugChatSendRejectsOwnerMismatch(t *testing.T) {
 	s.internalAuth = internalAuthConfig{enabled: true, token: "internal-token"}
 
 	e := echo.New()
-	internal := e.Group("", s.internalAuthMiddleware(), s.authMiddleware())
+	internal := e.Group("", s.internalAuthHeaderMiddleware(), s.authMiddleware())
 	internal.POST("/api/internal/v1/debug/chat/send", s.sendInternalDebugChat)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{
@@ -455,7 +485,7 @@ func TestInternalDebugChatSendDeletesCreatedConversationOnPromptFailure(t *testi
 	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
 
 	e := echo.New()
-	internal := e.Group("", s.internalAuthMiddleware(), s.authMiddleware())
+	internal := e.Group("", s.internalAuthHeaderMiddleware(), s.authMiddleware())
 	internal.POST("/api/internal/v1/debug/chat/send", s.sendInternalDebugChat)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{
@@ -512,7 +542,7 @@ func TestInternalDebugChatSendCancelsPromptWhenPromptTimesOut(t *testing.T) {
 	s.acp.promptTimeout = 20 * time.Millisecond
 
 	e := echo.New()
-	internal := e.Group("", s.internalAuthMiddleware(), s.authMiddleware())
+	internal := e.Group("", s.internalAuthHeaderMiddleware(), s.authMiddleware())
 	internal.POST("/api/internal/v1/debug/chat/send", s.sendInternalDebugChat)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{
@@ -550,7 +580,7 @@ func TestInternalDebugChatSendRejectsPermissionRequestsExplicitly(t *testing.T) 
 	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
 
 	e := echo.New()
-	internal := e.Group("", s.internalAuthMiddleware(), s.authMiddleware())
+	internal := e.Group("", s.internalAuthHeaderMiddleware(), s.authMiddleware())
 	internal.POST("/api/internal/v1/debug/chat/send", s.sendInternalDebugChat)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{
@@ -578,6 +608,139 @@ func TestInternalDebugChatSendRejectsPermissionRequestsExplicitly(t *testing.T) 
 	}
 	if fmt.Sprint(errorPayload["message"]) != "Permission requests are not supported by internal debug chat." {
 		t.Fatalf("unexpected permission response message: %#v", fakeACP.permissionResponses[0])
+	}
+}
+
+func TestInternalDebugChatSendRequiresDedicatedInternalHeader(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+
+	s := newACPTestServer(t, spritz)
+	s.internalAuth = internalAuthConfig{enabled: true, token: "internal-token"}
+
+	e := echo.New()
+	internal := e.Group("", s.internalAuthHeaderMiddleware(), s.authMiddleware())
+	internal.POST("/api/internal/v1/debug/chat/send", s.sendInternalDebugChat)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{
+		"target":{"spritzName":"tidy-otter"},
+		"message":"hello"
+	}`))
+	req.Header.Set("Authorization", "Bearer internal-token")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestInternalDebugChatSendRepairsMissingSessionBeforePrompt(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	conversation := conversationFor("tidy-otter-conv", "tidy-otter", "user-1", "Existing", metav1.Now())
+	conversation.Spec.SessionID = "session-stale"
+
+	fakeACP := newFakeACPDebugChatServer(t, fakeACPDebugChatServerOptions{
+		SessionID: "session-fresh",
+		LoadError: &acpBootstrapJSONRPCError{
+			Code:    -32002,
+			Message: "Session session-stale not found",
+		},
+		PromptChunks: []string{"ok"},
+	})
+
+	s := newACPTestServer(t, spritz, conversation)
+	s.internalAuth = internalAuthConfig{enabled: true, token: "internal-token"}
+	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
+
+	e := echo.New()
+	internal := e.Group("", s.internalAuthHeaderMiddleware(), s.authMiddleware())
+	internal.POST("/api/internal/v1/debug/chat/send", s.sendInternalDebugChat)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{
+		"target":{"conversationId":"tidy-otter-conv"},
+		"message":"follow up"
+	}`))
+	req.Header.Set(internalTokenHeader, "internal-token")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Status string                        `json:"status"`
+		Data   internalDebugChatSendResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.Data.EffectiveSessionID != "session-fresh" || !payload.Data.Replaced || payload.Data.BindingState != "replaced" {
+		t.Fatalf("expected replaced binding for session-fresh, got %#v", payload.Data)
+	}
+
+	stored := &spritzv1.SpritzConversation{}
+	if err := s.client.Get(context.Background(), clientKey("spritz-test", "tidy-otter-conv"), stored); err != nil {
+		t.Fatalf("failed to reload stored conversation: %v", err)
+	}
+	if stored.Spec.SessionID != "session-fresh" {
+		t.Fatalf("expected stored session id session-fresh, got %q", stored.Spec.SessionID)
+	}
+
+	fakeACP.mu.Lock()
+	defer fakeACP.mu.Unlock()
+	if len(fakeACP.loadSessionIDs) != 1 || fakeACP.loadSessionIDs[0] != "session-stale" {
+		t.Fatalf("expected one session/load for session-stale, got %#v", fakeACP.loadSessionIDs)
+	}
+	if fakeACP.newCalls != 1 {
+		t.Fatalf("expected one replacement session/new call, got %d", fakeACP.newCalls)
+	}
+	if len(fakeACP.promptSessionIDs) != 1 || fakeACP.promptSessionIDs[0] != "session-fresh" {
+		t.Fatalf("expected prompt to use the replacement session, got %#v", fakeACP.promptSessionIDs)
+	}
+}
+
+func TestInternalDebugChatSendFailsWhenPromptSettleHitsDeadline(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	fakeACP := newFakeACPDebugChatServer(t, fakeACPDebugChatServerOptions{
+		SessionID:         "session-fresh",
+		PromptChunkDelay:  40 * time.Millisecond,
+		PromptChunksAfter: []string{"late"},
+	})
+
+	s := newACPTestServer(t, spritz)
+	s.internalAuth = internalAuthConfig{enabled: true, token: "internal-token"}
+	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
+	s.acp.promptTimeout = 20 * time.Millisecond
+	s.acp.promptSettleTimeout = 200 * time.Millisecond
+
+	e := echo.New()
+	internal := e.Group("", s.internalAuthHeaderMiddleware(), s.authMiddleware())
+	internal.POST("/api/internal/v1/debug/chat/send", s.sendInternalDebugChat)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{
+		"target":{"spritzName":"tidy-otter","cwd":"/workspace/app","title":"Debug Run"},
+		"message":"hello from cli"
+	}`))
+	req.Header.Set(internalTokenHeader, "internal-token")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected status 502, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	time.Sleep(20 * time.Millisecond)
+	fakeACP.mu.Lock()
+	defer fakeACP.mu.Unlock()
+	if len(fakeACP.cancelSessionIDs) != 1 || fakeACP.cancelSessionIDs[0] != "session-fresh" {
+		t.Fatalf("expected one session/cancel for session-fresh, got %#v", fakeACP.cancelSessionIDs)
 	}
 }
 

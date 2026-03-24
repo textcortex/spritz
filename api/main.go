@@ -252,7 +252,7 @@ func (s *server) registerRoutes(e *echo.Echo) {
 		internal.POST("/spritzes", s.createInternalSpritz)
 		internal.GET("/spritzes/:namespace/:name", s.getInternalSpritz)
 		if s.auth.enabled() {
-			internalSecured := group.Group("/internal/v1", s.internalAuthMiddleware(), s.authMiddleware())
+			internalSecured := group.Group("/internal/v1", s.internalAuthHeaderMiddleware(), s.authMiddleware())
 			internalSecured.POST("/debug/chat/send", s.sendInternalDebugChat)
 		}
 	}

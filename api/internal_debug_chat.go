@@ -89,17 +89,14 @@ func (s *server) sendInternalDebugChat(c echo.Context) error {
 		return s.writeInternalDebugChatTargetError(c, err)
 	}
 
-	bootstrap, err := s.bootstrapACPConversationBinding(c.Request().Context(), conversation, spritz)
+	bootstrap, promptResult, err := s.runInternalDebugChat(c.Request().Context(), conversation, spritz, message)
 	if err != nil {
 		s.cleanupInternalDebugConversation(c.Request().Context(), conversation, createdConversation)
-		s.auditInternalDebugChatFailure(principal.ID, body.Target, reason, message, "bootstrap_error", err)
-		return s.writeInternalDebugChatRuntimeError(c, err)
-	}
-
-	promptResult, err := s.runInternalDebugChatPrompt(c.Request().Context(), spritz, bootstrap.EffectiveSessionID, conversation.Spec.CWD, message)
-	if err != nil {
-		s.cleanupInternalDebugConversation(c.Request().Context(), conversation, createdConversation)
-		s.auditInternalDebugChatFailure(principal.ID, body.Target, reason, message, "prompt_error", err)
+		outcome := "prompt_error"
+		if promptResult == nil {
+			outcome = "bootstrap_error"
+		}
+		s.auditInternalDebugChatFailure(principal.ID, body.Target, reason, message, outcome, err)
 		return s.writeInternalDebugChatRuntimeError(c, err)
 	}
 
@@ -207,31 +204,51 @@ func (s *server) cleanupInternalDebugConversation(ctx context.Context, conversat
 	}
 }
 
-func (s *server) runInternalDebugChatPrompt(ctx context.Context, spritz *spritzv1.Spritz, sessionID, cwd, message string) (*acpPromptResult, error) {
+func (s *server) runInternalDebugChat(ctx context.Context, conversation *spritzv1.SpritzConversation, spritz *spritzv1.Spritz, message string) (*acpBootstrapResponse, *acpPromptResult, error) {
 	runCtx, cancel := context.WithTimeout(ctx, s.acp.promptTimeout)
 	defer cancel()
-	cancelWatcherDone := make(chan struct{})
-	defer close(cancelWatcherDone)
-	var cancelOnce sync.Once
-	sendCancel := func() {
-		cancelOnce.Do(func() {
-			cancelCtx, cancelPrompt := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = s.cancelInternalDebugChatPrompt(cancelCtx, spritz, sessionID)
-			cancelPrompt()
-		})
-	}
 
 	dialCtx, dialCancel := context.WithTimeout(runCtx, s.acp.bootstrapDialTimeout)
 	defer dialCancel()
 
 	instanceConn, _, err := websocket.DefaultDialer.DialContext(dialCtx, s.acpInstanceURL(spritz.Namespace, spritz.Name), nil)
 	if err != nil {
-		return nil, err
+		s.recordConversationBindingError(runCtx, conversation.Namespace, conversation.Name, "", err)
+		return nil, nil, err
 	}
 	client := &acpBootstrapInstanceClient{conn: instanceConn}
 	defer func() {
 		_ = client.close()
 	}()
+
+	initResult, err := client.initialize(runCtx, s.acp.clientInfo, s.acp.clientCapabilities)
+	if err != nil {
+		s.recordConversationBindingError(runCtx, conversation.Namespace, conversation.Name, "", err)
+		return nil, nil, err
+	}
+
+	bootstrap, err := s.bootstrapACPConversationBindingWithClient(runCtx, conversation, client, initResult)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if bootstrap.Loaded {
+		ignoredReplayUpdates := make([]map[string]any, 0, 8)
+		if err := client.drainSessionUpdates(runCtx, s.acp.promptSettleTimeout, &ignoredReplayUpdates); err != nil {
+			return bootstrap, nil, err
+		}
+	}
+
+	cancelWatcherDone := make(chan struct{})
+	defer close(cancelWatcherDone)
+	var cancelOnce sync.Once
+	sendCancel := func() {
+		cancelOnce.Do(func() {
+			cancelCtx, cancelPrompt := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = s.cancelInternalDebugChatPrompt(cancelCtx, spritz, bootstrap.EffectiveSessionID)
+			cancelPrompt()
+		})
+	}
 	go func() {
 		select {
 		case <-runCtx.Done():
@@ -245,21 +262,11 @@ func (s *server) runInternalDebugChatPrompt(ctx context.Context, spritz *spritzv
 		}
 	}()
 
-	if _, err := client.initialize(runCtx, s.acp.clientInfo, s.acp.clientCapabilities); err != nil {
-		return nil, err
-	}
-	if _, err := client.loadSession(runCtx, sessionID, normalizeConversationCWD(cwd)); err != nil {
-		return nil, err
-	}
-	ignoredReplayUpdates := make([]map[string]any, 0, 8)
-	if err := client.drainSessionUpdates(runCtx, s.acp.promptSettleTimeout, &ignoredReplayUpdates); err != nil {
-		return nil, err
-	}
-	result, err := client.prompt(runCtx, sessionID, message, s.acp.promptSettleTimeout)
+	result, err := client.prompt(runCtx, bootstrap.EffectiveSessionID, message, s.acp.promptSettleTimeout)
 	if err != nil && runCtx.Err() != nil {
 		sendCancel()
 	}
-	return result, err
+	return bootstrap, result, err
 }
 
 func (s *server) cancelInternalDebugChatPrompt(ctx context.Context, spritz *spritzv1.Spritz, sessionID string) error {
