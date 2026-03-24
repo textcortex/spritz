@@ -341,6 +341,16 @@ func (g *slackGateway) handleSlackEvents(w http.ResponseWriter, r *http.Request)
 		_, _ = w.Write([]byte(envelope.Challenge))
 		return
 	case "event_callback":
+		g.processSlackEnvelopeAsync(envelope)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ignored": true})
+	}
+}
+
+func (g *slackGateway) processSlackEnvelopeAsync(envelope slackEnvelope) {
+	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), g.cfg.ProcessingTimeout)
 		defer cancel()
 		if err := g.processSlackEnvelope(ctx, envelope); err != nil {
@@ -355,14 +365,8 @@ func (g *slackGateway) handleSlackEvents(w http.ResponseWriter, r *http.Request)
 				"event_type",
 				envelope.Event.Type,
 			)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-		return
-	default:
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ignored": true})
-	}
+	}()
 }
 
 func (g *slackGateway) processSlackEnvelope(ctx context.Context, envelope slackEnvelope) error {

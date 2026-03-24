@@ -423,7 +423,7 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 	t.Fatalf("expected slack reply to be posted")
 }
 
-func TestSlackEventReturnsRetryableErrorWhenProcessingFails(t *testing.T) {
+func TestSlackEventAcknowledgesBeforeAsynchronousProcessingFailure(t *testing.T) {
 	cfg := config{
 		SlackSigningSecret:    "signing-secret",
 		OAuthStateSecret:      "oauth-state-secret",
@@ -453,9 +453,177 @@ func TestSlackEventReturnsRetryableErrorWhenProcessingFails(t *testing.T) {
 
 	gateway.handleSlackEvents(rec, req)
 
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 to trigger a Slack retry, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 acknowledgement, got %d: %s", rec.Code, rec.Body.String())
 	}
+}
+
+func TestSlackEventAcknowledgesBeforeSlowACPWork(t *testing.T) {
+	var slackCalls struct {
+		sync.Mutex
+		count int
+	}
+	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat.postMessage" {
+			t.Fatalf("unexpected slack path %s", r.URL.Path)
+		}
+		slackCalls.Lock()
+		slackCalls.count++
+		slackCalls.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	}))
+	defer slackAPI.Close()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"session": map[string]any{
+				"accessToken": "owner-token",
+				"ownerAuthId": "owner-123",
+				"namespace":   "spritz-staging",
+				"instanceId":  "zeno-acme",
+			},
+		})
+	}))
+	defer backend.Close()
+
+	releasePrompt := make(chan struct{})
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	spritz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/channel-conversations/upsert":
+			writeJSON(w, http.StatusCreated, map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"created": true,
+					"conversation": map[string]any{
+						"metadata": map[string]any{"name": "conv-1"},
+						"spec":     map[string]any{"cwd": "/home/dev"},
+					},
+				},
+			})
+		case "/api/acp/conversations/conv-1/bootstrap":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"effectiveSessionId": "session-1",
+					"conversation": map[string]any{
+						"metadata": map[string]any{"name": "conv-1"},
+						"spec":     map[string]any{"sessionId": "session-1", "cwd": "/home/dev"},
+					},
+				},
+			})
+		case "/api/acp/conversations/conv-1/connect":
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				t.Fatalf("upgrade failed: %v", err)
+			}
+			defer conn.Close()
+			for {
+				_, payload, err := conn.ReadMessage()
+				if err != nil {
+					return
+				}
+				var message map[string]any
+				if err := json.Unmarshal(payload, &message); err != nil {
+					t.Fatalf("decode ws payload: %v", err)
+				}
+				switch message["method"] {
+				case "initialize":
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{"protocolVersion": 1}})
+				case "session/load":
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
+				case "session/prompt":
+					<-releasePrompt
+					_ = conn.WriteJSON(map[string]any{
+						"jsonrpc": "2.0",
+						"method":  "session/update",
+						"params": map[string]any{
+							"update": map[string]any{
+								"sessionUpdate": "agent_message_chunk",
+								"content": []map[string]any{{
+									"type": "text",
+									"text": "Hello from concierge",
+								}},
+							},
+						},
+					})
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
+					return
+				default:
+					t.Fatalf("unexpected ACP method %#v", message["method"])
+				}
+			}
+		default:
+			t.Fatalf("unexpected spritz path %s", r.URL.Path)
+		}
+	}))
+	defer spritz.Close()
+
+	cfg := config{
+		SlackSigningSecret:    "signing-secret",
+		OAuthStateSecret:      "oauth-state-secret",
+		SlackAPIBaseURL:       slackAPI.URL,
+		BackendBaseURL:        backend.URL,
+		BackendInternalToken:  "backend-internal-token",
+		SpritzBaseURL:         spritz.URL,
+		SpritzServiceToken:    "spritz-service-token",
+		PrincipalID:           "shared-slack-gateway",
+		InstallationStorePath: filepath.Join(t.TempDir(), "installations.json"),
+		HTTPTimeout:           5 * time.Second,
+		DedupeTTL:             time.Minute,
+	}
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := gateway.installations.Upsert(slackInstallation{
+		ProviderInstallRef: "slack-install:T_workspace_1",
+		APIAppID:           "A_app_1",
+		TeamID:             "T_workspace_1",
+		BotAccessToken:     "xoxb-installed",
+	}); err != nil {
+		t.Fatalf("seed installation failed: %v", err)
+	}
+
+	body := []byte(`{
+		"type":"event_callback",
+		"team_id":"T_workspace_1",
+		"api_app_id":"A_app_1",
+		"event_id":"Ev_async",
+		"event":{"type":"app_mention","user":"U_1","text":"<@U_bot> hello","channel":"C_1","channel_type":"channel","ts":"1711387375.000100"}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/slack/events", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	signSlackRequest(req.Header, cfg.SlackSigningSecret, body, time.Now().UTC())
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		gateway.handleSlackEvents(rec, req)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("expected Slack event to be acknowledged before ACP prompt completed")
+	}
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 acknowledgement, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	close(releasePrompt)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		slackCalls.Lock()
+		count := slackCalls.count
+		slackCalls.Unlock()
+		if count == 1 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("expected asynchronous Slack reply to be posted")
 }
 
 func TestUpsertChannelConversationUsesChannelForDirectMessages(t *testing.T) {
