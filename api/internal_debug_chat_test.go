@@ -21,6 +21,7 @@ type fakeACPDebugChatServerOptions struct {
 	SessionID       string
 	LoadReplay      []map[string]any
 	LoadReplayAfter []map[string]any
+	HoldPrompt      bool
 	PromptChunks    []string
 	PromptError     *acpBootstrapJSONRPCError
 	StopReason      string
@@ -34,6 +35,7 @@ type fakeACPDebugChatServer struct {
 
 	initCalls        int
 	newCalls         int
+	cancelSessionIDs []string
 	loadSessionIDs   []string
 	promptSessionIDs []string
 	promptTexts      []string
@@ -162,6 +164,9 @@ func newFakeACPDebugChatServer(t *testing.T, options fakeACPDebugChatServerOptio
 				fakeServer.promptSessionIDs = append(fakeServer.promptSessionIDs, params.SessionID)
 				fakeServer.promptTexts = append(fakeServer.promptTexts, text)
 				fakeServer.mu.Unlock()
+				if options.HoldPrompt {
+					continue
+				}
 				if options.PromptError != nil {
 					if err := conn.WriteJSON(map[string]any{
 						"jsonrpc": "2.0",
@@ -202,6 +207,16 @@ func newFakeACPDebugChatServer(t *testing.T, options fakeACPDebugChatServerOptio
 				}); err != nil {
 					t.Fatalf("failed to write prompt result: %v", err)
 				}
+			case "session/cancel":
+				var params struct {
+					SessionID string `json:"sessionId"`
+				}
+				if err := json.Unmarshal(message.Params, &params); err != nil {
+					t.Fatalf("failed to decode cancel params: %v", err)
+				}
+				fakeServer.mu.Lock()
+				fakeServer.cancelSessionIDs = append(fakeServer.cancelSessionIDs, params.SessionID)
+				fakeServer.mu.Unlock()
 			default:
 				t.Fatalf("unexpected ACP method %q", message.Method)
 			}
@@ -455,6 +470,44 @@ func TestCleanupInternalDebugConversationUsesFallbackContextWhenCanceled(t *test
 	}
 	if len(stored.Items) != 0 {
 		t.Fatalf("expected cleanup to delete the conversation even when the request context is canceled, got %#v", stored.Items)
+	}
+}
+
+func TestInternalDebugChatSendCancelsPromptWhenPromptTimesOut(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	fakeACP := newFakeACPDebugChatServer(t, fakeACPDebugChatServerOptions{
+		SessionID:  "session-fresh",
+		HoldPrompt: true,
+	})
+
+	s := newACPTestServer(t, spritz)
+	s.internalAuth = internalAuthConfig{enabled: true, token: "internal-token"}
+	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
+	s.acp.promptTimeout = 20 * time.Millisecond
+
+	e := echo.New()
+	internal := e.Group("", s.internalAuthMiddleware(), s.authMiddleware())
+	internal.POST("/api/internal/v1/debug/chat/send", s.sendInternalDebugChat)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{
+		"target":{"spritzName":"tidy-otter","cwd":"/workspace/app","title":"Debug Run"},
+		"message":"hello from cli"
+	}`))
+	req.Header.Set(internalTokenHeader, "internal-token")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected status 502, got %d: %s", rec.Code, rec.Body.String())
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	fakeACP.mu.Lock()
+	defer fakeACP.mu.Unlock()
+	if len(fakeACP.cancelSessionIDs) != 1 || fakeACP.cancelSessionIDs[0] != "session-fresh" {
+		t.Fatalf("expected one session/cancel for session-fresh, got %#v", fakeACP.cancelSessionIDs)
 	}
 }
 

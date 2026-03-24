@@ -198,6 +198,23 @@ func (c *acpBootstrapInstanceClient) writeJSON(ctx context.Context, payload any)
 	return c.conn.WriteJSON(payload)
 }
 
+func (c *acpBootstrapInstanceClient) notify(ctx context.Context, method string, params any) error {
+	return c.writeJSON(ctx, map[string]any{
+		"jsonrpc": "2.0",
+		"method":  method,
+		"params":  params,
+	})
+}
+
+func (c *acpBootstrapInstanceClient) cancelPrompt(ctx context.Context, sessionID string) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil
+	}
+	return c.notify(ctx, "session/cancel", map[string]any{
+		"sessionId": sessionID,
+	})
+}
+
 func (c *acpBootstrapInstanceClient) readMessage(ctx context.Context) (*acpBootstrapJSONRPCMessage, error) {
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := c.conn.SetReadDeadline(deadline); err != nil {

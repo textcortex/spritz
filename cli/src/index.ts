@@ -481,13 +481,13 @@ function chatSendUsage() {
   console.log(`Spritz chat send
 
 Usage:
-  spritz chat send (--instance <name> | --conversation <id>) --message <text> [--owner-id <id>] [--reason <text>] [--cwd <path>] [--title <title>] [--namespace <ns>] [--json]
+  spritz chat send (--instance <name> | --conversation <id>) --message <text> [--reason <text>] [--cwd <path>] [--title <title>] [--namespace <ns>] [--json]
 
 Environment:
   SPRITZ_API_URL (default: ${process.env.SPRITZ_API_URL || defaultApiBase})
   SPRITZ_INTERNAL_TOKEN
   SPRITZ_INTERNAL_REQUEST_TIMEOUT_MS
-  SPRITZ_OWNER_ID, SPRITZ_USER_ID, SPRITZ_PROFILE
+  SPRITZ_USER_ID, SPRITZ_PROFILE
 
 Notes:
   --instance creates a new owner-scoped conversation before sending the prompt.
@@ -507,7 +507,7 @@ Usage:
   spritz open <name> [--namespace <ns>]
   spritz terminal <name> [--namespace <ns>] [--session <name>] [--transport <ws|ssh>] [--print]
   spritz ssh <name> [--namespace <ns>] [--session <name>] [--transport <ws|ssh>] [--print]
-  spritz chat send (--instance <name> | --conversation <id>) --message <text> [--owner-id <id>] [--reason <text>] [--cwd <path>] [--title <title>] [--namespace <ns>] [--json]
+  spritz chat send (--instance <name> | --conversation <id>) --message <text> [--reason <text>] [--cwd <path>] [--title <title>] [--namespace <ns>] [--json]
   spritz profile list
   spritz profile current
   spritz profile show [name]
@@ -1468,22 +1468,16 @@ async function main() {
     if (conversationId && (argValue('--cwd') || argValue('--title'))) {
       throw new Error('--cwd and --title are only supported with --instance');
     }
+    if (argValue('--owner-id')?.trim()) {
+      throw new Error('--owner-id is not supported for chat send; authenticate as the caller instead');
+    }
     const message = argValue('--message');
     if (!message?.trim()) {
       throw new Error('--message is required');
     }
-    const { profile } = await resolveProfile({ allowFlag: true });
-    const bearerToken = argValue('--token') || process.env.SPRITZ_BEARER_TOKEN || profile?.bearerToken;
-    const ownerId = argValue('--owner-id')?.trim() || (!bearerToken?.trim() ? await resolveDefaultOwnerId() : undefined);
-    if (!bearerToken?.trim() && !ownerId) {
-      throw new Error('owner id is required when bearer auth is unavailable; use --owner-id or set SPRITZ_OWNER_ID / SPRITZ_USER_ID');
-    }
     const ns = await resolveNamespace();
     const reason = argValue('--reason')?.trim() || 'spz chat send';
     const requestHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (!bearerToken?.trim() && ownerId) {
-      requestHeaders[headerId] = ownerId;
-    }
     const data = await internalRequest('/internal/v1/debug/chat/send', {
       method: 'POST',
       headers: requestHeaders,

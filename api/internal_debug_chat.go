@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -209,6 +210,16 @@ func (s *server) cleanupInternalDebugConversation(ctx context.Context, conversat
 func (s *server) runInternalDebugChatPrompt(ctx context.Context, spritz *spritzv1.Spritz, sessionID, message string) (*acpPromptResult, error) {
 	runCtx, cancel := context.WithTimeout(ctx, s.acp.promptTimeout)
 	defer cancel()
+	cancelWatcherDone := make(chan struct{})
+	defer close(cancelWatcherDone)
+	var cancelOnce sync.Once
+	sendCancel := func() {
+		cancelOnce.Do(func() {
+			cancelCtx, cancelPrompt := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = s.cancelInternalDebugChatPrompt(cancelCtx, spritz, sessionID)
+			cancelPrompt()
+		})
+	}
 
 	dialCtx, dialCancel := context.WithTimeout(runCtx, s.acp.bootstrapDialTimeout)
 	defer dialCancel()
@@ -221,11 +232,48 @@ func (s *server) runInternalDebugChatPrompt(ctx context.Context, spritz *spritzv
 	defer func() {
 		_ = client.close()
 	}()
+	go func() {
+		select {
+		case <-runCtx.Done():
+			select {
+			case <-cancelWatcherDone:
+				return
+			default:
+			}
+			sendCancel()
+		case <-cancelWatcherDone:
+		}
+	}()
 
 	if _, err := client.initialize(runCtx, s.acp.clientInfo, s.acp.clientCapabilities); err != nil {
 		return nil, err
 	}
-	return client.prompt(runCtx, sessionID, message, s.acp.promptSettleTimeout)
+	result, err := client.prompt(runCtx, sessionID, message, s.acp.promptSettleTimeout)
+	if err != nil && runCtx.Err() != nil {
+		sendCancel()
+	}
+	return result, err
+}
+
+func (s *server) cancelInternalDebugChatPrompt(ctx context.Context, spritz *spritzv1.Spritz, sessionID string) error {
+	if spritz == nil || strings.TrimSpace(sessionID) == "" {
+		return nil
+	}
+	dialCtx, cancel := context.WithTimeout(ctx, s.acp.bootstrapDialTimeout)
+	defer cancel()
+
+	instanceConn, _, err := websocket.DefaultDialer.DialContext(dialCtx, s.acpInstanceURL(spritz.Namespace, spritz.Name), nil)
+	if err != nil {
+		return err
+	}
+	client := &acpBootstrapInstanceClient{conn: instanceConn}
+	defer func() {
+		_ = client.close()
+	}()
+	if _, err := client.initialize(ctx, s.acp.clientInfo, s.acp.clientCapabilities); err != nil {
+		return err
+	}
+	return client.cancelPrompt(ctx, sessionID)
 }
 
 func (s *server) auditInternalDebugChat(actorID string, conversation *spritzv1.SpritzConversation, reason, message string, result *acpPromptResult) {

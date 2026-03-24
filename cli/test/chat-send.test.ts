@@ -56,8 +56,6 @@ test('chat send uses the internal token and prints assistant text by default', a
       'tidy-otter',
       '--message',
       '  hello from cli  ',
-      '--owner-id',
-      'user-123',
       '--cwd',
       '/workspace/app',
       '--title',
@@ -70,6 +68,7 @@ test('chat send uses the internal token and prints assistant text by default', a
         ...process.env,
         SPRITZ_API_URL: `http://127.0.0.1:${address.port}/api`,
         SPRITZ_INTERNAL_TOKEN: 'internal-token',
+        SPRITZ_USER_ID: 'user-123',
         SPRITZ_CONFIG_DIR: mkdtempSync(path.join(os.tmpdir(), 'spz-config-')),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -144,8 +143,6 @@ test('chat send supports existing conversations and json output', async (t) => {
       'tidy-otter-conv',
       '--message',
       'follow up',
-      '--owner-id',
-      'user-123',
       '--json',
     ],
     {
@@ -153,6 +150,7 @@ test('chat send supports existing conversations and json output', async (t) => {
         ...process.env,
         SPRITZ_API_URL: `http://127.0.0.1:${address.port}/api`,
         SPRITZ_INTERNAL_TOKEN: 'internal-token',
+        SPRITZ_USER_ID: 'user-123',
         SPRITZ_CONFIG_DIR: mkdtempSync(path.join(os.tmpdir(), 'spz-config-')),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -231,8 +229,6 @@ test('chat send does not inject owner header when bearer auth comes from the act
       'tidy-otter',
       '--message',
       'hello from cli',
-      '--owner-id',
-      'victim-id',
     ],
     {
       env: {
@@ -253,6 +249,42 @@ test('chat send does not inject owner header when bearer auth comes from the act
   assert.equal(exitCode, 0, `spz chat send should succeed: ${stderr}`);
   assert.equal(requestHeaders?.authorization, 'Bearer profile-token');
   assert.equal(requestHeaders?.['x-spritz-user-id'], undefined);
+});
+
+test('chat send rejects --owner-id as an auth source', async () => {
+  const child = spawn(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      cliPath,
+      'chat',
+      'send',
+      '--instance',
+      'tidy-otter',
+      '--message',
+      'hello from cli',
+      '--owner-id',
+      'victim-id',
+    ],
+    {
+      env: {
+        ...process.env,
+        SPRITZ_INTERNAL_TOKEN: 'internal-token',
+        SPRITZ_CONFIG_DIR: mkdtempSync(path.join(os.tmpdir(), 'spz-config-')),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+
+  let stderr = '';
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  const exitCode = await new Promise<number | null>((resolve) => child.on('exit', resolve));
+  assert.notEqual(exitCode, 0, 'spz chat send should reject --owner-id');
+  assert.match(stderr, /--owner-id is not supported for chat send/);
 });
 
 test('chat send does not require an owner id when bearer auth is available', async (t) => {
