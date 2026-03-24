@@ -90,6 +90,7 @@ That can be:
 
 - the example [OpenClaw](https://docs.openclaw.ai/) runtime in this repo
 - the example Claude Code runtime in this repo
+- the example Codex runtime in this repo
 - a custom internal image
 - a wrapper or adapter around another agent runtime
 
@@ -148,10 +149,10 @@ Human or gateway bot
             |
             v
 +------------------------+
-|   Agent instance      |
+|   Agent instance       |
 | OpenClaw, Claude Code, |
-| or any ACP runtime     |
-| on ws://:2529/         |
+| Codex, or another ACP  |
+| runtime on ws://:2529/ |
 +------------------------+
 ```
 
@@ -251,6 +252,7 @@ Spritz is intended to remain portable and standalone:
 - `helm/spritz/`: standalone deployment chart
 - `images/examples/openclaw/`: OpenClaw example runtime and ACP wrapper
 - `images/examples/claude-code/`: Claude Code example runtime and ACP wrapper
+- `images/examples/codex/`: Codex example runtime and ACP wrapper
 - `docs/`: architecture and deployment documents
 
 ## Key docs
