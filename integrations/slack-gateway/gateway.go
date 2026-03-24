@@ -302,7 +302,7 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	if err := g.upsertInstallation(r.Context(), installation); err != nil {
+	if err := g.upsertInstallation(r.Context(), &installation); err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -382,6 +382,9 @@ func (g *slackGateway) processMessageEvent(ctx context.Context, envelope slackEn
 	if shouldIgnoreSlackMessageEvent(event) {
 		return nil
 	}
+	if !shouldProcessSlackMessageEvent(event) {
+		return nil
+	}
 	if strings.TrimSpace(event.BotID) != "" || strings.TrimSpace(event.User) == "" {
 		return nil
 	}
@@ -450,6 +453,25 @@ func (g *slackGateway) processMessageEvent(ctx context.Context, envelope slackEn
 
 func shouldIgnoreSlackMessageEvent(event slackEventInner) bool {
 	return strings.TrimSpace(event.Subtype) != ""
+}
+
+func shouldProcessSlackMessageEvent(event slackEventInner) bool {
+	eventType := strings.TrimSpace(event.Type)
+	if isSlackDirectMessageEvent(event) {
+		return eventType == "message"
+	}
+	if eventType == "app_mention" {
+		return true
+	}
+	return strings.TrimSpace(event.ThreadTS) != ""
+}
+
+func isSlackDirectMessageEvent(event slackEventInner) bool {
+	switch strings.TrimSpace(event.ChannelType) {
+	case "im", "mpim":
+		return true
+	}
+	return strings.HasPrefix(strings.TrimSpace(event.Channel), "D")
 }
 
 func (g *slackGateway) waitForWorkers(ctx context.Context) error {
@@ -569,7 +591,10 @@ func (g *slackGateway) exchangeSlackOAuthCode(ctx context.Context, code string) 
 	return record, nil
 }
 
-func (g *slackGateway) upsertInstallation(ctx context.Context, installation slackInstallation) error {
+func (g *slackGateway) upsertInstallation(ctx context.Context, installation *slackInstallation) error {
+	if installation == nil {
+		return fmt.Errorf("installation is required")
+	}
 	body := map[string]any{
 		"principalId":       g.cfg.PrincipalID,
 		"provider":          slackProvider,
@@ -753,14 +778,29 @@ type acpPromptClient struct {
 	nextID int64
 }
 
+func (c *acpPromptClient) writeJSON(ctx context.Context, payload any) error {
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = c.conn.SetWriteDeadline(deadline)
+	}
+	return c.conn.WriteJSON(payload)
+}
+
+func (c *acpPromptClient) respondError(ctx context.Context, id any, code int, message string) error {
+	return c.writeJSON(ctx, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error": map[string]any{
+			"code":    code,
+			"message": message,
+		},
+	})
+}
+
 func (c *acpPromptClient) call(ctx context.Context, method string, params any, onNotification func(*acpRPCMessage)) (json.RawMessage, bool, error) {
 	c.nextID++
 	requestID := fmt.Sprintf("rpc-%d", c.nextID)
 	delivered := false
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = c.conn.SetWriteDeadline(deadline)
-	}
-	if err := c.conn.WriteJSON(map[string]any{
+	if err := c.writeJSON(ctx, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      requestID,
 		"method":  method,
@@ -779,6 +819,18 @@ func (c *acpPromptClient) call(ctx context.Context, method string, params any, o
 		var message acpRPCMessage
 		if err := json.Unmarshal(payload, &message); err != nil {
 			return nil, delivered, err
+		}
+		if message.Method == "session/request_permission" && message.ID != nil {
+			delivered = true
+			if err := c.respondError(
+				ctx,
+				message.ID,
+				-32000,
+				"Permission denied: interactive approvals are unavailable in the Slack gateway.",
+			); err != nil {
+				return nil, delivered, err
+			}
+			continue
 		}
 		if message.Method != "" && message.ID == nil {
 			delivered = true

@@ -85,6 +85,13 @@ func TestOAuthCallbackStoresInstallationAndUpsertsRegistry(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
+	var callbackPayload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &callbackPayload); err != nil {
+		t.Fatalf("decode callback body: %v", err)
+	}
+	if callbackPayload["providerInstallRef"] != "cred_slack_workspace_1" {
+		t.Fatalf("expected backend-assigned install ref, got %#v", callbackPayload["providerInstallRef"])
+	}
 	if upsertPayload["principalId"] != "shared-slack-gateway" {
 		t.Fatalf("expected principalId to match, got %#v", upsertPayload["principalId"])
 	}
@@ -386,6 +393,55 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("expected slack reply to be posted")
+}
+
+func TestSlackEventIgnoresTopLevelChannelMessagesWithoutMention(t *testing.T) {
+	var backendCalls int
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls++
+		t.Fatalf("unexpected backend path %s", r.URL.Path)
+	}))
+	defer backend.Close()
+
+	cfg := config{
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      "https://slack.example.test",
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        "https://spritz.example.test",
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
+	}
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	body := []byte(`{
+		"type":"event_callback",
+		"team_id":"T_workspace_1",
+		"api_app_id":"A_app_1",
+		"event_id":"Ev_plain_channel",
+		"event":{"type":"message","user":"U_1","text":"good morning","channel":"C_1","channel_type":"channel","ts":"1711387375.000100"}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/slack/events", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	signSlackRequest(req.Header, cfg.SlackSigningSecret, body, time.Now().UTC())
+	rec := httptest.NewRecorder()
+
+	gateway.handleSlackEvents(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	drainCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := gateway.waitForWorkers(drainCtx); err != nil {
+		t.Fatalf("worker drain failed: %v", err)
+	}
+	if backendCalls != 0 {
+		t.Fatalf("expected plain channel chatter to be ignored, got %d backend calls", backendCalls)
+	}
 }
 
 func TestSlackEventAcknowledgesBeforeAsynchronousProcessingFailure(t *testing.T) {
@@ -709,6 +765,152 @@ func TestShouldIgnoreSlackMessageEventRejectsSystemSubtypes(t *testing.T) {
 	}
 	if shouldIgnoreSlackMessageEvent(slackEventInner{Type: "message"}) {
 		t.Fatalf("expected plain message events to be processed")
+	}
+}
+
+func TestShouldProcessSlackMessageEventRequiresMentionOrThreadOutsideDMs(t *testing.T) {
+	if shouldProcessSlackMessageEvent(
+		slackEventInner{
+			Type:        "message",
+			Channel:     "C_1",
+			ChannelType: "channel",
+			TS:          "1711387375.000100",
+		},
+	) {
+		t.Fatalf("expected top-level channel messages to be ignored")
+	}
+	if !shouldProcessSlackMessageEvent(
+		slackEventInner{
+			Type:        "app_mention",
+			Channel:     "C_1",
+			ChannelType: "channel",
+			TS:          "1711387375.000100",
+		},
+	) {
+		t.Fatalf("expected channel app_mention events to be processed")
+	}
+	if !shouldProcessSlackMessageEvent(
+		slackEventInner{
+			Type:        "message",
+			Channel:     "C_1",
+			ChannelType: "channel",
+			ThreadTS:    "1711387375.000100",
+			TS:          "1711387376.000100",
+		},
+	) {
+		t.Fatalf("expected channel thread replies to be processed")
+	}
+	if !shouldProcessSlackMessageEvent(
+		slackEventInner{
+			Type:        "message",
+			Channel:     "D_1",
+			ChannelType: "im",
+			TS:          "1711387375.000100",
+		},
+	) {
+		t.Fatalf("expected DM messages to be processed")
+	}
+}
+
+func TestPromptConversationRejectsInteractivePermissionRequests(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	permissionResponse := make(chan map[string]any, 1)
+	spritz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/acp/conversations/conv-1/connect" {
+			t.Fatalf("unexpected spritz path %s", r.URL.Path)
+		}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("upgrade failed: %v", err)
+		}
+		defer conn.Close()
+		for {
+			_, payload, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var message map[string]any
+			if err := json.Unmarshal(payload, &message); err != nil {
+				t.Fatalf("decode ws payload: %v", err)
+			}
+			switch message["method"] {
+			case "initialize":
+				_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{"protocolVersion": 1}})
+			case "session/load":
+				_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
+			case "session/prompt":
+				_ = conn.WriteJSON(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      77,
+					"method":  "session/request_permission",
+					"params": map[string]any{
+						"tool":    "bash",
+						"command": "ls",
+					},
+				})
+				_, responsePayload, err := conn.ReadMessage()
+				if err != nil {
+					t.Fatalf("read permission response: %v", err)
+				}
+				var response map[string]any
+				if err := json.Unmarshal(responsePayload, &response); err != nil {
+					t.Fatalf("decode permission response: %v", err)
+				}
+				permissionResponse <- response
+				_ = conn.WriteJSON(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      message["id"],
+					"error": map[string]any{
+						"code":    -32000,
+						"message": "Permission denied.",
+					},
+				})
+				return
+			default:
+				t.Fatalf("unexpected ACP method %#v", message["method"])
+			}
+		}
+	}))
+	defer spritz.Close()
+
+	cfg := config{
+		SpritzBaseURL: spritz.URL,
+		HTTPTimeout:   5 * time.Second,
+	}
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	reply, promptSent, err := gateway.promptConversation(
+		t.Context(),
+		"owner-token",
+		"spritz-staging",
+		"conv-1",
+		"session-1",
+		"/home/dev",
+		"hello",
+	)
+	if err == nil {
+		t.Fatalf("expected promptConversation to fail when permission is denied")
+	}
+	if !promptSent {
+		t.Fatalf("expected prompt delivery to be marked as sent")
+	}
+	if strings.TrimSpace(reply) != "" {
+		t.Fatalf("expected no reply text on permission denial, got %q", reply)
+	}
+	select {
+	case response := <-permissionResponse:
+		if response["id"] != float64(77) {
+			t.Fatalf("expected permission response to target request 77, got %#v", response["id"])
+		}
+		rpcError, ok := response["error"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected error response, got %#v", response)
+		}
+		if rpcError["code"] != float64(-32000) {
+			t.Fatalf("expected permission denial code -32000, got %#v", rpcError["code"])
+		}
+	default:
+		t.Fatalf("expected gateway to answer the permission request")
 	}
 }
 
