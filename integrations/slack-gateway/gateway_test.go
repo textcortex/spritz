@@ -692,6 +692,185 @@ func TestSlackEventWaitsForSlowACPWorkBeforeAcknowledging(t *testing.T) {
 	t.Fatalf("expected asynchronous Slack reply to be posted")
 }
 
+func TestSlackEventContinuesAfterRequestContextCancellation(t *testing.T) {
+	var slackCalls struct {
+		sync.Mutex
+		count int
+	}
+	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat.postMessage" {
+			t.Fatalf("unexpected slack path %s", r.URL.Path)
+		}
+		slackCalls.Lock()
+		slackCalls.count++
+		slackCalls.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	}))
+	defer slackAPI.Close()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"session": map[string]any{
+				"accessToken": "owner-token",
+				"ownerAuthId": "owner-123",
+				"namespace":   "spritz-staging",
+				"instanceId":  "zeno-acme",
+				"providerAuth": map[string]any{
+					"providerInstallRef": "cred_slack_workspace_1",
+					"apiAppId":           "A_app_1",
+					"teamId":             "T_workspace_1",
+					"botUserId":          "U_bot",
+					"botAccessToken":     "xoxb-installed",
+				},
+			},
+		})
+	}))
+	defer backend.Close()
+
+	releasePrompt := make(chan struct{})
+	promptStarted := make(chan struct{}, 1)
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	spritz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/channel-conversations/upsert":
+			writeJSON(w, http.StatusCreated, map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"created": true,
+					"conversation": map[string]any{
+						"metadata": map[string]any{"name": "conv-1"},
+						"spec":     map[string]any{"cwd": "/home/dev"},
+					},
+				},
+			})
+		case "/api/acp/conversations/conv-1/bootstrap":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"effectiveSessionId": "session-1",
+					"conversation": map[string]any{
+						"metadata": map[string]any{"name": "conv-1"},
+						"spec":     map[string]any{"sessionId": "session-1", "cwd": "/home/dev"},
+					},
+				},
+			})
+		case "/api/acp/conversations/conv-1/connect":
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				t.Fatalf("upgrade failed: %v", err)
+			}
+			defer conn.Close()
+			for {
+				_, payload, err := conn.ReadMessage()
+				if err != nil {
+					return
+				}
+				var message map[string]any
+				if err := json.Unmarshal(payload, &message); err != nil {
+					t.Fatalf("decode ws payload: %v", err)
+				}
+				switch message["method"] {
+				case "initialize":
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{"protocolVersion": 1}})
+				case "session/load":
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
+				case "session/prompt":
+					select {
+					case promptStarted <- struct{}{}:
+					default:
+					}
+					<-releasePrompt
+					_ = conn.WriteJSON(map[string]any{
+						"jsonrpc": "2.0",
+						"method":  "session/update",
+						"params": map[string]any{
+							"update": map[string]any{
+								"sessionUpdate": "agent_message_chunk",
+								"content": []map[string]any{{
+									"type": "text",
+									"text": "Hello from concierge",
+								}},
+							},
+						},
+					})
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
+					return
+				default:
+					t.Fatalf("unexpected ACP method %#v", message["method"])
+				}
+			}
+		default:
+			t.Fatalf("unexpected spritz path %s", r.URL.Path)
+		}
+	}))
+	defer spritz.Close()
+
+	cfg := config{
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      slackAPI.URL,
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        spritz.URL,
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
+	}
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	body := []byte(`{
+		"type":"event_callback",
+		"team_id":"T_workspace_1",
+		"api_app_id":"A_app_1",
+		"event_id":"Ev_cancelled",
+		"event":{"type":"app_mention","user":"U_1","text":"<@U_bot> hello","channel":"C_1","channel_type":"channel","ts":"1711387375.000100"}
+	}`)
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodPost, "/slack/events", bytes.NewReader(body)).WithContext(requestCtx)
+	req.Header.Set("Content-Type", "application/json")
+	signSlackRequest(req.Header, cfg.SlackSigningSecret, body, time.Now().UTC())
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		gateway.handleSlackEvents(rec, req)
+		close(done)
+	}()
+
+	select {
+	case <-promptStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("expected Slack event to reach the ACP prompt before cancellation")
+	}
+
+	cancelRequest()
+	close(releasePrompt)
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("expected detached Slack processing to finish after request cancellation")
+	}
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 acknowledgement after detached processing, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		slackCalls.Lock()
+		count := slackCalls.count
+		slackCalls.Unlock()
+		if count == 1 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("expected detached processing to post the Slack reply")
+}
+
 func TestSlackEventReturnsServiceUnavailableWhileMatchingDeliveryIsInFlight(t *testing.T) {
 	var slackCalls struct {
 		sync.Mutex

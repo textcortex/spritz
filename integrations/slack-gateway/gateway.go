@@ -350,7 +350,10 @@ func (g *slackGateway) handleSlackEvents(w http.ResponseWriter, r *http.Request)
 		return
 	case "event_callback":
 		if strings.TrimSpace(envelope.Event.Type) == "app_uninstalled" {
-			ctx, cancel := context.WithTimeout(r.Context(), g.cfg.ProcessingTimeout)
+			ctx, cancel := context.WithTimeout(
+				context.WithoutCancel(r.Context()),
+				g.cfg.ProcessingTimeout,
+			)
 			defer cancel()
 			if err := g.processSlackEnvelope(ctx, envelope); err != nil {
 				http.Error(w, err.Error(), http.StatusBadGateway)
@@ -359,7 +362,10 @@ func (g *slackGateway) handleSlackEvents(w http.ResponseWriter, r *http.Request)
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), g.cfg.ProcessingTimeout)
+		ctx, cancel := context.WithTimeout(
+			context.WithoutCancel(r.Context()),
+			g.cfg.ProcessingTimeout,
+		)
 		defer cancel()
 		if err := g.processSlackEnvelope(ctx, envelope); err != nil {
 			statusCode := http.StatusBadGateway
