@@ -158,6 +158,58 @@ func TestUpsertChannelConversationReusesExistingConversation(t *testing.T) {
 	}
 }
 
+func TestUpsertChannelConversationPreservesExistingTitleAndCWD(t *testing.T) {
+	s := newChannelConversationsTestServer(t, readyACPSpritz("zeno-acme", "owner-123"))
+	e := echo.New()
+	s.registerRoutes(e)
+
+	firstRec := httptest.NewRecorder()
+	e.ServeHTTP(firstRec, newChannelConversationsRequest(`{
+		"instanceId":"zeno-acme",
+		"ownerId":"owner-123",
+		"provider":"slack",
+		"externalScopeType":"workspace",
+		"externalTenantId":"T_workspace_1",
+		"externalChannelId":"C_channel_1",
+		"externalConversationId":"1711387375.000100",
+		"title":"Original Slack concierge",
+		"cwd":"/workspace/original"
+	}`))
+	if firstRec.Code != http.StatusCreated {
+		t.Fatalf("expected first request to create, got %d: %s", firstRec.Code, firstRec.Body.String())
+	}
+
+	secondRec := httptest.NewRecorder()
+	e.ServeHTTP(secondRec, newChannelConversationsRequest(`{
+		"instanceId":"zeno-acme",
+		"ownerId":"owner-123",
+		"provider":"slack",
+		"externalScopeType":"workspace",
+		"externalTenantId":"T_workspace_1",
+		"externalChannelId":"C_channel_1",
+		"externalConversationId":"1711387375.000100",
+		"title":"Generated Slack title",
+		"cwd":"/home/dev"
+	}`))
+	if secondRec.Code != http.StatusOK {
+		t.Fatalf("expected second request to reuse, got %d: %s", secondRec.Code, secondRec.Body.String())
+	}
+
+	list := &spritzv1.SpritzConversationList{}
+	if err := s.client.List(context.Background(), list, client.InNamespace("spritz-test")); err != nil {
+		t.Fatalf("failed to list conversations: %v", err)
+	}
+	if len(list.Items) != 1 {
+		t.Fatalf("expected one persisted conversation, got %d", len(list.Items))
+	}
+	if list.Items[0].Spec.Title != "Original Slack concierge" {
+		t.Fatalf("expected title to be preserved, got %q", list.Items[0].Spec.Title)
+	}
+	if list.Items[0].Spec.CWD != "/workspace/original" {
+		t.Fatalf("expected cwd to be preserved, got %q", list.Items[0].Spec.CWD)
+	}
+}
+
 func TestUpsertChannelConversationRejectsMissingScope(t *testing.T) {
 	s := newChannelConversationsTestServer(t, readyACPSpritz("zeno-acme", "owner-123"))
 	e := echo.New()

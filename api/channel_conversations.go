@@ -258,20 +258,6 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
 	if found {
-		changed := false
-		if normalizedBody.Title != "" && conversation.Spec.Title != normalizedBody.Title {
-			conversation.Spec.Title = normalizedBody.Title
-			changed = true
-		}
-		if conversation.Spec.CWD != normalizedBody.CWD {
-			conversation.Spec.CWD = normalizedBody.CWD
-			changed = true
-		}
-		if changed {
-			if err := s.client.Update(c.Request().Context(), conversation); err != nil {
-				return writeError(c, http.StatusInternalServerError, err.Error())
-			}
-		}
 		return writeJSON(c, http.StatusOK, map[string]any{"created": false, "conversation": conversation})
 	}
 
@@ -289,20 +275,6 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 			}
 			if !channelConversationMatchesIdentity(existing, identity) {
 				return writeError(c, http.StatusConflict, "channel conversation is ambiguous")
-			}
-			changed := false
-			if normalizedBody.Title != "" && existing.Spec.Title != normalizedBody.Title {
-				existing.Spec.Title = normalizedBody.Title
-				changed = true
-			}
-			if existing.Spec.CWD != normalizedBody.CWD {
-				existing.Spec.CWD = normalizedBody.CWD
-				changed = true
-			}
-			if changed {
-				if updateErr := s.client.Update(c.Request().Context(), existing); updateErr != nil {
-					return writeError(c, http.StatusInternalServerError, updateErr.Error())
-				}
 			}
 			return writeJSON(c, http.StatusOK, map[string]any{"created": false, "conversation": existing})
 		}

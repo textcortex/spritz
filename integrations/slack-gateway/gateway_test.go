@@ -109,6 +109,76 @@ func TestOAuthCallbackStoresInstallationAndUpsertsRegistry(t *testing.T) {
 	}
 }
 
+func TestOAuthCallbackRollsBackInstallationWhenBackendUpsertFails(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "backend unavailable", http.StatusServiceUnavailable)
+	}))
+	defer backend.Close()
+
+	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":           true,
+			"app_id":       "A_app_1",
+			"scope":        "app_mentions:read,channels:history,chat:write",
+			"access_token": "xoxb-new-token",
+			"bot_user_id":  "U_bot",
+			"team":         map[string]any{"id": "T_workspace_1"},
+			"authed_user":  map[string]any{"id": "U_installer"},
+		})
+	}))
+	defer slackAPI.Close()
+
+	cfg := config{
+		PublicURL:             "https://gateway.example.test",
+		SlackClientID:         "client-id",
+		SlackClientSecret:     "client-secret",
+		SlackSigningSecret:    "signing-secret",
+		OAuthStateSecret:      "oauth-state-secret",
+		SlackAPIBaseURL:       slackAPI.URL,
+		SlackBotScopes:        []string{"chat:write"},
+		BackendBaseURL:        backend.URL,
+		BackendInternalToken:  "backend-internal-token",
+		SpritzBaseURL:         "https://spritz.example.test",
+		SpritzServiceToken:    "spritz-service-token",
+		PrincipalID:           "shared-slack-gateway",
+		InstallationStorePath: filepath.Join(t.TempDir(), "installations.json"),
+		HTTPTimeout:           5 * time.Second,
+		DedupeTTL:             time.Minute,
+	}
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := gateway.installations.Upsert(slackInstallation{
+		ProviderInstallRef: "slack-install:T_workspace_1",
+		APIAppID:           "A_existing",
+		TeamID:             "T_workspace_1",
+		InstallingUserID:   "U_existing",
+		BotAccessToken:     "xoxb-existing-token",
+	}); err != nil {
+		t.Fatalf("seed installation failed: %v", err)
+	}
+	state, err := gateway.state.generate()
+	if err != nil {
+		t.Fatalf("state generate failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/slack/oauth/callback?code=test-code&state="+url.QueryEscape(state), nil)
+	rec := httptest.NewRecorder()
+	gateway.handleOAuthCallback(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
+	}
+	stored, ok, err := gateway.installations.GetByTeamID("T_workspace_1")
+	if err != nil || !ok {
+		t.Fatalf("expected prior installation to be restored, ok=%v err=%v", ok, err)
+	}
+	if stored.BotAccessToken != "xoxb-existing-token" {
+		t.Fatalf("expected original token to remain after rollback, got %q", stored.BotAccessToken)
+	}
+	if stored.APIAppID != "A_existing" {
+		t.Fatalf("expected original app id to remain after rollback, got %q", stored.APIAppID)
+	}
+}
+
 func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 	var slackCalls struct {
 		sync.Mutex
@@ -364,6 +434,155 @@ func TestDedupeStoreAllowsRetryAfterFailure(t *testing.T) {
 
 	if duplicateLease, duplicated := store.begin("message:T_workspace_1:C_1:1711387375.000100"); !duplicated || duplicateLease != nil {
 		t.Fatalf("expected successful delivery to suppress duplicates within the TTL")
+	}
+}
+
+func TestProcessMessageEventSuppressesRetryAfterSlackReplyFailure(t *testing.T) {
+	var postCalls int
+	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat.postMessage" {
+			t.Fatalf("unexpected slack path %s", r.URL.Path)
+		}
+		postCalls++
+		http.Error(w, "slack unavailable", http.StatusBadGateway)
+	}))
+	defer slackAPI.Close()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"session": map[string]any{
+				"accessToken": "owner-token",
+				"ownerAuthId": "owner-123",
+				"namespace":   "spritz-staging",
+				"instanceId":  "zeno-acme",
+			},
+		})
+	}))
+	defer backend.Close()
+
+	var promptCalls int
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	spritz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/channel-conversations/upsert":
+			writeJSON(w, http.StatusCreated, map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"created": true,
+					"conversation": map[string]any{
+						"metadata": map[string]any{"name": "conv-1"},
+						"spec":     map[string]any{"cwd": "/home/dev"},
+					},
+				},
+			})
+		case "/api/acp/conversations/conv-1/bootstrap":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"effectiveSessionId": "session-1",
+					"conversation": map[string]any{
+						"metadata": map[string]any{"name": "conv-1"},
+						"spec":     map[string]any{"sessionId": "session-1", "cwd": "/home/dev"},
+					},
+				},
+			})
+		case "/api/acp/conversations/conv-1/connect":
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				t.Fatalf("upgrade failed: %v", err)
+			}
+			defer conn.Close()
+			for {
+				_, payload, err := conn.ReadMessage()
+				if err != nil {
+					return
+				}
+				var message map[string]any
+				if err := json.Unmarshal(payload, &message); err != nil {
+					t.Fatalf("decode ws payload: %v", err)
+				}
+				switch message["method"] {
+				case "initialize":
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{"protocolVersion": 1}})
+				case "session/load":
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
+				case "session/prompt":
+					promptCalls++
+					_ = conn.WriteJSON(map[string]any{
+						"jsonrpc": "2.0",
+						"method":  "session/update",
+						"params": map[string]any{
+							"update": map[string]any{
+								"sessionUpdate": "agent_message_chunk",
+								"content": []map[string]any{{
+									"type": "text",
+									"text": "Hello from concierge",
+								}},
+							},
+						},
+					})
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
+					return
+				default:
+					t.Fatalf("unexpected ACP method %#v", message["method"])
+				}
+			}
+		default:
+			t.Fatalf("unexpected spritz path %s", r.URL.Path)
+		}
+	}))
+	defer spritz.Close()
+
+	cfg := config{
+		SlackSigningSecret:    "signing-secret",
+		OAuthStateSecret:      "oauth-state-secret",
+		SlackAPIBaseURL:       slackAPI.URL,
+		BackendBaseURL:        backend.URL,
+		BackendInternalToken:  "backend-internal-token",
+		SpritzBaseURL:         spritz.URL,
+		SpritzServiceToken:    "spritz-service-token",
+		PrincipalID:           "shared-slack-gateway",
+		InstallationStorePath: filepath.Join(t.TempDir(), "installations.json"),
+		HTTPTimeout:           5 * time.Second,
+		DedupeTTL:             time.Minute,
+	}
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := gateway.installations.Upsert(slackInstallation{
+		ProviderInstallRef: "slack-install:T_workspace_1",
+		APIAppID:           "A_app_1",
+		TeamID:             "T_workspace_1",
+		BotAccessToken:     "xoxb-installed",
+	}); err != nil {
+		t.Fatalf("seed installation failed: %v", err)
+	}
+
+	envelope := slackEnvelope{
+		Type:     "event_callback",
+		TeamID:   "T_workspace_1",
+		APIAppID: "A_app_1",
+		EventID:  "Ev_retry",
+		Event: slackEventInner{
+			Type:        "app_mention",
+			User:        "U_1",
+			Text:        "<@U_bot> hello",
+			Channel:     "C_1",
+			ChannelType: "channel",
+			TS:          "1711387375.000100",
+		},
+	}
+
+	if err := gateway.processMessageEvent(t.Context(), envelope); err == nil {
+		t.Fatalf("expected first delivery to fail on slack post")
+	}
+	if err := gateway.processMessageEvent(t.Context(), envelope); err != nil {
+		t.Fatalf("expected duplicate retry to be suppressed, got %v", err)
+	}
+	if promptCalls != 1 {
+		t.Fatalf("expected ACP prompt to run once, got %d", promptCalls)
+	}
+	if postCalls != 1 {
+		t.Fatalf("expected one slack post attempt, got %d", postCalls)
 	}
 }
 

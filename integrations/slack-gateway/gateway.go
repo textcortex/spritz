@@ -267,12 +267,28 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	previous, hadPrevious, err := g.installations.GetByTeamID(installation.TeamID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	stored, err := g.installations.Upsert(installation)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if err := g.upsertInstallation(r.Context(), stored); err != nil {
+		if rollbackErr := g.rollbackInstallation(stored.TeamID, previous, hadPrevious); rollbackErr != nil {
+			g.logger.Error(
+				"failed to rollback slack installation after backend registration error",
+				"team_id",
+				stored.TeamID,
+				"rollback_error",
+				rollbackErr,
+			)
+			http.Error(w, fmt.Sprintf("%v (rollback failed: %v)", err, rollbackErr), http.StatusBadGateway)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -352,7 +368,9 @@ func (g *slackGateway) processMessageEvent(ctx context.Context, envelope slackEn
 		return nil
 	}
 	success := false
-	defer messageLease.finish(success)
+	defer func() {
+		messageLease.finish(success)
+	}()
 
 	var eventLease *dedupeLease
 	if eventID := strings.TrimSpace(envelope.EventID); eventID != "" {
@@ -360,7 +378,9 @@ func (g *slackGateway) processMessageEvent(ctx context.Context, envelope slackEn
 		if duplicated {
 			return nil
 		}
-		defer eventLease.finish(success)
+		defer func() {
+			eventLease.finish(success)
+		}()
 	}
 
 	installation, ok, err := g.installations.GetByTeamID(envelope.TeamID)
@@ -391,16 +411,31 @@ func (g *slackGateway) processMessageEvent(ctx context.Context, envelope slackEn
 	if err != nil {
 		return err
 	}
-	reply, err := g.promptConversation(ctx, session.AccessToken, session.Namespace, conversationID, sessionID, cwd, promptText)
+	reply, promptSent, err := g.promptConversation(ctx, session.AccessToken, session.Namespace, conversationID, sessionID, cwd, promptText)
 	if err != nil {
 		reply = "I hit an internal error while processing that request."
+		if promptSent {
+			success = true
+		}
 		g.logger.Error("acp prompt failed", "error", err, "conversation_id", conversationID)
+	} else {
+		success = true
 	}
 	if err := g.postSlackMessage(ctx, installation.BotAccessToken, event.Channel, reply, slackReplyThreadTS(event)); err != nil {
 		return err
 	}
-	success = true
+	if !success {
+		success = true
+	}
 	return nil
+}
+
+func (g *slackGateway) rollbackInstallation(teamID string, previous slackInstallation, hadPrevious bool) error {
+	if hadPrevious {
+		_, err := g.installations.Upsert(previous)
+		return err
+	}
+	return g.installations.DeleteByTeamID(teamID)
 }
 
 func normalizeSlackPromptText(eventType, text string) string {
@@ -602,22 +637,22 @@ func (g *slackGateway) bootstrapConversation(ctx context.Context, ownerToken, na
 	return sessionID, cwd, nil
 }
 
-func (g *slackGateway) promptConversation(ctx context.Context, ownerToken, namespace, conversationID, sessionID, cwd, prompt string) (string, error) {
+func (g *slackGateway) promptConversation(ctx context.Context, ownerToken, namespace, conversationID, sessionID, cwd, prompt string) (string, bool, error) {
 	wsURL, err := g.spritzWebSocketURL("/api/acp/conversations/"+url.PathEscape(conversationID)+"/connect", map[string]string{"namespace": namespace})
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	dialer := websocket.Dialer{HandshakeTimeout: g.cfg.HTTPTimeout}
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+ownerToken)
 	conn, _, err := dialer.DialContext(ctx, wsURL, headers)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	defer conn.Close()
 
 	client := &acpPromptClient{conn: conn}
-	if _, err := client.call(ctx, "initialize", map[string]any{
+	if _, _, err := client.call(ctx, "initialize", map[string]any{
 		"protocolVersion":    1,
 		"clientCapabilities": map[string]any{},
 		"clientInfo": map[string]any{
@@ -626,17 +661,17 @@ func (g *slackGateway) promptConversation(ctx context.Context, ownerToken, names
 			"version": "1.0.0",
 		},
 	}, nil); err != nil {
-		return "", err
+		return "", false, err
 	}
-	if _, err := client.call(ctx, "session/load", map[string]any{
+	if _, _, err := client.call(ctx, "session/load", map[string]any{
 		"sessionId":  sessionID,
 		"cwd":        cwd,
 		"mcpServers": []any{},
 	}, nil); err != nil {
-		return "", err
+		return "", false, err
 	}
 	var reply strings.Builder
-	if _, err := client.call(ctx, "session/prompt", map[string]any{
+	if _, promptSent, err := client.call(ctx, "session/prompt", map[string]any{
 		"sessionId": sessionID,
 		"prompt": []map[string]any{{
 			"type": "text",
@@ -657,13 +692,13 @@ func (g *slackGateway) promptConversation(ctx context.Context, ownerToken, names
 		}
 		reply.WriteString(extractACPText(payload.Update["content"]))
 	}); err != nil {
-		return "", err
+		return strings.TrimSpace(reply.String()), promptSent, err
 	}
 	text := strings.TrimSpace(reply.String())
 	if text == "" {
-		return "", fmt.Errorf("agent returned an empty reply")
+		return "", true, fmt.Errorf("agent returned an empty reply")
 	}
-	return text, nil
+	return text, true, nil
 }
 
 type acpPromptClient struct {
@@ -671,7 +706,7 @@ type acpPromptClient struct {
 	nextID int64
 }
 
-func (c *acpPromptClient) call(ctx context.Context, method string, params any, onNotification func(*acpRPCMessage)) (json.RawMessage, error) {
+func (c *acpPromptClient) call(ctx context.Context, method string, params any, onNotification func(*acpRPCMessage)) (json.RawMessage, bool, error) {
 	c.nextID++
 	requestID := fmt.Sprintf("rpc-%d", c.nextID)
 	if deadline, ok := ctx.Deadline(); ok {
@@ -683,7 +718,7 @@ func (c *acpPromptClient) call(ctx context.Context, method string, params any, o
 		"method":  method,
 		"params":  params,
 	}); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	for {
 		if deadline, ok := ctx.Deadline(); ok {
@@ -691,11 +726,11 @@ func (c *acpPromptClient) call(ctx context.Context, method string, params any, o
 		}
 		_, payload, err := c.conn.ReadMessage()
 		if err != nil {
-			return nil, err
+			return nil, true, err
 		}
 		var message acpRPCMessage
 		if err := json.Unmarshal(payload, &message); err != nil {
-			return nil, err
+			return nil, true, err
 		}
 		if message.Method != "" && message.ID == nil {
 			if onNotification != nil {
@@ -707,9 +742,9 @@ func (c *acpPromptClient) call(ctx context.Context, method string, params any, o
 			continue
 		}
 		if message.Error != nil {
-			return nil, fmt.Errorf("%s", strings.TrimSpace(message.Error.Message))
+			return nil, true, fmt.Errorf("%s", strings.TrimSpace(message.Error.Message))
 		}
-		return message.Result, nil
+		return message.Result, true, nil
 	}
 }
 
