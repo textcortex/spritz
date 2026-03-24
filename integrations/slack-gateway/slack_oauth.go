@@ -152,6 +152,7 @@ func (g *slackGateway) upsertInstallation(ctx context.Context, installation *sla
 		"provider":          slackProvider,
 		"externalScopeType": slackWorkspaceScope,
 		"externalTenantId":  installation.TeamID,
+		"presetId":          g.presetID(),
 		"ownerRef": map[string]any{
 			"type":     "external",
 			"provider": slackProvider,

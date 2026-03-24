@@ -17,6 +17,7 @@ type config struct {
 	OAuthStateSecret     string
 	SlackAPIBaseURL      string
 	SlackBotScopes       []string
+	PresetID             string
 	BackendBaseURL       string
 	BackendInternalToken string
 	SpritzBaseURL        string
@@ -37,6 +38,7 @@ func loadConfig() (config, error) {
 		OAuthStateSecret:     strings.TrimSpace(os.Getenv("SPRITZ_SLACK_OAUTH_STATE_SECRET")),
 		SlackAPIBaseURL:      strings.TrimRight(envOrDefault("SPRITZ_SLACK_API_BASE_URL", "https://slack.com/api"), "/"),
 		SlackBotScopes:       splitCSV(envOrDefault("SPRITZ_SLACK_BOT_SCOPES", "app_mentions:read,channels:history,chat:write,im:history,mpim:history")),
+		PresetID:             strings.TrimSpace(envOrDefault("SPRITZ_SLACK_PRESET_ID", defaultSlackPresetID)),
 		BackendBaseURL:       strings.TrimRight(strings.TrimSpace(os.Getenv("SPRITZ_SLACK_BACKEND_BASE_URL")), "/"),
 		BackendInternalToken: strings.TrimSpace(os.Getenv("SPRITZ_SLACK_BACKEND_INTERNAL_TOKEN")),
 		SpritzBaseURL:        strings.TrimRight(strings.TrimSpace(os.Getenv("SPRITZ_SLACK_SPRITZ_BASE_URL")), "/"),

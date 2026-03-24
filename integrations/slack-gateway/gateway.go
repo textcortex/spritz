@@ -15,6 +15,7 @@ import (
 const (
 	slackProvider          = "slack"
 	slackWorkspaceScope    = "workspace"
+	defaultSlackPresetID   = "zeno"
 	defaultConversationCWD = "/home/dev"
 )
 
@@ -108,4 +109,8 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func (g *slackGateway) presetID() string {
+	return firstNonEmpty(g.cfg.PresetID, defaultSlackPresetID)
 }

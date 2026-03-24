@@ -121,6 +121,9 @@ func TestOAuthCallbackStoresInstallationAndUpsertsRegistry(t *testing.T) {
 	if providerAuth["botUserId"] != "U_bot" {
 		t.Fatalf("expected bot user id to be forwarded, got %#v", providerAuth["botUserId"])
 	}
+	if upsertPayload["presetId"] != "zeno" {
+		t.Fatalf("expected presetId zeno, got %#v", upsertPayload["presetId"])
+	}
 }
 
 func TestInstallRedirectUsesConfiguredSlackHost(t *testing.T) {
@@ -1980,6 +1983,9 @@ func TestLoadConfigIncludesMPIMHistoryByDefault(t *testing.T) {
 	}
 	if !containsString(cfg.SlackBotScopes, "mpim:history") {
 		t.Fatalf("expected default Slack scopes to include mpim:history, got %#v", cfg.SlackBotScopes)
+	}
+	if cfg.PresetID != "zeno" {
+		t.Fatalf("expected default preset id zeno, got %q", cfg.PresetID)
 	}
 }
 
