@@ -261,6 +261,7 @@ func (s *server) registerRoutes(e *echo.Echo) {
 	secured.GET("/spritzes", s.listSpritzes)
 	secured.POST("/spritzes/suggest-name", s.suggestSpritzName)
 	secured.POST("/channel-routes/resolve", s.resolveChannelRoute)
+	secured.POST("/channel-conversations/upsert", s.upsertChannelConversation)
 	secured.POST("/spritzes", s.createSpritz)
 	secured.GET("/spritzes/:name", s.getSpritz)
 	secured.DELETE("/spritzes/:name", s.deleteSpritz)

@@ -22,12 +22,13 @@ import (
 )
 
 const (
-	scopeInstancesCreate          = "spritz.instances.create"
-	scopeInstancesAssignOwner     = "spritz.instances.assign_owner"
-	scopePresetsRead              = "spritz.presets.read"
-	scopeInstancesSuggestName     = "spritz.instances.suggest_name"
-	scopeExternalResolveViaCreate = "spritz.external_identities.resolve_via_create"
-	scopeChannelRouteResolve      = "spritz.channel.route.resolve"
+	scopeInstancesCreate            = "spritz.instances.create"
+	scopeInstancesAssignOwner       = "spritz.instances.assign_owner"
+	scopePresetsRead                = "spritz.presets.read"
+	scopeInstancesSuggestName       = "spritz.instances.suggest_name"
+	scopeExternalResolveViaCreate   = "spritz.external_identities.resolve_via_create"
+	scopeChannelRouteResolve        = "spritz.channel.route.resolve"
+	scopeChannelConversationsUpsert = "spritz.channel.conversations.upsert"
 
 	actorIDAnnotationKey          = "spritz.sh/actor.id"
 	actorTypeAnnotationKey        = "spritz.sh/actor.type"
