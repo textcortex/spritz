@@ -353,6 +353,41 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 	t.Fatalf("expected slack reply to be posted")
 }
 
+func TestSlackEventReturnsRetryableErrorWhenProcessingFails(t *testing.T) {
+	cfg := config{
+		SlackSigningSecret:    "signing-secret",
+		OAuthStateSecret:      "oauth-state-secret",
+		SlackAPIBaseURL:       "https://slack.example.test",
+		BackendBaseURL:        "https://backend.example.test",
+		BackendInternalToken:  "backend-internal-token",
+		SpritzBaseURL:         "https://spritz.example.test",
+		SpritzServiceToken:    "spritz-service-token",
+		PrincipalID:           "shared-slack-gateway",
+		InstallationStorePath: filepath.Join(t.TempDir(), "installations.json"),
+		HTTPTimeout:           5 * time.Second,
+		DedupeTTL:             time.Minute,
+	}
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	body := []byte(`{
+		"type":"event_callback",
+		"team_id":"T_workspace_1",
+		"api_app_id":"A_app_1",
+		"event_id":"Ev_missing",
+		"event":{"type":"app_mention","user":"U_1","text":"<@U_bot> hello","channel":"C_1","channel_type":"channel","ts":"1711387375.000100"}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/slack/events", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	signSlackRequest(req.Header, cfg.SlackSigningSecret, body, time.Now().UTC())
+	rec := httptest.NewRecorder()
+
+	gateway.handleSlackEvents(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 to trigger a Slack retry, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestUpsertChannelConversationUsesChannelForDirectMessages(t *testing.T) {
 	var upsertPayload map[string]any
 	spritz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -434,6 +469,17 @@ func TestDedupeStoreAllowsRetryAfterFailure(t *testing.T) {
 
 	if duplicateLease, duplicated := store.begin("message:T_workspace_1:C_1:1711387375.000100"); !duplicated || duplicateLease != nil {
 		t.Fatalf("expected successful delivery to suppress duplicates within the TTL")
+	}
+}
+
+func TestNormalizeSlackPromptTextPreservesNonGatewayMentions(t *testing.T) {
+	normalized := normalizeSlackPromptText(
+		"app_mention",
+		"<@U_BOT> ask <@U_APPROVER> for approval",
+		"U_BOT",
+	)
+	if normalized != "ask <@U_APPROVER> for approval" {
+		t.Fatalf("expected non-gateway mentions to remain, got %q", normalized)
 	}
 }
 
@@ -583,6 +629,31 @@ func TestProcessMessageEventSuppressesRetryAfterSlackReplyFailure(t *testing.T) 
 	}
 	if postCalls != 1 {
 		t.Fatalf("expected one slack post attempt, got %d", postCalls)
+	}
+}
+
+func TestSpritzWebSocketURLPreservesBasePath(t *testing.T) {
+	gateway := newSlackGateway(
+		config{SpritzBaseURL: "https://spritz.example.test/prefix"},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	wsURL, err := gateway.spritzWebSocketURL(
+		"/api/acp/conversations/conv-1/connect",
+		map[string]string{"namespace": "spritz-staging"},
+	)
+	if err != nil {
+		t.Fatalf("spritzWebSocketURL failed: %v", err)
+	}
+	parsed, err := url.Parse(wsURL)
+	if err != nil {
+		t.Fatalf("parse ws url: %v", err)
+	}
+	if parsed.Path != "/prefix/api/acp/conversations/conv-1/connect" {
+		t.Fatalf("expected base path to be preserved, got %q", parsed.Path)
+	}
+	if parsed.Query().Get("namespace") != "spritz-staging" {
+		t.Fatalf("expected namespace query, got %q", parsed.RawQuery)
 	}
 }
 

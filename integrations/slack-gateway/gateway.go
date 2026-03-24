@@ -13,7 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"regexp"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -322,13 +322,23 @@ func (g *slackGateway) handleSlackEvents(w http.ResponseWriter, r *http.Request)
 		_, _ = w.Write([]byte(envelope.Challenge))
 		return
 	case "event_callback":
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), g.cfg.ProcessingTimeout)
-			defer cancel()
-			if err := g.processSlackEnvelope(ctx, envelope); err != nil {
-				g.logger.Error("slack event failed", "error", err, "team_id", envelope.TeamID, "event_id", envelope.EventID, "event_type", envelope.Event.Type)
-			}
-		}()
+		ctx, cancel := context.WithTimeout(context.Background(), g.cfg.ProcessingTimeout)
+		defer cancel()
+		if err := g.processSlackEnvelope(ctx, envelope); err != nil {
+			g.logger.Error(
+				"slack event failed",
+				"error",
+				err,
+				"team_id",
+				envelope.TeamID,
+				"event_id",
+				envelope.EventID,
+				"event_type",
+				envelope.Event.Type,
+			)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	default:
@@ -394,7 +404,7 @@ func (g *slackGateway) processMessageEvent(ctx context.Context, envelope slackEn
 		return fmt.Errorf("slack api_app_id mismatch for team %s", envelope.TeamID)
 	}
 
-	promptText := normalizeSlackPromptText(event.Type, event.Text)
+	promptText := normalizeSlackPromptText(event.Type, event.Text, installation.BotUserID)
 	if promptText == "" {
 		return nil
 	}
@@ -438,15 +448,21 @@ func (g *slackGateway) rollbackInstallation(teamID string, previous slackInstall
 	return g.installations.DeleteByTeamID(teamID)
 }
 
-func normalizeSlackPromptText(eventType, text string) string {
+func normalizeSlackPromptText(eventType, text, botUserID string) string {
 	normalized := strings.TrimSpace(text)
 	if strings.TrimSpace(eventType) == "app_mention" {
-		normalized = strings.TrimSpace(slackMentionPattern.ReplaceAllString(normalized, ""))
+		botUserID = strings.TrimSpace(botUserID)
+		if botUserID != "" {
+			mentionToken := "<@" + botUserID + ">"
+			if index := strings.Index(normalized, mentionToken); index >= 0 {
+				normalized = strings.TrimSpace(
+					normalized[:index] + normalized[index+len(mentionToken):],
+				)
+			}
+		}
 	}
 	return normalized
 }
-
-var slackMentionPattern = regexpMustCompile(`<@[^>]+>`)
 
 func slackReplyThreadTS(event slackEventInner) string {
 	if strings.TrimSpace(event.ThreadTS) != "" {
@@ -879,7 +895,7 @@ func (g *slackGateway) postJSONWithMethod(ctx context.Context, method, endpoint,
 	return json.NewDecoder(resp.Body).Decode(target)
 }
 
-func (g *slackGateway) spritzWebSocketURL(path string, query map[string]string) (string, error) {
+func (g *slackGateway) spritzWebSocketURL(routePath string, query map[string]string) (string, error) {
 	parsed, err := url.Parse(g.cfg.SpritzBaseURL)
 	if err != nil {
 		return "", err
@@ -892,7 +908,7 @@ func (g *slackGateway) spritzWebSocketURL(path string, query map[string]string) 
 	default:
 		return "", fmt.Errorf("unsupported spritz url scheme %q", parsed.Scheme)
 	}
-	parsed.Path = path
+	parsed.Path = path.Join(parsed.Path, routePath)
 	values := parsed.Query()
 	for key, value := range query {
 		values.Set(key, value)
@@ -905,14 +921,6 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
-}
-
-func regexpMustCompile(pattern string) *regexp.Regexp {
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		panic(err)
-	}
-	return re
 }
 
 func firstNonEmpty(values ...string) string {
