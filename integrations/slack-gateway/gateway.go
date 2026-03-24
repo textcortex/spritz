@@ -93,6 +93,23 @@ type slackEventInner struct {
 	ThreadTS    string `json:"thread_ts,omitempty"`
 }
 
+type httpStatusError struct {
+	method     string
+	endpoint   string
+	statusCode int
+	body       string
+}
+
+func (err *httpStatusError) Error() string {
+	return fmt.Sprintf(
+		"%s %s failed: %d %s",
+		err.method,
+		err.endpoint,
+		err.statusCode,
+		strings.TrimSpace(err.body),
+	)
+}
+
 type backendChannelSessionResponse struct {
 	Status  string `json:"status"`
 	Session struct {
@@ -278,16 +295,18 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := g.upsertInstallation(r.Context(), stored); err != nil {
-		if rollbackErr := g.rollbackInstallation(stored.TeamID, previous, hadPrevious); rollbackErr != nil {
-			g.logger.Error(
-				"failed to rollback slack installation after backend registration error",
-				"team_id",
-				stored.TeamID,
-				"rollback_error",
-				rollbackErr,
-			)
-			http.Error(w, fmt.Sprintf("%v (rollback failed: %v)", err, rollbackErr), http.StatusBadGateway)
-			return
+		if shouldRollbackInstallation(err) {
+			if rollbackErr := g.rollbackInstallation(stored.TeamID, previous, hadPrevious); rollbackErr != nil {
+				g.logger.Error(
+					"failed to rollback slack installation after backend registration error",
+					"team_id",
+					stored.TeamID,
+					"rollback_error",
+					rollbackErr,
+				)
+				http.Error(w, fmt.Sprintf("%v (rollback failed: %v)", err, rollbackErr), http.StatusBadGateway)
+				return
+			}
 		}
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -423,19 +442,17 @@ func (g *slackGateway) processMessageEvent(ctx context.Context, envelope slackEn
 	}
 	reply, promptSent, err := g.promptConversation(ctx, session.AccessToken, session.Namespace, conversationID, sessionID, cwd, promptText)
 	if err != nil {
-		reply = "I hit an internal error while processing that request."
-		if promptSent {
-			success = true
+		if !promptSent {
+			return err
 		}
+		reply = "I hit an internal error while processing that request."
+		success = true
 		g.logger.Error("acp prompt failed", "error", err, "conversation_id", conversationID)
 	} else {
 		success = true
 	}
 	if err := g.postSlackMessage(ctx, installation.BotAccessToken, event.Channel, reply, slackReplyThreadTS(event)); err != nil {
 		return err
-	}
-	if !success {
-		success = true
 	}
 	return nil
 }
@@ -446,6 +463,22 @@ func (g *slackGateway) rollbackInstallation(teamID string, previous slackInstall
 		return err
 	}
 	return g.installations.DeleteByTeamID(teamID)
+}
+
+func shouldRollbackInstallation(err error) bool {
+	var statusErr *httpStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	if statusErr.statusCode < http.StatusBadRequest || statusErr.statusCode >= http.StatusInternalServerError {
+		return false
+	}
+	switch statusErr.statusCode {
+	case http.StatusConflict, http.StatusRequestTimeout, http.StatusTooManyRequests:
+		return false
+	default:
+		return true
+	}
 }
 
 func normalizeSlackPromptText(eventType, text, botUserID string) string {
@@ -725,6 +758,7 @@ type acpPromptClient struct {
 func (c *acpPromptClient) call(ctx context.Context, method string, params any, onNotification func(*acpRPCMessage)) (json.RawMessage, bool, error) {
 	c.nextID++
 	requestID := fmt.Sprintf("rpc-%d", c.nextID)
+	delivered := false
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = c.conn.SetWriteDeadline(deadline)
 	}
@@ -742,13 +776,14 @@ func (c *acpPromptClient) call(ctx context.Context, method string, params any, o
 		}
 		_, payload, err := c.conn.ReadMessage()
 		if err != nil {
-			return nil, true, err
+			return nil, delivered, err
 		}
 		var message acpRPCMessage
 		if err := json.Unmarshal(payload, &message); err != nil {
-			return nil, true, err
+			return nil, delivered, err
 		}
 		if message.Method != "" && message.ID == nil {
+			delivered = true
 			if onNotification != nil {
 				onNotification(&message)
 			}
@@ -757,10 +792,11 @@ func (c *acpPromptClient) call(ctx context.Context, method string, params any, o
 		if fmt.Sprint(message.ID) != requestID {
 			continue
 		}
+		delivered = true
 		if message.Error != nil {
-			return nil, true, fmt.Errorf("%s", strings.TrimSpace(message.Error.Message))
+			return nil, delivered, fmt.Errorf("%s", strings.TrimSpace(message.Error.Message))
 		}
-		return message.Result, true, nil
+		return message.Result, delivered, nil
 	}
 }
 
@@ -887,7 +923,12 @@ func (g *slackGateway) postJSONWithMethod(ctx context.Context, method, endpoint,
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("%s %s failed: %s %s", method, endpoint, resp.Status, strings.TrimSpace(string(bodyBytes)))
+		return &httpStatusError{
+			method:     method,
+			endpoint:   endpoint,
+			statusCode: resp.StatusCode,
+			body:       string(bodyBytes),
+		}
 	}
 	if target == nil {
 		return nil

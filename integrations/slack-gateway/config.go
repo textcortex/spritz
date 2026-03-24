@@ -52,8 +52,12 @@ func loadConfig() (config, error) {
 	if cfg.PublicURL == "" {
 		return config{}, fmt.Errorf("SPRITZ_SLACK_GATEWAY_PUBLIC_URL is required")
 	}
-	if _, err := url.Parse(cfg.PublicURL); err != nil {
+	publicURL, err := url.Parse(cfg.PublicURL)
+	if err != nil {
 		return config{}, fmt.Errorf("SPRITZ_SLACK_GATEWAY_PUBLIC_URL is invalid: %w", err)
+	}
+	if strings.TrimSpace(publicURL.Scheme) == "" || strings.TrimSpace(publicURL.Host) == "" {
+		return config{}, fmt.Errorf("SPRITZ_SLACK_GATEWAY_PUBLIC_URL must be an absolute URL")
 	}
 	if cfg.SlackClientID == "" {
 		return config{}, fmt.Errorf("SPRITZ_SLACK_CLIENT_ID is required")
