@@ -249,6 +249,8 @@ func (s *server) registerRoutes(e *echo.Echo) {
 	internal := group.Group("/internal/v1", s.internalAuthMiddleware())
 	if s.internalAuth.enabled {
 		internal.GET("/runtime-bindings/:namespace/:instanceId", s.getRuntimeBinding)
+		internal.POST("/spritzes", s.createInternalSpritz)
+		internal.GET("/spritzes/:namespace/:name", s.getInternalSpritz)
 	}
 	internal.GET("/shared-mounts/owner/:owner/:mount/latest", s.getSharedMountLatest)
 	internal.GET("/shared-mounts/owner/:owner/:mount/revisions/:revision", s.getSharedMountRevision)
@@ -258,6 +260,7 @@ func (s *server) registerRoutes(e *echo.Echo) {
 	secured.GET("/presets", s.listPresets)
 	secured.GET("/spritzes", s.listSpritzes)
 	secured.POST("/spritzes/suggest-name", s.suggestSpritzName)
+	secured.POST("/channel-routes/resolve", s.resolveChannelRoute)
 	secured.POST("/spritzes", s.createSpritz)
 	secured.GET("/spritzes/:name", s.getSpritz)
 	secured.DELETE("/spritzes/:name", s.deleteSpritz)
