@@ -104,6 +104,10 @@ func (s *server) resolveChannelRoute(c echo.Context) error {
 	if err != nil {
 		return writeError(c, http.StatusBadRequest, err.Error())
 	}
+	namespace, err := s.resolveSpritzNamespace("")
+	if err != nil {
+		return writeError(c, http.StatusForbidden, err.Error())
+	}
 
 	resolver, response, err := s.extensions.resolve(
 		c.Request().Context(),
@@ -111,7 +115,7 @@ func (s *server) resolveChannelRoute(c echo.Context) error {
 		principal,
 		normalized.RequestID,
 		extensionRequestContext{
-			Namespace:       s.namespace,
+			Namespace:       namespace,
 			InstanceClassID: channelRouteInstanceClassID,
 		},
 		map[string]string{

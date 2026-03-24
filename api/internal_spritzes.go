@@ -66,6 +66,10 @@ func (p internalCreatePrincipal) normalize() (principal, error) {
 }
 
 func summarizeInternalSpritz(spritz *spritzv1.Spritz) internalSpritzSummary {
+	owner := spritz.Spec.Owner
+	if hasExternalOwnerAnnotations(spritz.GetAnnotations()) {
+		owner.ID = ""
+	}
 	return internalSpritzSummary{
 		Metadata: internalSpritzMetadata{
 			Name:              spritz.Name,
@@ -73,7 +77,7 @@ func summarizeInternalSpritz(spritz *spritzv1.Spritz) internalSpritzSummary {
 			CreationTimestamp: spritz.CreationTimestamp,
 		},
 		Spec: internalSpritzSpec{
-			Owner: spritz.Spec.Owner,
+			Owner: owner,
 		},
 		Status:      spritz.Status,
 		AccessURL:   spritzv1.AccessURLForSpritz(spritz),

@@ -65,6 +65,9 @@ func TestResolveChannelRouteReturnsResolvedInstance(t *testing.T) {
 		if payload.Context.InstanceClassID != channelRouteInstanceClassID {
 			t.Fatalf("expected instanceClassId=%q, got %q", channelRouteInstanceClassID, payload.Context.InstanceClassID)
 		}
+		if payload.Context.Namespace != "default" {
+			t.Fatalf("expected default namespace to be forwarded, got %q", payload.Context.Namespace)
+		}
 		if payload.Principal.ID != "shared-discord-bot" {
 			t.Fatalf("expected principal id to be forwarded, got %q", payload.Principal.ID)
 		}

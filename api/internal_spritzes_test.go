@@ -160,3 +160,40 @@ func TestInternalGetSpritzReturnsSanitizedSummary(t *testing.T) {
 		}
 	}
 }
+
+func TestInternalGetSpritzRedactsExternallyResolvedOwner(t *testing.T) {
+	spritz := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "zeno-acme",
+			Namespace: "spritz-production",
+			Annotations: map[string]string{
+				externalOwnerIssuerAnnotationKey:      "discord",
+				externalOwnerProviderAnnotationKey:    "discord",
+				externalOwnerSubjectHashAnnotationKey: "subject-hash",
+			},
+		},
+		Spec: spritzv1.SpritzSpec{
+			Owner: spritzv1.SpritzOwner{ID: "user-123"},
+		},
+		Status: spritzv1.SpritzStatus{Phase: "Ready"},
+	}
+	s := newInternalSpritzesTestServer(t, spritz)
+	e := echo.New()
+	s.registerRoutes(e)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/internal/v1/spritzes/spritz-production/zeno-acme", nil)
+	req.Header.Set("Authorization", "Bearer spritz-internal-token")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"owner":{"id":"user-123"}`) {
+		t.Fatalf("expected externally resolved owner id to be redacted, got %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"owner":{"id":""}`) {
+		t.Fatalf("expected redacted owner summary, got %s", rec.Body.String())
+	}
+}
