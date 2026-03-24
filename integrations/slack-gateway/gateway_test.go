@@ -1491,8 +1491,8 @@ func TestPromptConversationRejectsInteractivePermissionRequests(t *testing.T) {
 		if got := headers.Get("Authorization"); got != "Bearer owner-token" {
 			t.Fatalf("expected spritz websocket Authorization header, got %q", got)
 		}
-		if got := headers.Get("Origin"); got != spritz.URL {
-			t.Fatalf("expected spritz websocket Origin header %q, got %q", spritz.URL, got)
+		if got := headers.Get("Origin"); got != "" {
+			t.Fatalf("expected spritz websocket Origin header to be omitted, got %q", got)
 		}
 	default:
 		t.Fatalf("expected websocket request headers to be captured")
@@ -1800,14 +1800,14 @@ func TestProcessMessageEventSuppressesRetryAfterSlackReplyFailure(t *testing.T) 
 	if err := gateway.processMessageEvent(t.Context(), envelope); err == nil {
 		t.Fatalf("expected first delivery to fail on slack post")
 	}
-	if err := gateway.processMessageEvent(t.Context(), envelope); err == nil {
-		t.Fatalf("expected retry after failed slack post to attempt delivery again")
+	if err := gateway.processMessageEvent(t.Context(), envelope); err != nil {
+		t.Fatalf("expected duplicate slack delivery to be suppressed after prompt side effects, got %v", err)
 	}
-	if promptCalls != 2 {
-		t.Fatalf("expected ACP prompt to run twice, got %d", promptCalls)
+	if promptCalls != 1 {
+		t.Fatalf("expected ACP prompt to run once, got %d", promptCalls)
 	}
-	if postCalls != 2 {
-		t.Fatalf("expected two slack post attempts, got %d", postCalls)
+	if postCalls != 1 {
+		t.Fatalf("expected one slack post attempt before dedupe suppression, got %d", postCalls)
 	}
 }
 

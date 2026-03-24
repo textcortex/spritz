@@ -530,7 +530,9 @@ func (g *slackGateway) processMessageEventWithDelivery(
 	delivery *slackMessageDelivery,
 ) error {
 	success := false
-	defer delivery.finish(success)
+	defer func() {
+		delivery.finish(success)
+	}()
 
 	event := envelope.Event
 
@@ -566,6 +568,9 @@ func (g *slackGateway) processMessageEventWithDelivery(
 	replyCtx, cancelReply := context.WithTimeout(context.WithoutCancel(ctx), g.cfg.HTTPTimeout)
 	defer cancelReply()
 	if err := g.postSlackMessage(replyCtx, session.ProviderAuth.BotAccessToken, event.Channel, reply, slackReplyThreadTS(event)); err != nil {
+		// Once the ACP prompt has already been delivered, suppress duplicate
+		// Slack retries from re-running the same agent side effects.
+		success = promptSent
 		return err
 	}
 	success = true
@@ -834,14 +839,9 @@ func (g *slackGateway) promptConversation(ctx context.Context, serviceToken, nam
 	if err != nil {
 		return "", false, err
 	}
-	origin, err := g.spritzOrigin()
-	if err != nil {
-		return "", false, err
-	}
 	dialer := websocket.Dialer{HandshakeTimeout: g.cfg.HTTPTimeout}
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+serviceToken)
-	headers.Set("Origin", origin)
 	conn, _, err := dialer.DialContext(ctx, wsURL, headers)
 	if err != nil {
 		return "", false, err
@@ -1137,17 +1137,6 @@ func (g *slackGateway) spritzWebSocketURL(routePath string, query map[string]str
 	}
 	parsed.RawQuery = values.Encode()
 	return parsed.String(), nil
-}
-
-func (g *slackGateway) spritzOrigin() (string, error) {
-	parsed, err := url.Parse(g.cfg.SpritzBaseURL)
-	if err != nil {
-		return "", err
-	}
-	return (&url.URL{
-		Scheme: parsed.Scheme,
-		Host:   parsed.Host,
-	}).String(), nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
