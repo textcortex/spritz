@@ -9,6 +9,10 @@ acp_path="${SPRITZ_CODEX_ACP_PATH:-/}"
 codex_bin="${SPRITZ_CODEX_BIN:-codex}"
 server_bin="${SPRITZ_CODEX_SERVER_BIN:-/usr/local/bin/spritz-codex-acp-server}"
 spritz_entrypoint_bin="${SPRITZ_CODEX_MAIN_ENTRYPOINT:-/usr/local/bin/spritz-entrypoint}"
+codex_home="${CODEX_HOME:-${HOME:-/home/dev}/.codex}"
+
+mkdir -p "${codex_home}"
+export CODEX_HOME="${codex_home}"
 
 lower_auto_login="$(printf '%s' "${auto_login}" | tr '[:upper:]' '[:lower:]')"
 if [[ -n "${OPENAI_API_KEY:-}" && "${lower_auto_login}" != "false" && "${lower_auto_login}" != "0" && "${lower_auto_login}" != "no" && "${lower_auto_login}" != "off" ]]; then
