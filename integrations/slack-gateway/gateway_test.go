@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,7 +13,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -30,7 +30,12 @@ func TestOAuthCallbackStoresInstallationAndUpsertsRegistry(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&upsertPayload); err != nil {
 			t.Fatalf("decode backend payload: %v", err)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"status": "resolved"})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"installation": map[string]any{
+				"providerInstallRef": "cred_slack_workspace_1",
+			},
+		})
 	}))
 	defer backend.Close()
 
@@ -52,21 +57,20 @@ func TestOAuthCallbackStoresInstallationAndUpsertsRegistry(t *testing.T) {
 
 	publicURL := "https://gateway.example.test"
 	cfg := config{
-		PublicURL:             publicURL,
-		SlackClientID:         "client-id",
-		SlackClientSecret:     "client-secret",
-		SlackSigningSecret:    "signing-secret",
-		OAuthStateSecret:      "oauth-state-secret",
-		SlackAPIBaseURL:       slackAPI.URL,
-		SlackBotScopes:        []string{"chat:write"},
-		BackendBaseURL:        backend.URL,
-		BackendInternalToken:  "backend-internal-token",
-		SpritzBaseURL:         "https://spritz.example.test",
-		SpritzServiceToken:    "spritz-service-token",
-		PrincipalID:           "shared-slack-gateway",
-		InstallationStorePath: filepath.Join(t.TempDir(), "installations.json"),
-		HTTPTimeout:           5 * time.Second,
-		DedupeTTL:             time.Minute,
+		PublicURL:            publicURL,
+		SlackClientID:        "client-id",
+		SlackClientSecret:    "client-secret",
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      slackAPI.URL,
+		SlackBotScopes:       []string{"chat:write"},
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        "https://spritz.example.test",
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
 	}
 	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	state, err := gateway.state.generate()
@@ -80,13 +84,6 @@ func TestOAuthCallbackStoresInstallationAndUpsertsRegistry(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	stored, ok, err := gateway.installations.GetByTeamID("T_workspace_1")
-	if err != nil || !ok {
-		t.Fatalf("expected stored installation, ok=%v err=%v", ok, err)
-	}
-	if stored.BotAccessToken != "xoxb-installed" {
-		t.Fatalf("expected stored token, got %q", stored.BotAccessToken)
 	}
 	if upsertPayload["principalId"] != "shared-slack-gateway" {
 		t.Fatalf("expected principalId to match, got %#v", upsertPayload["principalId"])
@@ -107,9 +104,19 @@ func TestOAuthCallbackStoresInstallationAndUpsertsRegistry(t *testing.T) {
 	if ownerRef["tenant"] != "T_workspace_1" {
 		t.Fatalf("expected workspace tenant, got %#v", ownerRef["tenant"])
 	}
+	providerAuth, ok := upsertPayload["providerAuth"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected providerAuth object, got %#v", upsertPayload["providerAuth"])
+	}
+	if providerAuth["botAccessToken"] != "xoxb-installed" {
+		t.Fatalf("expected bot access token to be forwarded, got %#v", providerAuth["botAccessToken"])
+	}
+	if providerAuth["botUserId"] != "U_bot" {
+		t.Fatalf("expected bot user id to be forwarded, got %#v", providerAuth["botUserId"])
+	}
 }
 
-func TestOAuthCallbackKeepsFreshInstallationWhenBackendUpsertIsAmbiguous(t *testing.T) {
+func TestOAuthCallbackReturnsBadGatewayWhenBackendUpsertFails(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "backend unavailable", http.StatusServiceUnavailable)
 	}))
@@ -129,32 +136,22 @@ func TestOAuthCallbackKeepsFreshInstallationWhenBackendUpsertIsAmbiguous(t *test
 	defer slackAPI.Close()
 
 	cfg := config{
-		PublicURL:             "https://gateway.example.test",
-		SlackClientID:         "client-id",
-		SlackClientSecret:     "client-secret",
-		SlackSigningSecret:    "signing-secret",
-		OAuthStateSecret:      "oauth-state-secret",
-		SlackAPIBaseURL:       slackAPI.URL,
-		SlackBotScopes:        []string{"chat:write"},
-		BackendBaseURL:        backend.URL,
-		BackendInternalToken:  "backend-internal-token",
-		SpritzBaseURL:         "https://spritz.example.test",
-		SpritzServiceToken:    "spritz-service-token",
-		PrincipalID:           "shared-slack-gateway",
-		InstallationStorePath: filepath.Join(t.TempDir(), "installations.json"),
-		HTTPTimeout:           5 * time.Second,
-		DedupeTTL:             time.Minute,
+		PublicURL:            "https://gateway.example.test",
+		SlackClientID:        "client-id",
+		SlackClientSecret:    "client-secret",
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      slackAPI.URL,
+		SlackBotScopes:       []string{"chat:write"},
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        "https://spritz.example.test",
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
 	}
 	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := gateway.installations.Upsert(slackInstallation{
-		ProviderInstallRef: "slack-install:T_workspace_1",
-		APIAppID:           "A_existing",
-		TeamID:             "T_workspace_1",
-		InstallingUserID:   "U_existing",
-		BotAccessToken:     "xoxb-existing-token",
-	}); err != nil {
-		t.Fatalf("seed installation failed: %v", err)
-	}
 	state, err := gateway.state.generate()
 	if err != nil {
 		t.Fatalf("state generate failed: %v", err)
@@ -167,19 +164,9 @@ func TestOAuthCallbackKeepsFreshInstallationWhenBackendUpsertIsAmbiguous(t *test
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
 	}
-	stored, ok, err := gateway.installations.GetByTeamID("T_workspace_1")
-	if err != nil || !ok {
-		t.Fatalf("expected fresh installation to remain available, ok=%v err=%v", ok, err)
-	}
-	if stored.BotAccessToken != "xoxb-new-token" {
-		t.Fatalf("expected fresh token to remain after ambiguous failure, got %q", stored.BotAccessToken)
-	}
-	if stored.APIAppID != "A_app_1" {
-		t.Fatalf("expected fresh app id to remain after ambiguous failure, got %q", stored.APIAppID)
-	}
 }
 
-func TestOAuthCallbackRollsBackInstallationOnDeterministicBackendFailure(t *testing.T) {
+func TestOAuthCallbackReturnsBadGatewayOnDeterministicBackendFailure(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "owner was not found", http.StatusNotFound)
 	}))
@@ -199,32 +186,22 @@ func TestOAuthCallbackRollsBackInstallationOnDeterministicBackendFailure(t *test
 	defer slackAPI.Close()
 
 	cfg := config{
-		PublicURL:             "https://gateway.example.test",
-		SlackClientID:         "client-id",
-		SlackClientSecret:     "client-secret",
-		SlackSigningSecret:    "signing-secret",
-		OAuthStateSecret:      "oauth-state-secret",
-		SlackAPIBaseURL:       slackAPI.URL,
-		SlackBotScopes:        []string{"chat:write"},
-		BackendBaseURL:        backend.URL,
-		BackendInternalToken:  "backend-internal-token",
-		SpritzBaseURL:         "https://spritz.example.test",
-		SpritzServiceToken:    "spritz-service-token",
-		PrincipalID:           "shared-slack-gateway",
-		InstallationStorePath: filepath.Join(t.TempDir(), "installations.json"),
-		HTTPTimeout:           5 * time.Second,
-		DedupeTTL:             time.Minute,
+		PublicURL:            "https://gateway.example.test",
+		SlackClientID:        "client-id",
+		SlackClientSecret:    "client-secret",
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      slackAPI.URL,
+		SlackBotScopes:       []string{"chat:write"},
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        "https://spritz.example.test",
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
 	}
 	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := gateway.installations.Upsert(slackInstallation{
-		ProviderInstallRef: "slack-install:T_workspace_1",
-		APIAppID:           "A_existing",
-		TeamID:             "T_workspace_1",
-		InstallingUserID:   "U_existing",
-		BotAccessToken:     "xoxb-existing-token",
-	}); err != nil {
-		t.Fatalf("seed installation failed: %v", err)
-	}
 	state, err := gateway.state.generate()
 	if err != nil {
 		t.Fatalf("state generate failed: %v", err)
@@ -236,16 +213,6 @@ func TestOAuthCallbackRollsBackInstallationOnDeterministicBackendFailure(t *test
 
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
-	}
-	stored, ok, err := gateway.installations.GetByTeamID("T_workspace_1")
-	if err != nil || !ok {
-		t.Fatalf("expected prior installation to be restored, ok=%v err=%v", ok, err)
-	}
-	if stored.BotAccessToken != "xoxb-existing-token" {
-		t.Fatalf("expected original token to remain after rollback, got %q", stored.BotAccessToken)
-	}
-	if stored.APIAppID != "A_existing" {
-		t.Fatalf("expected original app id to remain after rollback, got %q", stored.APIAppID)
 	}
 }
 
@@ -281,6 +248,13 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 				"ownerAuthId": "owner-123",
 				"namespace":   "spritz-staging",
 				"instanceId":  "zeno-acme",
+				"providerAuth": map[string]any{
+					"providerInstallRef": "cred_slack_workspace_1",
+					"apiAppId":           "A_app_1",
+					"teamId":             "T_workspace_1",
+					"botUserId":          "U_bot",
+					"botAccessToken":     "xoxb-installed",
+				},
 			},
 		})
 	}))
@@ -358,27 +332,18 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 	defer spritz.Close()
 
 	cfg := config{
-		SlackSigningSecret:    "signing-secret",
-		OAuthStateSecret:      "oauth-state-secret",
-		SlackAPIBaseURL:       slackAPI.URL,
-		BackendBaseURL:        backend.URL,
-		BackendInternalToken:  "backend-internal-token",
-		SpritzBaseURL:         spritz.URL,
-		SpritzServiceToken:    "spritz-service-token",
-		PrincipalID:           "shared-slack-gateway",
-		InstallationStorePath: filepath.Join(t.TempDir(), "installations.json"),
-		HTTPTimeout:           5 * time.Second,
-		DedupeTTL:             time.Minute,
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      slackAPI.URL,
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        spritz.URL,
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
 	}
 	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := gateway.installations.Upsert(slackInstallation{
-		ProviderInstallRef: "slack-install:T_workspace_1",
-		APIAppID:           "A_app_1",
-		TeamID:             "T_workspace_1",
-		BotAccessToken:     "xoxb-installed",
-	}); err != nil {
-		t.Fatalf("seed installation failed: %v", err)
-	}
 
 	body := []byte(`{
 		"type":"event_callback",
@@ -425,17 +390,16 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 
 func TestSlackEventAcknowledgesBeforeAsynchronousProcessingFailure(t *testing.T) {
 	cfg := config{
-		SlackSigningSecret:    "signing-secret",
-		OAuthStateSecret:      "oauth-state-secret",
-		SlackAPIBaseURL:       "https://slack.example.test",
-		BackendBaseURL:        "https://backend.example.test",
-		BackendInternalToken:  "backend-internal-token",
-		SpritzBaseURL:         "https://spritz.example.test",
-		SpritzServiceToken:    "spritz-service-token",
-		PrincipalID:           "shared-slack-gateway",
-		InstallationStorePath: filepath.Join(t.TempDir(), "installations.json"),
-		HTTPTimeout:           5 * time.Second,
-		DedupeTTL:             time.Minute,
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      "https://slack.example.test",
+		BackendBaseURL:       "https://backend.example.test",
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        "https://spritz.example.test",
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
 	}
 	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
@@ -482,6 +446,13 @@ func TestSlackEventAcknowledgesBeforeSlowACPWork(t *testing.T) {
 				"ownerAuthId": "owner-123",
 				"namespace":   "spritz-staging",
 				"instanceId":  "zeno-acme",
+				"providerAuth": map[string]any{
+					"providerInstallRef": "cred_slack_workspace_1",
+					"apiAppId":           "A_app_1",
+					"teamId":             "T_workspace_1",
+					"botUserId":          "U_bot",
+					"botAccessToken":     "xoxb-installed",
+				},
 			},
 		})
 	}))
@@ -561,27 +532,18 @@ func TestSlackEventAcknowledgesBeforeSlowACPWork(t *testing.T) {
 	defer spritz.Close()
 
 	cfg := config{
-		SlackSigningSecret:    "signing-secret",
-		OAuthStateSecret:      "oauth-state-secret",
-		SlackAPIBaseURL:       slackAPI.URL,
-		BackendBaseURL:        backend.URL,
-		BackendInternalToken:  "backend-internal-token",
-		SpritzBaseURL:         spritz.URL,
-		SpritzServiceToken:    "spritz-service-token",
-		PrincipalID:           "shared-slack-gateway",
-		InstallationStorePath: filepath.Join(t.TempDir(), "installations.json"),
-		HTTPTimeout:           5 * time.Second,
-		DedupeTTL:             time.Minute,
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      slackAPI.URL,
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        spritz.URL,
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
 	}
 	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := gateway.installations.Upsert(slackInstallation{
-		ProviderInstallRef: "slack-install:T_workspace_1",
-		APIAppID:           "A_app_1",
-		TeamID:             "T_workspace_1",
-		BotAccessToken:     "xoxb-installed",
-	}); err != nil {
-		t.Fatalf("seed installation failed: %v", err)
-	}
 
 	body := []byte(`{
 		"type":"event_callback",
@@ -611,7 +573,25 @@ func TestSlackEventAcknowledgesBeforeSlowACPWork(t *testing.T) {
 		t.Fatalf("expected 200 acknowledgement, got %d: %s", rec.Code, rec.Body.String())
 	}
 
+	waitCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- gateway.waitForWorkers(waitCtx)
+	}()
+	select {
+	case err := <-waitDone:
+		t.Fatalf("expected worker drain to wait for ACP completion, got %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
 	close(releasePrompt)
+
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer drainCancel()
+	if err := gateway.waitForWorkers(drainCtx); err != nil {
+		t.Fatalf("expected worker drain to finish after prompt completion, got %v", err)
+	}
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -721,6 +701,17 @@ func TestNormalizeSlackPromptTextPreservesNonGatewayMentions(t *testing.T) {
 	}
 }
 
+func TestShouldIgnoreSlackMessageEventRejectsSystemSubtypes(t *testing.T) {
+	if !shouldIgnoreSlackMessageEvent(
+		slackEventInner{Type: "message", Subtype: "channel_join"},
+	) {
+		t.Fatalf("expected channel_join subtype to be ignored")
+	}
+	if shouldIgnoreSlackMessageEvent(slackEventInner{Type: "message"}) {
+		t.Fatalf("expected plain message events to be processed")
+	}
+}
+
 func TestProcessMessageEventSuppressesRetryAfterSlackReplyFailure(t *testing.T) {
 	var postCalls int
 	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -740,6 +731,13 @@ func TestProcessMessageEventSuppressesRetryAfterSlackReplyFailure(t *testing.T) 
 				"ownerAuthId": "owner-123",
 				"namespace":   "spritz-staging",
 				"instanceId":  "zeno-acme",
+				"providerAuth": map[string]any{
+					"providerInstallRef": "cred_slack_workspace_1",
+					"apiAppId":           "A_app_1",
+					"teamId":             "T_workspace_1",
+					"botUserId":          "U_bot",
+					"botAccessToken":     "xoxb-installed",
+				},
 			},
 		})
 	}))
@@ -819,27 +817,18 @@ func TestProcessMessageEventSuppressesRetryAfterSlackReplyFailure(t *testing.T) 
 	defer spritz.Close()
 
 	cfg := config{
-		SlackSigningSecret:    "signing-secret",
-		OAuthStateSecret:      "oauth-state-secret",
-		SlackAPIBaseURL:       slackAPI.URL,
-		BackendBaseURL:        backend.URL,
-		BackendInternalToken:  "backend-internal-token",
-		SpritzBaseURL:         spritz.URL,
-		SpritzServiceToken:    "spritz-service-token",
-		PrincipalID:           "shared-slack-gateway",
-		InstallationStorePath: filepath.Join(t.TempDir(), "installations.json"),
-		HTTPTimeout:           5 * time.Second,
-		DedupeTTL:             time.Minute,
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      slackAPI.URL,
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        spritz.URL,
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
 	}
 	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := gateway.installations.Upsert(slackInstallation{
-		ProviderInstallRef: "slack-install:T_workspace_1",
-		APIAppID:           "A_app_1",
-		TeamID:             "T_workspace_1",
-		BotAccessToken:     "xoxb-installed",
-	}); err != nil {
-		t.Fatalf("seed installation failed: %v", err)
-	}
 
 	envelope := slackEnvelope{
 		Type:     "event_callback",
@@ -879,6 +868,13 @@ func TestProcessMessageEventAllowsRetryWhenPromptWasNotDelivered(t *testing.T) {
 				"ownerAuthId": "owner-123",
 				"namespace":   "spritz-staging",
 				"instanceId":  "zeno-acme",
+				"providerAuth": map[string]any{
+					"providerInstallRef": "cred_slack_workspace_1",
+					"apiAppId":           "A_app_1",
+					"teamId":             "T_workspace_1",
+					"botUserId":          "U_bot",
+					"botAccessToken":     "xoxb-installed",
+				},
 			},
 		})
 	}))
@@ -954,27 +950,18 @@ func TestProcessMessageEventAllowsRetryWhenPromptWasNotDelivered(t *testing.T) {
 	defer spritz.Close()
 
 	cfg := config{
-		SlackSigningSecret:    "signing-secret",
-		OAuthStateSecret:      "oauth-state-secret",
-		SlackAPIBaseURL:       slackAPI.URL,
-		BackendBaseURL:        backend.URL,
-		BackendInternalToken:  "backend-internal-token",
-		SpritzBaseURL:         spritz.URL,
-		SpritzServiceToken:    "spritz-service-token",
-		PrincipalID:           "shared-slack-gateway",
-		InstallationStorePath: filepath.Join(t.TempDir(), "installations.json"),
-		HTTPTimeout:           5 * time.Second,
-		DedupeTTL:             time.Minute,
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      slackAPI.URL,
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        spritz.URL,
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
 	}
 	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := gateway.installations.Upsert(slackInstallation{
-		ProviderInstallRef: "slack-install:T_workspace_1",
-		APIAppID:           "A_app_1",
-		TeamID:             "T_workspace_1",
-		BotAccessToken:     "xoxb-installed",
-	}); err != nil {
-		t.Fatalf("seed installation failed: %v", err)
-	}
 
 	envelope := slackEnvelope{
 		Type:     "event_callback",
@@ -1016,7 +1003,6 @@ func TestLoadConfigRejectsRelativePublicURL(t *testing.T) {
 	t.Setenv("SPRITZ_SLACK_SPRITZ_BASE_URL", "https://spritz.example.test")
 	t.Setenv("SPRITZ_SLACK_SPRITZ_SERVICE_TOKEN", "spritz-service-token")
 	t.Setenv("SPRITZ_SLACK_PRINCIPAL_ID", "shared-slack-gateway")
-	t.Setenv("SPRITZ_SLACK_INSTALLATION_STORE_PATH", filepath.Join(t.TempDir(), "installations.json"))
 
 	_, err := loadConfig()
 	if err == nil || !strings.Contains(err.Error(), "must be an absolute URL") {

@@ -9,44 +9,42 @@ import (
 )
 
 type config struct {
-	Addr                  string
-	PublicURL             string
-	SlackClientID         string
-	SlackClientSecret     string
-	SlackSigningSecret    string
-	OAuthStateSecret      string
-	SlackAPIBaseURL       string
-	SlackBotScopes        []string
-	BackendBaseURL        string
-	BackendInternalToken  string
-	SpritzBaseURL         string
-	SpritzServiceToken    string
-	PrincipalID           string
-	InstallationStorePath string
-	HTTPTimeout           time.Duration
-	DedupeTTL             time.Duration
-	ProcessingTimeout     time.Duration
+	Addr                 string
+	PublicURL            string
+	SlackClientID        string
+	SlackClientSecret    string
+	SlackSigningSecret   string
+	OAuthStateSecret     string
+	SlackAPIBaseURL      string
+	SlackBotScopes       []string
+	BackendBaseURL       string
+	BackendInternalToken string
+	SpritzBaseURL        string
+	SpritzServiceToken   string
+	PrincipalID          string
+	HTTPTimeout          time.Duration
+	DedupeTTL            time.Duration
+	ProcessingTimeout    time.Duration
 }
 
 func loadConfig() (config, error) {
 	cfg := config{
-		Addr:                  envOrDefault("SPRITZ_SLACK_GATEWAY_ADDR", ":8080"),
-		PublicURL:             strings.TrimRight(strings.TrimSpace(os.Getenv("SPRITZ_SLACK_GATEWAY_PUBLIC_URL")), "/"),
-		SlackClientID:         strings.TrimSpace(os.Getenv("SPRITZ_SLACK_CLIENT_ID")),
-		SlackClientSecret:     strings.TrimSpace(os.Getenv("SPRITZ_SLACK_CLIENT_SECRET")),
-		SlackSigningSecret:    strings.TrimSpace(os.Getenv("SPRITZ_SLACK_SIGNING_SECRET")),
-		OAuthStateSecret:      strings.TrimSpace(os.Getenv("SPRITZ_SLACK_OAUTH_STATE_SECRET")),
-		SlackAPIBaseURL:       strings.TrimRight(envOrDefault("SPRITZ_SLACK_API_BASE_URL", "https://slack.com/api"), "/"),
-		SlackBotScopes:        splitCSV(envOrDefault("SPRITZ_SLACK_BOT_SCOPES", "app_mentions:read,channels:history,chat:write,im:history")),
-		BackendBaseURL:        strings.TrimRight(strings.TrimSpace(os.Getenv("SPRITZ_SLACK_BACKEND_BASE_URL")), "/"),
-		BackendInternalToken:  strings.TrimSpace(os.Getenv("SPRITZ_SLACK_BACKEND_INTERNAL_TOKEN")),
-		SpritzBaseURL:         strings.TrimRight(strings.TrimSpace(os.Getenv("SPRITZ_SLACK_SPRITZ_BASE_URL")), "/"),
-		SpritzServiceToken:    strings.TrimSpace(os.Getenv("SPRITZ_SLACK_SPRITZ_SERVICE_TOKEN")),
-		PrincipalID:           strings.TrimSpace(os.Getenv("SPRITZ_SLACK_PRINCIPAL_ID")),
-		InstallationStorePath: strings.TrimSpace(os.Getenv("SPRITZ_SLACK_INSTALLATION_STORE_PATH")),
-		HTTPTimeout:           parseDurationEnv("SPRITZ_SLACK_HTTP_TIMEOUT", 15*time.Second),
-		DedupeTTL:             parseDurationEnv("SPRITZ_SLACK_DEDUPE_TTL", 10*time.Minute),
-		ProcessingTimeout:     parseDurationEnv("SPRITZ_SLACK_PROCESSING_TIMEOUT", 60*time.Second),
+		Addr:                 envOrDefault("SPRITZ_SLACK_GATEWAY_ADDR", ":8080"),
+		PublicURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("SPRITZ_SLACK_GATEWAY_PUBLIC_URL")), "/"),
+		SlackClientID:        strings.TrimSpace(os.Getenv("SPRITZ_SLACK_CLIENT_ID")),
+		SlackClientSecret:    strings.TrimSpace(os.Getenv("SPRITZ_SLACK_CLIENT_SECRET")),
+		SlackSigningSecret:   strings.TrimSpace(os.Getenv("SPRITZ_SLACK_SIGNING_SECRET")),
+		OAuthStateSecret:     strings.TrimSpace(os.Getenv("SPRITZ_SLACK_OAUTH_STATE_SECRET")),
+		SlackAPIBaseURL:      strings.TrimRight(envOrDefault("SPRITZ_SLACK_API_BASE_URL", "https://slack.com/api"), "/"),
+		SlackBotScopes:       splitCSV(envOrDefault("SPRITZ_SLACK_BOT_SCOPES", "app_mentions:read,channels:history,chat:write,im:history")),
+		BackendBaseURL:       strings.TrimRight(strings.TrimSpace(os.Getenv("SPRITZ_SLACK_BACKEND_BASE_URL")), "/"),
+		BackendInternalToken: strings.TrimSpace(os.Getenv("SPRITZ_SLACK_BACKEND_INTERNAL_TOKEN")),
+		SpritzBaseURL:        strings.TrimRight(strings.TrimSpace(os.Getenv("SPRITZ_SLACK_SPRITZ_BASE_URL")), "/"),
+		SpritzServiceToken:   strings.TrimSpace(os.Getenv("SPRITZ_SLACK_SPRITZ_SERVICE_TOKEN")),
+		PrincipalID:          strings.TrimSpace(os.Getenv("SPRITZ_SLACK_PRINCIPAL_ID")),
+		HTTPTimeout:          parseDurationEnv("SPRITZ_SLACK_HTTP_TIMEOUT", 15*time.Second),
+		DedupeTTL:            parseDurationEnv("SPRITZ_SLACK_DEDUPE_TTL", 10*time.Minute),
+		ProcessingTimeout:    parseDurationEnv("SPRITZ_SLACK_PROCESSING_TIMEOUT", 60*time.Second),
 	}
 
 	if cfg.PublicURL == "" {
@@ -85,9 +83,6 @@ func loadConfig() (config, error) {
 	}
 	if cfg.PrincipalID == "" {
 		return config{}, fmt.Errorf("SPRITZ_SLACK_PRINCIPAL_ID is required")
-	}
-	if cfg.InstallationStorePath == "" {
-		return config{}, fmt.Errorf("SPRITZ_SLACK_INSTALLATION_STORE_PATH is required")
 	}
 	return cfg, nil
 }

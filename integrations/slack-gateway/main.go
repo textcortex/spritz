@@ -37,5 +37,10 @@ func main() {
 	<-sigCh
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_ = server.Shutdown(ctx)
+	if err := server.Shutdown(ctx); err != nil {
+		logger.Error("http shutdown failed", "error", err)
+	}
+	if err := gateway.waitForWorkers(ctx); err != nil {
+		logger.Error("worker drain failed", "error", err)
+	}
 }

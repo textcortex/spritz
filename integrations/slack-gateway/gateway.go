@@ -29,12 +29,12 @@ const (
 )
 
 type slackGateway struct {
-	cfg           config
-	httpClient    *http.Client
-	installations installationStore
-	state         *oauthStateManager
-	dedupe        *dedupeStore
-	logger        *slog.Logger
+	cfg        config
+	httpClient *http.Client
+	state      *oauthStateManager
+	dedupe     *dedupeStore
+	logger     *slog.Logger
+	workers    sync.WaitGroup
 }
 
 type dedupeStore struct {
@@ -93,6 +93,17 @@ type slackEventInner struct {
 	ThreadTS    string `json:"thread_ts,omitempty"`
 }
 
+type slackInstallation struct {
+	ProviderInstallRef string   `json:"providerInstallRef,omitempty"`
+	APIAppID           string   `json:"apiAppId,omitempty"`
+	TeamID             string   `json:"teamId,omitempty"`
+	EnterpriseID       string   `json:"enterpriseId,omitempty"`
+	InstallingUserID   string   `json:"installingUserId,omitempty"`
+	BotUserID          string   `json:"botUserId,omitempty"`
+	ScopeSet           []string `json:"scopeSet,omitempty"`
+	BotAccessToken     string   `json:"botAccessToken,omitempty"`
+}
+
 type httpStatusError struct {
 	method     string
 	endpoint   string
@@ -113,12 +124,20 @@ func (err *httpStatusError) Error() string {
 type backendChannelSessionResponse struct {
 	Status  string `json:"status"`
 	Session struct {
-		AccessToken string `json:"accessToken"`
-		ExpiresAt   string `json:"expiresAt"`
-		OwnerAuthID string `json:"ownerAuthId"`
-		Namespace   string `json:"namespace"`
-		InstanceID  string `json:"instanceId"`
+		AccessToken  string            `json:"accessToken"`
+		ExpiresAt    string            `json:"expiresAt"`
+		OwnerAuthID  string            `json:"ownerAuthId"`
+		Namespace    string            `json:"namespace"`
+		InstanceID   string            `json:"instanceId"`
+		ProviderAuth slackInstallation `json:"providerAuth"`
 	} `json:"session"`
+}
+
+type backendInstallationUpsertResponse struct {
+	Status       string `json:"status"`
+	Installation struct {
+		ProviderInstallRef string `json:"providerInstallRef"`
+	} `json:"installation"`
 }
 
 type spritzConversationUpsertResponse struct {
@@ -224,12 +243,11 @@ func newSlackGateway(cfg config, logger *slog.Logger) *slackGateway {
 		cfg.ProcessingTimeout = 60 * time.Second
 	}
 	return &slackGateway{
-		cfg:           cfg,
-		httpClient:    &http.Client{Timeout: cfg.HTTPTimeout},
-		installations: newFileInstallationStore(cfg.InstallationStorePath),
-		state:         newOAuthStateManager(cfg.OAuthStateSecret, 15*time.Minute),
-		dedupe:        newDedupeStore(cfg.DedupeTTL),
-		logger:        logger,
+		cfg:        cfg,
+		httpClient: &http.Client{Timeout: cfg.HTTPTimeout},
+		state:      newOAuthStateManager(cfg.OAuthStateSecret, 15*time.Minute),
+		dedupe:     newDedupeStore(cfg.DedupeTTL),
+		logger:     logger,
 	}
 }
 
@@ -284,37 +302,14 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	previous, hadPrevious, err := g.installations.GetByTeamID(installation.TeamID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	stored, err := g.installations.Upsert(installation)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if err := g.upsertInstallation(r.Context(), stored); err != nil {
-		if shouldRollbackInstallation(err) {
-			if rollbackErr := g.rollbackInstallation(stored.TeamID, previous, hadPrevious); rollbackErr != nil {
-				g.logger.Error(
-					"failed to rollback slack installation after backend registration error",
-					"team_id",
-					stored.TeamID,
-					"rollback_error",
-					rollbackErr,
-				)
-				http.Error(w, fmt.Sprintf("%v (rollback failed: %v)", err, rollbackErr), http.StatusBadGateway)
-				return
-			}
-		}
+	if err := g.upsertInstallation(r.Context(), installation); err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":             "installed",
-		"teamId":             stored.TeamID,
-		"providerInstallRef": stored.ProviderInstallRef,
+		"teamId":             installation.TeamID,
+		"providerInstallRef": installation.ProviderInstallRef,
 	})
 }
 
@@ -350,7 +345,9 @@ func (g *slackGateway) handleSlackEvents(w http.ResponseWriter, r *http.Request)
 }
 
 func (g *slackGateway) processSlackEnvelopeAsync(envelope slackEnvelope) {
+	g.workers.Add(1)
 	go func() {
+		defer g.workers.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), g.cfg.ProcessingTimeout)
 		defer cancel()
 		if err := g.processSlackEnvelope(ctx, envelope); err != nil {
@@ -372,10 +369,7 @@ func (g *slackGateway) processSlackEnvelopeAsync(envelope slackEnvelope) {
 func (g *slackGateway) processSlackEnvelope(ctx context.Context, envelope slackEnvelope) error {
 	switch envelope.Event.Type {
 	case "app_uninstalled":
-		if err := g.disconnectInstallation(ctx, envelope.TeamID); err != nil {
-			return err
-		}
-		return g.installations.DeleteByTeamID(envelope.TeamID)
+		return g.disconnectInstallation(ctx, envelope.TeamID)
 	case "message", "app_mention":
 		return g.processMessageEvent(ctx, envelope)
 	default:
@@ -385,7 +379,7 @@ func (g *slackGateway) processSlackEnvelope(ctx context.Context, envelope slackE
 
 func (g *slackGateway) processMessageEvent(ctx context.Context, envelope slackEnvelope) error {
 	event := envelope.Event
-	if event.Subtype == "message_changed" || event.Subtype == "message_deleted" || event.Subtype == "thread_broadcast" {
+	if shouldIgnoreSlackMessageEvent(event) {
 		return nil
 	}
 	if strings.TrimSpace(event.BotID) != "" || strings.TrimSpace(event.User) == "" {
@@ -416,26 +410,19 @@ func (g *slackGateway) processMessageEvent(ctx context.Context, envelope slackEn
 		}()
 	}
 
-	installation, ok, err := g.installations.GetByTeamID(envelope.TeamID)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("slack installation for team %s was not found", envelope.TeamID)
-	}
-	if installation.APIAppID != "" && strings.TrimSpace(envelope.APIAppID) != "" && installation.APIAppID != strings.TrimSpace(envelope.APIAppID) {
-		return fmt.Errorf("slack api_app_id mismatch for team %s", envelope.TeamID)
-	}
-
-	promptText := normalizeSlackPromptText(event.Type, event.Text, installation.BotUserID)
-	if promptText == "" {
-		return nil
-	}
-
 	session, err := g.exchangeChannelSession(ctx, envelope.TeamID)
 	if err != nil {
 		return err
 	}
+	if session.ProviderAuth.APIAppID != "" && strings.TrimSpace(envelope.APIAppID) != "" && session.ProviderAuth.APIAppID != strings.TrimSpace(envelope.APIAppID) {
+		return fmt.Errorf("slack api_app_id mismatch for team %s", envelope.TeamID)
+	}
+
+	promptText := normalizeSlackPromptText(event.Type, event.Text, session.ProviderAuth.BotUserID)
+	if promptText == "" {
+		return nil
+	}
+
 	conversationID, err := g.upsertChannelConversation(ctx, session, event, envelope.TeamID)
 	if err != nil {
 		return err
@@ -455,33 +442,27 @@ func (g *slackGateway) processMessageEvent(ctx context.Context, envelope slackEn
 	} else {
 		success = true
 	}
-	if err := g.postSlackMessage(ctx, installation.BotAccessToken, event.Channel, reply, slackReplyThreadTS(event)); err != nil {
+	if err := g.postSlackMessage(ctx, session.ProviderAuth.BotAccessToken, event.Channel, reply, slackReplyThreadTS(event)); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (g *slackGateway) rollbackInstallation(teamID string, previous slackInstallation, hadPrevious bool) error {
-	if hadPrevious {
-		_, err := g.installations.Upsert(previous)
-		return err
-	}
-	return g.installations.DeleteByTeamID(teamID)
+func shouldIgnoreSlackMessageEvent(event slackEventInner) bool {
+	return strings.TrimSpace(event.Subtype) != ""
 }
 
-func shouldRollbackInstallation(err error) bool {
-	var statusErr *httpStatusError
-	if !errors.As(err, &statusErr) {
-		return false
-	}
-	if statusErr.statusCode < http.StatusBadRequest || statusErr.statusCode >= http.StatusInternalServerError {
-		return false
-	}
-	switch statusErr.statusCode {
-	case http.StatusConflict, http.StatusRequestTimeout, http.StatusTooManyRequests:
-		return false
-	default:
-		return true
+func (g *slackGateway) waitForWorkers(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		g.workers.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -600,16 +581,27 @@ func (g *slackGateway) upsertInstallation(ctx context.Context, installation slac
 			"subject":  installation.InstallingUserID,
 			"tenant":   installation.TeamID,
 		},
-		"providerInstallRef": installation.ProviderInstallRef,
-		"providerMetadata": map[string]any{
-			"apiAppId":      installation.APIAppID,
-			"enterpriseId":  installation.EnterpriseID,
-			"botUserId":     installation.BotUserID,
-			"scopeSet":      installation.ScopeSet,
-			"installSource": "slack-oauth",
+		"providerAuth": map[string]any{
+			"apiAppId":         installation.APIAppID,
+			"teamId":           installation.TeamID,
+			"enterpriseId":     installation.EnterpriseID,
+			"installingUserId": installation.InstallingUserID,
+			"botUserId":        installation.BotUserID,
+			"botAccessToken":   installation.BotAccessToken,
+			"scopeSet":         installation.ScopeSet,
 		},
 	}
-	return g.postBackendJSON(ctx, "/internal/v1/spritz/channel-installations/upsert", body, nil)
+	var payload backendInstallationUpsertResponse
+	if err := g.postBackendJSON(ctx, "/internal/v1/spritz/channel-installations/upsert", body, &payload); err != nil {
+		return err
+	}
+	if payload.Status != "resolved" {
+		return fmt.Errorf("channel installation was not resolved")
+	}
+	if providerInstallRef := strings.TrimSpace(payload.Installation.ProviderInstallRef); providerInstallRef != "" {
+		installation.ProviderInstallRef = providerInstallRef
+	}
+	return nil
 }
 
 func (g *slackGateway) disconnectInstallation(ctx context.Context, teamID string) error {
@@ -623,10 +615,11 @@ func (g *slackGateway) disconnectInstallation(ctx context.Context, teamID string
 }
 
 type channelSession struct {
-	AccessToken string
-	OwnerAuthID string
-	Namespace   string
-	InstanceID  string
+	AccessToken  string
+	OwnerAuthID  string
+	Namespace    string
+	InstanceID   string
+	ProviderAuth slackInstallation
 }
 
 func (g *slackGateway) exchangeChannelSession(ctx context.Context, teamID string) (channelSession, error) {
@@ -644,10 +637,11 @@ func (g *slackGateway) exchangeChannelSession(ctx context.Context, teamID string
 		return channelSession{}, fmt.Errorf("channel session was not resolved")
 	}
 	return channelSession{
-		AccessToken: payload.Session.AccessToken,
-		OwnerAuthID: payload.Session.OwnerAuthID,
-		Namespace:   payload.Session.Namespace,
-		InstanceID:  payload.Session.InstanceID,
+		AccessToken:  payload.Session.AccessToken,
+		OwnerAuthID:  payload.Session.OwnerAuthID,
+		Namespace:    payload.Session.Namespace,
+		InstanceID:   payload.Session.InstanceID,
+		ProviderAuth: payload.Session.ProviderAuth,
 	}, nil
 }
 
