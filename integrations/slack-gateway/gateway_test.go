@@ -91,6 +91,22 @@ func TestOAuthCallbackStoresInstallationAndUpsertsRegistry(t *testing.T) {
 	if upsertPayload["principalId"] != "shared-slack-gateway" {
 		t.Fatalf("expected principalId to match, got %#v", upsertPayload["principalId"])
 	}
+	ownerRef, ok := upsertPayload["ownerRef"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected ownerRef object, got %#v", upsertPayload["ownerRef"])
+	}
+	if ownerRef["type"] != "external" {
+		t.Fatalf("expected external ownerRef, got %#v", ownerRef["type"])
+	}
+	if ownerRef["provider"] != "slack" {
+		t.Fatalf("expected slack ownerRef provider, got %#v", ownerRef["provider"])
+	}
+	if ownerRef["subject"] != "U_installer" {
+		t.Fatalf("expected installer subject, got %#v", ownerRef["subject"])
+	}
+	if ownerRef["tenant"] != "T_workspace_1" {
+		t.Fatalf("expected workspace tenant, got %#v", ownerRef["tenant"])
+	}
 }
 
 func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
@@ -265,6 +281,64 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("expected slack reply to be posted")
+}
+
+func TestUpsertChannelConversationUsesChannelForDirectMessages(t *testing.T) {
+	var upsertPayload map[string]any
+	spritz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/channel-conversations/upsert" {
+			t.Fatalf("unexpected spritz path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&upsertPayload); err != nil {
+			t.Fatalf("decode upsert payload: %v", err)
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"status": "success",
+			"data": map[string]any{
+				"created": true,
+				"conversation": map[string]any{
+					"metadata": map[string]any{"name": "conv-dm"},
+				},
+			},
+		})
+	}))
+	defer spritz.Close()
+
+	cfg := config{
+		SpritzBaseURL:      spritz.URL,
+		SpritzServiceToken: "spritz-service-token",
+		PrincipalID:        "shared-slack-gateway",
+		HTTPTimeout:        5 * time.Second,
+	}
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	conversationID, err := gateway.upsertChannelConversation(
+		t.Context(),
+		channelSession{
+			Namespace:   "spritz-staging",
+			InstanceID:  "zeno-acme",
+			OwnerAuthID: "owner-123",
+		},
+		slackEventInner{
+			Type:        "message",
+			Channel:     "D_workspace_bot",
+			ChannelType: "im",
+			TS:          "1711387375.000100",
+		},
+		"T_workspace_1",
+	)
+	if err != nil {
+		t.Fatalf("upsert channel conversation failed: %v", err)
+	}
+	if conversationID != "conv-dm" {
+		t.Fatalf("expected conversation id conv-dm, got %q", conversationID)
+	}
+	if upsertPayload["externalConversationId"] != "D_workspace_bot" {
+		t.Fatalf(
+			"expected DM conversation to key by channel id, got %#v",
+			upsertPayload["externalConversationId"],
+		)
+	}
 }
 
 func signSlackRequest(header http.Header, signingSecret string, body []byte, now time.Time) {

@@ -381,6 +381,13 @@ func slackReplyThreadTS(event slackEventInner) string {
 	return strings.TrimSpace(event.TS)
 }
 
+func slackExternalConversationID(event slackEventInner) string {
+	if strings.TrimSpace(event.ChannelType) == "im" {
+		return strings.TrimSpace(event.Channel)
+	}
+	return firstNonEmpty(strings.TrimSpace(event.ThreadTS), strings.TrimSpace(event.TS))
+}
+
 func (g *slackGateway) verifySlackSignature(header http.Header, body []byte) error {
 	timestampRaw := strings.TrimSpace(header.Get("X-Slack-Request-Timestamp"))
 	signature := strings.TrimSpace(header.Get("X-Slack-Signature"))
@@ -458,9 +465,10 @@ func (g *slackGateway) upsertInstallation(ctx context.Context, installation slac
 		"externalScopeType": slackWorkspaceScope,
 		"externalTenantId":  installation.TeamID,
 		"ownerRef": map[string]any{
-			"provider":         slackProvider,
-			"externalTenantId": installation.TeamID,
-			"externalUserId":   installation.InstallingUserID,
+			"type":     "external",
+			"provider": slackProvider,
+			"subject":  installation.InstallingUserID,
+			"tenant":   installation.TeamID,
 		},
 		"providerInstallRef": installation.ProviderInstallRef,
 		"providerMetadata": map[string]any{
@@ -522,7 +530,7 @@ func (g *slackGateway) upsertChannelConversation(ctx context.Context, session ch
 		"externalScopeType":      slackWorkspaceScope,
 		"externalTenantId":       strings.TrimSpace(teamID),
 		"externalChannelId":      strings.TrimSpace(event.Channel),
-		"externalConversationId": firstNonEmpty(strings.TrimSpace(event.ThreadTS), strings.TrimSpace(event.TS)),
+		"externalConversationId": slackExternalConversationID(event),
 		"title":                  fmt.Sprintf("Slack %s", strings.TrimSpace(event.Channel)),
 		"cwd":                    defaultConversationCWD,
 	}
