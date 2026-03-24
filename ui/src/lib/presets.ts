@@ -36,6 +36,14 @@ const DEFAULT_PRESETS: Preset[] = [
     branch: '',
     ttl: '',
   },
+  {
+    name: 'Codex',
+    image: 'spritz-codex:latest',
+    description: 'Codex example image.',
+    repoUrl: '',
+    branch: '',
+    ttl: '',
+  },
 ];
 
 export function parsePresets(raw: Preset[] | string | undefined | null): Preset[] {
