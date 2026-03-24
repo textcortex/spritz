@@ -414,14 +414,9 @@ export function ChatPage() {
       const activeSpritzName = activeConversation?.spec?.spritzName || name || '';
       const previousComposerText = composerText;
 
-      // Optimistically add user message
-      const t = transcriptRef.current;
-      t.messages.push({
-        role: 'user',
-        blocks: [{ type: 'text', text }],
-        streaming: false,
-      });
-      setTranscript({ ...t });
+      // ACP owns durable transcript entries, including the echoed user prompt.
+      // Keep send feedback in ephemeral UI state and wait for ACP to write the
+      // real message so the transcript cannot diverge or duplicate.
 
       // Set title from first message if conversation has no real title
       const currentTitle = selectedConversationRef.current?.spec?.title || '';

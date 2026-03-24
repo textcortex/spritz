@@ -56,6 +56,8 @@ func newACPTestServer(t *testing.T, objects ...client.Object) *server {
 			path:                 spritzv1.DefaultACPPath,
 			clientCapabilities:   defaultACPClientCapabilities(),
 			bootstrapDialTimeout: 5 * time.Second,
+			promptTimeout:        30 * time.Second,
+			promptSettleTimeout:  10 * time.Millisecond,
 		},
 	}
 }

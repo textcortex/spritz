@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
@@ -103,8 +104,12 @@ func (e *acpBootstrapRPCError) missingSession() bool {
 }
 
 type acpBootstrapInstanceClient struct {
-	conn   *websocket.Conn
-	nextID int64
+	conn       *websocket.Conn
+	nextID     int64
+	writeMu    sync.Mutex
+	readerOnce sync.Once
+	readCh     chan *acpBootstrapJSONRPCMessage
+	readErrCh  chan error
 }
 
 func (c *acpBootstrapInstanceClient) close() error {
@@ -190,6 +195,8 @@ func (c *acpBootstrapInstanceClient) request(ctx context.Context, method string,
 }
 
 func (c *acpBootstrapInstanceClient) writeJSON(ctx context.Context, payload any) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := c.conn.SetWriteDeadline(deadline); err != nil {
 			return err
@@ -198,21 +205,90 @@ func (c *acpBootstrapInstanceClient) writeJSON(ctx context.Context, payload any)
 	return c.conn.WriteJSON(payload)
 }
 
+func (c *acpBootstrapInstanceClient) notify(ctx context.Context, method string, params any) error {
+	return c.writeJSON(ctx, map[string]any{
+		"jsonrpc": "2.0",
+		"method":  method,
+		"params":  params,
+	})
+}
+
+func (c *acpBootstrapInstanceClient) cancelPrompt(ctx context.Context, sessionID string) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil
+	}
+	return c.notify(ctx, "session/cancel", map[string]any{
+		"sessionId": sessionID,
+	})
+}
+
+func (c *acpBootstrapInstanceClient) respondError(ctx context.Context, id any, code int, message string) error {
+	if id == nil {
+		return nil
+	}
+	return c.writeJSON(ctx, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error": map[string]any{
+			"code":    code,
+			"message": message,
+		},
+	})
+}
+
+func (c *acpBootstrapInstanceClient) handleServerRequest(ctx context.Context, message *acpBootstrapJSONRPCMessage, unsupportedMessage string) (bool, error) {
+	if message == nil || strings.TrimSpace(message.Method) == "" || message.ID == nil {
+		return false, nil
+	}
+	if message.Method == "session/request_permission" {
+		return true, c.respondError(ctx, message.ID, -32000, "Permission requests are not supported by internal debug chat.")
+	}
+	return true, c.respondError(ctx, message.ID, -32601, unsupportedMessage)
+}
+
 func (c *acpBootstrapInstanceClient) readMessage(ctx context.Context) (*acpBootstrapJSONRPCMessage, error) {
-	if deadline, ok := ctx.Deadline(); ok {
-		if err := c.conn.SetReadDeadline(deadline); err != nil {
+	c.startReader()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case message, ok := <-c.readCh:
+		if !ok {
+			if err, ok := <-c.readErrCh; ok && err != nil {
+				return nil, err
+			}
+			return nil, websocket.ErrCloseSent
+		}
+		return message, nil
+	case err, ok := <-c.readErrCh:
+		if ok && err != nil {
 			return nil, err
 		}
+		return nil, websocket.ErrCloseSent
 	}
-	_, payload, err := c.conn.ReadMessage()
-	if err != nil {
-		return nil, err
-	}
-	message := &acpBootstrapJSONRPCMessage{}
-	if err := json.Unmarshal(payload, message); err != nil {
-		return nil, err
-	}
-	return message, nil
+}
+
+func (c *acpBootstrapInstanceClient) startReader() {
+	c.readerOnce.Do(func() {
+		c.readCh = make(chan *acpBootstrapJSONRPCMessage, 32)
+		c.readErrCh = make(chan error, 1)
+		go func() {
+			defer close(c.readCh)
+			defer close(c.readErrCh)
+			for {
+				_, payload, err := c.conn.ReadMessage()
+				if err != nil {
+					c.readErrCh <- err
+					return
+				}
+				message := &acpBootstrapJSONRPCMessage{}
+				if err := json.Unmarshal(payload, message); err != nil {
+					c.readErrCh <- err
+					return
+				}
+				c.readCh <- message
+			}
+		}()
+	})
 }
 
 func newACPBootstrapRPCError(payload *acpBootstrapJSONRPCError) *acpBootstrapRPCError {
@@ -344,8 +420,12 @@ func (s *server) bootstrapACPConversationBinding(ctx context.Context, conversati
 		return nil, err
 	}
 
+	return s.bootstrapACPConversationBindingWithClient(ctx, conversation, client, initResult)
+}
+
+func (s *server) bootstrapACPConversationBindingWithClient(ctx context.Context, conversation *spritzv1.SpritzConversation, client *acpBootstrapInstanceClient, initResult *acpBootstrapInitializeResult) (*acpBootstrapResponse, error) {
 	if !initResult.AgentCapabilities.LoadSession {
-		err = errors.New("agent does not support session/load")
+		err := errors.New("agent does not support session/load")
 		s.recordConversationBindingError(ctx, conversation.Namespace, conversation.Name, "", err)
 		return nil, err
 	}
@@ -358,6 +438,7 @@ func (s *server) bootstrapACPConversationBinding(ctx context.Context, conversati
 	replaced := false
 	loaded := false
 	var replayMessageCount int32
+	var err error
 
 	if effectiveSessionID != "" {
 		replayMessageCount, err = client.loadSession(ctx, effectiveSessionID, normalizeConversationCWD(conversation.Spec.CWD))

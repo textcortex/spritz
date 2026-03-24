@@ -88,6 +88,23 @@ The path is always:
 
 That keeps auth, origin checks, and future policy enforcement in one place.
 
+### Transcript ownership
+
+ACP owns the durable transcript.
+
+That means:
+
+- the browser may show transient send state such as disabled composer state or a
+  "waiting" status
+- the browser should not append durable user or assistant transcript entries
+  outside ACP events
+- the echoed ACP `user_message_chunk` is the authoritative user message
+- the ACP `agent_message_chunk` stream is the authoritative assistant message
+
+This rule avoids transcript divergence between optimistic UI state and the real
+ACP session replay. In practice it also prevents duplicated user bubbles when a
+prompt is rendered once locally and then echoed back again by ACP.
+
 ## Helm surface
 
 The chart exposes ACP through these values:

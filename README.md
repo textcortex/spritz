@@ -262,6 +262,8 @@ Spritz is intended to remain portable and standalone:
 - [ACP Port and Agent Chat Architecture](docs/2026-03-09-acp-port-and-agent-chat-architecture.md)
 - [External Provisioner and Service Principal Architecture](docs/2026-03-11-external-provisioner-and-service-principal-architecture.md)
 - [External Identity Resolution API Architecture](docs/2026-03-12-external-identity-resolution-api-architecture.md)
+- [Privileged Conversation Debug and Test Architecture](docs/2026-03-24-privileged-conversation-debug-and-test-architecture.md)
+- [Spritz-Native Conversation Broker Architecture](docs/2026-03-24-spritz-native-conversation-broker-architecture.md)
 - [Spawn Language for Agent Instances](docs/2026-03-13-spawn-language-for-agent-instances.md)
 - [OpenClaw Integration](docs/2026-03-13-openclaw-integration.md)
 - [Local kind Development Guide](docs/2026-03-14-local-kind-development-guide.md)

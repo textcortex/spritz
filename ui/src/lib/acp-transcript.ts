@@ -270,6 +270,9 @@ export function applySessionUpdate(
     transcript.thinkingStartTime = 0;
     transcript.thinkingElapsedSeconds = 0;
 
+    // ACP is the source of truth for durable chat transcript messages. The
+    // chat page should not append a separate local user bubble for the same
+    // prompt; it should wait for this echoed user_message_chunk instead.
     if (historical) {
       appendHistoricalText(transcript, 'user', text, (update.historyMessageId || update.messageId) as string);
     } else {
