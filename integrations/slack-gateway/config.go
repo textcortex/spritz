@@ -25,6 +25,7 @@ type config struct {
 	InstallationStorePath string
 	HTTPTimeout           time.Duration
 	DedupeTTL             time.Duration
+	ProcessingTimeout     time.Duration
 }
 
 func loadConfig() (config, error) {
@@ -45,6 +46,7 @@ func loadConfig() (config, error) {
 		InstallationStorePath: strings.TrimSpace(os.Getenv("SPRITZ_SLACK_INSTALLATION_STORE_PATH")),
 		HTTPTimeout:           parseDurationEnv("SPRITZ_SLACK_HTTP_TIMEOUT", 15*time.Second),
 		DedupeTTL:             parseDurationEnv("SPRITZ_SLACK_DEDUPE_TTL", 10*time.Minute),
+		ProcessingTimeout:     parseDurationEnv("SPRITZ_SLACK_PROCESSING_TIMEOUT", 60*time.Second),
 	}
 
 	if cfg.PublicURL == "" {

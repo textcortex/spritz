@@ -168,6 +168,15 @@ func (d *dedupeStore) markSeen(key string) bool {
 }
 
 func newSlackGateway(cfg config, logger *slog.Logger) *slackGateway {
+	if cfg.HTTPTimeout <= 0 {
+		cfg.HTTPTimeout = 15 * time.Second
+	}
+	if cfg.DedupeTTL <= 0 {
+		cfg.DedupeTTL = 10 * time.Minute
+	}
+	if cfg.ProcessingTimeout <= 0 {
+		cfg.ProcessingTimeout = 60 * time.Second
+	}
 	return &slackGateway{
 		cfg:           cfg,
 		httpClient:    &http.Client{Timeout: cfg.HTTPTimeout},
@@ -269,7 +278,9 @@ func (g *slackGateway) handleSlackEvents(w http.ResponseWriter, r *http.Request)
 		return
 	case "event_callback":
 		go func() {
-			if err := g.processSlackEnvelope(context.Background(), envelope); err != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), g.cfg.ProcessingTimeout)
+			defer cancel()
+			if err := g.processSlackEnvelope(ctx, envelope); err != nil {
 				g.logger.Error("slack event failed", "error", err, "team_id", envelope.TeamID, "event_id", envelope.EventID, "event_type", envelope.Event.Type)
 			}
 		}()
