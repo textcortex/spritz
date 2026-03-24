@@ -251,7 +251,10 @@ func (s *server) registerRoutes(e *echo.Echo) {
 		internal.GET("/runtime-bindings/:namespace/:instanceId", s.getRuntimeBinding)
 		internal.POST("/spritzes", s.createInternalSpritz)
 		internal.GET("/spritzes/:namespace/:name", s.getInternalSpritz)
-		internal.POST("/debug/chat/send", s.sendInternalDebugChat)
+		if s.auth.enabled() {
+			internalSecured := group.Group("/internal/v1", s.internalAuthMiddleware(), s.authMiddleware())
+			internalSecured.POST("/debug/chat/send", s.sendInternalDebugChat)
+		}
 	}
 	internal.GET("/shared-mounts/owner/:owner/:mount/latest", s.getSharedMountLatest)
 	internal.GET("/shared-mounts/owner/:owner/:mount/revisions/:revision", s.getSharedMountRevision)

@@ -818,7 +818,8 @@ async function internalRequest(path: string, init?: RequestInit) {
   const timeoutMs = Number.isFinite(internalRequestTimeoutMs) ? internalRequestTimeoutMs : 95000;
   const timeout = setTimeout(() => controller.abort(), Math.max(timeoutMs, 1000));
   const mergedHeaders = {
-    Authorization: `Bearer ${resolveInternalToken()}`,
+    ...(await authHeaders()),
+    'X-Spritz-Internal-Token': resolveInternalToken(),
     ...normalizeHeaders(init?.headers),
   };
   const apiBase = await resolveApiBase();
@@ -1477,11 +1478,14 @@ async function main() {
     }
     const ns = await resolveNamespace();
     const reason = argValue('--reason')?.trim() || 'spz chat send';
+    const requestHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (!(argValue('--token') || process.env.SPRITZ_BEARER_TOKEN) && ownerId) {
+      requestHeaders[headerId] = ownerId;
+    }
     const data = await internalRequest('/internal/v1/debug/chat/send', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: requestHeaders,
       body: JSON.stringify({
-        principal: { id: ownerId },
         target: {
           namespace: ns,
           spritzName: instanceName,

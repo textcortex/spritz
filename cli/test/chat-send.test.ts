@@ -88,10 +88,9 @@ test('chat send uses the internal token and prints assistant text by default', a
   const exitCode = await new Promise<number | null>((resolve) => child.on('exit', resolve));
   assert.equal(exitCode, 0, `spz chat send should succeed: ${stderr}`);
   assert.equal(stdout.trim(), 'spritz debug');
-  assert.equal(requestHeaders?.authorization, 'Bearer internal-token');
-  assert.equal(requestHeaders?.['x-spritz-user-id'], undefined);
+  assert.equal(requestHeaders?.['x-spritz-internal-token'], 'internal-token');
+  assert.equal(requestHeaders?.['x-spritz-user-id'], 'user-123');
   assert.deepEqual(requestBody, {
-    principal: { id: 'user-123' },
     target: {
       spritzName: 'tidy-otter',
       cwd: '/workspace/app',
@@ -172,7 +171,6 @@ test('chat send supports existing conversations and json output', async (t) => {
   const exitCode = await new Promise<number | null>((resolve) => child.on('exit', resolve));
   assert.equal(exitCode, 0, `spz chat send --json should succeed: ${stderr}`);
   assert.deepEqual(requestBody, {
-    principal: { id: 'user-123' },
     target: {
       conversationId: 'tidy-otter-conv',
     },

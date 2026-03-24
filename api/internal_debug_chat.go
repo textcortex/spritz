@@ -17,14 +17,9 @@ import (
 )
 
 type internalDebugChatSendRequest struct {
-	Principal internalDebugChatPrincipal `json:"principal"`
-	Target    internalDebugChatTarget    `json:"target"`
-	Reason    string                     `json:"reason,omitempty"`
-	Message   string                     `json:"message"`
-}
-
-type internalDebugChatPrincipal struct {
-	ID string `json:"id"`
+	Target  internalDebugChatTarget `json:"target"`
+	Reason  string                  `json:"reason,omitempty"`
+	Message string                  `json:"message"`
 }
 
 type internalDebugChatTarget struct {
@@ -48,14 +43,6 @@ type internalDebugChatSendResponse struct {
 	CreatedConversation bool                         `json:"createdConversation,omitempty"`
 }
 
-func (p internalDebugChatPrincipal) normalize() (string, error) {
-	id := strings.TrimSpace(p.ID)
-	if id == "" {
-		return "", errors.New("principal.id is required")
-	}
-	return id, nil
-}
-
 func (t internalDebugChatTarget) validate() error {
 	hasSpritz := strings.TrimSpace(t.SpritzName) != ""
 	hasConversation := strings.TrimSpace(t.ConversationID) != ""
@@ -76,15 +63,17 @@ func (s *server) sendInternalDebugChat(c echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return writeError(c, http.StatusBadRequest, "invalid json")
 	}
-	actorID, err := body.Principal.normalize()
-	if err != nil {
-		return writeError(c, http.StatusBadRequest, err.Error())
+	principal, ok := principalFromContext(c)
+	if s.auth.enabled() && (!ok || principal.ID == "") {
+		return writeError(c, http.StatusUnauthorized, "unauthenticated")
 	}
 	if err := body.Target.validate(); err != nil {
+		s.auditInternalDebugChatFailure(principal.ID, body.Target, strings.TrimSpace(body.Reason), body.Message, "invalid_target", err)
 		return writeError(c, http.StatusBadRequest, err.Error())
 	}
 	message := strings.TrimSpace(body.Message)
 	if message == "" {
+		s.auditInternalDebugChatFailure(principal.ID, body.Target, strings.TrimSpace(body.Reason), body.Message, "invalid_message", errors.New("message is required"))
 		return writeError(c, http.StatusBadRequest, "message is required")
 	}
 	reason := strings.TrimSpace(body.Reason)
@@ -92,22 +81,25 @@ func (s *server) sendInternalDebugChat(c echo.Context) error {
 		reason = "spz chat send"
 	}
 
-	conversation, spritz, createdConversation, err := s.resolveInternalDebugChatTarget(c.Request().Context(), actorID, body.Target)
+	conversation, spritz, createdConversation, err := s.resolveInternalDebugChatTarget(c.Request().Context(), principal, body.Target)
 	if err != nil {
+		s.auditInternalDebugChatFailure(principal.ID, body.Target, reason, message, "target_error", err)
 		return s.writeInternalDebugChatTargetError(c, err)
 	}
 
 	bootstrap, err := s.bootstrapACPConversationBinding(c.Request().Context(), conversation, spritz)
 	if err != nil {
+		s.auditInternalDebugChatFailure(principal.ID, body.Target, reason, message, "bootstrap_error", err)
 		return s.writeInternalDebugChatRuntimeError(c, err)
 	}
 
 	promptResult, err := s.runInternalDebugChatPrompt(c.Request().Context(), spritz, bootstrap.EffectiveSessionID, conversation.Spec.CWD, message)
 	if err != nil {
+		s.auditInternalDebugChatFailure(principal.ID, body.Target, reason, message, "prompt_error", err)
 		return s.writeInternalDebugChatRuntimeError(c, err)
 	}
 
-	s.auditInternalDebugChat(actorID, conversation, reason, message, promptResult)
+	s.auditInternalDebugChat(principal.ID, conversation, reason, message, promptResult)
 
 	return writeJSON(c, http.StatusOK, internalDebugChatSendResponse{
 		Conversation:        bootstrap.Conversation,
@@ -123,7 +115,7 @@ func (s *server) sendInternalDebugChat(c echo.Context) error {
 	})
 }
 
-func (s *server) resolveInternalDebugChatTarget(ctx context.Context, actorID string, target internalDebugChatTarget) (*spritzv1.SpritzConversation, *spritzv1.Spritz, bool, error) {
+func (s *server) resolveInternalDebugChatTarget(ctx context.Context, principal principal, target internalDebugChatTarget) (*spritzv1.SpritzConversation, *spritzv1.Spritz, bool, error) {
 	namespace, err := s.resolveSpritzNamespace(strings.TrimSpace(target.Namespace))
 	if err != nil {
 		return nil, nil, false, errForbidden
@@ -133,18 +125,18 @@ func (s *server) resolveInternalDebugChatTarget(ctx context.Context, actorID str
 	}
 
 	if conversationID := strings.TrimSpace(target.ConversationID); conversationID != "" {
-		conversation, err := s.getInternalDebugConversation(ctx, actorID, namespace, conversationID)
+		conversation, err := s.getInternalDebugConversation(ctx, principal, namespace, conversationID)
 		if err != nil {
 			return nil, nil, false, err
 		}
-		spritz, err := s.getInternalDebugACPReadySpritz(ctx, actorID, namespace, conversation.Spec.SpritzName)
+		spritz, err := s.getInternalDebugACPReadySpritz(ctx, principal, namespace, conversation.Spec.SpritzName)
 		if err != nil {
 			return nil, nil, false, err
 		}
 		return conversation, spritz, false, nil
 	}
 
-	spritz, err := s.getInternalDebugACPReadySpritz(ctx, actorID, namespace, strings.TrimSpace(target.SpritzName))
+	spritz, err := s.getInternalDebugACPReadySpritz(ctx, principal, namespace, strings.TrimSpace(target.SpritzName))
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -166,23 +158,23 @@ func (s *server) resolveInternalDebugChatTarget(ctx context.Context, actorID str
 	return nil, nil, false, errors.New("failed to allocate conversation id")
 }
 
-func (s *server) getInternalDebugConversation(ctx context.Context, actorID, namespace, conversationID string) (*spritzv1.SpritzConversation, error) {
+func (s *server) getInternalDebugConversation(ctx context.Context, principal principal, namespace, conversationID string) (*spritzv1.SpritzConversation, error) {
 	conversation := &spritzv1.SpritzConversation{}
 	if err := s.client.Get(ctx, clientKey(namespace, conversationID), conversation); err != nil {
 		return nil, err
 	}
-	if err := authorizeOwnerIDAccess(actorID, conversation.Spec.Owner.ID); err != nil {
+	if err := authorizeExactOwnerAccess(principal, conversation.Spec.Owner.ID, s.auth.enabled()); err != nil {
 		return nil, err
 	}
 	return conversation, nil
 }
 
-func (s *server) getInternalDebugACPReadySpritz(ctx context.Context, actorID, namespace, name string) (*spritzv1.Spritz, error) {
+func (s *server) getInternalDebugACPReadySpritz(ctx context.Context, principal principal, namespace, name string) (*spritzv1.Spritz, error) {
 	spritz := &spritzv1.Spritz{}
 	if err := s.client.Get(ctx, clientKey(namespace, name), spritz); err != nil {
 		return nil, err
 	}
-	if err := authorizeOwnerIDAccess(actorID, spritz.Spec.Owner.ID); err != nil {
+	if err := authorizeExactOwnerAccess(principal, spritz.Spec.Owner.ID, s.auth.enabled()); err != nil {
 		return nil, err
 	}
 	if !spritzSupportsACPConversations(spritz) {
@@ -237,16 +229,6 @@ func (s *server) auditInternalDebugChat(actorID string, conversation *spritzv1.S
 	)
 }
 
-func authorizeOwnerIDAccess(actorID, ownerID string) error {
-	if strings.TrimSpace(actorID) == "" {
-		return errUnauthenticated
-	}
-	if strings.TrimSpace(ownerID) == "" || strings.TrimSpace(actorID) != strings.TrimSpace(ownerID) {
-		return errForbidden
-	}
-	return nil
-}
-
 func (s *server) writeInternalDebugChatTargetError(c echo.Context, err error) error {
 	switch {
 	case apierrors.IsNotFound(err):
@@ -258,6 +240,21 @@ func (s *server) writeInternalDebugChatTargetError(c echo.Context, err error) er
 	default:
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
+}
+
+func (s *server) auditInternalDebugChatFailure(actorID string, target internalDebugChatTarget, reason, message, outcome string, cause error) {
+	promptHash := sha256.Sum256([]byte(strings.TrimSpace(message)))
+	log.Printf(
+		"spritz internal-debug-chat actor_id=%s namespace=%s spritz_name=%s conversation_id=%s reason=%q outcome=%s prompt_sha256=%s err=%v",
+		strings.TrimSpace(actorID),
+		strings.TrimSpace(target.Namespace),
+		strings.TrimSpace(target.SpritzName),
+		strings.TrimSpace(target.ConversationID),
+		strings.TrimSpace(reason),
+		strings.TrimSpace(outcome),
+		hex.EncodeToString(promptHash[:]),
+		cause,
+	)
 }
 
 func (s *server) writeInternalDebugChatRuntimeError(c echo.Context, err error) error {

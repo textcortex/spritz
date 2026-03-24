@@ -530,7 +530,9 @@ The current phase-one shape is:
 - `spz chat send --conversation ... --message ...`
 
 This phase-one endpoint is intentionally synchronous and owner-scoped.
-It should only be registered when internal auth is enabled.
+It should only be registered when both internal auth and normal caller auth are
+enabled, so the control plane can bind the request to a real authenticated
+principal instead of trusting a caller-supplied owner id.
 Transcript reads, event streaming, and explicit cross-owner break-glass remain
 later phases.
 

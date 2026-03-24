@@ -202,17 +202,17 @@ func TestInternalDebugChatSendCreatesConversationAndReturnsAssistantText(t *test
 	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
 
 	e := echo.New()
-	internal := e.Group("", s.internalAuthMiddleware())
+	internal := e.Group("", s.internalAuthMiddleware(), s.authMiddleware())
 	internal.POST("/api/internal/v1/debug/chat/send", s.sendInternalDebugChat)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{
-		"principal":{"id":"user-1"},
 		"target":{"spritzName":"tidy-otter","cwd":"/workspace/app","title":"Debug Run"},
 		"reason":"local smoke",
 		"message":"hello from cli"
 	}`))
-	req.Header.Set("Authorization", "Bearer internal-token")
+	req.Header.Set(internalTokenHeader, "internal-token")
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Spritz-User-Id", "user-1")
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -281,16 +281,16 @@ func TestInternalDebugChatSendTargetsExistingConversation(t *testing.T) {
 	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
 
 	e := echo.New()
-	internal := e.Group("", s.internalAuthMiddleware())
+	internal := e.Group("", s.internalAuthMiddleware(), s.authMiddleware())
 	internal.POST("/api/internal/v1/debug/chat/send", s.sendInternalDebugChat)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{
-		"principal":{"id":"user-1"},
 		"target":{"conversationId":"tidy-otter-conv"},
 		"message":"follow up"
 	}`))
-	req.Header.Set("Authorization", "Bearer internal-token")
+	req.Header.Set(internalTokenHeader, "internal-token")
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Spritz-User-Id", "user-1")
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
@@ -335,20 +335,38 @@ func TestInternalDebugChatSendRejectsOwnerMismatch(t *testing.T) {
 	s.internalAuth = internalAuthConfig{enabled: true, token: "internal-token"}
 
 	e := echo.New()
-	internal := e.Group("", s.internalAuthMiddleware())
+	internal := e.Group("", s.internalAuthMiddleware(), s.authMiddleware())
 	internal.POST("/api/internal/v1/debug/chat/send", s.sendInternalDebugChat)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{
-		"principal":{"id":"user-1"},
 		"target":{"spritzName":"tidy-otter"},
 		"message":"hello"
 	}`))
-	req.Header.Set("Authorization", "Bearer internal-token")
+	req.Header.Set(internalTokenHeader, "internal-token")
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Spritz-User-Id", "user-1")
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected status 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDebugChatRouteIsUnavailableWithoutAuthOrInternalAuth(t *testing.T) {
+	s := newACPTestServer(t)
+	s.auth = authConfig{mode: authModeNone}
+	s.internalAuth = internalAuthConfig{enabled: false}
+
+	e := echo.New()
+	s.registerRoutes(e)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{"target":{"spritzName":"tidy-otter"},"message":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected debug chat route to be unavailable without auth and internal auth, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

@@ -64,7 +64,7 @@ func (c *acpBootstrapInstanceClient) prompt(ctx context.Context, sessionID, text
 		break
 	}
 
-	if err := c.drainSessionUpdates(settleTimeout, &updates); err != nil {
+	if err := c.drainSessionUpdates(ctx, settleTimeout, &updates); err != nil {
 		return nil, err
 	}
 
@@ -75,12 +75,18 @@ func (c *acpBootstrapInstanceClient) prompt(ctx context.Context, sessionID, text
 	}, nil
 }
 
-func (c *acpBootstrapInstanceClient) drainSessionUpdates(settleTimeout time.Duration, updates *[]map[string]any) error {
+func (c *acpBootstrapInstanceClient) drainSessionUpdates(ctx context.Context, settleTimeout time.Duration, updates *[]map[string]any) error {
 	if c == nil || c.conn == nil || settleTimeout <= 0 {
 		return nil
 	}
-	deadline := time.Now().Add(settleTimeout)
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil
+		}
+		deadline := time.Now().Add(settleTimeout)
+		if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+			deadline = ctxDeadline
+		}
 		if err := c.conn.SetReadDeadline(deadline); err != nil {
 			return err
 		}
@@ -101,7 +107,6 @@ func (c *acpBootstrapInstanceClient) drainSessionUpdates(settleTimeout time.Dura
 		}
 		if update, ok := sessionUpdateFromMessage(message); ok {
 			*updates = append(*updates, update)
-			deadline = time.Now().Add(settleTimeout)
 		}
 	}
 }
