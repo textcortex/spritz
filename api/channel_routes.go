@@ -46,22 +46,34 @@ func normalizeChannelRouteResolveRequest(body channelRouteResolveRequest) (chann
 	return body, nil
 }
 
-func parseChannelRouteResolveOutput(raw json.RawMessage) (channelRouteResolveOutput, error) {
+func parseChannelRouteResolveOutput(raw json.RawMessage, defaultNamespace string) (map[string]any, error) {
 	if len(raw) == 0 {
-		return channelRouteResolveOutput{}, errors.New("resolver output is required")
+		return nil, errors.New("resolver output is required")
 	}
-	var output channelRouteResolveOutput
+	var output map[string]any
 	if err := json.Unmarshal(raw, &output); err != nil {
-		return channelRouteResolveOutput{}, fmt.Errorf("resolver output is invalid: %w", err)
+		return nil, fmt.Errorf("resolver output is invalid: %w", err)
 	}
-	output.Namespace = strings.TrimSpace(output.Namespace)
-	output.InstanceID = strings.TrimSpace(output.InstanceID)
-	output.State = strings.TrimSpace(output.State)
-	if output.Namespace == "" {
-		return channelRouteResolveOutput{}, errors.New("resolver output namespace is required")
+	instanceID, ok := output["instanceId"].(string)
+	if !ok {
+		return nil, errors.New("resolver output instanceId is required")
 	}
-	if output.InstanceID == "" {
-		return channelRouteResolveOutput{}, errors.New("resolver output instanceId is required")
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" {
+		return nil, errors.New("resolver output instanceId is required")
+	}
+	namespace, _ := output["namespace"].(string)
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		namespace = strings.TrimSpace(defaultNamespace)
+	}
+	if namespace == "" {
+		return nil, errors.New("resolver output namespace is required")
+	}
+	output["namespace"] = namespace
+	output["instanceId"] = instanceID
+	if state, ok := output["state"].(string); ok {
+		output["state"] = strings.TrimSpace(state)
 	}
 	return output, nil
 }
@@ -113,7 +125,7 @@ func (s *server) resolveChannelRoute(c echo.Context) error {
 
 	switch response.Status {
 	case "", extensionStatusResolved:
-		output, err := parseChannelRouteResolveOutput(response.Output)
+		output, err := parseChannelRouteResolveOutput(response.Output, s.namespace)
 		if err != nil {
 			return writeError(c, http.StatusInternalServerError, err.Error())
 		}
