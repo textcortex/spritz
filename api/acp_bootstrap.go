@@ -296,18 +296,15 @@ func (s *server) bootstrapACPConversation(c echo.Context) error {
 	if s.auth.enabled() && (!ok || principal.ID == "") {
 		return writeError(c, http.StatusUnauthorized, "unauthenticated")
 	}
-	if err := authorizeHumanOnly(principal, s.auth.enabled()); err != nil {
-		return writeForbidden(c)
-	}
 	namespace := s.requestNamespace(c)
 	if namespace == "" {
 		namespace = "default"
 	}
-	conversation, err := s.getAuthorizedConversation(c.Request().Context(), principal, namespace, c.Param("id"))
+	conversation, err := s.getAuthorizedACPConversation(c.Request().Context(), principal, namespace, c.Param("id"))
 	if err != nil {
 		return s.writeACPConversationError(c, err)
 	}
-	spritz, err := s.getAuthorizedACPReadySpritz(c.Request().Context(), principal, namespace, conversation.Spec.SpritzName)
+	spritz, err := s.getAuthorizedACPReadySpritzForConversation(c.Request().Context(), conversation, namespace)
 	if err != nil {
 		return s.writeACPResourceError(c, err)
 	}

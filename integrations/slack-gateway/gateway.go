@@ -520,11 +520,11 @@ func (g *slackGateway) processMessageEventWithDelivery(
 	if err != nil {
 		return err
 	}
-	sessionID, cwd, err := g.bootstrapConversation(ctx, session.AccessToken, session.Namespace, conversationID)
+	sessionID, cwd, err := g.bootstrapConversation(ctx, g.cfg.SpritzServiceToken, session.Namespace, conversationID)
 	if err != nil {
 		return err
 	}
-	reply, promptSent, err := g.promptConversation(ctx, session.AccessToken, session.Namespace, conversationID, sessionID, cwd, promptText)
+	reply, promptSent, err := g.promptConversation(ctx, g.cfg.SpritzServiceToken, session.Namespace, conversationID, sessionID, cwd, promptText)
 	if err != nil {
 		if !promptSent {
 			return err
@@ -776,9 +776,9 @@ func (g *slackGateway) upsertChannelConversation(ctx context.Context, session ch
 	return strings.TrimSpace(payload.Data.Conversation.Metadata.Name), nil
 }
 
-func (g *slackGateway) bootstrapConversation(ctx context.Context, ownerToken, namespace, conversationID string) (string, string, error) {
+func (g *slackGateway) bootstrapConversation(ctx context.Context, serviceToken, namespace, conversationID string) (string, string, error) {
 	var payload spritzBootstrapResponse
-	if err := g.postSpritzJSON(ctx, http.MethodPost, "/api/acp/conversations/"+url.PathEscape(conversationID)+"/bootstrap", ownerToken, nil, &payload, map[string]string{"namespace": namespace}); err != nil {
+	if err := g.postSpritzJSON(ctx, http.MethodPost, "/api/acp/conversations/"+url.PathEscape(conversationID)+"/bootstrap", serviceToken, nil, &payload, map[string]string{"namespace": namespace}); err != nil {
 		return "", "", err
 	}
 	sessionID := strings.TrimSpace(payload.Data.EffectiveSessionID)
@@ -795,14 +795,14 @@ func (g *slackGateway) bootstrapConversation(ctx context.Context, ownerToken, na
 	return sessionID, cwd, nil
 }
 
-func (g *slackGateway) promptConversation(ctx context.Context, ownerToken, namespace, conversationID, sessionID, cwd, prompt string) (string, bool, error) {
+func (g *slackGateway) promptConversation(ctx context.Context, serviceToken, namespace, conversationID, sessionID, cwd, prompt string) (string, bool, error) {
 	wsURL, err := g.spritzWebSocketURL("/api/acp/conversations/"+url.PathEscape(conversationID)+"/connect", map[string]string{"namespace": namespace})
 	if err != nil {
 		return "", false, err
 	}
 	dialer := websocket.Dialer{HandshakeTimeout: g.cfg.HTTPTimeout}
 	headers := http.Header{}
-	headers.Set("Authorization", "Bearer "+ownerToken)
+	headers.Set("Authorization", "Bearer "+serviceToken)
 	conn, _, err := dialer.DialContext(ctx, wsURL, headers)
 	if err != nil {
 		return "", false, err

@@ -228,6 +228,10 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 		sync.Mutex
 		payloads []map[string]any
 	}
+	var acpAuthHeaders struct {
+		sync.Mutex
+		values []string
+	}
 	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/chat.postMessage" {
 			var payload map[string]any
@@ -282,6 +286,9 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 				},
 			})
 		case r.URL.Path == "/api/acp/conversations/conv-1/bootstrap":
+			acpAuthHeaders.Lock()
+			acpAuthHeaders.values = append(acpAuthHeaders.values, r.Header.Get("Authorization"))
+			acpAuthHeaders.Unlock()
 			writeJSON(w, http.StatusOK, map[string]any{
 				"status": "success",
 				"data": map[string]any{
@@ -293,6 +300,9 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 				},
 			})
 		case r.URL.Path == "/api/acp/conversations/conv-1/connect":
+			acpAuthHeaders.Lock()
+			acpAuthHeaders.values = append(acpAuthHeaders.values, r.Header.Get("Authorization"))
+			acpAuthHeaders.Unlock()
 			conn, err := upgrader.Upgrade(w, r, nil)
 			if err != nil {
 				t.Fatalf("upgrade failed: %v", err)
@@ -387,6 +397,16 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 			}
 			if payload["thread_ts"] != "1711387375.000100" {
 				t.Fatalf("expected thread reply, got %#v", payload["thread_ts"])
+			}
+			acpAuthHeaders.Lock()
+			defer acpAuthHeaders.Unlock()
+			if len(acpAuthHeaders.values) != 2 {
+				t.Fatalf("expected bootstrap and connect auth headers, got %#v", acpAuthHeaders.values)
+			}
+			for _, authHeader := range acpAuthHeaders.values {
+				if authHeader != "Bearer spritz-service-token" {
+					t.Fatalf("expected service token for ACP calls, got %q", authHeader)
+				}
 			}
 			return
 		}

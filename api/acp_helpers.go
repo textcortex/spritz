@@ -183,6 +183,27 @@ func (s *server) getAuthorizedACPReadySpritz(ctx context.Context, principal prin
 	return spritz, nil
 }
 
+func (s *server) getAuthorizedACPReadySpritzForConversation(
+	ctx context.Context,
+	conversation *spritzv1.SpritzConversation,
+	namespace string,
+) (*spritzv1.Spritz, error) {
+	spritz := &spritzv1.Spritz{}
+	if err := s.client.Get(ctx, clientKey(namespace, conversation.Spec.SpritzName), spritz); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, err
+		}
+		return nil, err
+	}
+	if strings.TrimSpace(spritz.Spec.Owner.ID) != strings.TrimSpace(conversation.Spec.Owner.ID) {
+		return nil, errForbidden
+	}
+	if !spritzSupportsACPConversations(spritz) {
+		return nil, errACPUnavailable
+	}
+	return spritz, nil
+}
+
 func (s *server) requestNamespace(c echo.Context) string {
 	namespace := s.namespace
 	if namespace == "" {

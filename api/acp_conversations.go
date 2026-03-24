@@ -207,6 +207,42 @@ func (s *server) getAuthorizedConversation(ctx context.Context, principal princi
 	return conversation, nil
 }
 
+func authorizeACPConversationAccess(principal principal, conversation *spritzv1.SpritzConversation, enabled bool) error {
+	if !enabled {
+		return nil
+	}
+	if principal.isAdminPrincipal() {
+		return nil
+	}
+	if principalCanAccessOwner(principal, conversation.Spec.Owner.ID) {
+		return nil
+	}
+	if principal.isService() &&
+		principal.hasScope(scopeChannelConversationsUpsert) &&
+		strings.TrimSpace(conversation.Annotations[channelConversationPrincipalAnnotationKey]) == stringsTrim(principal.ID) {
+		return nil
+	}
+	return errForbidden
+}
+
+func (s *server) getAuthorizedACPConversation(ctx context.Context, principal principal, namespace, id string) (*spritzv1.SpritzConversation, error) {
+	name := strings.TrimSpace(id)
+	if name == "" {
+		return nil, apierrors.NewNotFound(spritzv1.GroupVersion.WithResource("spritzconversations").GroupResource(), "")
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+	conversation := &spritzv1.SpritzConversation{}
+	if err := s.client.Get(ctx, clientKey(namespace, name), conversation); err != nil {
+		return nil, err
+	}
+	if err := authorizeACPConversationAccess(principal, conversation, s.auth.enabled()); err != nil {
+		return nil, errForbidden
+	}
+	return conversation, nil
+}
+
 func (s *server) writeACPConversationError(c echo.Context, err error) error {
 	switch {
 	case apierrors.IsNotFound(err):
