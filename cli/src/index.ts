@@ -1468,18 +1468,18 @@ async function main() {
     if (conversationId && (argValue('--cwd') || argValue('--title'))) {
       throw new Error('--cwd and --title are only supported with --instance');
     }
-    const message = argValue('--message')?.trim();
-    if (!message) {
+    const message = argValue('--message');
+    if (!message?.trim()) {
       throw new Error('--message is required');
     }
-    const ownerId = argValue('--owner-id')?.trim() || (await resolveDefaultOwnerId());
-    if (!ownerId) {
-      throw new Error('owner id is required; use --owner-id or set SPRITZ_OWNER_ID / SPRITZ_USER_ID');
+    const { profile } = await resolveProfile({ allowFlag: true });
+    const bearerToken = argValue('--token') || process.env.SPRITZ_BEARER_TOKEN || profile?.bearerToken;
+    const ownerId = argValue('--owner-id')?.trim() || (!bearerToken?.trim() ? await resolveDefaultOwnerId() : undefined);
+    if (!bearerToken?.trim() && !ownerId) {
+      throw new Error('owner id is required when bearer auth is unavailable; use --owner-id or set SPRITZ_OWNER_ID / SPRITZ_USER_ID');
     }
     const ns = await resolveNamespace();
     const reason = argValue('--reason')?.trim() || 'spz chat send';
-    const { profile } = await resolveProfile({ allowFlag: true });
-    const bearerToken = argValue('--token') || process.env.SPRITZ_BEARER_TOKEN || profile?.bearerToken;
     const requestHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
     if (!bearerToken?.trim() && ownerId) {
       requestHeaders[headerId] = ownerId;

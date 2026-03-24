@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
@@ -71,11 +70,11 @@ func (s *server) sendInternalDebugChat(c echo.Context) error {
 		s.auditInternalDebugChatFailure(principal.ID, body.Target, strings.TrimSpace(body.Reason), body.Message, "invalid_target", err)
 		return writeError(c, http.StatusBadRequest, err.Error())
 	}
-	message := strings.TrimSpace(body.Message)
-	if message == "" {
+	if strings.TrimSpace(body.Message) == "" {
 		s.auditInternalDebugChatFailure(principal.ID, body.Target, strings.TrimSpace(body.Reason), body.Message, "invalid_message", errors.New("message is required"))
 		return writeError(c, http.StatusBadRequest, "message is required")
 	}
+	message := body.Message
 	reason := strings.TrimSpace(body.Reason)
 	if reason == "" {
 		reason = "spz chat send"
@@ -87,13 +86,16 @@ func (s *server) sendInternalDebugChat(c echo.Context) error {
 		return s.writeInternalDebugChatTargetError(c, err)
 	}
 
-	bootstrap, err := s.bootstrapACPConversationBinding(c.Request().Context(), conversation, spritz)
+	bootstrap, client, err := s.bootstrapACPConversationBindingClient(c.Request().Context(), conversation, spritz)
 	if err != nil {
 		s.auditInternalDebugChatFailure(principal.ID, body.Target, reason, message, "bootstrap_error", err)
 		return s.writeInternalDebugChatRuntimeError(c, err)
 	}
+	defer func() {
+		_ = client.close()
+	}()
 
-	promptResult, err := s.runInternalDebugChatPrompt(c.Request().Context(), spritz, bootstrap.EffectiveSessionID, conversation.Spec.CWD, message)
+	promptResult, err := s.runInternalDebugChatPrompt(c.Request().Context(), client, bootstrap.EffectiveSessionID, message)
 	if err != nil {
 		s.auditInternalDebugChatFailure(principal.ID, body.Target, reason, message, "prompt_error", err)
 		return s.writeInternalDebugChatRuntimeError(c, err)
@@ -183,28 +185,13 @@ func (s *server) getInternalDebugACPReadySpritz(ctx context.Context, principal p
 	return spritz, nil
 }
 
-func (s *server) runInternalDebugChatPrompt(ctx context.Context, spritz *spritzv1.Spritz, sessionID, cwd, message string) (*acpPromptResult, error) {
+func (s *server) runInternalDebugChatPrompt(ctx context.Context, client *acpBootstrapInstanceClient, sessionID, message string) (*acpPromptResult, error) {
+	if client == nil {
+		return nil, errors.New("acp client is required")
+	}
 	runCtx, cancel := context.WithTimeout(ctx, s.acp.promptTimeout)
 	defer cancel()
 
-	dialCtx, dialCancel := context.WithTimeout(runCtx, s.acp.bootstrapDialTimeout)
-	defer dialCancel()
-
-	instanceConn, _, err := websocket.DefaultDialer.DialContext(dialCtx, s.acpInstanceURL(spritz.Namespace, spritz.Name), nil)
-	if err != nil {
-		return nil, err
-	}
-	client := &acpBootstrapInstanceClient{conn: instanceConn}
-	defer func() {
-		_ = client.close()
-	}()
-
-	if _, err := client.initialize(runCtx, s.acp.clientInfo, s.acp.clientCapabilities); err != nil {
-		return nil, err
-	}
-	if _, err := client.loadSession(runCtx, sessionID, normalizeConversationCWD(cwd)); err != nil {
-		return nil, err
-	}
 	return client.prompt(runCtx, sessionID, message, s.acp.promptSettleTimeout)
 }
 
@@ -243,7 +230,7 @@ func (s *server) writeInternalDebugChatTargetError(c echo.Context, err error) er
 }
 
 func (s *server) auditInternalDebugChatFailure(actorID string, target internalDebugChatTarget, reason, message, outcome string, cause error) {
-	promptHash := sha256.Sum256([]byte(strings.TrimSpace(message)))
+	promptHash := sha256.Sum256([]byte(message))
 	log.Printf(
 		"spritz internal-debug-chat actor_id=%s namespace=%s spritz_name=%s conversation_id=%s reason=%q outcome=%s prompt_sha256=%s err=%v",
 		strings.TrimSpace(actorID),

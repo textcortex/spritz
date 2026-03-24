@@ -55,7 +55,7 @@ test('chat send uses the internal token and prints assistant text by default', a
       '--instance',
       'tidy-otter',
       '--message',
-      'hello from cli',
+      '  hello from cli  ',
       '--owner-id',
       'user-123',
       '--cwd',
@@ -97,7 +97,7 @@ test('chat send uses the internal token and prints assistant text by default', a
       title: 'Debug Run',
     },
     reason: 'local smoke',
-    message: 'hello from cli',
+    message: '  hello from cli  ',
   });
 });
 
@@ -251,6 +251,78 @@ test('chat send does not inject owner header when bearer auth comes from the act
 
   const exitCode = await new Promise<number | null>((resolve) => child.on('exit', resolve));
   assert.equal(exitCode, 0, `spz chat send should succeed: ${stderr}`);
+  assert.equal(requestHeaders?.authorization, 'Bearer profile-token');
+  assert.equal(requestHeaders?.['x-spritz-user-id'], undefined);
+});
+
+test('chat send does not require an owner id when bearer auth is available', async (t) => {
+  let requestHeaders: http.IncomingHttpHeaders | null = null;
+
+  const server = http.createServer((req, res) => {
+    requestHeaders = req.headers;
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'success',
+        data: {
+          assistantText: 'ok',
+        },
+      }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    server.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+
+  const configDir = mkdtempSync(path.join(os.tmpdir(), 'spz-config-'));
+  const configPath = path.join(configDir, 'config.json');
+  writeFileSync(configPath, JSON.stringify({
+    currentProfile: 'p1',
+    profiles: {
+      p1: {
+        apiUrl: `http://127.0.0.1:${address.port}/api`,
+        bearerToken: 'profile-token',
+      },
+    },
+  }, null, 2));
+
+  const child = spawn(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      cliPath,
+      'chat',
+      'send',
+      '--instance',
+      'tidy-otter',
+      '--message',
+      'hello from cli',
+    ],
+    {
+      env: {
+        ...process.env,
+        USER: '',
+        SPRITZ_OWNER_ID: '',
+        SPRITZ_USER_ID: '',
+        SPRITZ_INTERNAL_TOKEN: 'internal-token',
+        SPRITZ_CONFIG_DIR: configDir,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+
+  let stderr = '';
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  const exitCode = await new Promise<number | null>((resolve) => child.on('exit', resolve));
+  assert.equal(exitCode, 0, `spz chat send should succeed without an owner id in bearer mode: ${stderr}`);
   assert.equal(requestHeaders?.authorization, 'Bearer profile-token');
   assert.equal(requestHeaders?.['x-spritz-user-id'], undefined);
 });

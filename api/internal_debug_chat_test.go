@@ -208,7 +208,7 @@ func TestInternalDebugChatSendCreatesConversationAndReturnsAssistantText(t *test
 	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{
 		"target":{"spritzName":"tidy-otter","cwd":"/workspace/app","title":"Debug Run"},
 		"reason":"local smoke",
-		"message":"hello from cli"
+		"message":"  hello from cli  "
 	}`))
 	req.Header.Set(internalTokenHeader, "internal-token")
 	req.Header.Set("Content-Type", "application/json")
@@ -259,10 +259,10 @@ func TestInternalDebugChatSendCreatesConversationAndReturnsAssistantText(t *test
 	if fakeACP.newCalls != 1 {
 		t.Fatalf("expected one session/new call, got %d", fakeACP.newCalls)
 	}
-	if len(fakeACP.loadSessionIDs) != 1 || fakeACP.loadSessionIDs[0] != "session-fresh" {
-		t.Fatalf("expected one prompt-side session/load for session-fresh, got %#v", fakeACP.loadSessionIDs)
+	if len(fakeACP.loadSessionIDs) != 0 {
+		t.Fatalf("expected no session/load calls for a fresh session, got %#v", fakeACP.loadSessionIDs)
 	}
-	if len(fakeACP.promptTexts) != 1 || fakeACP.promptTexts[0] != "hello from cli" {
+	if len(fakeACP.promptTexts) != 1 || fakeACP.promptTexts[0] != "  hello from cli  " {
 		t.Fatalf("expected one prompt with original message, got %#v", fakeACP.promptTexts)
 	}
 }
@@ -320,11 +320,11 @@ func TestInternalDebugChatSendTargetsExistingConversation(t *testing.T) {
 	if fakeACP.newCalls != 0 {
 		t.Fatalf("expected no session/new call, got %d", fakeACP.newCalls)
 	}
-	if len(fakeACP.loadSessionIDs) != 2 {
-		t.Fatalf("expected bootstrap and prompt-side session/load calls, got %#v", fakeACP.loadSessionIDs)
+	if len(fakeACP.loadSessionIDs) != 1 {
+		t.Fatalf("expected a single bootstrap session/load call, got %#v", fakeACP.loadSessionIDs)
 	}
-	if fakeACP.loadSessionIDs[0] != "session-existing" || fakeACP.loadSessionIDs[1] != "session-existing" {
-		t.Fatalf("expected both loads to target session-existing, got %#v", fakeACP.loadSessionIDs)
+	if fakeACP.loadSessionIDs[0] != "session-existing" {
+		t.Fatalf("expected load to target session-existing, got %#v", fakeACP.loadSessionIDs)
 	}
 }
 

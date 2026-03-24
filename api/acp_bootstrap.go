@@ -325,29 +325,38 @@ func (s *server) bootstrapACPConversation(c echo.Context) error {
 }
 
 func (s *server) bootstrapACPConversationBinding(ctx context.Context, conversation *spritzv1.SpritzConversation, spritz *spritzv1.Spritz) (*acpBootstrapResponse, error) {
+	response, client, err := s.bootstrapACPConversationBindingClient(ctx, conversation, spritz)
+	if client != nil {
+		_ = client.close()
+	}
+	return response, err
+}
+
+func (s *server) bootstrapACPConversationBindingClient(ctx context.Context, conversation *spritzv1.SpritzConversation, spritz *spritzv1.Spritz) (*acpBootstrapResponse, *acpBootstrapInstanceClient, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, s.acp.bootstrapDialTimeout)
 	defer cancel()
 
 	instanceConn, _, err := websocket.DefaultDialer.DialContext(dialCtx, s.acpInstanceURL(spritz.Namespace, spritz.Name), nil)
 	if err != nil {
 		s.recordConversationBindingError(ctx, conversation.Namespace, conversation.Name, "", err)
-		return nil, err
+		return nil, nil, err
 	}
 	client := &acpBootstrapInstanceClient{conn: instanceConn}
-	defer func() {
+	closeWithError := func(err error) (*acpBootstrapResponse, *acpBootstrapInstanceClient, error) {
 		_ = client.close()
-	}()
+		return nil, nil, err
+	}
 
 	initResult, err := client.initialize(ctx, s.acp.clientInfo, s.acp.clientCapabilities)
 	if err != nil {
 		s.recordConversationBindingError(ctx, conversation.Namespace, conversation.Name, "", err)
-		return nil, err
+		return closeWithError(err)
 	}
 
 	if !initResult.AgentCapabilities.LoadSession {
 		err = errors.New("agent does not support session/load")
 		s.recordConversationBindingError(ctx, conversation.Namespace, conversation.Name, "", err)
-		return nil, err
+		return closeWithError(err)
 	}
 
 	agentInfo := normalizeBootstrapAgentInfo(initResult)
@@ -368,13 +377,13 @@ func (s *server) bootstrapACPConversationBinding(ctx context.Context, conversati
 				effectiveSessionID, err = client.newSession(ctx, normalizeConversationCWD(conversation.Spec.CWD))
 				if err != nil {
 					s.recordConversationBindingError(ctx, conversation.Namespace, conversation.Name, previousSessionID, err)
-					return nil, err
+					return closeWithError(err)
 				}
 				bindingState = "replaced"
 				replaced = true
 			} else {
 				s.recordConversationBindingError(ctx, conversation.Namespace, conversation.Name, "", err)
-				return nil, err
+				return closeWithError(err)
 			}
 		} else {
 			loaded = true
@@ -383,14 +392,14 @@ func (s *server) bootstrapACPConversationBinding(ctx context.Context, conversati
 		effectiveSessionID, err = client.newSession(ctx, normalizeConversationCWD(conversation.Spec.CWD))
 		if err != nil {
 			s.recordConversationBindingError(ctx, conversation.Namespace, conversation.Name, "", err)
-			return nil, err
+			return closeWithError(err)
 		}
 	}
 
 	if strings.TrimSpace(effectiveSessionID) == "" {
 		err = errors.New("acp bootstrap returned empty session id")
 		s.recordConversationBindingError(ctx, conversation.Namespace, conversation.Name, "", err)
-		return nil, err
+		return closeWithError(err)
 	}
 
 	updatedConversation, err := s.updateConversationBinding(ctx, conversation.Namespace, conversation.Name, func(current *spritzv1.SpritzConversation) {
@@ -412,7 +421,7 @@ func (s *server) bootstrapACPConversationBinding(ctx context.Context, conversati
 		current.Status.UpdatedAt = &now
 	})
 	if err != nil {
-		return nil, err
+		return closeWithError(err)
 	}
 
 	return &acpBootstrapResponse{
@@ -424,7 +433,7 @@ func (s *server) bootstrapACPConversationBinding(ctx context.Context, conversati
 		ReplayMessageCount: replayMessageCount,
 		AgentInfo:          agentInfo,
 		Capabilities:       capabilities,
-	}, nil
+	}, client, nil
 }
 
 func (s *server) recordConversationBindingError(ctx context.Context, namespace, name, previousSessionID string, cause error) {
