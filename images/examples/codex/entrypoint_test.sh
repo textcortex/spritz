@@ -10,6 +10,8 @@ make_codex_stub() {
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == "login" && "${2:-}" == "--with-api-key" ]]; then
+  [[ -d "${CODEX_HOME:?}" ]]
+  printf '%s' "${CODEX_HOME}" >"${CODEX_HOME_CAPTURE:?}"
   cat >"${CODEX_LOGIN_CAPTURE:?}"
   exit 0
 fi
@@ -39,8 +41,10 @@ test_entrypoint_seeds_codex_login_from_openai_api_key() {
   make_main_stub "${test_dir}/bin/main-entrypoint"
 
   HOME="${test_dir}/home" \
+  CODEX_HOME="${test_dir}/home/.codex" \
   PATH="${test_dir}/bin:${PATH}" \
   OPENAI_API_KEY="example-openai-key" \
+  CODEX_HOME_CAPTURE="${test_dir}/codex-home.txt" \
   CODEX_LOGIN_CAPTURE="${test_dir}/codex-login.txt" \
   MAIN_CAPTURE="${test_dir}/main.txt" \
   SPRITZ_CODEX_ACP_ENABLED="false" \
@@ -48,6 +52,7 @@ test_entrypoint_seeds_codex_login_from_openai_api_key() {
   SPRITZ_CODEX_BIN="${test_dir}/bin/codex" \
   bash "${entrypoint}" "sleep" "infinity"
 
+  [[ "$(cat "${test_dir}/codex-home.txt")" == "${test_dir}/home/.codex" ]]
   [[ "$(cat "${test_dir}/codex-login.txt")" == "example-openai-key" ]]
   [[ "$(cat "${test_dir}/main.txt")" == "sleep infinity" ]]
 }
