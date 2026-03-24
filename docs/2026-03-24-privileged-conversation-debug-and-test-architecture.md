@@ -530,6 +530,7 @@ The current phase-one shape is:
 - `spz chat send --conversation ... --message ...`
 
 This phase-one endpoint is intentionally synchronous and owner-scoped.
+It should only be registered when internal auth is enabled.
 Transcript reads, event streaming, and explicit cross-owner break-glass remain
 later phases.
 

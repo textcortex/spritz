@@ -48,6 +48,7 @@ type TtyContext = {
 
 const defaultApiBase = 'http://localhost:8080/api';
 const requestTimeoutMs = Number.parseInt(process.env.SPRITZ_REQUEST_TIMEOUT_MS || '10000', 10);
+const internalRequestTimeoutMs = Number.parseInt(process.env.SPRITZ_INTERNAL_REQUEST_TIMEOUT_MS || '95000', 10);
 const headerId = process.env.SPRITZ_API_HEADER_ID || 'X-Spritz-User-Id';
 const headerEmail = process.env.SPRITZ_API_HEADER_EMAIL || 'X-Spritz-User-Email';
 const headerTeams = process.env.SPRITZ_API_HEADER_TEAMS || 'X-Spritz-User-Teams';
@@ -485,6 +486,7 @@ Usage:
 Environment:
   SPRITZ_API_URL (default: ${process.env.SPRITZ_API_URL || defaultApiBase})
   SPRITZ_INTERNAL_TOKEN
+  SPRITZ_INTERNAL_REQUEST_TIMEOUT_MS
   SPRITZ_OWNER_ID, SPRITZ_USER_ID, SPRITZ_PROFILE
 
 Notes:
@@ -521,6 +523,7 @@ Environment:
   SPRITZ_API_URL (default: ${process.env.SPRITZ_API_URL || defaultApiBase})
   SPRITZ_BEARER_TOKEN
   SPRITZ_INTERNAL_TOKEN
+  SPRITZ_INTERNAL_REQUEST_TIMEOUT_MS
   SPRITZ_USER_ID, SPRITZ_USER_EMAIL, SPRITZ_USER_TEAMS, SPRITZ_OWNER_ID
   SPRITZ_API_HEADER_ID, SPRITZ_API_HEADER_EMAIL, SPRITZ_API_HEADER_TEAMS
   SPRITZ_TERMINAL_TRANSPORT (default: ${terminalTransportDefault})
@@ -812,7 +815,7 @@ async function request(path: string, init?: RequestInit) {
 
 async function internalRequest(path: string, init?: RequestInit) {
   const controller = new AbortController();
-  const timeoutMs = Number.isFinite(requestTimeoutMs) ? requestTimeoutMs : 10000;
+  const timeoutMs = Number.isFinite(internalRequestTimeoutMs) ? internalRequestTimeoutMs : 95000;
   const timeout = setTimeout(() => controller.abort(), Math.max(timeoutMs, 1000));
   const mergedHeaders = {
     Authorization: `Bearer ${resolveInternalToken()}`,
