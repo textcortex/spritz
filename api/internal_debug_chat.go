@@ -88,6 +88,7 @@ func (s *server) sendInternalDebugChat(c echo.Context) error {
 
 	bootstrap, client, err := s.bootstrapACPConversationBindingClient(c.Request().Context(), conversation, spritz)
 	if err != nil {
+		s.cleanupInternalDebugConversation(c.Request().Context(), conversation, createdConversation)
 		s.auditInternalDebugChatFailure(principal.ID, body.Target, reason, message, "bootstrap_error", err)
 		return s.writeInternalDebugChatRuntimeError(c, err)
 	}
@@ -97,6 +98,7 @@ func (s *server) sendInternalDebugChat(c echo.Context) error {
 
 	promptResult, err := s.runInternalDebugChatPrompt(c.Request().Context(), client, bootstrap.EffectiveSessionID, message)
 	if err != nil {
+		s.cleanupInternalDebugConversation(c.Request().Context(), conversation, createdConversation)
 		s.auditInternalDebugChatFailure(principal.ID, body.Target, reason, message, "prompt_error", err)
 		return s.writeInternalDebugChatRuntimeError(c, err)
 	}
@@ -183,6 +185,20 @@ func (s *server) getInternalDebugACPReadySpritz(ctx context.Context, principal p
 		return nil, errACPUnavailable
 	}
 	return spritz, nil
+}
+
+func (s *server) cleanupInternalDebugConversation(ctx context.Context, conversation *spritzv1.SpritzConversation, created bool) {
+	if !created || conversation == nil {
+		return
+	}
+	if err := s.client.Delete(ctx, conversation); err != nil && !apierrors.IsNotFound(err) {
+		log.Printf(
+			"spritz internal-debug-chat cleanup_failed namespace=%s conversation_id=%s err=%v",
+			conversation.Namespace,
+			conversation.Name,
+			err,
+		)
+	}
 }
 
 func (s *server) runInternalDebugChatPrompt(ctx context.Context, client *acpBootstrapInstanceClient, sessionID, message string) (*acpPromptResult, error) {

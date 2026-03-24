@@ -68,7 +68,7 @@ func newACPConfig() acpConfig {
 		clientCapabilities:   defaultACPClientCapabilities(),
 		bootstrapDialTimeout: parseDurationEnv("SPRITZ_ACP_BOOTSTRAP_DIAL_TIMEOUT", 5*time.Second),
 		promptTimeout:        parseDurationEnv("SPRITZ_ACP_PROMPT_TIMEOUT", 90*time.Second),
-		promptSettleTimeout:  parseDurationEnv("SPRITZ_ACP_PROMPT_SETTLE_TIMEOUT", 200*time.Millisecond),
+		promptSettleTimeout:  parseDurationEnv("SPRITZ_ACP_PROMPT_SETTLE_TIMEOUT", 750*time.Millisecond),
 	}
 }
 

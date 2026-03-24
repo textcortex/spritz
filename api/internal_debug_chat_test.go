@@ -20,6 +20,7 @@ type fakeACPDebugChatServerOptions struct {
 	SessionID    string
 	LoadReplay   []map[string]any
 	PromptChunks []string
+	PromptError  *acpBootstrapJSONRPCError
 	StopReason   string
 }
 
@@ -148,6 +149,16 @@ func newFakeACPDebugChatServer(t *testing.T, options fakeACPDebugChatServerOptio
 				fakeServer.promptSessionIDs = append(fakeServer.promptSessionIDs, params.SessionID)
 				fakeServer.promptTexts = append(fakeServer.promptTexts, text)
 				fakeServer.mu.Unlock()
+				if options.PromptError != nil {
+					if err := conn.WriteJSON(map[string]any{
+						"jsonrpc": "2.0",
+						"id":      message.ID,
+						"error":   options.PromptError,
+					}); err != nil {
+						t.Fatalf("failed to write prompt error: %v", err)
+					}
+					continue
+				}
 				for _, chunk := range options.PromptChunks {
 					if err := conn.WriteJSON(map[string]any{
 						"jsonrpc": "2.0",
@@ -350,6 +361,47 @@ func TestInternalDebugChatSendRejectsOwnerMismatch(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected status 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestInternalDebugChatSendDeletesCreatedConversationOnPromptFailure(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	fakeACP := newFakeACPDebugChatServer(t, fakeACPDebugChatServerOptions{
+		SessionID: "session-fresh",
+		PromptError: &acpBootstrapJSONRPCError{
+			Code:    -32000,
+			Message: "prompt failed",
+		},
+	})
+
+	s := newACPTestServer(t, spritz)
+	s.internalAuth = internalAuthConfig{enabled: true, token: "internal-token"}
+	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
+
+	e := echo.New()
+	internal := e.Group("", s.internalAuthMiddleware(), s.authMiddleware())
+	internal.POST("/api/internal/v1/debug/chat/send", s.sendInternalDebugChat)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{
+		"target":{"spritzName":"tidy-otter","cwd":"/workspace/app","title":"Debug Run"},
+		"message":"hello from cli"
+	}`))
+	req.Header.Set(internalTokenHeader, "internal-token")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected status 502, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	stored := &spritzv1.SpritzConversationList{}
+	if err := s.client.List(context.Background(), stored); err != nil {
+		t.Fatalf("failed to list conversations: %v", err)
+	}
+	if len(stored.Items) != 0 {
+		t.Fatalf("expected created conversation to be deleted on prompt failure, got %#v", stored.Items)
 	}
 }
 

@@ -48,7 +48,7 @@ type TtyContext = {
 
 const defaultApiBase = 'http://localhost:8080/api';
 const requestTimeoutMs = Number.parseInt(process.env.SPRITZ_REQUEST_TIMEOUT_MS || '10000', 10);
-const internalRequestTimeoutMs = Number.parseInt(process.env.SPRITZ_INTERNAL_REQUEST_TIMEOUT_MS || '95000', 10);
+const internalRequestTimeoutMs = Number.parseInt(process.env.SPRITZ_INTERNAL_REQUEST_TIMEOUT_MS || '120000', 10);
 const headerId = process.env.SPRITZ_API_HEADER_ID || 'X-Spritz-User-Id';
 const headerEmail = process.env.SPRITZ_API_HEADER_EMAIL || 'X-Spritz-User-Email';
 const headerTeams = process.env.SPRITZ_API_HEADER_TEAMS || 'X-Spritz-User-Teams';
