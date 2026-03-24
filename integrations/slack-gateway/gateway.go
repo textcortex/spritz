@@ -56,6 +56,11 @@ type dedupeLease struct {
 	key   string
 }
 
+type slackMessageDelivery struct {
+	messageLease *dedupeLease
+	eventLease   *dedupeLease
+}
+
 type dedupeState int
 
 const (
@@ -245,6 +250,18 @@ func (l *dedupeLease) finish(success bool) {
 	l.store.entries[l.key] = entry
 }
 
+func (d *slackMessageDelivery) finish(success bool) {
+	if d == nil {
+		return
+	}
+	if d.eventLease != nil {
+		d.eventLease.finish(success)
+	}
+	if d.messageLease != nil {
+		d.messageLease.finish(success)
+	}
+}
+
 func newSlackGateway(cfg config, logger *slog.Logger) *slackGateway {
 	if cfg.HTTPTimeout <= 0 {
 		cfg.HTTPTimeout = 15 * time.Second
@@ -349,7 +366,8 @@ func (g *slackGateway) handleSlackEvents(w http.ResponseWriter, r *http.Request)
 		_, _ = w.Write([]byte(envelope.Challenge))
 		return
 	case "event_callback":
-		if strings.TrimSpace(envelope.Event.Type) == "app_uninstalled" {
+		switch strings.TrimSpace(envelope.Event.Type) {
+		case "app_uninstalled":
 			ctx, cancel := context.WithTimeout(
 				context.WithoutCancel(r.Context()),
 				g.cfg.ProcessingTimeout,
@@ -361,25 +379,56 @@ func (g *slackGateway) handleSlackEvents(w http.ResponseWriter, r *http.Request)
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 			return
-		}
-		ctx, cancel := context.WithTimeout(
-			context.WithoutCancel(r.Context()),
-			g.cfg.ProcessingTimeout,
-		)
-		defer cancel()
-		if err := g.processSlackEnvelope(ctx, envelope); err != nil {
-			statusCode := http.StatusBadGateway
-			if errors.Is(err, errSlackEventInFlight) {
-				statusCode = http.StatusServiceUnavailable
+		case "message", "app_mention":
+			delivery, process, err := g.beginMessageEventDelivery(envelope)
+			if err != nil {
+				statusCode := http.StatusBadGateway
+				if errors.Is(err, errSlackEventInFlight) {
+					statusCode = http.StatusServiceUnavailable
+				}
+				http.Error(w, err.Error(), statusCode)
+				return
 			}
-			http.Error(w, err.Error(), statusCode)
+			if !process {
+				writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+				return
+			}
+			ctx, cancel := context.WithTimeout(
+				context.WithoutCancel(r.Context()),
+				g.cfg.ProcessingTimeout,
+			)
+			g.startSlackEventWorker(ctx, cancel, envelope, delivery)
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			return
+		default:
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ignored": true})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-		return
 	default:
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ignored": true})
 	}
+}
+
+func (g *slackGateway) startSlackEventWorker(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	envelope slackEnvelope,
+	delivery *slackMessageDelivery,
+) {
+	g.workers.Add(1)
+	go func() {
+		defer g.workers.Done()
+		defer cancel()
+		if err := g.processMessageEventWithDelivery(ctx, envelope, delivery); err != nil {
+			g.logger.Error(
+				"slack event processing failed",
+				"error", err,
+				"event_id", strings.TrimSpace(envelope.EventID),
+				"event_type", strings.TrimSpace(envelope.Event.Type),
+				"team_id", strings.TrimSpace(envelope.TeamID),
+			)
+		}
+	}()
 }
 
 func (g *slackGateway) processSlackEnvelope(ctx context.Context, envelope slackEnvelope) error {
@@ -394,47 +443,65 @@ func (g *slackGateway) processSlackEnvelope(ctx context.Context, envelope slackE
 }
 
 func (g *slackGateway) processMessageEvent(ctx context.Context, envelope slackEnvelope) error {
+	delivery, process, err := g.beginMessageEventDelivery(envelope)
+	if err != nil || !process {
+		return err
+	}
+	return g.processMessageEventWithDelivery(ctx, envelope, delivery)
+}
+
+func (g *slackGateway) beginMessageEventDelivery(
+	envelope slackEnvelope,
+) (*slackMessageDelivery, bool, error) {
 	event := envelope.Event
 	if shouldIgnoreSlackMessageEvent(event) {
-		return nil
+		return nil, false, nil
 	}
 	if !shouldProcessSlackMessageEvent(event) {
-		return nil
+		return nil, false, nil
 	}
 	if strings.TrimSpace(event.BotID) != "" || strings.TrimSpace(event.User) == "" {
-		return nil
+		return nil, false, nil
 	}
 	if strings.TrimSpace(event.Channel) == "" || strings.TrimSpace(event.TS) == "" || strings.TrimSpace(envelope.TeamID) == "" {
-		return nil
+		return nil, false, nil
 	}
 
 	messageKey := strings.Join([]string{envelope.TeamID, event.Channel, event.TS}, ":")
 	messageLease, messageState := g.dedupe.begin("message:" + messageKey)
 	if messageState == dedupeStateDuplicateDelivered {
-		return nil
+		return nil, false, nil
 	}
 	if messageState == dedupeStateDuplicateInFlight {
-		return errSlackEventInFlight
+		return nil, false, errSlackEventInFlight
 	}
-	success := false
-	defer func() {
-		messageLease.finish(success)
-	}()
+	delivery := &slackMessageDelivery{messageLease: messageLease}
 
-	var eventLease *dedupeLease
 	if eventID := strings.TrimSpace(envelope.EventID); eventID != "" {
 		var eventState dedupeState
-		eventLease, eventState = g.dedupe.begin("event:" + eventID)
+		eventLease, eventState := g.dedupe.begin("event:" + eventID)
 		if eventState == dedupeStateDuplicateDelivered {
-			return nil
+			delivery.finish(false)
+			return nil, false, nil
 		}
 		if eventState == dedupeStateDuplicateInFlight {
-			return errSlackEventInFlight
+			delivery.finish(false)
+			return nil, false, errSlackEventInFlight
 		}
-		defer func() {
-			eventLease.finish(success)
-		}()
+		delivery.eventLease = eventLease
 	}
+	return delivery, true, nil
+}
+
+func (g *slackGateway) processMessageEventWithDelivery(
+	ctx context.Context,
+	envelope slackEnvelope,
+	delivery *slackMessageDelivery,
+) error {
+	success := false
+	defer delivery.finish(success)
+
+	event := envelope.Event
 
 	session, err := g.exchangeChannelSession(ctx, envelope.TeamID)
 	if err != nil {
@@ -463,14 +530,12 @@ func (g *slackGateway) processMessageEvent(ctx context.Context, envelope slackEn
 			return err
 		}
 		reply = "I hit an internal error while processing that request."
-		success = true
 		g.logger.Error("acp prompt failed", "error", err, "conversation_id", conversationID)
-	} else {
-		success = true
 	}
 	if err := g.postSlackMessage(ctx, session.ProviderAuth.BotAccessToken, event.Channel, reply, slackReplyThreadTS(event)); err != nil {
 		return err
 	}
+	success = true
 	return nil
 }
 

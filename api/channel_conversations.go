@@ -95,7 +95,7 @@ func normalizeChannelConversationUpsertRequest(principalID string, body channelC
 	}, nil
 }
 
-func channelConversationRouteHash(identity normalizedChannelConversationIdentity, instanceID string) string {
+func channelConversationRouteHash(identity normalizedChannelConversationIdentity, ownerID, instanceID string) string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{
 		identity.principalID,
 		identity.provider,
@@ -103,18 +103,19 @@ func channelConversationRouteHash(identity normalizedChannelConversationIdentity
 		identity.externalTenantID,
 		identity.externalChannelID,
 		identity.externalConversationID,
+		strings.TrimSpace(ownerID),
 		strings.TrimSpace(instanceID),
 	}, "\n")))
 	return hex.EncodeToString(sum[:16])
 }
 
-func channelConversationName(spritzName string, identity normalizedChannelConversationIdentity) string {
+func channelConversationName(spritzName, ownerID string, identity normalizedChannelConversationIdentity) string {
 	prefix := strings.ToLower(strings.TrimSpace(spritzName))
 	prefix = strings.Trim(prefix, "-")
 	if prefix == "" {
 		prefix = "conversation"
 	}
-	suffix := "channel-" + channelConversationRouteHash(identity, spritzName)
+	suffix := "channel-" + channelConversationRouteHash(identity, ownerID, spritzName)
 	maxPrefixLen := 63 - len(suffix) - 1
 	if maxPrefixLen < 1 {
 		maxPrefixLen = 1
@@ -168,7 +169,7 @@ func (s *server) findChannelConversation(c echo.Context, namespace string, sprit
 			acpConversationLabelKey:          acpConversationLabelValue,
 			acpConversationOwnerLabelKey:     ownerLabelValue(spritz.Spec.Owner.ID),
 			acpConversationSpritzLabelKey:    spritz.Name,
-			channelConversationRouteLabelKey: channelConversationRouteHash(identity, spritz.Name),
+			channelConversationRouteLabelKey: channelConversationRouteHash(identity, spritz.Spec.Owner.ID, spritz.Name),
 		},
 	); err != nil {
 		return nil, false, err
@@ -197,7 +198,7 @@ func applyChannelConversationMetadata(conversation *spritzv1.SpritzConversation,
 	conversation.Labels[acpConversationOwnerLabelKey] = ownerLabelValue(spritz.Spec.Owner.ID)
 	conversation.Labels[acpConversationSpritzLabelKey] = spritz.Name
 	conversation.Labels[acpConversationLabelKey] = acpConversationLabelValue
-	conversation.Labels[channelConversationRouteLabelKey] = channelConversationRouteHash(identity, spritz.Name)
+	conversation.Labels[channelConversationRouteLabelKey] = channelConversationRouteHash(identity, spritz.Spec.Owner.ID, spritz.Name)
 
 	if conversation.Annotations == nil {
 		conversation.Annotations = map[string]string{}
@@ -265,7 +266,7 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 	if err != nil {
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
-	conversation.Name = channelConversationName(spritz.Name, identity)
+	conversation.Name = channelConversationName(spritz.Name, spritz.Spec.Owner.ID, identity)
 	applyChannelConversationMetadata(conversation, identity, normalizedBody.RequestID, spritz)
 	if err := s.client.Create(c.Request().Context(), conversation); err != nil {
 		if apierrors.IsAlreadyExists(err) {

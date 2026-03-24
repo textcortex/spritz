@@ -78,6 +78,7 @@ func TestUpsertChannelConversationCreatesConversation(t *testing.T) {
 	}
 	expectedName := channelConversationName(
 		"zeno-acme",
+		"owner-123",
 		normalizedChannelConversationIdentity{
 			principalID:            "shared-slack-gateway",
 			provider:               "slack",
@@ -101,6 +102,24 @@ func TestUpsertChannelConversationCreatesConversation(t *testing.T) {
 	}
 	if payload.Data.Conversation.Labels[channelConversationRouteLabelKey] == "" {
 		t.Fatalf("expected route label to be set")
+	}
+}
+
+func TestChannelConversationNameIncludesOwner(t *testing.T) {
+	identity := normalizedChannelConversationIdentity{
+		principalID:            "shared-slack-gateway",
+		provider:               "slack",
+		externalScopeType:      "workspace",
+		externalTenantID:       "T_workspace_1",
+		externalChannelID:      "C_channel_1",
+		externalConversationID: "1711387375.000100",
+	}
+
+	first := channelConversationName("zeno-acme", "owner-123", identity)
+	second := channelConversationName("zeno-acme", "owner-456", identity)
+
+	if first == second {
+		t.Fatalf("expected owner-specific conversation names, got %q", first)
 	}
 }
 

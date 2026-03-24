@@ -444,7 +444,7 @@ func TestSlackEventIgnoresTopLevelChannelMessagesWithoutMention(t *testing.T) {
 	}
 }
 
-func TestSlackEventReturnsBadGatewayWhenProcessingFails(t *testing.T) {
+func TestSlackEventAcknowledgesBeforeBackgroundProcessingFails(t *testing.T) {
 	cfg := config{
 		SlackSigningSecret:   "signing-secret",
 		OAuthStateSecret:     "oauth-state-secret",
@@ -473,8 +473,13 @@ func TestSlackEventReturnsBadGatewayWhenProcessingFails(t *testing.T) {
 
 	gateway.handleSlackEvents(rec, req)
 
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	drainCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := gateway.waitForWorkers(drainCtx); err != nil {
+		t.Fatalf("worker drain failed: %v", err)
 	}
 }
 
@@ -521,7 +526,7 @@ func TestSlackUninstallReturnsBadGatewayWhenDisconnectFails(t *testing.T) {
 	}
 }
 
-func TestSlackEventWaitsForSlowACPWorkBeforeAcknowledging(t *testing.T) {
+func TestSlackEventAcknowledgesBeforeSlowACPWorkCompletes(t *testing.T) {
 	var slackCalls struct {
 		sync.Mutex
 		count int
@@ -664,19 +669,27 @@ func TestSlackEventWaitsForSlowACPWorkBeforeAcknowledging(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(50 * time.Millisecond):
-	}
-
-	close(releasePrompt)
-
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatalf("expected Slack event to finish after ACP prompt completion")
+	case <-time.After(250 * time.Millisecond):
+		t.Fatalf("expected Slack event acknowledgement before ACP prompt completion")
 	}
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 acknowledgement, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	slackCalls.Lock()
+	countBeforeRelease := slackCalls.count
+	slackCalls.Unlock()
+	if countBeforeRelease != 0 {
+		t.Fatalf("expected slack reply to wait for ACP prompt completion, got %d", countBeforeRelease)
+	}
+
+	close(releasePrompt)
+
+	drainCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := gateway.waitForWorkers(drainCtx); err != nil {
+		t.Fatalf("expected background worker to finish after ACP prompt completion: %v", err)
 	}
 
 	deadline := time.Now().Add(3 * time.Second)
@@ -1474,14 +1487,14 @@ func TestProcessMessageEventSuppressesRetryAfterSlackReplyFailure(t *testing.T) 
 	if err := gateway.processMessageEvent(t.Context(), envelope); err == nil {
 		t.Fatalf("expected first delivery to fail on slack post")
 	}
-	if err := gateway.processMessageEvent(t.Context(), envelope); err != nil {
-		t.Fatalf("expected duplicate retry to be suppressed, got %v", err)
+	if err := gateway.processMessageEvent(t.Context(), envelope); err == nil {
+		t.Fatalf("expected retry after failed slack post to attempt delivery again")
 	}
-	if promptCalls != 1 {
-		t.Fatalf("expected ACP prompt to run once, got %d", promptCalls)
+	if promptCalls != 2 {
+		t.Fatalf("expected ACP prompt to run twice, got %d", promptCalls)
 	}
-	if postCalls != 1 {
-		t.Fatalf("expected one slack post attempt, got %d", postCalls)
+	if postCalls != 2 {
+		t.Fatalf("expected two slack post attempts, got %d", postCalls)
 	}
 }
 
