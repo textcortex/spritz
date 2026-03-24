@@ -532,7 +532,9 @@ func (g *slackGateway) processMessageEventWithDelivery(
 		reply = "I hit an internal error while processing that request."
 		g.logger.Error("acp prompt failed", "error", err, "conversation_id", conversationID)
 	}
-	if err := g.postSlackMessage(ctx, session.ProviderAuth.BotAccessToken, event.Channel, reply, slackReplyThreadTS(event)); err != nil {
+	replyCtx, cancelReply := context.WithTimeout(context.WithoutCancel(ctx), g.cfg.HTTPTimeout)
+	defer cancelReply()
+	if err := g.postSlackMessage(replyCtx, session.ProviderAuth.BotAccessToken, event.Channel, reply, slackReplyThreadTS(event)); err != nil {
 		return err
 	}
 	success = true
