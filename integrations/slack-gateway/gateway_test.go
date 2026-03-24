@@ -123,6 +123,49 @@ func TestOAuthCallbackStoresInstallationAndUpsertsRegistry(t *testing.T) {
 	}
 }
 
+func TestInstallRedirectUsesConfiguredSlackHost(t *testing.T) {
+	cfg := config{
+		PublicURL:          "https://gateway.example.test",
+		SlackClientID:      "client-id",
+		SlackAPIBaseURL:    "https://gov.slack.example.test/api",
+		SlackBotScopes:     []string{"chat:write", "im:history"},
+		OAuthStateSecret:   "oauth-state-secret",
+		BackendBaseURL:     "https://backend.example.test",
+		SpritzBaseURL:      "https://spritz.example.test",
+		SpritzServiceToken: "spritz-service-token",
+		PrincipalID:        "shared-slack-gateway",
+	}
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	req := httptest.NewRequest(http.MethodGet, "/slack/install", nil)
+	rec := httptest.NewRecorder()
+	gateway.handleInstallRedirect(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d: %s", rec.Code, rec.Body.String())
+	}
+	location := rec.Header().Get("Location")
+	if location == "" {
+		t.Fatal("expected redirect location")
+	}
+	redirectURL, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("parse redirect location: %v", err)
+	}
+	if redirectURL.Scheme != "https" || redirectURL.Host != "gov.slack.example.test" {
+		t.Fatalf("expected redirect host to follow configured Slack host, got %s", redirectURL.String())
+	}
+	if redirectURL.Path != "/oauth/v2/authorize" {
+		t.Fatalf("expected authorize path, got %s", redirectURL.Path)
+	}
+	if got := redirectURL.Query().Get("client_id"); got != "client-id" {
+		t.Fatalf("expected client_id query param, got %q", got)
+	}
+	if got := redirectURL.Query().Get("scope"); got != "chat:write,im:history" {
+		t.Fatalf("expected scope query param, got %q", got)
+	}
+}
+
 func TestOAuthCallbackReturnsBadGatewayWhenBackendUpsertFails(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "backend unavailable", http.StatusServiceUnavailable)
@@ -170,6 +213,26 @@ func TestOAuthCallbackReturnsBadGatewayWhenBackendUpsertFails(t *testing.T) {
 
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestExtractACPTextSupportsResourceBlocks(t *testing.T) {
+	resourceText := extractACPText(map[string]any{
+		"resource": map[string]any{
+			"text": "resource text",
+		},
+	})
+	if resourceText != "resource text" {
+		t.Fatalf("expected resource text, got %q", resourceText)
+	}
+
+	resourceURI := extractACPText(map[string]any{
+		"resource": map[string]any{
+			"uri": "file://workspace/report.txt",
+		},
+	})
+	if resourceURI != "file://workspace/report.txt" {
+		t.Fatalf("expected resource uri, got %q", resourceURI)
 	}
 }
 

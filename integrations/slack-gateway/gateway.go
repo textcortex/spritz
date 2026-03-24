@@ -301,7 +301,7 @@ func (g *slackGateway) handleInstallRedirect(w http.ResponseWriter, r *http.Requ
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	target, err := url.Parse("https://slack.com/oauth/v2/authorize")
+	target, err := slackOAuthAuthorizeURL(g.cfg.SlackAPIBaseURL)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -313,6 +313,18 @@ func (g *slackGateway) handleInstallRedirect(w http.ResponseWriter, r *http.Requ
 	query.Set("state", state)
 	target.RawQuery = query.Encode()
 	http.Redirect(w, r, target.String(), http.StatusFound)
+}
+
+func slackOAuthAuthorizeURL(apiBaseURL string) (*url.URL, error) {
+	target, err := url.Parse(strings.TrimSpace(apiBaseURL))
+	if err != nil {
+		return nil, err
+	}
+	target.Path = "/oauth/v2/authorize"
+	target.RawPath = ""
+	target.RawQuery = ""
+	target.Fragment = ""
+	return target, nil
 }
 
 func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
@@ -964,6 +976,12 @@ func extractACPText(value any) string {
 		}
 		if content, ok := typed["content"]; ok {
 			return extractACPText(content)
+		}
+		if resource, ok := typed["resource"]; ok {
+			return extractACPText(resource)
+		}
+		if uri := stringValue(typed["uri"]); uri != "" {
+			return uri
 		}
 	}
 	return ""
