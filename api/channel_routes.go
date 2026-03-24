@@ -13,6 +13,8 @@ import (
 
 var channelRouteScopeTypeTokenPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
+const channelRouteInstanceClassID = "concierge"
+
 type channelRouteResolveRequest struct {
 	RequestID         string `json:"requestId,omitempty"`
 	Provider          string `json:"provider"`
@@ -69,11 +71,13 @@ func (s *server) resolveChannelRoute(c echo.Context) error {
 	if s.auth.enabled() && (!ok || principal.ID == "") {
 		return writeError(c, http.StatusUnauthorized, "unauthenticated")
 	}
-	if !principal.isService() && !principal.isAdminPrincipal() {
-		return writeForbidden(c)
-	}
-	if principal.isService() && !principal.hasScope(scopeChannelRouteResolve) && !principal.isAdminPrincipal() {
-		return writeForbidden(c)
+	if s.auth.enabled() {
+		if !principal.isService() && !principal.isAdminPrincipal() {
+			return writeForbidden(c)
+		}
+		if principal.isService() && !principal.hasScope(scopeChannelRouteResolve) && !principal.isAdminPrincipal() {
+			return writeForbidden(c)
+		}
 	}
 
 	var body channelRouteResolveRequest
@@ -91,7 +95,8 @@ func (s *server) resolveChannelRoute(c echo.Context) error {
 		principal,
 		normalized.RequestID,
 		extensionRequestContext{
-			Namespace: s.namespace,
+			Namespace:       s.namespace,
+			InstanceClassID: channelRouteInstanceClassID,
 		},
 		map[string]string{
 			"provider":          normalized.Provider,

@@ -62,6 +62,9 @@ func TestResolveChannelRouteReturnsResolvedInstance(t *testing.T) {
 		if payload.Operation != extensionOperation("channel.route.resolve") {
 			t.Fatalf("expected channel route resolve operation, got %q", payload.Operation)
 		}
+		if payload.Context.InstanceClassID != channelRouteInstanceClassID {
+			t.Fatalf("expected instanceClassId=%q, got %q", channelRouteInstanceClassID, payload.Context.InstanceClassID)
+		}
 		if payload.Principal.ID != "shared-discord-bot" {
 			t.Fatalf("expected principal id to be forwarded, got %q", payload.Principal.ID)
 		}
@@ -149,5 +152,51 @@ func TestResolveChannelRouteReturnsUnavailableWhenNoResolverMatches(t *testing.T
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503 when no resolver is configured, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestResolveChannelRouteAllowsAuthDisabledMode(t *testing.T) {
+	s := &server{
+		auth:         authConfig{mode: authModeNone},
+		internalAuth: internalAuthConfig{enabled: false},
+		terminal:     terminalConfig{enabled: false},
+		extensions: extensionRegistry{
+			resolvers: []configuredResolver{
+				{
+					id:        "channel-routing",
+					kind:      extensionKindResolver,
+					operation: extensionOperationChannelRouteResolve,
+					match:     extensionMatchRule{},
+					transport: configuredHTTPTransport{
+						url: "http://resolver.example.test/channel-route",
+					},
+				},
+			},
+		},
+	}
+	originalTransport := http.DefaultClient.Transport
+	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"status":"resolved","output":{"namespace":"spritz-staging","instanceId":"zeno-acme"}}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})
+	defer func() {
+		http.DefaultClient.Transport = originalTransport
+	}()
+
+	e := echo.New()
+	s.registerRoutes(e)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/channel-routes/resolve", strings.NewReader(`{"provider":"discord","externalScopeType":"guild","externalTenantId":"123456789012345678"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 in auth-disabled mode, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
