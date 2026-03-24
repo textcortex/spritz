@@ -165,6 +165,13 @@ The gateway layer must:
 
 ### Shared-Host Gateway State Isolation
 
+The preferred shared-host deployment model is:
+
+- one browser-facing auth gateway per public host
+
+See [Shared-Host Auth Gateway Architecture](2026-03-20-shared-host-auth-gateway-architecture.md)
+for the full topology.
+
 If one browser host is protected by more than one auth gateway instance, those
 gateways must not share browser auth state accidentally.
 
@@ -175,7 +182,7 @@ Examples:
 - `/i/*` or another instance-facing path routed through a third gateway
   instance.
 
-For that topology:
+For that advanced topology:
 
 - each gateway instance should use a distinct cookie namespace,
 - each gateway instance should isolate CSRF and PKCE state per request,
@@ -186,7 +193,8 @@ For that topology:
 
 This matters because otherwise one gateway can start a fresh login flow that
 clobbers the callback verifier state needed by another gateway on the same host,
-which typically surfaces as redirect loops or PKCE verification failures.
+or the callback can return to the wrong gateway instance entirely. That
+typically surfaces as redirect loops or PKCE verification failures.
 
 ## Route Design
 

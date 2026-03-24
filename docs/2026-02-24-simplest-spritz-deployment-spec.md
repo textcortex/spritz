@@ -58,7 +58,8 @@ front-end hosting, and backward-compatibility branches.
 - No edge-worker route forwarding required.
 - Easier debugging: one host, one ingress path map.
 - One auth gateway instance is enough for the default path, which avoids
-  cross-gateway cookie and PKCE state collisions on the same host.
+  cross-gateway cookie and PKCE state collisions on the same host. See
+  [Shared-Host Auth Gateway Architecture](2026-03-20-shared-host-auth-gateway-architecture.md).
 
 ## Required Operator Inputs
 
