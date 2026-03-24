@@ -452,7 +452,8 @@ func (g *slackGateway) processMessageEvent(ctx context.Context, envelope slackEn
 }
 
 func shouldIgnoreSlackMessageEvent(event slackEventInner) bool {
-	return strings.TrimSpace(event.Subtype) != ""
+	subtype := strings.TrimSpace(event.Subtype)
+	return subtype != "" && subtype != "file_share"
 }
 
 func shouldProcessSlackMessageEvent(event slackEventInner) bool {
@@ -508,14 +509,14 @@ func slackReplyThreadTS(event slackEventInner) string {
 	if strings.TrimSpace(event.ThreadTS) != "" {
 		return strings.TrimSpace(event.ThreadTS)
 	}
-	if strings.TrimSpace(event.ChannelType) == "im" {
+	if isSlackDirectMessageEvent(event) {
 		return ""
 	}
 	return strings.TrimSpace(event.TS)
 }
 
 func slackExternalConversationID(event slackEventInner) string {
-	if strings.TrimSpace(event.ChannelType) == "im" {
+	if isSlackDirectMessageEvent(event) {
 		return strings.TrimSpace(event.Channel)
 	}
 	return firstNonEmpty(strings.TrimSpace(event.ThreadTS), strings.TrimSpace(event.TS))

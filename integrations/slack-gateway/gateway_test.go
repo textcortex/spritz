@@ -763,6 +763,11 @@ func TestShouldIgnoreSlackMessageEventRejectsSystemSubtypes(t *testing.T) {
 	) {
 		t.Fatalf("expected channel_join subtype to be ignored")
 	}
+	if shouldIgnoreSlackMessageEvent(
+		slackEventInner{Type: "message", Subtype: "file_share"},
+	) {
+		t.Fatalf("expected file_share messages to be processed")
+	}
 	if shouldIgnoreSlackMessageEvent(slackEventInner{Type: "message"}) {
 		t.Fatalf("expected plain message events to be processed")
 	}
@@ -809,6 +814,39 @@ func TestShouldProcessSlackMessageEventRequiresMentionOrThreadOutsideDMs(t *test
 		},
 	) {
 		t.Fatalf("expected DM messages to be processed")
+	}
+}
+
+func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
+	fallbackDM := slackEventInner{
+		Type:    "message",
+		Channel: "D_workspace_bot",
+		TS:      "1711387375.000100",
+	}
+	if !isSlackDirectMessageEvent(fallbackDM) {
+		t.Fatalf("expected D-prefixed channels to be treated as DMs")
+	}
+	if slackExternalConversationID(fallbackDM) != "D_workspace_bot" {
+		t.Fatalf("expected D-prefixed channels to key conversations by channel id")
+	}
+	if slackReplyThreadTS(fallbackDM) != "" {
+		t.Fatalf("expected D-prefixed channels to reply inline")
+	}
+
+	groupDM := slackEventInner{
+		Type:        "message",
+		Channel:     "G_workspace_group",
+		ChannelType: "mpim",
+		TS:          "1711387375.000100",
+	}
+	if !isSlackDirectMessageEvent(groupDM) {
+		t.Fatalf("expected mpim channels to be treated as direct-message style conversations")
+	}
+	if slackExternalConversationID(groupDM) != "G_workspace_group" {
+		t.Fatalf("expected mpim conversations to key by channel id")
+	}
+	if slackReplyThreadTS(groupDM) != "" {
+		t.Fatalf("expected mpim replies to stay inline")
 	}
 }
 
