@@ -1478,8 +1478,10 @@ async function main() {
     }
     const ns = await resolveNamespace();
     const reason = argValue('--reason')?.trim() || 'spz chat send';
+    const { profile } = await resolveProfile({ allowFlag: true });
+    const bearerToken = argValue('--token') || process.env.SPRITZ_BEARER_TOKEN || profile?.bearerToken;
     const requestHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (!(argValue('--token') || process.env.SPRITZ_BEARER_TOKEN) && ownerId) {
+    if (!bearerToken?.trim() && ownerId) {
       requestHeaders[headerId] = ownerId;
     }
     const data = await internalRequest('/internal/v1/debug/chat/send', {
