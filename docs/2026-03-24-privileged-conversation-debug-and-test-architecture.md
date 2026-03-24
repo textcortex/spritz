@@ -1,6 +1,6 @@
 ---
 date: 2026-03-24
-author: Onur Solmaz <onur@textcortex.com>
+author: Spritz Maintainers <user@example.com>
 title: Privileged Conversation Debug and Test Architecture
 tags: [spritz, conversations, debug, testing, auth, audit, architecture]
 ---
