@@ -37,6 +37,8 @@ type slackGateway struct {
 	workers    sync.WaitGroup
 }
 
+var errSlackEventInFlight = errors.New("slack event is already being processed")
+
 type dedupeStore struct {
 	ttl     time.Duration
 	now     func() time.Time
@@ -53,6 +55,14 @@ type dedupeLease struct {
 	store *dedupeStore
 	key   string
 }
+
+type dedupeState int
+
+const (
+	dedupeStateAcquired dedupeState = iota
+	dedupeStateDuplicateInFlight
+	dedupeStateDuplicateDelivered
+)
 
 type slackOAuthAccessResponse struct {
 	OK          bool   `json:"ok"`
@@ -192,10 +202,10 @@ func newDedupeStore(ttl time.Duration) *dedupeStore {
 	}
 }
 
-func (d *dedupeStore) begin(key string) (*dedupeLease, bool) {
+func (d *dedupeStore) begin(key string) (*dedupeLease, dedupeState) {
 	key = strings.TrimSpace(key)
 	if key == "" {
-		return nil, false
+		return nil, dedupeStateAcquired
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -207,10 +217,13 @@ func (d *dedupeStore) begin(key string) (*dedupeLease, bool) {
 		}
 	}
 	if entry, ok := d.entries[key]; ok && now.Sub(entry.seenAt) <= d.ttl {
-		return nil, true
+		if entry.inFlight {
+			return nil, dedupeStateDuplicateInFlight
+		}
+		return nil, dedupeStateDuplicateDelivered
 	}
 	d.entries[key] = dedupeEntry{seenAt: now, inFlight: true}
-	return &dedupeLease{store: d, key: key}, false
+	return &dedupeLease{store: d, key: key}, dedupeStateAcquired
 }
 
 func (l *dedupeLease) finish(success bool) {
@@ -346,34 +359,21 @@ func (g *slackGateway) handleSlackEvents(w http.ResponseWriter, r *http.Request)
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 			return
 		}
-		g.processSlackEnvelopeAsync(envelope)
+		ctx, cancel := context.WithTimeout(r.Context(), g.cfg.ProcessingTimeout)
+		defer cancel()
+		if err := g.processSlackEnvelope(ctx, envelope); err != nil {
+			statusCode := http.StatusBadGateway
+			if errors.Is(err, errSlackEventInFlight) {
+				statusCode = http.StatusServiceUnavailable
+			}
+			http.Error(w, err.Error(), statusCode)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	default:
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ignored": true})
 	}
-}
-
-func (g *slackGateway) processSlackEnvelopeAsync(envelope slackEnvelope) {
-	g.workers.Add(1)
-	go func() {
-		defer g.workers.Done()
-		ctx, cancel := context.WithTimeout(context.Background(), g.cfg.ProcessingTimeout)
-		defer cancel()
-		if err := g.processSlackEnvelope(ctx, envelope); err != nil {
-			g.logger.Error(
-				"slack event failed",
-				"error",
-				err,
-				"team_id",
-				envelope.TeamID,
-				"event_id",
-				envelope.EventID,
-				"event_type",
-				envelope.Event.Type,
-			)
-		}
-	}()
 }
 
 func (g *slackGateway) processSlackEnvelope(ctx context.Context, envelope slackEnvelope) error {
@@ -403,9 +403,12 @@ func (g *slackGateway) processMessageEvent(ctx context.Context, envelope slackEn
 	}
 
 	messageKey := strings.Join([]string{envelope.TeamID, event.Channel, event.TS}, ":")
-	messageLease, duplicated := g.dedupe.begin("message:" + messageKey)
-	if duplicated {
+	messageLease, messageState := g.dedupe.begin("message:" + messageKey)
+	if messageState == dedupeStateDuplicateDelivered {
 		return nil
+	}
+	if messageState == dedupeStateDuplicateInFlight {
+		return errSlackEventInFlight
 	}
 	success := false
 	defer func() {
@@ -414,9 +417,13 @@ func (g *slackGateway) processMessageEvent(ctx context.Context, envelope slackEn
 
 	var eventLease *dedupeLease
 	if eventID := strings.TrimSpace(envelope.EventID); eventID != "" {
-		eventLease, duplicated = g.dedupe.begin("event:" + eventID)
-		if duplicated {
+		var eventState dedupeState
+		eventLease, eventState = g.dedupe.begin("event:" + eventID)
+		if eventState == dedupeStateDuplicateDelivered {
 			return nil
+		}
+		if eventState == dedupeStateDuplicateInFlight {
+			return errSlackEventInFlight
 		}
 		defer func() {
 			eventLease.finish(success)
