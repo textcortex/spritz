@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -16,7 +17,12 @@ import (
 )
 
 type internalCreateSpritzRequest struct {
-	Request json.RawMessage `json:"request"`
+	Principal internalCreatePrincipal `json:"principal"`
+	Request   json.RawMessage         `json:"request"`
+}
+
+type internalCreatePrincipal struct {
+	ID string `json:"id"`
 }
 
 type internalSpritzSummary struct {
@@ -38,17 +44,25 @@ type internalSpritzSpec struct {
 	Owner spritzv1.SpritzOwner `json:"owner"`
 }
 
-func internalProvisionerPrincipal() principal {
+func (p internalCreatePrincipal) normalize() (principal, error) {
+	id := strings.TrimSpace(p.ID)
+	if id == "" {
+		return principal{}, fmt.Errorf("principal.id is required")
+	}
 	return finalizePrincipal(
-		"spritz-internal",
+		id,
 		"",
 		nil,
 		"",
-		"spritz-internal",
+		id,
 		principalTypeService,
-		[]string{scopeInstancesCreate, scopeInstancesAssignOwner},
+		[]string{
+			scopeInstancesCreate,
+			scopeInstancesAssignOwner,
+			scopeExternalResolveViaCreate,
+		},
 		false,
-	)
+	), nil
 }
 
 func summarizeInternalSpritz(spritz *spritzv1.Spritz) internalSpritzSummary {
@@ -73,6 +87,10 @@ func (s *server) createInternalSpritz(c echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return writeError(c, http.StatusBadRequest, "invalid json")
 	}
+	internalPrincipal, err := body.Principal.normalize()
+	if err != nil {
+		return writeError(c, http.StatusBadRequest, err.Error())
+	}
 	encodedRequest := bytes.TrimSpace(body.Request)
 	if len(encodedRequest) == 0 {
 		return writeError(c, http.StatusBadRequest, "request is required")
@@ -82,7 +100,7 @@ func (s *server) createInternalSpritz(c echo.Context) error {
 	clonedRequest.Body = io.NopCloser(bytes.NewReader(encodedRequest))
 	clonedRequest.ContentLength = int64(len(encodedRequest))
 	c.SetRequest(clonedRequest)
-	c.Set(principalContextKey, internalProvisionerPrincipal())
+	c.Set(principalContextKey, internalPrincipal)
 	return s.createSpritz(c)
 }
 

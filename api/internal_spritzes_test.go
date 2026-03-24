@@ -65,7 +65,7 @@ func newInternalSpritzesTestServer(t *testing.T, objects ...*spritzv1.Spritz) *s
 	}
 }
 
-func TestInternalCreateSpritzIgnoresCallerSuppliedPrincipal(t *testing.T) {
+func TestInternalCreateSpritzNormalizesCallerSuppliedPrincipal(t *testing.T) {
 	s := newInternalSpritzesTestServer(t)
 	e := echo.New()
 	s.registerRoutes(e)
@@ -98,7 +98,7 @@ func TestInternalCreateSpritzIgnoresCallerSuppliedPrincipal(t *testing.T) {
 	}
 	for _, fragment := range []string{
 		`"ownerId":"user-123"`,
-		`"actorId":"spritz-internal"`,
+		`"actorId":"forged-human"`,
 		`"actorType":"service"`,
 		`"presetId":"zeno"`,
 		`"source":"channel-gateway"`,
