@@ -761,6 +761,7 @@ func (g *slackGateway) exchangeChannelSession(ctx context.Context, teamID string
 func (g *slackGateway) upsertChannelConversation(ctx context.Context, session channelSession, event slackEventInner, teamID string) (string, error) {
 	body := map[string]any{
 		"namespace":              session.Namespace,
+		"principalId":            g.cfg.PrincipalID,
 		"instanceId":             session.InstanceID,
 		"ownerId":                session.OwnerAuthID,
 		"provider":               slackProvider,
@@ -772,7 +773,7 @@ func (g *slackGateway) upsertChannelConversation(ctx context.Context, session ch
 		"cwd":                    defaultConversationCWD,
 	}
 	var payload spritzConversationUpsertResponse
-	if err := g.postSpritzJSON(ctx, http.MethodPost, "/api/channel-conversations/upsert", g.cfg.SpritzServiceToken, body, &payload, nil); err != nil {
+	if err := g.postSpritzJSON(ctx, http.MethodPost, "/api/channel-conversations/upsert", session.AccessToken, body, &payload, nil); err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(payload.Data.Conversation.Metadata.Name), nil

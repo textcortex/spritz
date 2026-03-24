@@ -27,6 +27,7 @@ const (
 type channelConversationUpsertRequest struct {
 	RequestID              string `json:"requestId,omitempty"`
 	Namespace              string `json:"namespace,omitempty"`
+	PrincipalID            string `json:"principalId"`
 	InstanceID             string `json:"instanceId"`
 	OwnerID                string `json:"ownerId"`
 	Provider               string `json:"provider"`
@@ -49,9 +50,10 @@ type normalizedChannelConversationIdentity struct {
 
 // normalizeChannelConversationUpsertRequest validates the route/thread identity
 // used to upsert a persistent ACP conversation mapping.
-func normalizeChannelConversationUpsertRequest(principalID string, body channelConversationUpsertRequest) (channelConversationUpsertRequest, normalizedChannelConversationIdentity, error) {
+func normalizeChannelConversationUpsertRequest(body channelConversationUpsertRequest) (channelConversationUpsertRequest, normalizedChannelConversationIdentity, error) {
 	body.RequestID = strings.TrimSpace(body.RequestID)
 	body.Namespace = strings.TrimSpace(body.Namespace)
+	body.PrincipalID = strings.TrimSpace(body.PrincipalID)
 	body.InstanceID = sanitizeSpritzNameToken(body.InstanceID)
 	body.OwnerID = strings.TrimSpace(body.OwnerID)
 	body.Title = strings.TrimSpace(body.Title)
@@ -76,6 +78,9 @@ func normalizeChannelConversationUpsertRequest(principalID string, body channelC
 	if body.OwnerID == "" {
 		return channelConversationUpsertRequest{}, normalizedChannelConversationIdentity{}, echo.NewHTTPError(http.StatusBadRequest, "ownerId is required")
 	}
+	if body.PrincipalID == "" {
+		return channelConversationUpsertRequest{}, normalizedChannelConversationIdentity{}, echo.NewHTTPError(http.StatusBadRequest, "principalId is required")
+	}
 	body.ExternalChannelID = strings.TrimSpace(body.ExternalChannelID)
 	if body.ExternalChannelID == "" {
 		return channelConversationUpsertRequest{}, normalizedChannelConversationIdentity{}, echo.NewHTTPError(http.StatusBadRequest, "externalChannelId is required")
@@ -86,7 +91,7 @@ func normalizeChannelConversationUpsertRequest(principalID string, body channelC
 	}
 
 	return body, normalizedChannelConversationIdentity{
-		principalID:            strings.TrimSpace(principalID),
+		principalID:            body.PrincipalID,
 		provider:               body.Provider,
 		externalScopeType:      body.ExternalScopeType,
 		externalTenantID:       body.ExternalTenantID,
@@ -145,7 +150,7 @@ func channelConversationMatchesIdentity(conversation *spritzv1.SpritzConversatio
 		strings.TrimSpace(conversation.Annotations[channelConversationExternalConversationIDAnnotationKey]) == identity.externalConversationID
 }
 
-func (s *server) getServiceScopedACPReadySpritz(c echo.Context, namespace, instanceID, ownerID string) (*spritzv1.Spritz, error) {
+func (s *server) getAdminScopedACPReadySpritz(c echo.Context, namespace, instanceID, ownerID string) (*spritzv1.Spritz, error) {
 	spritz := &spritzv1.Spritz{}
 	if err := s.client.Get(c.Request().Context(), clientKey(namespace, instanceID), spritz); err != nil {
 		return nil, err
@@ -223,10 +228,7 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 		return writeError(c, http.StatusUnauthorized, "unauthenticated")
 	}
 	if s.auth.enabled() {
-		if !principal.isService() && !principal.isAdminPrincipal() {
-			return writeForbidden(c)
-		}
-		if principal.isService() && !principal.hasScope(scopeChannelConversationsUpsert) && !principal.isAdminPrincipal() {
+		if !principal.isHuman() && !principal.isAdminPrincipal() {
 			return writeForbidden(c)
 		}
 	}
@@ -235,7 +237,7 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 	if err := decodeACPBody(c, &body); err != nil {
 		return writeError(c, http.StatusBadRequest, err.Error())
 	}
-	normalizedBody, identity, err := normalizeChannelConversationUpsertRequest(principal.ID, body)
+	normalizedBody, identity, err := normalizeChannelConversationUpsertRequest(body)
 	if err != nil {
 		if httpErr, ok := err.(*echo.HTTPError); ok {
 			return writeError(c, httpErr.Code, httpErr.Message.(string))
@@ -247,9 +249,20 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 		return writeError(c, http.StatusForbidden, err.Error())
 	}
 
-	spritz, err := s.getServiceScopedACPReadySpritz(c, namespace, normalizedBody.InstanceID, normalizedBody.OwnerID)
-	if err != nil {
-		return s.writeACPResourceError(c, err)
+	var spritz *spritzv1.Spritz
+	if principal.isAdminPrincipal() {
+		spritz, err = s.getAdminScopedACPReadySpritz(c, namespace, normalizedBody.InstanceID, normalizedBody.OwnerID)
+		if err != nil {
+			return s.writeACPResourceError(c, err)
+		}
+	} else {
+		if normalizedBody.OwnerID != principal.ID {
+			return writeForbidden(c)
+		}
+		spritz, err = s.getAuthorizedACPReadySpritz(c.Request().Context(), principal, namespace, normalizedBody.InstanceID)
+		if err != nil {
+			return s.writeACPResourceError(c, err)
+		}
 	}
 	conversation, found, err := s.findChannelConversation(c, namespace, spritz, identity)
 	if err != nil {

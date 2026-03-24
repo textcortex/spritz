@@ -232,6 +232,11 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 		sync.Mutex
 		values []string
 	}
+	var channelConversationCall struct {
+		sync.Mutex
+		authHeader string
+		payload    map[string]any
+	}
 	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/chat.postMessage" {
 			var payload map[string]any
@@ -275,6 +280,14 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 	spritz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/channel-conversations/upsert":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode channel conversation body: %v", err)
+			}
+			channelConversationCall.Lock()
+			channelConversationCall.authHeader = r.Header.Get("Authorization")
+			channelConversationCall.payload = payload
+			channelConversationCall.Unlock()
 			writeJSON(w, http.StatusCreated, map[string]any{
 				"status": "success",
 				"data": map[string]any{
@@ -407,6 +420,14 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 				if authHeader != "Bearer spritz-service-token" {
 					t.Fatalf("expected service token for ACP calls, got %q", authHeader)
 				}
+			}
+			channelConversationCall.Lock()
+			defer channelConversationCall.Unlock()
+			if channelConversationCall.authHeader != "Bearer owner-token" {
+				t.Fatalf("expected owner token for channel conversation upsert, got %q", channelConversationCall.authHeader)
+			}
+			if channelConversationCall.payload["principalId"] != "shared-slack-gateway" {
+				t.Fatalf("expected shared gateway principal in channel conversation payload, got %#v", channelConversationCall.payload["principalId"])
 			}
 			return
 		}

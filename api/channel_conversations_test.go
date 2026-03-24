@@ -26,6 +26,13 @@ func newChannelConversationsTestServer(t *testing.T, objects ...client.Object) *
 func newChannelConversationsRequest(body string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/api/channel-conversations/upsert", strings.NewReader(body))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "owner-123")
+	return req
+}
+
+func newChannelConversationsServiceRequest(body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/api/channel-conversations/upsert", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	req.Header.Set("X-Spritz-User-Id", "shared-slack-gateway")
 	req.Header.Set("X-Spritz-Principal-Type", "service")
 	req.Header.Set("X-Spritz-Principal-Scopes", scopeChannelConversationsUpsert)
@@ -39,6 +46,7 @@ func TestUpsertChannelConversationCreatesConversation(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, newChannelConversationsRequest(`{
+		"principalId":"shared-slack-gateway",
 		"instanceId":"zeno-acme",
 		"ownerId":"owner-123",
 		"provider":"slack",
@@ -129,6 +137,7 @@ func TestUpsertChannelConversationReusesExistingConversation(t *testing.T) {
 	s.registerRoutes(e)
 
 	body := `{
+		"principalId":"shared-slack-gateway",
 		"instanceId":"zeno-acme",
 		"ownerId":"owner-123",
 		"provider":"slack",
@@ -184,6 +193,7 @@ func TestUpsertChannelConversationPreservesExistingTitleAndCWD(t *testing.T) {
 
 	firstRec := httptest.NewRecorder()
 	e.ServeHTTP(firstRec, newChannelConversationsRequest(`{
+		"principalId":"shared-slack-gateway",
 		"instanceId":"zeno-acme",
 		"ownerId":"owner-123",
 		"provider":"slack",
@@ -200,6 +210,7 @@ func TestUpsertChannelConversationPreservesExistingTitleAndCWD(t *testing.T) {
 
 	secondRec := httptest.NewRecorder()
 	e.ServeHTTP(secondRec, newChannelConversationsRequest(`{
+		"principalId":"shared-slack-gateway",
 		"instanceId":"zeno-acme",
 		"ownerId":"owner-123",
 		"provider":"slack",
@@ -229,12 +240,14 @@ func TestUpsertChannelConversationPreservesExistingTitleAndCWD(t *testing.T) {
 	}
 }
 
-func TestUpsertChannelConversationRejectsMissingScope(t *testing.T) {
+func TestUpsertChannelConversationRejectsScopedServicePrincipal(t *testing.T) {
 	s := newChannelConversationsTestServer(t, readyACPSpritz("zeno-acme", "owner-123"))
 	e := echo.New()
 	s.registerRoutes(e)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/channel-conversations/upsert", strings.NewReader(`{
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, newChannelConversationsServiceRequest(`{
+		"principalId":"shared-slack-gateway",
 		"instanceId":"zeno-acme",
 		"ownerId":"owner-123",
 		"provider":"slack",
@@ -243,15 +256,9 @@ func TestUpsertChannelConversationRejectsMissingScope(t *testing.T) {
 		"externalChannelId":"C_channel_1",
 		"externalConversationId":"1711387375.000100"
 	}`))
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	req.Header.Set("X-Spritz-User-Id", "shared-slack-gateway")
-	req.Header.Set("X-Spritz-Principal-Type", "service")
-	rec := httptest.NewRecorder()
-
-	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 without scope, got %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("expected 403 for scoped service principal, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -262,6 +269,7 @@ func TestUpsertChannelConversationRejectsOwnerMismatch(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, newChannelConversationsRequest(`{
+		"principalId":"shared-slack-gateway",
 		"instanceId":"zeno-acme",
 		"ownerId":"owner-456",
 		"provider":"slack",
