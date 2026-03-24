@@ -256,7 +256,7 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 			return s.writeACPResourceError(c, err)
 		}
 	} else {
-		if normalizedBody.OwnerID != principal.ID {
+		if s.auth.enabled() && normalizedBody.OwnerID != principal.ID {
 			return writeForbidden(c)
 		}
 		spritz, err = s.getAuthorizedACPReadySpritz(c.Request().Context(), principal, namespace, normalizedBody.InstanceID)

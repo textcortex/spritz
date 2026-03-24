@@ -283,3 +283,26 @@ func TestUpsertChannelConversationRejectsOwnerMismatch(t *testing.T) {
 		t.Fatalf("expected 403 for owner mismatch, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestUpsertChannelConversationAllowsAuthDisabledOwnerBoundRequest(t *testing.T) {
+	s := newChannelConversationsTestServer(t, readyACPSpritz("zeno-acme", "owner-123"))
+	s.auth.mode = authModeNone
+	e := echo.New()
+	s.registerRoutes(e)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, newChannelConversationsRequest(`{
+		"principalId":"shared-slack-gateway",
+		"instanceId":"zeno-acme",
+		"ownerId":"owner-123",
+		"provider":"slack",
+		"externalScopeType":"workspace",
+		"externalTenantId":"T_workspace_1",
+		"externalChannelId":"C_channel_1",
+		"externalConversationId":"1711387375.000100"
+	}`))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 when auth is disabled, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

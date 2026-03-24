@@ -283,11 +283,30 @@ func newSlackGateway(cfg config, logger *slog.Logger) *slackGateway {
 
 func (g *slackGateway) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", g.handleHealthz)
-	mux.HandleFunc("/slack/install", g.handleInstallRedirect)
-	mux.HandleFunc("/slack/oauth/callback", g.handleOAuthCallback)
-	mux.HandleFunc("/slack/events", g.handleSlackEvents)
+	g.registerRoute(mux, "/healthz", g.handleHealthz)
+	g.registerRoute(mux, "/slack/install", g.handleInstallRedirect)
+	g.registerRoute(mux, "/slack/oauth/callback", g.handleOAuthCallback)
+	g.registerRoute(mux, "/slack/events", g.handleSlackEvents)
 	return mux
+}
+
+func (g *slackGateway) registerRoute(mux *http.ServeMux, route string, handler http.HandlerFunc) {
+	mux.HandleFunc(route, handler)
+	if prefix := g.publicPathPrefix(); prefix != "" {
+		mux.HandleFunc(prefix+route, handler)
+	}
+}
+
+func (g *slackGateway) publicPathPrefix() string {
+	parsed, err := url.Parse(strings.TrimSpace(g.cfg.PublicURL))
+	if err != nil {
+		return ""
+	}
+	prefix := strings.TrimRight(strings.TrimSpace(parsed.Path), "/")
+	if prefix == "" || prefix == "." || prefix == "/" {
+		return ""
+	}
+	return prefix
 }
 
 func (g *slackGateway) handleHealthz(w http.ResponseWriter, _ *http.Request) {

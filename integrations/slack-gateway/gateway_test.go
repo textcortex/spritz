@@ -166,6 +166,37 @@ func TestInstallRedirectUsesConfiguredSlackHost(t *testing.T) {
 	}
 }
 
+func TestRoutesServeSlackEndpointsUnderConfiguredPublicURLPathPrefix(t *testing.T) {
+	cfg := config{
+		PublicURL:          "https://gateway.example.test/spritz/slack-gateway",
+		SlackClientID:      "client-id",
+		SlackAPIBaseURL:    "https://slack.example.test/api",
+		SlackBotScopes:     []string{"chat:write"},
+		OAuthStateSecret:   "oauth-state-secret",
+		BackendBaseURL:     "https://backend.example.test",
+		SpritzBaseURL:      "https://spritz.example.test",
+		SpritzServiceToken: "spritz-service-token",
+		PrincipalID:        "shared-slack-gateway",
+	}
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	req := httptest.NewRequest(http.MethodGet, "/spritz/slack-gateway/slack/install", nil)
+	rec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected prefixed install route to resolve, got %d: %s", rec.Code, rec.Body.String())
+	}
+	location := rec.Header().Get("Location")
+	redirectURL, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("parse redirect location: %v", err)
+	}
+	if got := redirectURL.Query().Get("redirect_uri"); got != "https://gateway.example.test/spritz/slack-gateway/slack/oauth/callback" {
+		t.Fatalf("expected redirect_uri to keep the public path prefix, got %q", got)
+	}
+}
+
 func TestOAuthCallbackReturnsBadGatewayWhenBackendUpsertFails(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "backend unavailable", http.StatusServiceUnavailable)
