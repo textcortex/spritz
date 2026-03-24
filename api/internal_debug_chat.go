@@ -164,7 +164,7 @@ func (s *server) getInternalDebugConversation(ctx context.Context, principal pri
 	if err := s.client.Get(ctx, clientKey(namespace, conversationID), conversation); err != nil {
 		return nil, err
 	}
-	if err := authorizeExactOwnerAccess(principal, conversation.Spec.Owner.ID, s.auth.enabled()); err != nil {
+	if err := authorizeCallerOwnerAccess(principal, conversation.Spec.Owner.ID, s.auth.enabled()); err != nil {
 		return nil, err
 	}
 	return conversation, nil
@@ -175,7 +175,7 @@ func (s *server) getInternalDebugACPReadySpritz(ctx context.Context, principal p
 	if err := s.client.Get(ctx, clientKey(namespace, name), spritz); err != nil {
 		return nil, err
 	}
-	if err := authorizeExactOwnerAccess(principal, spritz.Spec.Owner.ID, s.auth.enabled()); err != nil {
+	if err := authorizeCallerOwnerAccess(principal, spritz.Spec.Owner.ID, s.auth.enabled()); err != nil {
 		return nil, err
 	}
 	if !spritzSupportsACPConversations(spritz) {

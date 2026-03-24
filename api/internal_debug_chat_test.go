@@ -636,6 +636,32 @@ func TestInternalDebugChatSendRequiresDedicatedInternalHeader(t *testing.T) {
 	}
 }
 
+func TestInternalDebugChatSendRejectsAdminOwnerMismatch(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-2")
+
+	s := newACPTestServer(t, spritz)
+	s.internalAuth = internalAuthConfig{enabled: true, token: "internal-token"}
+	s.auth.adminIDs = map[string]struct{}{"admin-1": {}}
+
+	e := echo.New()
+	internal := e.Group("", s.internalAuthHeaderMiddleware(), s.authMiddleware())
+	internal.POST("/api/internal/v1/debug/chat/send", s.sendInternalDebugChat)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{
+		"target":{"spritzName":"tidy-otter"},
+		"message":"hello"
+	}`))
+	req.Header.Set(internalTokenHeader, "internal-token")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Spritz-User-Id", "admin-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestInternalDebugChatSendRepairsMissingSessionBeforePrompt(t *testing.T) {
 	spritz := readyACPSpritz("tidy-otter", "user-1")
 	conversation := conversationFor("tidy-otter-conv", "tidy-otter", "user-1", "Existing", metav1.Now())
