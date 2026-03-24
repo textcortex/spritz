@@ -3,13 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net"
 	"strings"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 type acpPromptResult struct {
@@ -46,6 +42,12 @@ func (c *acpBootstrapInstanceClient) prompt(ctx context.Context, sessionID, text
 		if err != nil {
 			return nil, err
 		}
+		if handled, err := c.handleServerRequest(ctx, message, "Method not supported by internal debug chat."); handled {
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
 		if update, ok := sessionUpdateFromMessage(message); ok {
 			updates = append(updates, update)
 			continue
@@ -79,37 +81,48 @@ func (c *acpBootstrapInstanceClient) drainSessionUpdates(ctx context.Context, se
 	if c == nil || c.conn == nil || settleTimeout <= 0 {
 		return nil
 	}
-	defer func() {
-		_ = c.conn.SetReadDeadline(time.Time{})
-	}()
+	c.startReader()
+	timer := time.NewTimer(settleTimeout)
+	defer timer.Stop()
+
 	for {
-		if err := ctx.Err(); err != nil {
+		select {
+		case <-ctx.Done():
 			return nil
-		}
-		deadline := time.Now().Add(settleTimeout)
-		if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
-			deadline = ctxDeadline
-		}
-		if err := c.conn.SetReadDeadline(deadline); err != nil {
-			return err
-		}
-		_, payload, err := c.conn.ReadMessage()
-		if err != nil {
-			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				return nil
-			}
-			var netErr net.Error
-			if errors.As(err, &netErr) && netErr.Timeout() {
+		case <-timer.C:
+			return nil
+		case err, ok := <-c.readErrCh:
+			if !ok || err == nil {
 				return nil
 			}
 			return err
-		}
-		message := &acpBootstrapJSONRPCMessage{}
-		if err := json.Unmarshal(payload, message); err != nil {
-			return err
-		}
-		if update, ok := sessionUpdateFromMessage(message); ok {
-			*updates = append(*updates, update)
+		case message, ok := <-c.readCh:
+			if !ok {
+				return nil
+			}
+			if handled, err := c.handleServerRequest(ctx, message, "Method not supported by internal debug chat."); handled {
+				if err != nil {
+					return err
+				}
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(settleTimeout)
+				continue
+			}
+			if update, ok := sessionUpdateFromMessage(message); ok {
+				*updates = append(*updates, update)
+			}
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(settleTimeout)
 		}
 	}
 }

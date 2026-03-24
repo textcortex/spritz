@@ -96,7 +96,7 @@ func (s *server) sendInternalDebugChat(c echo.Context) error {
 		return s.writeInternalDebugChatRuntimeError(c, err)
 	}
 
-	promptResult, err := s.runInternalDebugChatPrompt(c.Request().Context(), spritz, bootstrap.EffectiveSessionID, message)
+	promptResult, err := s.runInternalDebugChatPrompt(c.Request().Context(), spritz, bootstrap.EffectiveSessionID, conversation.Spec.CWD, message)
 	if err != nil {
 		s.cleanupInternalDebugConversation(c.Request().Context(), conversation, createdConversation)
 		s.auditInternalDebugChatFailure(principal.ID, body.Target, reason, message, "prompt_error", err)
@@ -207,7 +207,7 @@ func (s *server) cleanupInternalDebugConversation(ctx context.Context, conversat
 	}
 }
 
-func (s *server) runInternalDebugChatPrompt(ctx context.Context, spritz *spritzv1.Spritz, sessionID, message string) (*acpPromptResult, error) {
+func (s *server) runInternalDebugChatPrompt(ctx context.Context, spritz *spritzv1.Spritz, sessionID, cwd, message string) (*acpPromptResult, error) {
 	runCtx, cancel := context.WithTimeout(ctx, s.acp.promptTimeout)
 	defer cancel()
 	cancelWatcherDone := make(chan struct{})
@@ -246,6 +246,13 @@ func (s *server) runInternalDebugChatPrompt(ctx context.Context, spritz *spritzv
 	}()
 
 	if _, err := client.initialize(runCtx, s.acp.clientInfo, s.acp.clientCapabilities); err != nil {
+		return nil, err
+	}
+	if _, err := client.loadSession(runCtx, sessionID, normalizeConversationCWD(cwd)); err != nil {
+		return nil, err
+	}
+	ignoredReplayUpdates := make([]map[string]any, 0, 8)
+	if err := client.drainSessionUpdates(runCtx, s.acp.promptSettleTimeout, &ignoredReplayUpdates); err != nil {
 		return nil, err
 	}
 	result, err := client.prompt(runCtx, sessionID, message, s.acp.promptSettleTimeout)

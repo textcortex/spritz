@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,13 +19,14 @@ import (
 )
 
 type fakeACPDebugChatServerOptions struct {
-	SessionID       string
-	LoadReplay      []map[string]any
-	LoadReplayAfter []map[string]any
-	HoldPrompt      bool
-	PromptChunks    []string
-	PromptError     *acpBootstrapJSONRPCError
-	StopReason      string
+	SessionID           string
+	LoadReplay          []map[string]any
+	LoadReplayAfter     []map[string]any
+	HoldPrompt          bool
+	PermissionRequestID any
+	PromptChunks        []string
+	PromptError         *acpBootstrapJSONRPCError
+	StopReason          string
 }
 
 type fakeACPDebugChatServer struct {
@@ -33,12 +35,13 @@ type fakeACPDebugChatServer struct {
 	server *httptest.Server
 	mu     sync.Mutex
 
-	initCalls        int
-	newCalls         int
-	cancelSessionIDs []string
-	loadSessionIDs   []string
-	promptSessionIDs []string
-	promptTexts      []string
+	initCalls           int
+	newCalls            int
+	cancelSessionIDs    []string
+	loadSessionIDs      []string
+	permissionResponses []map[string]any
+	promptSessionIDs    []string
+	promptTexts         []string
 }
 
 func newFakeACPDebugChatServer(t *testing.T, options fakeACPDebugChatServerOptions) *fakeACPDebugChatServer {
@@ -164,6 +167,29 @@ func newFakeACPDebugChatServer(t *testing.T, options fakeACPDebugChatServerOptio
 				fakeServer.promptSessionIDs = append(fakeServer.promptSessionIDs, params.SessionID)
 				fakeServer.promptTexts = append(fakeServer.promptTexts, text)
 				fakeServer.mu.Unlock()
+				if options.PermissionRequestID != nil {
+					if err := conn.WriteJSON(map[string]any{
+						"jsonrpc": "2.0",
+						"id":      options.PermissionRequestID,
+						"method":  "session/request_permission",
+						"params": map[string]any{
+							"tool": "dangerous-tool",
+						},
+					}); err != nil {
+						t.Fatalf("failed to write permission request: %v", err)
+					}
+					_, payload, err := conn.ReadMessage()
+					if err != nil {
+						t.Fatalf("failed to read permission response: %v", err)
+					}
+					var response map[string]any
+					if err := json.Unmarshal(payload, &response); err != nil {
+						t.Fatalf("failed to decode permission response: %v", err)
+					}
+					fakeServer.mu.Lock()
+					fakeServer.permissionResponses = append(fakeServer.permissionResponses, response)
+					fakeServer.mu.Unlock()
+				}
 				if options.HoldPrompt {
 					continue
 				}
@@ -298,8 +324,8 @@ func TestInternalDebugChatSendCreatesConversationAndReturnsAssistantText(t *test
 	if fakeACP.newCalls != 1 {
 		t.Fatalf("expected one session/new call, got %d", fakeACP.newCalls)
 	}
-	if len(fakeACP.loadSessionIDs) != 0 {
-		t.Fatalf("expected no session/load calls for a fresh session, got %#v", fakeACP.loadSessionIDs)
+	if len(fakeACP.loadSessionIDs) != 1 || fakeACP.loadSessionIDs[0] != "session-fresh" {
+		t.Fatalf("expected prompt-side session/load for session-fresh, got %#v", fakeACP.loadSessionIDs)
 	}
 	if len(fakeACP.promptTexts) != 1 || fakeACP.promptTexts[0] != "  hello from cli  " {
 		t.Fatalf("expected one prompt with original message, got %#v", fakeACP.promptTexts)
@@ -381,11 +407,11 @@ func TestInternalDebugChatSendTargetsExistingConversation(t *testing.T) {
 	if fakeACP.newCalls != 0 {
 		t.Fatalf("expected no session/new call, got %d", fakeACP.newCalls)
 	}
-	if len(fakeACP.loadSessionIDs) != 1 {
-		t.Fatalf("expected a single bootstrap session/load call, got %#v", fakeACP.loadSessionIDs)
+	if len(fakeACP.loadSessionIDs) != 2 {
+		t.Fatalf("expected bootstrap and prompt-side session/load calls, got %#v", fakeACP.loadSessionIDs)
 	}
-	if fakeACP.loadSessionIDs[0] != "session-existing" {
-		t.Fatalf("expected load to target session-existing, got %#v", fakeACP.loadSessionIDs)
+	if fakeACP.loadSessionIDs[0] != "session-existing" || fakeACP.loadSessionIDs[1] != "session-existing" {
+		t.Fatalf("expected both loads to target session-existing, got %#v", fakeACP.loadSessionIDs)
 	}
 }
 
@@ -508,6 +534,50 @@ func TestInternalDebugChatSendCancelsPromptWhenPromptTimesOut(t *testing.T) {
 	defer fakeACP.mu.Unlock()
 	if len(fakeACP.cancelSessionIDs) != 1 || fakeACP.cancelSessionIDs[0] != "session-fresh" {
 		t.Fatalf("expected one session/cancel for session-fresh, got %#v", fakeACP.cancelSessionIDs)
+	}
+}
+
+func TestInternalDebugChatSendRejectsPermissionRequestsExplicitly(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	fakeACP := newFakeACPDebugChatServer(t, fakeACPDebugChatServerOptions{
+		SessionID:           "session-fresh",
+		PermissionRequestID: "perm-1",
+		PromptChunks:        []string{"ok"},
+	})
+
+	s := newACPTestServer(t, spritz)
+	s.internalAuth = internalAuthConfig{enabled: true, token: "internal-token"}
+	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
+
+	e := echo.New()
+	internal := e.Group("", s.internalAuthMiddleware(), s.authMiddleware())
+	internal.POST("/api/internal/v1/debug/chat/send", s.sendInternalDebugChat)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{
+		"target":{"spritzName":"tidy-otter","cwd":"/workspace/app","title":"Debug Run"},
+		"message":"hello from cli"
+	}`))
+	req.Header.Set(internalTokenHeader, "internal-token")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	fakeACP.mu.Lock()
+	defer fakeACP.mu.Unlock()
+	if len(fakeACP.permissionResponses) != 1 {
+		t.Fatalf("expected one permission response, got %#v", fakeACP.permissionResponses)
+	}
+	errorPayload, _ := fakeACP.permissionResponses[0]["error"].(map[string]any)
+	if errorPayload == nil {
+		t.Fatalf("expected permission response to be an error, got %#v", fakeACP.permissionResponses[0])
+	}
+	if fmt.Sprint(errorPayload["message"]) != "Permission requests are not supported by internal debug chat." {
+		t.Fatalf("unexpected permission response message: %#v", fakeACP.permissionResponses[0])
 	}
 }
 
