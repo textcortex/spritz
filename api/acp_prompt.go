@@ -79,6 +79,9 @@ func (c *acpBootstrapInstanceClient) drainSessionUpdates(ctx context.Context, se
 	if c == nil || c.conn == nil || settleTimeout <= 0 {
 		return nil
 	}
+	defer func() {
+		_ = c.conn.SetReadDeadline(time.Time{})
+	}()
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
@@ -17,11 +18,12 @@ import (
 )
 
 type fakeACPDebugChatServerOptions struct {
-	SessionID    string
-	LoadReplay   []map[string]any
-	PromptChunks []string
-	PromptError  *acpBootstrapJSONRPCError
-	StopReason   string
+	SessionID       string
+	LoadReplay      []map[string]any
+	LoadReplayAfter []map[string]any
+	PromptChunks    []string
+	PromptError     *acpBootstrapJSONRPCError
+	StopReason      string
 }
 
 type fakeACPDebugChatServer struct {
@@ -130,6 +132,17 @@ func newFakeACPDebugChatServer(t *testing.T, options fakeACPDebugChatServerOptio
 					"result":  map[string]any{},
 				}); err != nil {
 					t.Fatalf("failed to write load result: %v", err)
+				}
+				for _, update := range options.LoadReplayAfter {
+					if err := conn.WriteJSON(map[string]any{
+						"jsonrpc": "2.0",
+						"method":  "session/update",
+						"params": map[string]any{
+							"update": update,
+						},
+					}); err != nil {
+						t.Fatalf("failed to write late replay update: %v", err)
+					}
 				}
 			case "session/prompt":
 				var params struct {
@@ -284,12 +297,22 @@ func TestInternalDebugChatSendTargetsExistingConversation(t *testing.T) {
 	conversation.Spec.SessionID = "session-existing"
 
 	fakeACP := newFakeACPDebugChatServer(t, fakeACPDebugChatServerOptions{
+		LoadReplayAfter: []map[string]any{
+			{
+				"sessionUpdate": "agent_message_chunk",
+				"content": map[string]any{
+					"type": "text",
+					"text": "stale-",
+				},
+			},
+		},
 		PromptChunks: []string{"ok"},
 	})
 
 	s := newACPTestServer(t, spritz, conversation)
 	s.internalAuth = internalAuthConfig{enabled: true, token: "internal-token"}
 	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
+	s.acp.promptSettleTimeout = 100 * time.Millisecond
 
 	e := echo.New()
 	internal := e.Group("", s.internalAuthMiddleware(), s.authMiddleware())
@@ -306,7 +329,19 @@ func TestInternalDebugChatSendTargetsExistingConversation(t *testing.T) {
 	e.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		fakeACP.mu.Lock()
+		loadSessionIDs := append([]string(nil), fakeACP.loadSessionIDs...)
+		promptSessionIDs := append([]string(nil), fakeACP.promptSessionIDs...)
+		promptTexts := append([]string(nil), fakeACP.promptTexts...)
+		fakeACP.mu.Unlock()
+		t.Fatalf(
+			"expected status 200, got %d: %s (loads=%#v prompts=%#v promptTexts=%#v)",
+			rec.Code,
+			rec.Body.String(),
+			loadSessionIDs,
+			promptSessionIDs,
+			promptTexts,
+		)
 	}
 
 	var payload struct {
@@ -402,6 +437,24 @@ func TestInternalDebugChatSendDeletesCreatedConversationOnPromptFailure(t *testi
 	}
 	if len(stored.Items) != 0 {
 		t.Fatalf("expected created conversation to be deleted on prompt failure, got %#v", stored.Items)
+	}
+}
+
+func TestCleanupInternalDebugConversationUsesFallbackContextWhenCanceled(t *testing.T) {
+	conversation := conversationFor("tidy-otter-conv", "tidy-otter", "user-1", "Existing", metav1.Now())
+	s := newACPTestServer(t, conversation)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	s.cleanupInternalDebugConversation(ctx, conversation, true)
+
+	stored := &spritzv1.SpritzConversationList{}
+	if err := s.client.List(context.Background(), stored); err != nil {
+		t.Fatalf("failed to list conversations: %v", err)
+	}
+	if len(stored.Items) != 0 {
+		t.Fatalf("expected cleanup to delete the conversation even when the request context is canceled, got %#v", stored.Items)
 	}
 }
 

@@ -8,7 +8,9 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
@@ -86,17 +88,14 @@ func (s *server) sendInternalDebugChat(c echo.Context) error {
 		return s.writeInternalDebugChatTargetError(c, err)
 	}
 
-	bootstrap, client, err := s.bootstrapACPConversationBindingClient(c.Request().Context(), conversation, spritz)
+	bootstrap, err := s.bootstrapACPConversationBinding(c.Request().Context(), conversation, spritz)
 	if err != nil {
 		s.cleanupInternalDebugConversation(c.Request().Context(), conversation, createdConversation)
 		s.auditInternalDebugChatFailure(principal.ID, body.Target, reason, message, "bootstrap_error", err)
 		return s.writeInternalDebugChatRuntimeError(c, err)
 	}
-	defer func() {
-		_ = client.close()
-	}()
 
-	promptResult, err := s.runInternalDebugChatPrompt(c.Request().Context(), client, bootstrap.EffectiveSessionID, message)
+	promptResult, err := s.runInternalDebugChatPrompt(c.Request().Context(), spritz, bootstrap.EffectiveSessionID, message)
 	if err != nil {
 		s.cleanupInternalDebugConversation(c.Request().Context(), conversation, createdConversation)
 		s.auditInternalDebugChatFailure(principal.ID, body.Target, reason, message, "prompt_error", err)
@@ -191,7 +190,13 @@ func (s *server) cleanupInternalDebugConversation(ctx context.Context, conversat
 	if !created || conversation == nil {
 		return
 	}
-	if err := s.client.Delete(ctx, conversation); err != nil && !apierrors.IsNotFound(err) {
+	cleanupCtx := ctx
+	cleanupCancel := func() {}
+	if cleanupCtx == nil || cleanupCtx.Err() != nil {
+		cleanupCtx, cleanupCancel = context.WithTimeout(context.Background(), 5*time.Second)
+	}
+	defer cleanupCancel()
+	if err := s.client.Delete(cleanupCtx, conversation); err != nil && !apierrors.IsNotFound(err) {
 		log.Printf(
 			"spritz internal-debug-chat cleanup_failed namespace=%s conversation_id=%s err=%v",
 			conversation.Namespace,
@@ -201,13 +206,25 @@ func (s *server) cleanupInternalDebugConversation(ctx context.Context, conversat
 	}
 }
 
-func (s *server) runInternalDebugChatPrompt(ctx context.Context, client *acpBootstrapInstanceClient, sessionID, message string) (*acpPromptResult, error) {
-	if client == nil {
-		return nil, errors.New("acp client is required")
-	}
+func (s *server) runInternalDebugChatPrompt(ctx context.Context, spritz *spritzv1.Spritz, sessionID, message string) (*acpPromptResult, error) {
 	runCtx, cancel := context.WithTimeout(ctx, s.acp.promptTimeout)
 	defer cancel()
 
+	dialCtx, dialCancel := context.WithTimeout(runCtx, s.acp.bootstrapDialTimeout)
+	defer dialCancel()
+
+	instanceConn, _, err := websocket.DefaultDialer.DialContext(dialCtx, s.acpInstanceURL(spritz.Namespace, spritz.Name), nil)
+	if err != nil {
+		return nil, err
+	}
+	client := &acpBootstrapInstanceClient{conn: instanceConn}
+	defer func() {
+		_ = client.close()
+	}()
+
+	if _, err := client.initialize(runCtx, s.acp.clientInfo, s.acp.clientCapabilities); err != nil {
+		return nil, err
+	}
 	return client.prompt(runCtx, sessionID, message, s.acp.promptSettleTimeout)
 }
 
