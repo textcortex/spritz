@@ -62,6 +62,12 @@ func newACPTestServer(t *testing.T, objects ...client.Object) *server {
 	}
 }
 
+func configureServicePrincipalHeaders(s *server) {
+	s.auth.headerType = "X-Spritz-Principal-Type"
+	s.auth.headerScopes = "X-Spritz-Principal-Scopes"
+	s.auth.headerTrustTypeAndScopes = true
+}
+
 type fakeACPBootstrapServerOptions struct {
 	LoadError         *acpBootstrapJSONRPCError
 	NewSessionID      string
@@ -247,6 +253,13 @@ func conversationFor(name, spritzName, owner, title string, createdAt metav1.Tim
 			CWD:        "/home/dev",
 		},
 	}
+}
+
+func markConversationAsChannelBound(conversation *spritzv1.SpritzConversation, principalID string) {
+	if conversation.Annotations == nil {
+		conversation.Annotations = map[string]string{}
+	}
+	conversation.Annotations[channelConversationPrincipalAnnotationKey] = principalID
 }
 
 func TestListACPAgentsUsesStoredStatusOnly(t *testing.T) {
@@ -772,5 +785,93 @@ func TestBootstrapACPConversationAdvertisesRichClientCapabilities(t *testing.T) 
 	}
 	if metaCapabilities["terminal-auth"] != true || metaCapabilities["terminal_output"] != true {
 		t.Fatalf("expected terminal metadata capabilities, got %#v", metaCapabilities)
+	}
+}
+
+func TestBootstrapACPConversationAllowsScopedChannelServicePrincipal(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	conversation := conversationFor("tidy-otter-conv", "tidy-otter", "user-1", "Latest", metav1.Now())
+	conversation.Spec.SessionID = "session-existing"
+	markConversationAsChannelBound(conversation, "shared-slack-gateway")
+	fakeACP := newFakeACPBootstrapServer(t, fakeACPBootstrapServerOptions{})
+
+	s := newACPTestServer(t, spritz, conversation)
+	configureServicePrincipalHeaders(s)
+	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/acp/conversations/:id/bootstrap", s.bootstrapACPConversation)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/acp/conversations/"+conversation.Name+"/bootstrap", nil)
+	req.Header.Set("X-Spritz-User-Id", "shared-slack-gateway")
+	req.Header.Set("X-Spritz-Principal-Type", "service")
+	req.Header.Set("X-Spritz-Principal-Scopes", scopeChannelConversationsUpsert)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestOpenACPConversationConnectionAllowsScopedChannelServicePrincipal(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	conversation := conversationFor("tidy-otter-conv", "tidy-otter", "user-1", "Latest", metav1.Now())
+	markConversationAsChannelBound(conversation, "shared-slack-gateway")
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	instance := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("failed to upgrade instance websocket: %v", err)
+		}
+		defer conn.Close()
+
+		msgType, payload, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("failed to read instance websocket message: %v", err)
+		}
+		if err := conn.WriteMessage(msgType, []byte(strings.ToUpper(string(payload)))); err != nil {
+			t.Fatalf("failed to write instance websocket message: %v", err)
+		}
+	}))
+	defer instance.Close()
+
+	s := newACPTestServer(t, spritz, conversation)
+	configureServicePrincipalHeaders(s)
+	s.acp.instanceURL = func(namespace, name string) string {
+		return "ws" + strings.TrimPrefix(instance.URL, "http")
+	}
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.GET("/api/acp/conversations/:id/connect", s.openACPConversationConnection)
+	proxy := httptest.NewServer(e)
+	defer proxy.Close()
+
+	proxyURL := strings.TrimPrefix(proxy.URL, "http")
+	wsURL := "ws" + proxyURL + "/api/acp/conversations/" + conversation.Name + "/connect"
+	headers := http.Header{}
+	headers.Set("X-Spritz-User-Id", "shared-slack-gateway")
+	headers.Set("X-Spritz-Principal-Type", "service")
+	headers.Set("X-Spritz-Principal-Scopes", scopeChannelConversationsUpsert)
+	headers.Set("Origin", proxy.URL)
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, headers)
+	if err != nil {
+		t.Fatalf("expected websocket dial to succeed, got %v", err)
+	}
+	defer conn.Close()
+
+	if err := conn.WriteMessage(websocket.TextMessage, []byte("ping")); err != nil {
+		t.Fatalf("failed to write websocket message: %v", err)
+	}
+	_, payload, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("failed to read websocket message: %v", err)
+	}
+	if string(payload) != "PING" {
+		t.Fatalf("expected websocket echo PING, got %q", string(payload))
 	}
 }

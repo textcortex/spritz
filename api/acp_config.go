@@ -74,10 +74,12 @@ func newACPConfig() acpConfig {
 
 func (a acpConfig) allowOrigin(r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		// Non-browser ACP clients authenticate with bearer tokens and do not rely
+		// on browser-origin semantics.
+		return strings.TrimSpace(r.Header.Get("Authorization")) != ""
+	}
 	if len(a.allowedOrigins) == 0 {
-		if origin == "" {
-			return false
-		}
 		parsed, err := url.Parse(origin)
 		if err != nil {
 			return false
