@@ -10,6 +10,9 @@ tags: [spritz, conversations, debug, testing, auth, audit, architecture]
 This document defines the preferred architecture for privileged conversation
 debugging and testing in Spritz.
 
+For the broader long-term conversation architecture, see
+[Spritz-Native Conversation Broker Architecture](2026-03-24-spritz-native-conversation-broker-architecture.md).
+
 The target model is:
 
 - the Spritz control plane owns all privileged debug and test access,
@@ -537,6 +540,10 @@ Transcript reads, event streaming, and explicit cross-owner break-glass remain
 later phases.
 
 This replaces the need for direct ACP from local laptops for routine testing.
+
+The longer-term target is to move this flow under the canonical conversation
+broker described in
+[Spritz-Native Conversation Broker Architecture](2026-03-24-spritz-native-conversation-broker-architecture.md).
 
 ### Phase 2
 
