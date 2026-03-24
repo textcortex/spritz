@@ -205,15 +205,15 @@ func (s *server) cleanupInternalDebugConversation(ctx context.Context, conversat
 }
 
 func (s *server) runInternalDebugChat(ctx context.Context, conversation *spritzv1.SpritzConversation, spritz *spritzv1.Spritz, message string) (*acpBootstrapResponse, *acpPromptResult, error) {
-	runCtx, cancel := context.WithTimeout(ctx, s.acp.promptTimeout)
-	defer cancel()
+	bootstrapCtx, bootstrapCancel := context.WithTimeout(ctx, s.acp.promptTimeout)
+	defer bootstrapCancel()
 
-	dialCtx, dialCancel := context.WithTimeout(runCtx, s.acp.bootstrapDialTimeout)
+	dialCtx, dialCancel := context.WithTimeout(bootstrapCtx, s.acp.bootstrapDialTimeout)
 	defer dialCancel()
 
 	instanceConn, _, err := websocket.DefaultDialer.DialContext(dialCtx, s.acpInstanceURL(spritz.Namespace, spritz.Name), nil)
 	if err != nil {
-		s.recordConversationBindingError(runCtx, conversation.Namespace, conversation.Name, "", err)
+		s.recordConversationBindingError(bootstrapCtx, conversation.Namespace, conversation.Name, "", err)
 		return nil, nil, err
 	}
 	client := &acpBootstrapInstanceClient{conn: instanceConn}
@@ -221,24 +221,26 @@ func (s *server) runInternalDebugChat(ctx context.Context, conversation *spritzv
 		_ = client.close()
 	}()
 
-	initResult, err := client.initialize(runCtx, s.acp.clientInfo, s.acp.clientCapabilities)
+	initResult, err := client.initialize(bootstrapCtx, s.acp.clientInfo, s.acp.clientCapabilities)
 	if err != nil {
-		s.recordConversationBindingError(runCtx, conversation.Namespace, conversation.Name, "", err)
+		s.recordConversationBindingError(bootstrapCtx, conversation.Namespace, conversation.Name, "", err)
 		return nil, nil, err
 	}
 
-	bootstrap, err := s.bootstrapACPConversationBindingWithClient(runCtx, conversation, client, initResult)
+	bootstrap, err := s.bootstrapACPConversationBindingWithClient(bootstrapCtx, conversation, client, initResult)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	if bootstrap.Loaded {
 		ignoredReplayUpdates := make([]map[string]any, 0, 8)
-		if err := client.drainSessionUpdates(runCtx, s.acp.promptSettleTimeout, &ignoredReplayUpdates); err != nil {
+		if err := client.drainSessionUpdates(bootstrapCtx, s.acp.promptSettleTimeout, &ignoredReplayUpdates); err != nil {
 			return bootstrap, nil, err
 		}
 	}
 
+	promptCtx, cancel := context.WithTimeout(ctx, s.acp.promptTimeout)
+	defer cancel()
 	cancelWatcherDone := make(chan struct{})
 	defer close(cancelWatcherDone)
 	var cancelOnce sync.Once
@@ -251,7 +253,7 @@ func (s *server) runInternalDebugChat(ctx context.Context, conversation *spritzv
 	}
 	go func() {
 		select {
-		case <-runCtx.Done():
+		case <-promptCtx.Done():
 			select {
 			case <-cancelWatcherDone:
 				return
@@ -262,8 +264,8 @@ func (s *server) runInternalDebugChat(ctx context.Context, conversation *spritzv
 		}
 	}()
 
-	result, err := client.prompt(runCtx, bootstrap.EffectiveSessionID, message, s.acp.promptSettleTimeout)
-	if err != nil && runCtx.Err() != nil {
+	result, err := client.prompt(promptCtx, bootstrap.EffectiveSessionID, message, s.acp.promptSettleTimeout)
+	if err != nil && promptCtx.Err() != nil {
 		sendCancel()
 	}
 	return bootstrap, result, err

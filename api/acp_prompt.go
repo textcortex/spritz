@@ -104,17 +104,13 @@ func (c *acpBootstrapInstanceClient) drainSessionUpdates(ctx context.Context, se
 				if err != nil {
 					return err
 				}
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
-				timer.Reset(settleTimeout)
 				continue
 			}
 			if update, ok := sessionUpdateFromMessage(message); ok {
 				*updates = append(*updates, update)
+				if !shouldExtendSessionSettleWindow(update) {
+					continue
+				}
 			}
 			if !timer.Stop() {
 				select {
@@ -124,6 +120,15 @@ func (c *acpBootstrapInstanceClient) drainSessionUpdates(ctx context.Context, se
 			}
 			timer.Reset(settleTimeout)
 		}
+	}
+}
+
+func shouldExtendSessionSettleWindow(update map[string]any) bool {
+	switch strings.TrimSpace(fmt.Sprint(update["sessionUpdate"])) {
+	case "", "heartbeat", "ping", "pong", "ack", "available_commands_update", "current_mode_update", "usage_update", "session_info_update":
+		return false
+	default:
+		return true
 	}
 }
 
