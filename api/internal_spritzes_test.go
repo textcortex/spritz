@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -64,17 +65,17 @@ func newInternalSpritzesTestServer(t *testing.T, objects ...*spritzv1.Spritz) *s
 	}
 }
 
-func TestInternalCreateSpritzCreatesProvisionerManagedInstance(t *testing.T) {
+func TestInternalCreateSpritzIgnoresCallerSuppliedPrincipal(t *testing.T) {
 	s := newInternalSpritzesTestServer(t)
 	e := echo.New()
 	s.registerRoutes(e)
 
 	body := `{
 		"principal": {
-			"id": "channel-gateway",
-			"type": "service",
-			"issuer": "channel-gateway",
-			"scopes": ["spritz.instances.create","spritz.instances.assign_owner"]
+			"id": "forged-human",
+			"type": "human",
+			"issuer": "forged-human",
+			"scopes": ["spritz.instances.create","spritz.instances.assign_owner","spritz.admin"]
 		},
 		"request": {
 			"presetId": "zeno",
@@ -97,7 +98,8 @@ func TestInternalCreateSpritzCreatesProvisionerManagedInstance(t *testing.T) {
 	}
 	for _, fragment := range []string{
 		`"ownerId":"user-123"`,
-		`"actorId":"channel-gateway"`,
+		`"actorId":"spritz-internal"`,
+		`"actorType":"service"`,
 		`"presetId":"zeno"`,
 		`"source":"channel-gateway"`,
 	} {
@@ -107,7 +109,7 @@ func TestInternalCreateSpritzCreatesProvisionerManagedInstance(t *testing.T) {
 	}
 }
 
-func TestInternalGetSpritzReturnsStoredResource(t *testing.T) {
+func TestInternalGetSpritzReturnsSanitizedSummary(t *testing.T) {
 	spritz := &spritzv1.Spritz{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "zeno-acme",
@@ -115,6 +117,16 @@ func TestInternalGetSpritzReturnsStoredResource(t *testing.T) {
 		},
 		Spec: spritzv1.SpritzSpec{
 			Owner: spritzv1.SpritzOwner{ID: "user-123"},
+			Env: []corev1.EnvVar{{
+				Name:  "DISCORD_BOT_TOKEN",
+				Value: "secret-token",
+			}},
+			Repo: &spritzv1.SpritzRepo{
+				URL: "https://example.com/private.git",
+				Auth: &spritzv1.SpritzRepoAuth{
+					SecretName: "repo-auth-secret",
+				},
+			},
 		},
 		Status: spritzv1.SpritzStatus{Phase: "Ready"},
 	}
@@ -133,5 +145,18 @@ func TestInternalGetSpritzReturnsStoredResource(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"phase":"Ready"`) {
 		t.Fatalf("expected response to include ready phase, got %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"owner":{"id":"user-123"}`) {
+		t.Fatalf("expected response to include owner summary, got %s", rec.Body.String())
+	}
+	for _, fragment := range []string{
+		`"env":`,
+		`"repo":`,
+		`"secretName":"repo-auth-secret"`,
+		`"DISCORD_BOT_TOKEN"`,
+	} {
+		if strings.Contains(rec.Body.String(), fragment) {
+			t.Fatalf("expected response to omit %q, got %s", fragment, rec.Body.String())
+		}
 	}
 }

@@ -3,59 +3,75 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/labstack/echo/v4"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	spritzv1 "spritz.sh/operator/api/v1"
 )
 
-type internalCreatePrincipal struct {
-	ID      string   `json:"id"`
-	Email   string   `json:"email,omitempty"`
-	Teams   []string `json:"teams,omitempty"`
-	Type    string   `json:"type,omitempty"`
-	Subject string   `json:"subject,omitempty"`
-	Issuer  string   `json:"issuer,omitempty"`
-	Scopes  []string `json:"scopes,omitempty"`
-}
-
 type internalCreateSpritzRequest struct {
-	Principal internalCreatePrincipal `json:"principal"`
-	Request   json.RawMessage         `json:"request"`
+	Request json.RawMessage `json:"request"`
 }
 
-func (p internalCreatePrincipal) normalize() (principal, error) {
-	id := strings.TrimSpace(p.ID)
-	if id == "" {
-		return principal{}, errors.New("principal.id is required")
-	}
-	principalTypeValue := normalizePrincipalType(p.Type, principalTypeService)
+type internalSpritzSummary struct {
+	Metadata    internalSpritzMetadata `json:"metadata"`
+	Spec        internalSpritzSpec     `json:"spec"`
+	Status      spritzv1.SpritzStatus  `json:"status"`
+	AccessURL   string                 `json:"accessUrl,omitempty"`
+	ChatURL     string                 `json:"chatUrl,omitempty"`
+	InstanceURL string                 `json:"instanceUrl,omitempty"`
+}
+
+type internalSpritzMetadata struct {
+	Name              string      `json:"name"`
+	Namespace         string      `json:"namespace"`
+	CreationTimestamp metav1.Time `json:"creationTimestamp,omitempty"`
+}
+
+type internalSpritzSpec struct {
+	Owner spritzv1.SpritzOwner `json:"owner"`
+}
+
+func internalProvisionerPrincipal() principal {
 	return finalizePrincipal(
-		id,
-		strings.TrimSpace(p.Email),
-		append([]string(nil), p.Teams...),
-		strings.TrimSpace(p.Subject),
-		strings.TrimSpace(p.Issuer),
-		principalTypeValue,
-		append([]string(nil), p.Scopes...),
+		"spritz-internal",
+		"",
+		nil,
+		"",
+		"spritz-internal",
+		principalTypeService,
+		[]string{scopeInstancesCreate, scopeInstancesAssignOwner},
 		false,
-	), nil
+	)
+}
+
+func summarizeInternalSpritz(spritz *spritzv1.Spritz) internalSpritzSummary {
+	return internalSpritzSummary{
+		Metadata: internalSpritzMetadata{
+			Name:              spritz.Name,
+			Namespace:         spritz.Namespace,
+			CreationTimestamp: spritz.CreationTimestamp,
+		},
+		Spec: internalSpritzSpec{
+			Owner: spritz.Spec.Owner,
+		},
+		Status:      spritz.Status,
+		AccessURL:   spritzv1.AccessURLForSpritz(spritz),
+		ChatURL:     spritzv1.ChatURLForSpritz(spritz),
+		InstanceURL: spritzv1.InstanceURLForSpritz(spritz),
+	}
 }
 
 func (s *server) createInternalSpritz(c echo.Context) error {
 	var body internalCreateSpritzRequest
 	if err := c.Bind(&body); err != nil {
 		return writeError(c, http.StatusBadRequest, "invalid json")
-	}
-	internalPrincipal, err := body.Principal.normalize()
-	if err != nil {
-		return writeError(c, http.StatusBadRequest, err.Error())
 	}
 	encodedRequest := bytes.TrimSpace(body.Request)
 	if len(encodedRequest) == 0 {
@@ -66,7 +82,7 @@ func (s *server) createInternalSpritz(c echo.Context) error {
 	clonedRequest.Body = io.NopCloser(bytes.NewReader(encodedRequest))
 	clonedRequest.ContentLength = int64(len(encodedRequest))
 	c.SetRequest(clonedRequest)
-	c.Set(principalContextKey, internalPrincipal)
+	c.Set(principalContextKey, internalProvisionerPrincipal())
 	return s.createSpritz(c)
 }
 
@@ -90,5 +106,5 @@ func (s *server) getInternalSpritz(c echo.Context) error {
 		}
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
-	return writeJSON(c, http.StatusOK, &spritz)
+	return writeJSON(c, http.StatusOK, summarizeInternalSpritz(&spritz))
 }
