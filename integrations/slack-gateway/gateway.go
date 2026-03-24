@@ -800,9 +800,14 @@ func (g *slackGateway) promptConversation(ctx context.Context, serviceToken, nam
 	if err != nil {
 		return "", false, err
 	}
+	origin, err := g.spritzOrigin()
+	if err != nil {
+		return "", false, err
+	}
 	dialer := websocket.Dialer{HandshakeTimeout: g.cfg.HTTPTimeout}
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+serviceToken)
+	headers.Set("Origin", origin)
 	conn, _, err := dialer.DialContext(ctx, wsURL, headers)
 	if err != nil {
 		return "", false, err
@@ -1092,6 +1097,17 @@ func (g *slackGateway) spritzWebSocketURL(routePath string, query map[string]str
 	}
 	parsed.RawQuery = values.Encode()
 	return parsed.String(), nil
+}
+
+func (g *slackGateway) spritzOrigin() (string, error) {
+	parsed, err := url.Parse(g.cfg.SpritzBaseURL)
+	if err != nil {
+		return "", err
+	}
+	return (&url.URL{
+		Scheme: parsed.Scheme,
+		Host:   parsed.Host,
+	}).String(), nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

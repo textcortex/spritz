@@ -1272,6 +1272,7 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 func TestPromptConversationRejectsInteractivePermissionRequests(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	permissionResponse := make(chan map[string]any, 1)
+	requestHeaders := make(chan http.Header, 1)
 	spritz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/acp/conversations/conv-1/connect" {
 			t.Fatalf("unexpected spritz path %s", r.URL.Path)
@@ -1281,6 +1282,7 @@ func TestPromptConversationRejectsInteractivePermissionRequests(t *testing.T) {
 			t.Fatalf("upgrade failed: %v", err)
 		}
 		defer conn.Close()
+		requestHeaders <- r.Header.Clone()
 		for {
 			_, payload, err := conn.ReadMessage()
 			if err != nil {
@@ -1368,6 +1370,17 @@ func TestPromptConversationRejectsInteractivePermissionRequests(t *testing.T) {
 		}
 	default:
 		t.Fatalf("expected gateway to answer the permission request")
+	}
+	select {
+	case headers := <-requestHeaders:
+		if got := headers.Get("Authorization"); got != "Bearer owner-token" {
+			t.Fatalf("expected spritz websocket Authorization header, got %q", got)
+		}
+		if got := headers.Get("Origin"); got != spritz.URL {
+			t.Fatalf("expected spritz websocket Origin header %q, got %q", spritz.URL, got)
+		}
+	default:
+		t.Fatalf("expected websocket request headers to be captured")
 	}
 }
 
