@@ -336,6 +336,16 @@ func (g *slackGateway) handleSlackEvents(w http.ResponseWriter, r *http.Request)
 		_, _ = w.Write([]byte(envelope.Challenge))
 		return
 	case "event_callback":
+		if strings.TrimSpace(envelope.Event.Type) == "app_uninstalled" {
+			ctx, cancel := context.WithTimeout(r.Context(), g.cfg.ProcessingTimeout)
+			defer cancel()
+			if err := g.processSlackEnvelope(ctx, envelope); err != nil {
+				http.Error(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			return
+		}
 		g.processSlackEnvelopeAsync(envelope)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
@@ -461,10 +471,7 @@ func shouldProcessSlackMessageEvent(event slackEventInner) bool {
 	if isSlackDirectMessageEvent(event) {
 		return eventType == "message"
 	}
-	if eventType == "app_mention" {
-		return true
-	}
-	return strings.TrimSpace(event.ThreadTS) != ""
+	return eventType == "app_mention"
 }
 
 func isSlackDirectMessageEvent(event slackEventInner) bool {

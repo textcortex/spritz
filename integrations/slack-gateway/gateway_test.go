@@ -478,6 +478,49 @@ func TestSlackEventAcknowledgesBeforeAsynchronousProcessingFailure(t *testing.T)
 	}
 }
 
+func TestSlackUninstallReturnsBadGatewayWhenDisconnectFails(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v1/spritz/channel-installations/disconnect" {
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":"unavailable"}`))
+	}))
+	defer backend.Close()
+
+	cfg := config{
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      "https://slack.example.test",
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        "https://spritz.example.test",
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
+	}
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	body := []byte(`{
+		"type":"event_callback",
+		"team_id":"T_workspace_1",
+		"api_app_id":"A_app_1",
+		"event_id":"Ev_uninstall_1",
+		"event":{"type":"app_uninstalled"}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/slack/events", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	signSlackRequest(req.Header, cfg.SlackSigningSecret, body, time.Now().UTC())
+	rec := httptest.NewRecorder()
+
+	gateway.handleSlackEvents(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestSlackEventAcknowledgesBeforeSlowACPWork(t *testing.T) {
 	var slackCalls struct {
 		sync.Mutex
@@ -773,7 +816,7 @@ func TestShouldIgnoreSlackMessageEventRejectsSystemSubtypes(t *testing.T) {
 	}
 }
 
-func TestShouldProcessSlackMessageEventRequiresMentionOrThreadOutsideDMs(t *testing.T) {
+func TestShouldProcessSlackMessageEventRequiresMentionOutsideDMs(t *testing.T) {
 	if shouldProcessSlackMessageEvent(
 		slackEventInner{
 			Type:        "message",
@@ -794,7 +837,7 @@ func TestShouldProcessSlackMessageEventRequiresMentionOrThreadOutsideDMs(t *test
 	) {
 		t.Fatalf("expected channel app_mention events to be processed")
 	}
-	if !shouldProcessSlackMessageEvent(
+	if shouldProcessSlackMessageEvent(
 		slackEventInner{
 			Type:        "message",
 			Channel:     "C_1",
@@ -803,7 +846,7 @@ func TestShouldProcessSlackMessageEventRequiresMentionOrThreadOutsideDMs(t *test
 			TS:          "1711387376.000100",
 		},
 	) {
-		t.Fatalf("expected channel thread replies to be processed")
+		t.Fatalf("expected unmentioned channel thread replies to be ignored")
 	}
 	if !shouldProcessSlackMessageEvent(
 		slackEventInner{
