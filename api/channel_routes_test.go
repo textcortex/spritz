@@ -250,3 +250,100 @@ func TestResolveChannelRouteFallsBackToServerNamespace(t *testing.T) {
 		t.Fatalf("expected fallback namespace in response, got %s", rec.Body.String())
 	}
 }
+
+func TestResolveChannelRouteFallsBackToDefaultNamespace(t *testing.T) {
+	s := newChannelRoutesTestServer()
+	s.extensions = extensionRegistry{
+		resolvers: []configuredResolver{
+			{
+				id:        "channel-routing",
+				kind:      extensionKindResolver,
+				operation: extensionOperationChannelRouteResolve,
+				match:     extensionMatchRule{},
+				transport: configuredHTTPTransport{
+					url: "http://resolver.example.test/channel-route",
+				},
+			},
+		},
+	}
+	originalTransport := http.DefaultClient.Transport
+	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"status":"resolved","output":{"instanceId":"zeno-acme","state":"ready"}}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})
+	defer func() {
+		http.DefaultClient.Transport = originalTransport
+	}()
+
+	e := echo.New()
+	s.registerRoutes(e)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/channel-routes/resolve", strings.NewReader(`{"provider":"discord","externalScopeType":"guild","externalTenantId":"123456789012345678"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Spritz-Principal-Id", "shared-discord-bot")
+	req.Header.Set("X-Spritz-Principal-Type", "service")
+	req.Header.Set("X-Spritz-Principal-Scopes", scopeChannelRouteResolve)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"namespace":"default"`) {
+		t.Fatalf("expected default namespace in response, got %s", rec.Body.String())
+	}
+}
+
+func TestResolveChannelRouteRejectsResolverNamespaceMismatch(t *testing.T) {
+	s := newChannelRoutesTestServer()
+	s.namespace = "spritz-production"
+	s.extensions = extensionRegistry{
+		resolvers: []configuredResolver{
+			{
+				id:        "channel-routing",
+				kind:      extensionKindResolver,
+				operation: extensionOperationChannelRouteResolve,
+				match:     extensionMatchRule{},
+				transport: configuredHTTPTransport{
+					url: "http://resolver.example.test/channel-route",
+				},
+			},
+		},
+	}
+	originalTransport := http.DefaultClient.Transport
+	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"status":"resolved","output":{"namespace":"spritz-staging","instanceId":"zeno-acme","state":"ready"}}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})
+	defer func() {
+		http.DefaultClient.Transport = originalTransport
+	}()
+
+	e := echo.New()
+	s.registerRoutes(e)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/channel-routes/resolve", strings.NewReader(`{"provider":"discord","externalScopeType":"guild","externalTenantId":"123456789012345678"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Spritz-Principal-Id", "shared-discord-bot")
+	req.Header.Set("X-Spritz-Principal-Type", "service")
+	req.Header.Set("X-Spritz-Principal-Scopes", scopeChannelRouteResolve)
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"message":"resolver output namespace is invalid"`) {
+		t.Fatalf("expected namespace mismatch error, got %s", rec.Body.String())
+	}
+}

@@ -46,7 +46,7 @@ func normalizeChannelRouteResolveRequest(body channelRouteResolveRequest) (chann
 	return body, nil
 }
 
-func parseChannelRouteResolveOutput(raw json.RawMessage, defaultNamespace string) (map[string]any, error) {
+func parseChannelRouteResolveOutput(raw json.RawMessage, serverNamespace string) (map[string]any, error) {
 	if len(raw) == 0 {
 		return nil, errors.New("resolver output is required")
 	}
@@ -64,11 +64,15 @@ func parseChannelRouteResolveOutput(raw json.RawMessage, defaultNamespace string
 	}
 	namespace, _ := output["namespace"].(string)
 	namespace = strings.TrimSpace(namespace)
-	if namespace == "" {
-		namespace = strings.TrimSpace(defaultNamespace)
+	serverNamespace = strings.TrimSpace(serverNamespace)
+	if serverNamespace != "" {
+		if namespace != "" && namespace != serverNamespace {
+			return nil, errors.New("resolver output namespace is invalid")
+		}
+		namespace = serverNamespace
 	}
 	if namespace == "" {
-		return nil, errors.New("resolver output namespace is required")
+		namespace = "default"
 	}
 	output["namespace"] = namespace
 	output["instanceId"] = instanceID
