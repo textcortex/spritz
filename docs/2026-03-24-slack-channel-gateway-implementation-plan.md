@@ -164,25 +164,55 @@ surfaces for:
 - OAuth callback
 - Events API
 - interactive payloads when the app enables buttons or modals
+- slash-command callback when slash commands are enabled
 
-Phase 1 can keep the event set narrow:
+Phase 1 should explicitly subscribe to:
 
-- app mentions
-- direct messages
-- message events that should reach the concierge
+- `app_mention`
+- `message.channels`
+- `message.im`
+- `message.mpim` only if group DMs are in scope at launch
+- `reaction_added`, `reaction_removed` only if reactions are part of the
+  product flow
+
+Important Slack nuance:
+
+- `message.channels`, `message.groups`, `message.im`, and `message.mpim` are
+  subscription labels
+- the real inbound event type is still `message`
+- the gateway should use `channel_type` to distinguish channel, group, DM, and
+  group DM traffic
+
+Phase 1 interactive support should be:
+
+- block actions: yes
+- slash commands: optional but supported by the gateway shape
+- modal submissions: optional
+- modal close events: optional
+
+Phase 1 should treat these message subtypes as non-chat system events unless a
+product requirement says otherwise:
+
+- `message_changed`
+- `message_deleted`
+- `thread_broadcast`
 
 ### Event handling
 
 1. Slack sends the inbound request to the shared gateway.
 2. Gateway verifies the Slack signing secret and request timestamp.
 3. Gateway extracts routing identity from the payload:
+   - `api_app_id`
    - `team_id`
    - event type
+   - `channel_type`
    - channel id
    - message ts or thread ts
    - external sender id
-4. Gateway resolves the target concierge through `channel.route.resolve`.
-5. Gateway forwards a normalized inbound event to that concierge instance.
+4. Gateway rejects the request if `api_app_id` or `team_id` do not match the
+   expected shared Slack app installation.
+5. Gateway resolves the target concierge through `channel.route.resolve`.
+6. Gateway forwards a normalized inbound event to that concierge instance.
 
 The normalized event should carry at least:
 
@@ -194,7 +224,20 @@ The normalized event should carry at least:
 - `messageTs`
 - `externalSenderId`
 - `text`
+- `source`
 - raw provider event reference
+
+The `source` field should distinguish at least:
+
+- `message`
+- `app_mention`
+- `slash_command`
+- `block_action`
+- `view_submission`
+- `view_closed`
+
+The gateway should also preserve enough raw event metadata to debug Slack
+delivery problems without logging whole secrets or oversized payloads.
 
 ## Outbound Action Flow
 
@@ -228,9 +271,23 @@ Slack retries are normal. The gateway must handle them deliberately.
 ### Inbound Slack retries
 
 - verify the Slack retry headers
-- deduplicate by Slack event id or equivalent request identity
+- deduplicate by Slack `event_id` when present
+- for message dispatch, also guard against duplicate processing by `channel:ts`
 - keep a bounded dedupe window
 - ack quickly and hand off longer work asynchronously if needed
+
+The gateway should explicitly handle the `message` vs `app_mention` overlap for
+the same Slack message:
+
+- a DM should be handled through `message`, not duplicated through
+  `app_mention`
+- channel messages may arrive through both paths for the same `ts`
+- the gateway should allow one controlled fallback and otherwise suppress the
+  duplicate path
+
+The gateway should also resolve missing `thread_ts` for true thread replies
+before forwarding the normalized event to the concierge when Slack does not
+include it directly in the inbound payload.
 
 ### Install retries
 
@@ -275,6 +332,7 @@ Required fields:
 Recommended Slack metadata:
 
 - `enterprise_id` when present
+- `api_app_id`
 - installing Slack user id
 - bot user id
 - granted scopes
@@ -296,6 +354,9 @@ Before calling Phase 1 done, verify:
 6. A channel event replies in the correct thread.
 7. Concierge outbound replies go through the shared Slack channel gateway, not
    directly from the runtime.
+8. The same Slack message delivered through both `message` and `app_mention`
+   produces one concierge execution.
+9. A mismatched `team_id` or `api_app_id` is rejected before route resolution.
 
 ## Follow-ups
 
