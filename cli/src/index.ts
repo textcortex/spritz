@@ -476,6 +476,24 @@ ${ownerNotes}
 ${reportingNotes}`);
 }
 
+function chatSendUsage() {
+  console.log(`Spritz chat send
+
+Usage:
+  spritz chat send (--instance <name> | --conversation <id>) --message <text> [--owner-id <id>] [--reason <text>] [--cwd <path>] [--title <title>] [--namespace <ns>] [--json]
+
+Environment:
+  SPRITZ_API_URL (default: ${process.env.SPRITZ_API_URL || defaultApiBase})
+  SPRITZ_INTERNAL_TOKEN
+  SPRITZ_OWNER_ID, SPRITZ_USER_ID, SPRITZ_PROFILE
+
+Notes:
+  --instance creates a new owner-scoped conversation before sending the prompt.
+  --conversation sends into an existing owner-scoped conversation.
+  --cwd and --title are only used with --instance.
+`);
+}
+
 function usage(guidance = guidanceForAudience()) {
   console.log(`Spritz CLI
 
@@ -487,6 +505,7 @@ Usage:
   spritz open <name> [--namespace <ns>]
   spritz terminal <name> [--namespace <ns>] [--session <name>] [--transport <ws|ssh>] [--print]
   spritz ssh <name> [--namespace <ns>] [--session <name>] [--transport <ws|ssh>] [--print]
+  spritz chat send (--instance <name> | --conversation <id>) --message <text> [--owner-id <id>] [--reason <text>] [--cwd <path>] [--title <title>] [--namespace <ns>] [--json]
   spritz profile list
   spritz profile current
   spritz profile show [name]
@@ -501,6 +520,7 @@ Alias:
 Environment:
   SPRITZ_API_URL (default: ${process.env.SPRITZ_API_URL || defaultApiBase})
   SPRITZ_BEARER_TOKEN
+  SPRITZ_INTERNAL_TOKEN
   SPRITZ_USER_ID, SPRITZ_USER_EMAIL, SPRITZ_USER_TEAMS, SPRITZ_OWNER_ID
   SPRITZ_API_HEADER_ID, SPRITZ_API_HEADER_EMAIL, SPRITZ_API_HEADER_TEAMS
   SPRITZ_TERMINAL_TRANSPORT (default: ${terminalTransportDefault})
@@ -740,6 +760,14 @@ async function resolveDefaultOwnerId(): Promise<string | undefined> {
   );
 }
 
+function resolveInternalToken(): string {
+  const token = argValue('--internal-token') || process.env.SPRITZ_INTERNAL_TOKEN;
+  if (!token?.trim()) {
+    throw new Error('SPRITZ_INTERNAL_TOKEN or --internal-token is required for chat send');
+  }
+  return token.trim();
+}
+
 async function request(path: string, init?: RequestInit) {
   const controller = new AbortController();
   const timeoutMs = Number.isFinite(requestTimeoutMs) ? requestTimeoutMs : 10000;
@@ -775,6 +803,44 @@ async function request(path: string, init?: RequestInit) {
       res.statusText ||
       'Request failed';
     throw new SpritzRequestError(message, { statusCode: res.status, code: errorCode, data: errorData });
+  }
+  if (res.status === 204) return null;
+  if (jsend) return jsend.data ?? null;
+  if (data !== null) return data;
+  return text ? text : null;
+}
+
+async function internalRequest(path: string, init?: RequestInit) {
+  const controller = new AbortController();
+  const timeoutMs = Number.isFinite(requestTimeoutMs) ? requestTimeoutMs : 10000;
+  const timeout = setTimeout(() => controller.abort(), Math.max(timeoutMs, 1000));
+  const mergedHeaders = {
+    Authorization: `Bearer ${resolveInternalToken()}`,
+    ...normalizeHeaders(init?.headers),
+  };
+  const apiBase = await resolveApiBase();
+  const res = await fetch(`${apiBase}${path}`, {
+    ...init,
+    headers: mergedHeaders,
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timeout));
+  const text = await res.text();
+  let data: any = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = null;
+    }
+  }
+  const jsend = isJSend(data) ? data : null;
+  if (!res.ok || (res.ok && jsend && jsend.status !== 'success')) {
+    const message =
+      (jsend && (jsend.message || jsend.data?.message || jsend.data?.error)) ||
+      text ||
+      res.statusText ||
+      'Request failed';
+    throw new SpritzRequestError(message, { statusCode: res.status, data: jsend?.data });
   }
   if (res.status === 204) return null;
   if (jsend) return jsend.data ?? null;
@@ -1105,12 +1171,21 @@ async function main() {
       createUsage(guidance);
       return;
     }
+    if (command === 'help' && rest[0] === 'chat' && (!rest[1] || rest[1] === 'send')) {
+      chatSendUsage();
+      return;
+    }
     usage(guidance);
     return;
   }
 
   if (command === 'create' && hasFlag('--help')) {
     createUsage(guidance);
+    return;
+  }
+
+  if (command === 'chat' && hasFlag('--help')) {
+    chatSendUsage();
     return;
   }
 
@@ -1369,6 +1444,57 @@ async function main() {
     const ns = await resolveNamespace();
     const data = await request(`/spritzes/${encodeURIComponent(name)}${ns ? `?namespace=${encodeURIComponent(ns)}` : ''}`);
     console.log(data?.status?.url || 'no url available');
+    return;
+  }
+
+  if (command === 'chat') {
+    const action = rest[0];
+    if (!action || action === 'help' || action === '--help') {
+      chatSendUsage();
+      return;
+    }
+    if (action !== 'send') {
+      throw new Error(`unknown chat command: ${action}`);
+    }
+    const instanceName = argValue('--instance')?.trim();
+    const conversationId = argValue('--conversation')?.trim();
+    if (Boolean(instanceName) === Boolean(conversationId)) {
+      throw new Error('exactly one of --instance or --conversation is required');
+    }
+    if (conversationId && (argValue('--cwd') || argValue('--title'))) {
+      throw new Error('--cwd and --title are only supported with --instance');
+    }
+    const message = argValue('--message')?.trim();
+    if (!message) {
+      throw new Error('--message is required');
+    }
+    const ownerId = argValue('--owner-id')?.trim() || (await resolveDefaultOwnerId());
+    if (!ownerId) {
+      throw new Error('owner id is required; use --owner-id or set SPRITZ_OWNER_ID / SPRITZ_USER_ID');
+    }
+    const ns = await resolveNamespace();
+    const reason = argValue('--reason')?.trim() || 'spz chat send';
+    const data = await internalRequest('/internal/v1/debug/chat/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        principal: { id: ownerId },
+        target: {
+          namespace: ns,
+          spritzName: instanceName,
+          conversationId,
+          cwd: argValue('--cwd'),
+          title: argValue('--title'),
+        },
+        reason,
+        message,
+      }),
+    });
+    if (hasFlag('--json') || !data?.assistantText) {
+      console.log(JSON.stringify(data, null, 2));
+      return;
+    }
+    console.log(data.assistantText);
     return;
   }
 

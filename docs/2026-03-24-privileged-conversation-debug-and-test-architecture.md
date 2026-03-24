@@ -523,6 +523,16 @@ This design should guarantee all of the following:
 Add an internal broker API in `spritz-api` and a thin `spz chat send` client
 for owner-scoped usage.
 
+The current phase-one shape is:
+
+- `POST /api/internal/v1/debug/chat/send`
+- `spz chat send --instance ... --message ...`
+- `spz chat send --conversation ... --message ...`
+
+This phase-one endpoint is intentionally synchronous and owner-scoped.
+Transcript reads, event streaming, and explicit cross-owner break-glass remain
+later phases.
+
 This replaces the need for direct ACP from local laptops for routine testing.
 
 ### Phase 2
