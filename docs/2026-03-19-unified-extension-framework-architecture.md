@@ -245,7 +245,7 @@ the API layer.
 High-level model:
 
 - extensions are declared in API config,
-- each extension has an `id`, `kind`, `operation`, and transport,
+- each extension has an `id`, `type`, `operation`, and transport,
 - operations decide when an extension is invoked,
 - Spritz builds a standard request envelope,
 - the extension returns a standard response envelope,
@@ -292,7 +292,7 @@ Emit post-decision or post-create hooks.
 This phase model is more durable than creating a separate subsystem for each
 new feature.
 
-## Admission Kinds
+## Admission Types
 
 ### Resolver
 
@@ -326,7 +326,7 @@ Typical uses:
 - emit lifecycle events,
 - run bookkeeping after delete or expiration.
 
-Resolvers are the most important initial kind because they cover the existing
+Resolvers are the most important initial type because they cover the existing
 external owner flow and the create-time preset binding problem.
 
 ## InstanceClass as a First-Class Resource
@@ -573,7 +573,7 @@ hooks, for example:
 api:
   extensions:
     - id: external-owner
-      kind: resolver
+      type: resolver
       operation: owner.resolve
       transport:
         type: http
@@ -582,7 +582,7 @@ api:
         timeout: 5s
 
     - id: runtime-binding
-      kind: resolver
+      type: resolver
       operation: preset.create.resolve
       match:
         presetIds: [assistant-runtime]
@@ -593,7 +593,7 @@ api:
         timeout: 5s
 
     - id: web-login
-      kind: auth_provider
+      type: auth_provider
       operation: auth.login.metadata
       provider:
         loginUrl: https://console.example.com/login
@@ -603,7 +603,7 @@ api:
 Rules:
 
 - `id` MUST be unique.
-- `kind` MUST be one of the supported extension kinds.
+- `type` MUST be one of the supported extension types.
 - `operation` MUST be one of the supported extension operations.
 - `match` MAY further restrict invocation, such as by preset ID.
 - HTTP transport MUST support timeout and auth configuration.
@@ -616,7 +616,7 @@ Spritz should call resolvers with one common request contract:
 {
   "version": "v1",
   "extensionId": "runtime-binding",
-  "kind": "resolver",
+  "type": "resolver",
   "operation": "preset.create.resolve",
   "requestId": "req-123",
   "principal": {

@@ -104,7 +104,7 @@ Response shape:
   "namespace": "spritz-production",
   "ownerPrincipal": {
     "id": "user-123",
-    "kind": "user"
+    "type": "user"
   },
   "runtimePrincipal": {
     "authnMode": "workload_identity",

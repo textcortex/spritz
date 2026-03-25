@@ -9,6 +9,7 @@ This repository is open-source and must remain provider- and organization-agnost
 - Never add TextCortex-specific values to code, tests, docs, examples, or comments.
 - Never include organization-specific domains, project IDs, cluster names, account IDs, emails, tokens, or credentials.
 - Never use TextCortex hostnames in test fixtures.
+- New or changed data structures, schemas, DTOs, CRDs, and API models must use `type` as the field name, never `kind`. If an external payload already sends `kind`, convert it at the boundary with an alias and keep the internal field named `type`.
 
 Use neutral placeholders instead:
 
