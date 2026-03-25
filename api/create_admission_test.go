@@ -42,9 +42,9 @@ func configurePresetResolverTestServer(s *server, resolverURL string) {
 	if strings.TrimSpace(resolverURL) != "" {
 		s.extensions = extensionRegistry{
 			resolvers: []configuredResolver{{
-				id:        "runtime-binding",
-				kind:      extensionKindResolver,
-				operation: extensionOperationPresetCreateResolve,
+				id:            "runtime-binding",
+				extensionType: extensionTypeResolver,
+				operation:     extensionOperationPresetCreateResolve,
 				match: extensionMatchRule{
 					presetIDs: map[string]struct{}{"zeno": {}},
 				},
@@ -266,9 +266,9 @@ func TestCreateSpritzProvisionerPresetResolverReplaysWithResolvedBinding(t *test
 	}
 	s.extensions = extensionRegistry{
 		resolvers: []configuredResolver{{
-			id:        "runtime-binding",
-			kind:      extensionKindResolver,
-			operation: extensionOperationPresetCreateResolve,
+			id:            "runtime-binding",
+			extensionType: extensionTypeResolver,
+			operation:     extensionOperationPresetCreateResolve,
 			match: extensionMatchRule{
 				presetIDs: map[string]struct{}{"zeno": {}},
 			},
@@ -363,9 +363,9 @@ func TestCreateSpritzProvisionerRejectsDisallowedPresetBeforeResolver(t *testing
 	}
 	s.extensions = extensionRegistry{
 		resolvers: []configuredResolver{{
-			id:        "runtime-binding",
-			kind:      extensionKindResolver,
-			operation: extensionOperationPresetCreateResolve,
+			id:            "runtime-binding",
+			extensionType: extensionTypeResolver,
+			operation:     extensionOperationPresetCreateResolve,
 			match: extensionMatchRule{
 				presetIDs: map[string]struct{}{"zeno": {}},
 			},

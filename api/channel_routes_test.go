@@ -37,10 +37,10 @@ func TestResolveChannelRouteReturnsResolvedInstance(t *testing.T) {
 	s.extensions = extensionRegistry{
 		resolvers: []configuredResolver{
 			{
-				id:        "channel-routing",
-				kind:      extensionKindResolver,
-				operation: extensionOperation("channel.route.resolve"),
-				match:     extensionMatchRule{},
+				id:            "channel-routing",
+				extensionType: extensionTypeResolver,
+				operation:     extensionOperation("channel.route.resolve"),
+				match:         extensionMatchRule{},
 				transport: configuredHTTPTransport{
 					url: "http://resolver.example.test/channel-route",
 				},
@@ -167,10 +167,10 @@ func TestResolveChannelRouteAllowsAuthDisabledMode(t *testing.T) {
 		extensions: extensionRegistry{
 			resolvers: []configuredResolver{
 				{
-					id:        "channel-routing",
-					kind:      extensionKindResolver,
-					operation: extensionOperationChannelRouteResolve,
-					match:     extensionMatchRule{},
+					id:            "channel-routing",
+					extensionType: extensionTypeResolver,
+					operation:     extensionOperationChannelRouteResolve,
+					match:         extensionMatchRule{},
 					transport: configuredHTTPTransport{
 						url: "http://resolver.example.test/channel-route",
 					},
@@ -211,10 +211,10 @@ func TestResolveChannelRouteFallsBackToServerNamespace(t *testing.T) {
 	s.extensions = extensionRegistry{
 		resolvers: []configuredResolver{
 			{
-				id:        "channel-routing",
-				kind:      extensionKindResolver,
-				operation: extensionOperationChannelRouteResolve,
-				match:     extensionMatchRule{},
+				id:            "channel-routing",
+				extensionType: extensionTypeResolver,
+				operation:     extensionOperationChannelRouteResolve,
+				match:         extensionMatchRule{},
 				transport: configuredHTTPTransport{
 					url: "http://resolver.example.test/channel-route",
 				},
@@ -259,10 +259,10 @@ func TestResolveChannelRouteFallsBackToDefaultNamespace(t *testing.T) {
 	s.extensions = extensionRegistry{
 		resolvers: []configuredResolver{
 			{
-				id:        "channel-routing",
-				kind:      extensionKindResolver,
-				operation: extensionOperationChannelRouteResolve,
-				match:     extensionMatchRule{},
+				id:            "channel-routing",
+				extensionType: extensionTypeResolver,
+				operation:     extensionOperationChannelRouteResolve,
+				match:         extensionMatchRule{},
 				transport: configuredHTTPTransport{
 					url: "http://resolver.example.test/channel-route",
 				},
@@ -308,10 +308,10 @@ func TestResolveChannelRouteRejectsResolverNamespaceMismatch(t *testing.T) {
 	s.extensions = extensionRegistry{
 		resolvers: []configuredResolver{
 			{
-				id:        "channel-routing",
-				kind:      extensionKindResolver,
-				operation: extensionOperationChannelRouteResolve,
-				match:     extensionMatchRule{},
+				id:            "channel-routing",
+				extensionType: extensionTypeResolver,
+				operation:     extensionOperationChannelRouteResolve,
+				match:         extensionMatchRule{},
 				transport: configuredHTTPTransport{
 					url: "http://resolver.example.test/channel-route",
 				},

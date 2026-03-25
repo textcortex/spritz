@@ -5,27 +5,27 @@ import (
 	"testing"
 )
 
-func TestNewExtensionRegistryRejectsUnsupportedKind(t *testing.T) {
+func TestNewExtensionRegistryRejectsUnsupportedType(t *testing.T) {
 	t.Setenv(extensionsEnvKey, `[{
 		"id": "login-metadata",
-		"kind": "auth_provider",
+		"type": "auth_provider",
 		"operation": "auth.login.metadata",
 		"transport": {"url": "https://example.com/internal/extensions/login"}
 	}]`)
 
 	_, err := newExtensionRegistry()
 	if err == nil {
-		t.Fatal("expected unsupported extension kind error")
+		t.Fatal("expected unsupported extension type error")
 	}
 	if !strings.Contains(err.Error(), "not yet supported") {
-		t.Fatalf("expected unsupported kind error, got %v", err)
+		t.Fatalf("expected unsupported type error, got %v", err)
 	}
 }
 
 func TestNewExtensionRegistryRejectsUnknownOperation(t *testing.T) {
 	t.Setenv(extensionsEnvKey, `[{
 		"id": "runtime-binding",
-		"kind": "resolver",
+		"type": "resolver",
 		"operation": "preset.create.typo",
 		"transport": {"url": "https://example.com/internal/extensions/preset-create"}
 	}]`)
@@ -42,7 +42,7 @@ func TestNewExtensionRegistryRejectsUnknownOperation(t *testing.T) {
 func TestNewExtensionRegistryAcceptsChannelRouteResolveOperation(t *testing.T) {
 	t.Setenv(extensionsEnvKey, `[{
 		"id": "channel-routing",
-		"kind": "resolver",
+		"type": "resolver",
 		"operation": "channel.route.resolve",
 		"transport": {"url": "https://example.com/internal/extensions/channel-routing"}
 	}]`)
@@ -75,7 +75,7 @@ func TestNormalizeExtensionMatchSanitizesPresetIDs(t *testing.T) {
 func TestNewExtensionRegistryRejectsInvalidSanitizedPresetID(t *testing.T) {
 	t.Setenv(extensionsEnvKey, `[{
 		"id": "runtime-binding",
-		"kind": "resolver",
+		"type": "resolver",
 		"operation": "preset.create.resolve",
 		"match": {"presetIds": ["!!!"]},
 		"transport": {"url": "https://example.com/internal/extensions/preset-create"}

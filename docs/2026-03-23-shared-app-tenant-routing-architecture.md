@@ -155,7 +155,7 @@ Examples:
 
 ### External scope type
 
-The provider-specific scope kind for the tenant ID.
+The provider-specific scope type for the tenant ID.
 
 Examples:
 
@@ -562,7 +562,7 @@ Example request envelope:
 {
   "version": "v1",
   "extensionId": "channel-routing",
-  "kind": "resolver",
+  "type": "resolver",
   "operation": "channel.route.resolve",
   "requestId": "req-123",
   "principal": {

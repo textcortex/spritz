@@ -20,12 +20,12 @@ const (
 	extensionsEnvKey                = "SPRITZ_EXTENSIONS_JSON"
 )
 
-type extensionKind string
+type extensionType string
 
 const (
-	extensionKindResolver      extensionKind = "resolver"
-	extensionKindAuthProvider  extensionKind = "auth_provider"
-	extensionKindLifecycleHook extensionKind = "lifecycle_hook"
+	extensionTypeResolver      extensionType = "resolver"
+	extensionTypeAuthProvider  extensionType = "auth_provider"
+	extensionTypeLifecycleHook extensionType = "lifecycle_hook"
 )
 
 type extensionOperation string
@@ -60,7 +60,7 @@ type extensionRegistry struct {
 
 type extensionConfigInput struct {
 	ID        string                  `json:"id"`
-	Kind      string                  `json:"kind"`
+	Type      string                  `json:"type"`
 	Operation string                  `json:"operation"`
 	Match     extensionMatchInput     `json:"match,omitempty"`
 	Transport extensionTransportInput `json:"transport,omitempty"`
@@ -98,7 +98,7 @@ type extensionRequestContext struct {
 type extensionResolverRequestEnvelope struct {
 	Version     string                    `json:"version"`
 	ExtensionID string                    `json:"extensionId"`
-	Kind        extensionKind             `json:"kind"`
+	Type        extensionType             `json:"type"`
 	Operation   extensionOperation        `json:"operation"`
 	RequestID   string                    `json:"requestId,omitempty"`
 	Principal   extensionPrincipalPayload `json:"principal"`
@@ -123,11 +123,11 @@ type extensionResolverSpecMutation struct {
 }
 
 type configuredResolver struct {
-	id        string
-	kind      extensionKind
-	operation extensionOperation
-	match     extensionMatchRule
-	transport configuredHTTPTransport
+	id            string
+	extensionType extensionType
+	operation     extensionOperation
+	match         extensionMatchRule
+	transport     configuredHTTPTransport
 }
 
 type extensionMatchRule struct {
@@ -192,16 +192,16 @@ func newExtensionRegistry() (extensionRegistry, error) {
 		}
 		seen[id] = struct{}{}
 
-		kind := normalizeExtensionKind(input.Kind)
-		if kind == "" {
-			return extensionRegistry{}, fmt.Errorf("invalid %s: extensions[%d].kind is required", extensionsEnvKey, index)
+		extensionType := normalizeExtensionType(input.Type)
+		if extensionType == "" {
+			return extensionRegistry{}, fmt.Errorf("invalid %s: extensions[%d].type is required", extensionsEnvKey, index)
 		}
 		operation := normalizeExtensionOperation(input.Operation)
 		if operation == "" {
 			return extensionRegistry{}, fmt.Errorf("invalid %s: extensions[%d].operation is required and must be supported", extensionsEnvKey, index)
 		}
-		if kind != extensionKindResolver {
-			return extensionRegistry{}, fmt.Errorf("invalid %s: extensions[%d].kind %q is not yet supported", extensionsEnvKey, index, kind)
+		if extensionType != extensionTypeResolver {
+			return extensionRegistry{}, fmt.Errorf("invalid %s: extensions[%d].type %q is not yet supported", extensionsEnvKey, index, extensionType)
 		}
 		match, err := normalizeExtensionMatch(input.Match)
 		if err != nil {
@@ -212,24 +212,24 @@ func newExtensionRegistry() (extensionRegistry, error) {
 			return extensionRegistry{}, fmt.Errorf("invalid %s: extensions[%d].transport %v", extensionsEnvKey, index, err)
 		}
 		registry.resolvers = append(registry.resolvers, configuredResolver{
-			id:        id,
-			kind:      kind,
-			operation: operation,
-			match:     match,
-			transport: transport,
+			id:            id,
+			extensionType: extensionType,
+			operation:     operation,
+			match:         match,
+			transport:     transport,
 		})
 	}
 	return registry, nil
 }
 
-func normalizeExtensionKind(raw string) extensionKind {
-	switch extensionKind(strings.ToLower(strings.TrimSpace(raw))) {
-	case extensionKindResolver:
-		return extensionKindResolver
-	case extensionKindAuthProvider:
-		return extensionKindAuthProvider
-	case extensionKindLifecycleHook:
-		return extensionKindLifecycleHook
+func normalizeExtensionType(raw string) extensionType {
+	switch extensionType(strings.ToLower(strings.TrimSpace(raw))) {
+	case extensionTypeResolver:
+		return extensionTypeResolver
+	case extensionTypeAuthProvider:
+		return extensionTypeAuthProvider
+	case extensionTypeLifecycleHook:
+		return extensionTypeLifecycleHook
 	default:
 		return ""
 	}
@@ -294,11 +294,11 @@ func normalizePresetIDSet(values []string) (map[string]struct{}, error) {
 }
 
 func normalizeExtensionTransport(input extensionTransportInput) (configuredHTTPTransport, error) {
-	kind := extensionTransportType(strings.ToLower(strings.TrimSpace(input.Type)))
-	if kind == "" {
-		kind = extensionTransportHTTP
+	transportType := extensionTransportType(strings.ToLower(strings.TrimSpace(input.Type)))
+	if transportType == "" {
+		transportType = extensionTransportHTTP
 	}
-	if kind != extensionTransportHTTP {
+	if transportType != extensionTransportHTTP {
 		return configuredHTTPTransport{}, fmt.Errorf("type must be http")
 	}
 	urlValue := strings.TrimSpace(input.URL)
@@ -447,7 +447,7 @@ func (r configuredResolver) resolve(
 	envelope := extensionResolverRequestEnvelope{
 		Version:     "v1",
 		ExtensionID: r.id,
-		Kind:        r.kind,
+		Type:        r.extensionType,
 		Operation:   r.operation,
 		RequestID:   strings.TrimSpace(requestID),
 		Principal: extensionPrincipalPayload{

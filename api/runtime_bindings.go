@@ -14,7 +14,7 @@ import (
 
 type runtimeBindingOwnerPrincipal struct {
 	ID   string `json:"id"`
-	Kind string `json:"kind"`
+	Type string `json:"type"`
 }
 
 type runtimeBindingRuntimePrincipal struct {
@@ -98,7 +98,7 @@ func buildRuntimeBindingResponse(spritz *spritzv1.Spritz) (runtimeBindingRespons
 		Namespace:  namespace,
 		OwnerPrincipal: runtimeBindingOwnerPrincipal{
 			ID:   ownerID,
-			Kind: "user",
+			Type: "user",
 		},
 		RuntimePrincipal: runtimeBindingRuntimePrincipal{
 			AuthnMode:          "workload_identity",
