@@ -318,6 +318,115 @@ test('loadSession replays persisted session transcript before returning', async 
   assert.deepEqual(agent.sentAvailableCommands, ['123e4567-e89b-42d3-a456-426614174000']);
 });
 
+test('loadSession skips transcript replay when gateway transcript read requires operator scope', async () => {
+  class FakeBaseAgent {
+    constructor() {
+      this.logged = [];
+      this.rateLimits = [];
+      this.sentAvailableCommands = [];
+      this.connection = {
+        updates: [],
+        async sessionUpdate(payload) {
+          this.updates.push(payload);
+        },
+      };
+      this.gateway = {
+        async request(method) {
+          assert.equal(method, 'sessions.get');
+          throw Object.assign(new Error('missing scope: operator.read'), {
+            code: 'INVALID_REQUEST',
+          });
+        },
+      };
+      this.sessionStore = {
+        entries: new Map(),
+        createSession: ({ sessionId, sessionKey, cwd }) => {
+          const session = { sessionId, sessionKey, cwd };
+          this.sessionStore.entries.set(sessionId, session);
+          return session;
+        },
+        hasSession: () => false,
+      };
+    }
+
+    log(message) {
+      this.logged.push(message);
+    }
+
+    enforceSessionCreateRateLimit(method) {
+      this.rateLimits.push(method);
+    }
+
+    async resolveSessionKeyFromMeta({ fallbackKey }) {
+      return fallbackKey;
+    }
+
+    async sendAvailableCommands(sessionId) {
+      this.sentAvailableCommands.push(sessionId);
+    }
+  }
+
+  const SpritzAgent = createSpritzAcpGatewayAgentClass(FakeBaseAgent, {});
+  const agent = new SpritzAgent();
+
+  await agent.loadSession({
+    sessionId: '123e4567-e89b-42d3-a456-426614174000',
+    cwd: '/home/dev',
+    mcpServers: [],
+  });
+
+  assert.equal(agent.connection.updates.length, 0);
+  assert.deepEqual(agent.rateLimits, ['loadSession']);
+  assert.deepEqual(agent.sentAvailableCommands, ['123e4567-e89b-42d3-a456-426614174000']);
+  assert.match(
+    agent.logged.at(-1),
+    /skipping transcript replay .* operator\.read/i,
+  );
+});
+
+test('loadSession still fails on unrelated transcript replay errors', async () => {
+  class FakeBaseAgent {
+    constructor() {
+      this.connection = {
+        async sessionUpdate() {},
+      };
+      this.gateway = {
+        async request() {
+          throw new Error('gateway unavailable');
+        },
+      };
+      this.sessionStore = {
+        entries: new Map(),
+        createSession: ({ sessionId, sessionKey, cwd }) => {
+          const session = { sessionId, sessionKey, cwd };
+          this.sessionStore.entries.set(sessionId, session);
+          return session;
+        },
+        hasSession: () => false,
+      };
+    }
+
+    log() {}
+    enforceSessionCreateRateLimit() {}
+    async resolveSessionKeyFromMeta({ fallbackKey }) {
+      return fallbackKey;
+    }
+    async sendAvailableCommands() {}
+  }
+
+  const SpritzAgent = createSpritzAcpGatewayAgentClass(FakeBaseAgent, {});
+  const agent = new SpritzAgent();
+
+  await assert.rejects(
+    agent.loadSession({
+      sessionId: '123e4567-e89b-42d3-a456-426614174000',
+      cwd: '/home/dev',
+      mcpServers: [],
+    }),
+    /gateway unavailable/,
+  );
+});
+
 test('Spritz ACP gateway agent ensures the gateway is ready before session lifecycle calls', async () => {
   class FakeBaseAgent {
     constructor() {

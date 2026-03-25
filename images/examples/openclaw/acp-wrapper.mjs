@@ -190,15 +190,45 @@ export function buildHistoryReplayUpdates(messages = []) {
   return updates;
 }
 
+function hasMissingOperatorReadScope(value, seen = new Set()) {
+  if (typeof value === "string") {
+    return value.toLowerCase().includes("missing scope: operator.read");
+  }
+  if (!value || typeof value !== "object" || seen.has(value)) {
+    return false;
+  }
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return value.some((entry) => hasMissingOperatorReadScope(entry, seen));
+  }
+  return (
+    hasMissingOperatorReadScope(value.message, seen) ||
+    hasMissingOperatorReadScope(value.errorMessage, seen) ||
+    hasMissingOperatorReadScope(value.data, seen) ||
+    hasMissingOperatorReadScope(value.cause, seen)
+  );
+}
+
 async function replayGatewayTranscript(agent, session) {
   if (!agent?.gateway?.request || !agent?.connection?.sessionUpdate) {
     return;
   }
 
-  const transcript = await agent.gateway.request("sessions.get", {
-    key: session.sessionKey,
-    limit: 1000,
-  });
+  let transcript;
+  try {
+    transcript = await agent.gateway.request("sessions.get", {
+      key: session.sessionKey,
+      limit: 1000,
+    });
+  } catch (error) {
+    if (hasMissingOperatorReadScope(error)) {
+      agent.log?.(
+        `replayGatewayTranscript: skipping transcript replay for ${session.sessionId}; gateway transcript read requires operator.read`,
+      );
+      return;
+    }
+    throw error;
+  }
 
   const updates = buildHistoryReplayUpdates(transcript?.messages);
   for (const update of updates) {
