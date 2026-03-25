@@ -248,6 +248,16 @@ func TestOAuthCallbackReturnsBadGatewayWhenBackendUpsertFails(t *testing.T) {
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
 	}
+	logOutput := logBuffer.String()
+	if !strings.Contains(logOutput, "slack oauth callback installation upsert failed") {
+		t.Fatalf("expected upsert failure to be logged, got %q", logOutput)
+	}
+	if !strings.Contains(logOutput, "backend unavailable") {
+		t.Fatalf("expected backend error details in logs, got %q", logOutput)
+	}
+	if !strings.Contains(logOutput, "installing_user_id=U_installer") {
+		t.Fatalf("expected installing user id in logs, got %q", logOutput)
+	}
 }
 
 func TestExtractACPTextSupportsResourceBlocks(t *testing.T) {

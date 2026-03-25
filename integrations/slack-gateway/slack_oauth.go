@@ -88,6 +88,16 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := g.upsertInstallation(r.Context(), &installation); err != nil {
+		g.logger.ErrorContext(
+			r.Context(),
+			"slack oauth callback installation upsert failed",
+			"err",
+			err,
+			"team_id",
+			installation.TeamID,
+			"installing_user_id",
+			installation.InstallingUserID,
+		)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
