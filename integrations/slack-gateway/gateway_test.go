@@ -519,8 +519,8 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 			if !strings.Contains(fmt.Sprint(payload["text"]), "Hello from concierge") {
 				t.Fatalf("expected assistant reply, got %#v", payload["text"])
 			}
-			if payload["thread_ts"] != "1711387375.000100" {
-				t.Fatalf("expected thread reply, got %#v", payload["thread_ts"])
+			if _, ok := payload["thread_ts"]; ok {
+				t.Fatalf("expected top-level channel reply, got %#v", payload["thread_ts"])
 			}
 			acpAuthHeaders.Lock()
 			defer acpAuthHeaders.Unlock()
@@ -1399,6 +1399,27 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 	if slackReplyThreadTS(groupDM) != "" {
 		t.Fatalf("expected mpim replies to stay inline")
 	}
+
+	topLevelChannel := slackEventInner{
+		Type:        "app_mention",
+		Channel:     "C_workspace_channel",
+		ChannelType: "channel",
+		TS:          "1711387375.000100",
+	}
+	if slackReplyThreadTS(topLevelChannel) != "" {
+		t.Fatalf("expected top-level channel mentions to reply inline")
+	}
+
+	threadedChannel := slackEventInner{
+		Type:        "app_mention",
+		Channel:     "C_workspace_channel",
+		ChannelType: "channel",
+		ThreadTS:    "1711387375.000100",
+		TS:          "1711387376.000100",
+	}
+	if slackReplyThreadTS(threadedChannel) != "1711387375.000100" {
+		t.Fatalf("expected threaded channel mentions to reply in-thread")
+	}
 }
 
 func TestPromptConversationRejectsInteractivePermissionRequests(t *testing.T) {
@@ -1676,8 +1697,8 @@ func TestProcessMessageEventPostsFallbackAfterPromptTimeout(t *testing.T) {
 	if got := slackPayloads.items[0]["text"]; got != "I hit an internal error while processing that request." {
 		t.Fatalf("expected fallback reply text, got %#v", got)
 	}
-	if got := slackPayloads.items[0]["thread_ts"]; got != "1711387375.000100" {
-		t.Fatalf("expected threaded fallback reply, got %#v", got)
+	if _, ok := slackPayloads.items[0]["thread_ts"]; ok {
+		t.Fatalf("expected top-level fallback reply, got %#v", slackPayloads.items[0]["thread_ts"])
 	}
 }
 

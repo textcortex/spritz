@@ -280,10 +280,7 @@ func slackReplyThreadTS(event slackEventInner) string {
 	if strings.TrimSpace(event.ThreadTS) != "" {
 		return strings.TrimSpace(event.ThreadTS)
 	}
-	if isSlackDirectMessageEvent(event) {
-		return ""
-	}
-	return strings.TrimSpace(event.TS)
+	return ""
 }
 
 func slackExternalConversationID(event slackEventInner) string {
