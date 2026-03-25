@@ -477,8 +477,8 @@ export function parseArgs(argv, helpers = { readSecretFromFile: defaultReadSecre
 
 /**
  * Builds the Gateway client profile used by the wrapper. In trusted-proxy mode
- * the bridge must connect as a Control UI operator session without a device
- * identity; otherwise OpenClaw will force pairing for the CLI ACP client.
+ * the bridge must connect as a Control UI operator session so OpenClaw applies
+ * browser-style trusted-proxy auth instead of pairing-oriented CLI auth.
  */
 export function buildGatewayClientOptions(params) {
   const base = {
@@ -493,7 +493,6 @@ export function buildGatewayClientOptions(params) {
       ...base,
       clientName: GATEWAY_CLIENT_NAMES.CONTROL_UI,
       mode: GATEWAY_CLIENT_MODES.WEBCHAT,
-      deviceIdentity: false,
       token: undefined,
       password: undefined,
     };

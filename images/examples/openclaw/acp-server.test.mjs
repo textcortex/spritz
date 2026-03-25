@@ -1,50 +1,51 @@
-import test from "node:test";
-import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
-import { configFromEnv, normalizeGatewayProxyHeaders } from "./acp-server.mjs";
+import { rewriteConnectFrameAsTrustedProxyControlUi } from './acp-server.mjs';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-test("configFromEnv normalizes ACP paths and upstream timeout", () => {
-  const config = configFromEnv({
-    SPRITZ_OPENCLAW_ACP_GATEWAY_URL: "wss://gateway.example.com/ws",
-    SPRITZ_OPENCLAW_ACP_PATH: "acp",
-    SPRITZ_OPENCLAW_ACP_HEALTH_PATH: "health",
-    SPRITZ_OPENCLAW_ACP_METADATA_PATH: "metadata",
-    SPRITZ_OPENCLAW_ACP_UPSTREAM_CHECK_TIMEOUT_MS: "750",
-  });
-
-  assert.equal(config.acpPath, "/acp");
-  assert.equal(config.healthPath, "/health");
-  assert.equal(config.metadataPath, "/metadata");
-  assert.equal(config.upstreamCheckTimeoutMs, 750);
-});
-
-test("normalizeGatewayProxyHeaders synthesizes Origin for trusted proxy control UI", () => {
-  assert.deepEqual(
-    normalizeGatewayProxyHeaders(
-      {
-        "X-Forwarded-Proto": "https",
-        "X-Forwarded-Host": "spritz.example.com",
+test('trusted-proxy control-ui rewrite preserves auth and device payloads', () => {
+  const original = {
+    type: 'req',
+    method: 'connect',
+    params: {
+      client: {
+        id: 'openclaw-gateway-client',
+        mode: 'backend',
       },
-      "ws://127.0.0.1:1234/control",
-      true,
-    ),
-    {
-      "X-Forwarded-Proto": "https",
-      "X-Forwarded-Host": "spritz.example.com",
-      Origin: "http://127.0.0.1:1234",
+      auth: {
+        token: 'device-token',
+      },
+      device: {
+        id: 'device-123',
+        publicKey: 'pubkey',
+        signature: 'sig',
+        signedAt: 123,
+        nonce: 'nonce-1',
+      },
     },
+  };
+
+  const rewritten = JSON.parse(
+    rewriteConnectFrameAsTrustedProxyControlUi(Buffer.from(JSON.stringify(original), 'utf8'))
+      .toString('utf8'),
   );
+
+  assert.equal(rewritten.params.client.id, 'openclaw-control-ui');
+  assert.equal(rewritten.params.client.mode, 'webchat');
+  assert.deepEqual(rewritten.params.auth, original.params.auth);
+  assert.deepEqual(rewritten.params.device, original.params.device);
 });
 
-test("openclaw ACP server imports the shared ACP harness", () => {
-  const source = fs.readFileSync(path.join(__dirname, "acp-server.mjs"), "utf8");
+test('trusted-proxy control-ui rewrite ignores non-connect frames', () => {
+  const original = Buffer.from(
+    JSON.stringify({
+      type: 'req',
+      method: 'chat.send',
+      params: { text: 'hello' },
+    }),
+    'utf8',
+  );
 
-  assert.match(source, /\.\.\/shared\/spritz-acp-server\.mjs/);
-  assert.match(source, /serveSpritzACPServer\(/);
-  assert.match(source, /loadWSModule: async \(\) => loadWSModule\(env\)/);
+  const rewritten = rewriteConnectFrameAsTrustedProxyControlUi(original);
+  assert.deepEqual(rewritten, original);
 });

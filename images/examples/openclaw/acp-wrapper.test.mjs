@@ -16,7 +16,7 @@ import {
   useTrustedProxyControlUiBridge,
 } from './acp-wrapper.mjs';
 
-test('trusted-proxy bridge uses control-ui profile without shared auth or device identity', () => {
+test('trusted-proxy bridge uses control-ui profile without shared auth while preserving device identity', () => {
   const opts = buildGatewayClientOptions({
     connectionUrl: 'ws://127.0.0.1:8080',
     gatewayToken: 'secret-token',
@@ -27,7 +27,7 @@ test('trusted-proxy bridge uses control-ui profile without shared auth or device
   assert.equal(opts.url, 'ws://127.0.0.1:8080');
   assert.equal(opts.clientName, 'openclaw-control-ui');
   assert.equal(opts.mode, 'webchat');
-  assert.equal(opts.deviceIdentity, false);
+  assert.equal(opts.deviceIdentity, undefined);
   assert.equal(opts.token, undefined);
   assert.equal(opts.password, undefined);
   assert.equal(opts.role, 'operator');

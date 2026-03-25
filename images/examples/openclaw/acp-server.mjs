@@ -109,7 +109,7 @@ export function normalizeGatewayProxyHeaders(headers, upstreamURL, trustedProxyC
   return normalized;
 }
 
-function rewriteConnectFrameAsTrustedProxyControlUi(payload) {
+export function rewriteConnectFrameAsTrustedProxyControlUi(payload) {
   let frame;
   try {
     frame = JSON.parse(payload.toString("utf8"));
@@ -121,8 +121,6 @@ function rewriteConnectFrameAsTrustedProxyControlUi(payload) {
   }
   frame.params.client.id = "openclaw-control-ui";
   frame.params.client.mode = "webchat";
-  delete frame.params.auth;
-  delete frame.params.device;
   return Buffer.from(JSON.stringify(frame), "utf8");
 }
 
