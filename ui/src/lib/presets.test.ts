@@ -9,28 +9,28 @@ describe('parsePresets', () => {
 
   it('returns DEFAULT_PRESETS for placeholder string', () => {
     const result = parsePresets('__SPRITZ_UI_PRESETS__');
-    expect(result).toHaveLength(4);
+    expect(result).toHaveLength(5);
     expect(result[0].name).toBe('Starter (minimal)');
   });
 
   it('returns DEFAULT_PRESETS for empty string', () => {
     const result = parsePresets('');
-    expect(result).toHaveLength(4);
+    expect(result).toHaveLength(5);
   });
 
   it('returns DEFAULT_PRESETS for whitespace-only string', () => {
     const result = parsePresets('   ');
-    expect(result).toHaveLength(4);
+    expect(result).toHaveLength(5);
   });
 
   it('returns DEFAULT_PRESETS for undefined', () => {
     const result = parsePresets(undefined);
-    expect(result).toHaveLength(4);
+    expect(result).toHaveLength(5);
   });
 
   it('returns DEFAULT_PRESETS for null', () => {
     const result = parsePresets(null);
-    expect(result).toHaveLength(4);
+    expect(result).toHaveLength(5);
   });
 
   it('parses valid JSON string into preset array', () => {

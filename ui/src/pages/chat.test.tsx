@@ -8,29 +8,63 @@ import { ConfigProvider, config } from '@/lib/config';
 import { NoticeProvider } from '@/components/notice-banner';
 import { ChatPage } from './chat';
 
-const { requestMock, sendPromptMock } = vi.hoisted(() => ({
-  requestMock: vi.fn(),
-  sendPromptMock: vi.fn(),
-}));
+const { requestMock, sendPromptMock, emitUpdate, setUpdateHandler } = vi.hoisted(() => {
+  let updateHandler:
+    | ((update: Record<string, unknown>, options?: { historical?: boolean }) => void)
+    | undefined;
+  return {
+    requestMock: vi.fn(),
+    sendPromptMock: vi.fn(),
+    emitUpdate: (update: Record<string, unknown>, options?: { historical?: boolean }) => {
+      updateHandler?.(update, options);
+    },
+    setUpdateHandler: (
+      handler?: (update: Record<string, unknown>, options?: { historical?: boolean }) => void,
+    ) => {
+      updateHandler = handler;
+    },
+  };
+});
 
 vi.mock('@/lib/api', () => ({
   request: requestMock,
 }));
 
 vi.mock('@/lib/acp-client', () => ({
-  createACPClient: ({ onReadyChange, onStatus }: { onReadyChange?: (ready: boolean) => void; onStatus?: (status: string) => void }) => ({
-    start: vi.fn(async () => {
-      onStatus?.('Connected');
-      onReadyChange?.(true);
-    }),
-    getConversationId: () => 'conv-1',
-    getSessionId: () => 'sess-1',
-    matchesConversation: () => true,
-    isReady: () => true,
-    sendPrompt: sendPromptMock,
-    cancelPrompt: vi.fn(),
-    dispose: vi.fn(),
-  }),
+  extractACPText: (value: unknown): string => {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) return value.map((item) => String(item ?? '')).join('\n');
+    if (typeof value !== 'object') return String(value);
+    const obj = value as Record<string, unknown>;
+    if (typeof obj.text === 'string') return obj.text;
+    if (obj.content) return String(obj.content);
+    return '';
+  },
+  createACPClient: ({
+    onReadyChange,
+    onStatus,
+    onUpdate,
+  }: {
+    onReadyChange?: (ready: boolean) => void;
+    onStatus?: (status: string) => void;
+    onUpdate?: (update: Record<string, unknown>, options?: { historical?: boolean }) => void;
+  }) => {
+    setUpdateHandler(onUpdate);
+    return {
+      start: vi.fn(async () => {
+        onStatus?.('Connected');
+        onReadyChange?.(true);
+      }),
+      getConversationId: () => 'conv-1',
+      getSessionId: () => 'sess-1',
+      matchesConversation: () => true,
+      isReady: () => true,
+      sendPrompt: sendPromptMock,
+      cancelPrompt: vi.fn(),
+      dispose: vi.fn(() => setUpdateHandler(undefined)),
+    };
+  },
 }));
 
 vi.mock('@/components/notice-banner', async () => {
@@ -67,7 +101,19 @@ vi.mock('@/components/acp/sidebar', () => ({
 }));
 
 vi.mock('@/components/acp/message', () => ({
-  ChatMessage: () => null,
+  ChatMessage: ({
+    message,
+  }: {
+    message: { role: string; blocks: Array<{ type: string; text?: string }> };
+  }) => (
+    <div data-testid="chat-message">
+      {message.role}:
+      {message.blocks
+        .filter((block) => block.type === 'text')
+        .map((block) => block.text || '')
+        .join(' ')}
+    </div>
+  ),
 }));
 
 vi.mock('@/components/acp/thinking-block', () => ({
@@ -168,6 +214,7 @@ describe('ChatPage draft persistence', () => {
     });
     requestMock.mockReset();
     sendPromptMock.mockReset();
+    setUpdateHandler(undefined);
     sendPromptMock.mockResolvedValue({});
     setupRequestMock();
   });
@@ -232,6 +279,29 @@ describe('ChatPage draft persistence', () => {
     await waitFor(() => expect(sendPromptMock).toHaveBeenCalledWith('send me'));
     await waitFor(() => expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).value).toBe(''));
     expect(localStorage.getItem('spritz:chat-drafts')).toBeNull();
+  });
+
+  it('renders the echoed ACP user message only once', async () => {
+    const user = userEvent.setup();
+    await renderChat('/c/covo/conv-1');
+
+    await user.type(screen.getByLabelText('Message input'), 'test');
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+
+    await waitFor(() => expect(sendPromptMock).toHaveBeenCalledWith('test'));
+
+    emitUpdate({
+      sessionUpdate: 'user_message_chunk',
+      messageId: 'user-1',
+      content: { type: 'text', text: 'test' },
+    });
+
+    await waitFor(() => {
+      const userMessages = screen
+        .getAllByTestId('chat-message')
+        .filter((element) => element.textContent === 'user:test');
+      expect(userMessages).toHaveLength(1);
+    });
   });
 
   it('restores the original conversation draft when send fails after switching chats', async () => {

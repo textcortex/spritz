@@ -72,11 +72,7 @@ func TestOAuthCallbackStoresInstallationAndUpsertsRegistry(t *testing.T) {
 		HTTPTimeout:          5 * time.Second,
 		DedupeTTL:            time.Minute,
 	}
-	var logBuffer bytes.Buffer
-	gateway := newSlackGateway(
-		cfg,
-		slog.New(slog.NewTextHandler(&logBuffer, &slog.HandlerOptions{Level: slog.LevelDebug})),
-	)
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	state, err := gateway.state.generate()
 	if err != nil {
 		t.Fatalf("state generate failed: %v", err)
@@ -142,11 +138,7 @@ func TestInstallRedirectUsesConfiguredSlackHost(t *testing.T) {
 		SpritzServiceToken: "spritz-service-token",
 		PrincipalID:        "shared-slack-gateway",
 	}
-	var logBuffer bytes.Buffer
-	gateway := newSlackGateway(
-		cfg,
-		slog.New(slog.NewTextHandler(&logBuffer, &slog.HandlerOptions{Level: slog.LevelDebug})),
-	)
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	req := httptest.NewRequest(http.MethodGet, "/slack/install", nil)
 	rec := httptest.NewRecorder()
