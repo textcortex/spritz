@@ -343,6 +343,7 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 		sync.Mutex
 		values []string
 	}
+	var promptPayload map[string]any
 	var channelConversationCall struct {
 		sync.Mutex
 		authHeaders []string
@@ -453,6 +454,7 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 				case "session/load":
 					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
 				case "session/prompt":
+					promptPayload = message
 					_ = conn.WriteJSON(map[string]any{
 						"jsonrpc": "2.0",
 						"method":  "session/update",
@@ -559,6 +561,28 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 			}
 			if channelConversationCall.payloads[1]["externalConversationId"] != "1711387376.000100" {
 				t.Fatalf("expected alias upsert to persist the bot reply ts, got %#v", channelConversationCall.payloads[1]["externalConversationId"])
+			}
+			params, ok := promptPayload["params"].(map[string]any)
+			if !ok {
+				t.Fatalf("expected prompt params payload, got %#v", promptPayload)
+			}
+			promptItems, ok := params["prompt"].([]any)
+			if !ok || len(promptItems) != 1 {
+				t.Fatalf("expected a single prompt item, got %#v", params["prompt"])
+			}
+			item, ok := promptItems[0].(map[string]any)
+			if !ok {
+				t.Fatalf("expected prompt item object, got %#v", promptItems[0])
+			}
+			text := fmt.Sprint(item["text"])
+			if !strings.Contains(text, "<spritz-channel-context>") {
+				t.Fatalf("expected trusted channel context in prompt text, got %q", text)
+			}
+			if !strings.Contains(text, "\"actor_user_id\":\"U_1\"") {
+				t.Fatalf("expected actor metadata in prompt text, got %q", text)
+			}
+			if !strings.HasSuffix(text, "\n\nhello") {
+				t.Fatalf("expected normalized prompt body after metadata block, got %q", text)
 			}
 			return
 		}
@@ -1327,6 +1351,56 @@ func TestNormalizeSlackPromptTextPreservesNonGatewayMentions(t *testing.T) {
 	)
 	if normalized != "ask <@U_APPROVER> for approval" {
 		t.Fatalf("expected non-gateway mentions to remain, got %q", normalized)
+	}
+}
+
+func TestBuildSlackPromptTextPrependsTrustedContext(t *testing.T) {
+	prompt := buildSlackPromptText(
+		"T_workspace_1",
+		slackEventInner{
+			Type:        "app_mention",
+			User:        "U_requester",
+			Text:        "<@U_BOT> create a zeno for me",
+			Channel:     "C_channel_1",
+			ChannelType: "channel",
+			TS:          "1711387375.000100",
+		},
+		"U_BOT",
+	)
+
+	const prefix = "<spritz-channel-context>"
+	if !strings.HasPrefix(prompt, prefix) {
+		t.Fatalf("expected trusted context prefix, got %q", prompt)
+	}
+	endIndex := strings.Index(prompt, "</spritz-channel-context>")
+	if endIndex < 0 {
+		t.Fatalf("expected trusted context suffix, got %q", prompt)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(prompt[len(prefix):endIndex]), &payload); err != nil {
+		t.Fatalf("decode prompt context: %v", err)
+	}
+	if payload["source"] != "spritz-slack-gateway" {
+		t.Fatalf("expected source metadata, got %#v", payload["source"])
+	}
+	if payload["provider"] != "slack" {
+		t.Fatalf("expected slack provider, got %#v", payload["provider"])
+	}
+	if payload["workspace_id"] != "T_workspace_1" {
+		t.Fatalf("expected workspace metadata, got %#v", payload["workspace_id"])
+	}
+	if payload["actor_user_id"] != "U_requester" {
+		t.Fatalf("expected actor metadata, got %#v", payload["actor_user_id"])
+	}
+	if payload["conversation_id"] != "1711387375.000100" {
+		t.Fatalf("expected top-level conversation identity, got %#v", payload["conversation_id"])
+	}
+	if payload["direct_message"] != false {
+		t.Fatalf("expected non-DM metadata, got %#v", payload["direct_message"])
+	}
+	if !strings.HasSuffix(prompt, "\n\ncreate a zeno for me") {
+		t.Fatalf("expected normalized user text after metadata block, got %q", prompt)
 	}
 }
 

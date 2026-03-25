@@ -206,7 +206,11 @@ func (g *slackGateway) processMessageEventWithDelivery(
 		return fmt.Errorf("slack api_app_id mismatch for team %s", envelope.TeamID)
 	}
 
-	promptText := normalizeSlackPromptText(event.Type, event.Text, session.ProviderAuth.BotUserID)
+	promptText := buildSlackPromptText(
+		envelope.TeamID,
+		event,
+		session.ProviderAuth.BotUserID,
+	)
 	if promptText == "" {
 		return nil
 	}
@@ -298,6 +302,45 @@ func normalizeSlackPromptText(eventType, text, botUserID string) string {
 		}
 	}
 	return normalized
+}
+
+type slackPromptContext struct {
+	Source         string `json:"source"`
+	Provider       string `json:"provider"`
+	WorkspaceID    string `json:"workspace_id"`
+	ActorUserID    string `json:"actor_user_id"`
+	ChannelID      string `json:"channel_id"`
+	ChannelType    string `json:"channel_type,omitempty"`
+	MessageTS      string `json:"message_ts"`
+	ThreadTS       string `json:"thread_ts,omitempty"`
+	ConversationID string `json:"conversation_id"`
+	DirectMessage  bool   `json:"direct_message"`
+}
+
+func buildSlackPromptText(teamID string, event slackEventInner, botUserID string) string {
+	normalized := normalizeSlackPromptText(event.Type, event.Text, botUserID)
+	if normalized == "" {
+		return ""
+	}
+
+	payload, err := json.Marshal(
+		slackPromptContext{
+			Source:         "spritz-slack-gateway",
+			Provider:       slackProvider,
+			WorkspaceID:    strings.TrimSpace(teamID),
+			ActorUserID:    strings.TrimSpace(event.User),
+			ChannelID:      strings.TrimSpace(event.Channel),
+			ChannelType:    strings.TrimSpace(event.ChannelType),
+			MessageTS:      strings.TrimSpace(event.TS),
+			ThreadTS:       strings.TrimSpace(event.ThreadTS),
+			ConversationID: slackExternalConversationID(event),
+			DirectMessage:  isSlackDirectMessageEvent(event),
+		},
+	)
+	if err != nil {
+		return normalized
+	}
+	return "<spritz-channel-context>" + string(payload) + "</spritz-channel-context>\n\n" + normalized
 }
 
 func slackReplyThreadTS(event slackEventInner) string {
