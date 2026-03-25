@@ -211,8 +211,8 @@ func (g *slackGateway) processMessageEventWithDelivery(
 		return nil
 	}
 
-	externalConversationID := g.slackExternalConversationID(envelope.TeamID, event)
-	conversationID, err := g.upsertChannelConversation(ctx, session, event, envelope.TeamID, externalConversationID)
+	externalConversationID := slackExternalConversationID(event)
+	conversationID, err := g.upsertChannelConversation(ctx, session, event, envelope.TeamID, "", externalConversationID)
 	if err != nil {
 		return err
 	}
@@ -238,13 +238,23 @@ func (g *slackGateway) processMessageEventWithDelivery(
 		success = promptSent
 		return err
 	}
-	g.rememberSlackReplyThreadRoot(
-		envelope.TeamID,
-		event,
-		replyThreadTS,
-		replyMessageTS,
-		externalConversationID,
-	)
+	if replyThreadTS == "" && !isSlackDirectMessageEvent(event) && strings.TrimSpace(replyMessageTS) != "" {
+		if _, err := g.upsertChannelConversation(
+			ctx,
+			session,
+			event,
+			envelope.TeamID,
+			conversationID,
+			replyMessageTS,
+		); err != nil {
+			g.logger.Error(
+				"slack reply alias persistence failed",
+				"error", err,
+				"conversation_id", conversationID,
+				"reply_message_ts", replyMessageTS,
+			)
+		}
+	}
 	success = true
 	return nil
 }
@@ -293,24 +303,14 @@ func slackReplyThreadTS(event slackEventInner) string {
 	return ""
 }
 
-func (g *slackGateway) slackExternalConversationID(teamID string, event slackEventInner) string {
+func slackExternalConversationID(event slackEventInner) string {
 	if isSlackDirectMessageEvent(event) {
 		return strings.TrimSpace(event.Channel)
 	}
 	if threadTS := strings.TrimSpace(event.ThreadTS); threadTS != "" {
-		if rootConversationID := g.threadRoots.lookup(teamID, event.Channel, threadTS); rootConversationID != "" {
-			return rootConversationID
-		}
 		return threadTS
 	}
 	return strings.TrimSpace(event.TS)
-}
-
-func (g *slackGateway) rememberSlackReplyThreadRoot(teamID string, event slackEventInner, replyThreadTS, replyMessageTS, externalConversationID string) {
-	if isSlackDirectMessageEvent(event) || strings.TrimSpace(replyThreadTS) != "" {
-		return
-	}
-	g.threadRoots.remember(teamID, event.Channel, replyMessageTS, externalConversationID)
 }
 
 func (g *slackGateway) verifySlackSignature(header http.Header, body []byte) error {

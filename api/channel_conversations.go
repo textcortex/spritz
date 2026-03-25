@@ -63,6 +63,32 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 	if found {
 		return writeJSON(c, http.StatusOK, map[string]any{"created": false, "conversation": conversation})
 	}
+	if normalizedBody.ConversationID != "" {
+		existing := &spritzv1.SpritzConversation{}
+		if err := s.client.Get(c.Request().Context(), clientKey(namespace, normalizedBody.ConversationID), existing); err != nil {
+			return s.writeACPResourceError(c, err)
+		}
+		if !channelConversationMatchesBaseIdentity(existing, identity) {
+			return writeError(c, http.StatusConflict, "channel conversation is ambiguous")
+		}
+		changed, err := appendChannelConversationAlias(existing, identity.externalConversationID)
+		if err != nil {
+			return writeError(c, http.StatusInternalServerError, err.Error())
+		}
+		if normalizedBody.RequestID != "" {
+			if existing.Annotations == nil {
+				existing.Annotations = map[string]string{}
+			}
+			existing.Annotations[requestIDAnnotationKey] = normalizedBody.RequestID
+			changed = true
+		}
+		if changed {
+			if err := s.client.Update(c.Request().Context(), existing); err != nil {
+				return s.writeACPResourceError(c, err)
+			}
+		}
+		return writeJSON(c, http.StatusOK, map[string]any{"created": false, "conversation": existing})
+	}
 
 	conversation, err = buildACPConversationResource(spritz, normalizedBody.Title, normalizedBody.CWD)
 	if err != nil {

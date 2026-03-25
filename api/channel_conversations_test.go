@@ -186,6 +186,89 @@ func TestUpsertChannelConversationReusesExistingConversation(t *testing.T) {
 	}
 }
 
+func TestUpsertChannelConversationPersistsAndResolvesReplyAliases(t *testing.T) {
+	s := newChannelConversationsTestServer(t, readyACPSpritz("zeno-acme", "owner-123"))
+	e := echo.New()
+	s.registerRoutes(e)
+
+	createRec := httptest.NewRecorder()
+	e.ServeHTTP(createRec, newChannelConversationsRequest(`{
+		"principalId":"shared-slack-gateway",
+		"instanceId":"zeno-acme",
+		"ownerId":"owner-123",
+		"provider":"slack",
+		"externalScopeType":"workspace",
+		"externalTenantId":"T_workspace_1",
+		"externalChannelId":"C_channel_1",
+		"externalConversationId":"1711387375.000100",
+		"title":"Slack concierge"
+	}`))
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("expected first request to create, got %d: %s", createRec.Code, createRec.Body.String())
+	}
+	var createPayload struct {
+		Data struct {
+			Conversation spritzv1.SpritzConversation `json:"conversation"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createRec.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("failed to decode create response: %v", err)
+	}
+
+	aliasRec := httptest.NewRecorder()
+	e.ServeHTTP(aliasRec, newChannelConversationsRequest(`{
+		"principalId":"shared-slack-gateway",
+		"instanceId":"zeno-acme",
+		"ownerId":"owner-123",
+		"conversationId":"`+createPayload.Data.Conversation.Name+`",
+		"provider":"slack",
+		"externalScopeType":"workspace",
+		"externalTenantId":"T_workspace_1",
+		"externalChannelId":"C_channel_1",
+		"externalConversationId":"1711387376.000100",
+		"title":"Slack concierge"
+	}`))
+	if aliasRec.Code != http.StatusOK {
+		t.Fatalf("expected alias request to reuse, got %d: %s", aliasRec.Code, aliasRec.Body.String())
+	}
+
+	reuseRec := httptest.NewRecorder()
+	e.ServeHTTP(reuseRec, newChannelConversationsRequest(`{
+		"principalId":"shared-slack-gateway",
+		"instanceId":"zeno-acme",
+		"ownerId":"owner-123",
+		"provider":"slack",
+		"externalScopeType":"workspace",
+		"externalTenantId":"T_workspace_1",
+		"externalChannelId":"C_channel_1",
+		"externalConversationId":"1711387376.000100",
+		"title":"Slack concierge"
+	}`))
+	if reuseRec.Code != http.StatusOK {
+		t.Fatalf("expected alias lookup to reuse, got %d: %s", reuseRec.Code, reuseRec.Body.String())
+	}
+
+	var reusePayload struct {
+		Data struct {
+			Created      bool                        `json:"created"`
+			Conversation spritzv1.SpritzConversation `json:"conversation"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(reuseRec.Body.Bytes(), &reusePayload); err != nil {
+		t.Fatalf("failed to decode reuse response: %v", err)
+	}
+	if reusePayload.Data.Created {
+		t.Fatalf("expected alias lookup to reuse the original conversation")
+	}
+	if reusePayload.Data.Conversation.Name != createPayload.Data.Conversation.Name {
+		t.Fatalf("expected alias lookup to reuse %q, got %q", createPayload.Data.Conversation.Name, reusePayload.Data.Conversation.Name)
+	}
+	aliases := channelConversationExternalConversationAliases(&reusePayload.Data.Conversation)
+	if len(aliases) != 1 || aliases[0] != "1711387376.000100" {
+		t.Fatalf("expected persisted alias, got %#v", aliases)
+	}
+}
+
 func TestUpsertChannelConversationPreservesExistingTitleAndCWD(t *testing.T) {
 	s := newChannelConversationsTestServer(t, readyACPSpritz("zeno-acme", "owner-123"))
 	e := echo.New()

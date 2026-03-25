@@ -110,9 +110,10 @@ func (g *slackGateway) exchangeChannelSession(ctx context.Context, teamID string
 	}, nil
 }
 
-func (g *slackGateway) upsertChannelConversation(ctx context.Context, session channelSession, event slackEventInner, teamID, externalConversationID string) (string, error) {
+func (g *slackGateway) upsertChannelConversation(ctx context.Context, session channelSession, event slackEventInner, teamID, conversationID, externalConversationID string) (string, error) {
 	body := map[string]any{
 		"namespace":              session.Namespace,
+		"conversationId":         strings.TrimSpace(conversationID),
 		"principalId":            g.cfg.PrincipalID,
 		"instanceId":             session.InstanceID,
 		"ownerId":                session.OwnerAuthID,
