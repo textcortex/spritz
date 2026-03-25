@@ -1,0 +1,14 @@
+{
+  "name": "@spritz/example-acp-runtime",
+  "private": true,
+  "type": "module",
+  "description": "TypeScript build for generic Spritz example ACP runtime scripts.",
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/openclaw/*.test.js dist/shared/*.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "typescript": "^5.9.2"
+  }
+}

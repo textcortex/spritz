@@ -22,12 +22,49 @@ const DEFAULT_OPENCLAW_PACKAGE_ROOT = "/usr/local/lib/node_modules/openclaw";
 const DEFAULT_FALLBACK_AGENT_ID = "main";
 const DEFAULT_FALLBACK_SESSION_PREFIX = "spritz-acp";
 const DEFAULT_ACP_PROTOCOL_VERSION = 1;
+const DEFAULT_LIVE_TOOL_TRANSCRIPT_SYNC_INTERVAL_MS = 400;
 const DEFAULT_OPENCLAW_ACP_AGENT_INFO = {
   name: "openclaw-acp",
   title: "OpenClaw ACP Gateway",
 };
 const UUIDISH_SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type ParsedArgs = {
+  defaultSessionKey?: string;
+  defaultSessionLabel?: string;
+  gatewayPassword?: string;
+  gatewayToken?: string;
+  gatewayUrl?: string;
+  help?: boolean;
+  prefixCwd?: boolean;
+  provenanceMode?: string;
+  requireExistingSession?: boolean;
+  resetSession?: boolean;
+  verbose?: boolean;
+};
+
+type PromptToolTranscriptSyncHooks = {
+  clearInterval?: typeof globalThis.clearInterval;
+  setInterval?: typeof globalThis.setInterval;
+  toolTranscriptSyncIntervalMs?: number;
+};
+
+type LazyGatewayHooks = {
+  onStop?: () => void;
+  waitUntilReady?: () => Promise<void> | void;
+};
+
+type GatewayAgentClassHooks = PromptToolTranscriptSyncHooks & {
+  ensureGatewayReady?: () => Promise<void> | void;
+};
+
+type GatewayClientOptionsParams = {
+  connectionUrl: string;
+  gatewayPassword?: string;
+  gatewayToken?: string;
+  trustedProxyControlUi?: boolean;
+};
 
 /**
  * Returns whether the image-owned ACP adapter should impersonate a trusted-proxy
@@ -79,6 +116,86 @@ function readTextFromHistoryContent(content) {
     .trim();
 }
 
+function stripInjectedUserMessageEnvelope(text) {
+  if (typeof text !== "string") {
+    return "";
+  }
+
+  let normalized = text.trim();
+  normalized = normalized.replace(
+    /^Sender \(untrusted metadata\):\n```json\n[\s\S]*?\n```\n\n/u,
+    "",
+  );
+  normalized = normalized.replace(/^\[[^\n]*Working directory:[^\n]*\]\n\n/u, "");
+  normalized = normalized.replace(/^\[Working directory:[^\n]*\]\n\n/u, "");
+  return normalized.trim();
+}
+
+function extractVisibleUserHistoryText(content) {
+  return stripInjectedUserMessageEnvelope(readTextFromHistoryContent(content));
+}
+
+function extractPromptText(prompt) {
+  if (!Array.isArray(prompt)) {
+    return "";
+  }
+
+  return prompt
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return "";
+      }
+      return typeof item.text === "string" ? item.text.trim() : "";
+    })
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+/**
+ * Resolves the pending ACP prompt for a gateway event. Tool events can carry a
+ * gateway-engine run ID that differs from the client-generated prompt
+ * idempotency key, so we fall back to the sole prompt sharing the session key.
+ */
+export function findPendingPromptBySessionKey(pendingPrompts, sessionKey, runId) {
+  if (!(pendingPrompts instanceof Map)) {
+    return undefined;
+  }
+
+  let sessionMatch;
+  let sessionMatchCount = 0;
+
+  for (const pending of pendingPrompts.values()) {
+    if (!pending || pending.sessionKey !== sessionKey) {
+      continue;
+    }
+
+    sessionMatchCount += 1;
+    if (!runId || pending.idempotencyKey === runId) {
+      return pending;
+    }
+    if (!sessionMatch) {
+      sessionMatch = pending;
+    }
+  }
+
+  if (runId && sessionMatchCount === 1) {
+    return sessionMatch;
+  }
+
+  return undefined;
+}
+
+function normalizeContentItemType(item) {
+  return typeof item?.type === "string" ? item.type.toLowerCase() : "";
+}
+
+function isToolCallContentItem(item) {
+  return ["toolcall", "tool_call", "tooluse", "tool_use"].includes(
+    normalizeContentItemType(item),
+  );
+}
+
 function buildHistoryToolCallUpdate(item) {
   const toolCallId =
     (typeof item.id === "string" && item.id.trim()) ||
@@ -127,6 +244,262 @@ function buildHistoryToolResultUpdate(message, content) {
   };
 }
 
+function ensurePendingToolLifecycleState(pending) {
+  if (!pending) {
+    return {
+      toolCalls: new Map(),
+      startedToolCallIds: new Set(),
+      completedToolCallIds: new Set(),
+    };
+  }
+
+  if (!(pending.toolCalls instanceof Map)) {
+    pending.toolCalls = new Map();
+  }
+  if (!(pending.startedToolCallIds instanceof Set)) {
+    pending.startedToolCallIds = new Set();
+  }
+  if (!(pending.completedToolCallIds instanceof Set)) {
+    pending.completedToolCallIds = new Set();
+  }
+
+  return {
+    toolCalls: pending.toolCalls,
+    startedToolCallIds: pending.startedToolCallIds,
+    completedToolCallIds: pending.completedToolCallIds,
+  };
+}
+
+function rememberObservedToolLifecycleEvent(pending, payload) {
+  const stream = payload?.stream;
+  const phase = payload?.data?.phase;
+  const toolCallId = payload?.data?.toolCallId;
+  if (!pending || stream !== "tool" || !toolCallId) {
+    return;
+  }
+
+  const { toolCalls, startedToolCallIds, completedToolCallIds } =
+    ensurePendingToolLifecycleState(pending);
+
+  if (phase === "start") {
+    startedToolCallIds.add(toolCallId);
+    if (!toolCalls.has(toolCallId)) {
+      const toolName =
+        (typeof payload?.data?.name === "string" && payload.data.name.trim()) || "tool";
+      toolCalls.set(toolCallId, {
+        title: `${toolName}`,
+        rawInput: payload?.data?.args,
+        type: toolName,
+      });
+    }
+    return;
+  }
+
+  if (phase === "result") {
+    startedToolCallIds.add(toolCallId);
+    completedToolCallIds.add(toolCallId);
+    toolCalls.delete(toolCallId);
+  }
+}
+
+/**
+ * Emits live tool_call updates from assistant content blocks when the ACP
+ * bundle only streams text/thinking and leaves tool blocks to transcript
+ * replay. This keeps the UI in sync before a refresh.
+ */
+export async function emitLiveToolCallContentUpdates(agent, sessionId, pending, messageData) {
+  if (!pending) {
+    return;
+  }
+
+  const content = normalizeHistoryContent(messageData?.content);
+  if (content.length === 0) {
+    return;
+  }
+
+  const { toolCalls, startedToolCallIds, completedToolCallIds } =
+    ensurePendingToolLifecycleState(pending);
+
+  for (const item of content) {
+    if (!isToolCallContentItem(item)) {
+      continue;
+    }
+
+    const update = buildHistoryToolCallUpdate(item);
+    if (
+      !update ||
+      startedToolCallIds.has(update.toolCallId) ||
+      completedToolCallIds.has(update.toolCallId)
+    ) {
+      continue;
+    }
+
+    startedToolCallIds.add(update.toolCallId);
+    toolCalls.set(update.toolCallId, {
+      title: update.title,
+      rawInput: update.rawInput,
+      type: update.type,
+    });
+
+    await agent.connection.sessionUpdate({
+      sessionId,
+      update: {
+        ...update,
+        status: "in_progress",
+      },
+    });
+  }
+}
+
+/**
+ * Marks any live tool calls as completed using the persisted gateway transcript
+ * before the prompt finishes. Refresh already rebuilds this from history; this
+ * closes the gap for the live stream.
+ */
+export async function syncPendingToolCallTranscriptUpdates(agent, sessionId, pending) {
+  if (!pending?.sessionKey || !agent?.gateway?.request) {
+    return;
+  }
+
+  if (pending.transcriptToolSyncPromise) {
+    return await pending.transcriptToolSyncPromise;
+  }
+
+  const syncPromise = (async () => {
+    let transcript;
+    try {
+      transcript = await agent.gateway.request("sessions.get", {
+        key: pending.sessionKey,
+        limit: 1000,
+      });
+    } catch (error) {
+      if (hasMissingOperatorReadScope(error)) {
+        agent.log?.(
+          `syncPendingToolCallTranscriptUpdates: skipping transcript fetch for ${sessionId}; gateway transcript read requires operator.read`,
+        );
+        return;
+      }
+      throw error;
+    }
+
+    const { toolCalls, startedToolCallIds, completedToolCallIds } =
+      ensurePendingToolLifecycleState(pending);
+    const transcriptToolCalls = [];
+    const transcriptToolResults = [];
+
+    for (const rawMessage of transcript?.messages ?? []) {
+      if (!rawMessage || typeof rawMessage !== "object") {
+        continue;
+      }
+
+      const role = typeof rawMessage.role === "string" ? rawMessage.role.toLowerCase() : "";
+      const content = normalizeHistoryContent(rawMessage.content);
+
+      if (role === "assistant") {
+        for (const item of content) {
+          if (!isToolCallContentItem(item)) {
+            continue;
+          }
+          const update = buildHistoryToolCallUpdate(item);
+          if (!update) {
+            continue;
+          }
+          transcriptToolCalls.push(update);
+        }
+        continue;
+      }
+
+      if (["toolresult", "tool_result", "tool"].includes(role)) {
+        const update = buildHistoryToolResultUpdate(rawMessage, content);
+        if (update) {
+          transcriptToolResults.push(update);
+        }
+      }
+    }
+
+    for (const update of transcriptToolCalls) {
+      if (
+        startedToolCallIds.has(update.toolCallId) ||
+        completedToolCallIds.has(update.toolCallId)
+      ) {
+        continue;
+      }
+
+      startedToolCallIds.add(update.toolCallId);
+      toolCalls.set(update.toolCallId, {
+        title: update.title,
+        rawInput: update.rawInput,
+        type: update.type,
+      });
+      await agent.connection.sessionUpdate({
+        sessionId,
+        update: {
+          ...update,
+          status: "in_progress",
+        },
+      });
+    }
+
+    for (const update of transcriptToolResults) {
+      if (completedToolCallIds.has(update.toolCallId)) {
+        continue;
+      }
+
+      completedToolCallIds.add(update.toolCallId);
+      startedToolCallIds.add(update.toolCallId);
+      toolCalls.delete(update.toolCallId);
+      await agent.connection.sessionUpdate({
+        sessionId,
+        update,
+      });
+    }
+  })();
+
+  pending.transcriptToolSyncPromise = syncPromise;
+  try {
+    await syncPromise;
+  } finally {
+    if (pending.transcriptToolSyncPromise === syncPromise) {
+      delete pending.transcriptToolSyncPromise;
+    }
+  }
+}
+
+function startPromptToolTranscriptSync(
+  agent,
+  sessionId,
+  pending,
+  hooks: PromptToolTranscriptSyncHooks = {},
+) {
+  if (!pending?.sessionKey || !agent?.gateway?.request) {
+    return () => {};
+  }
+
+  const setTimer = hooks.setInterval ?? globalThis.setInterval;
+  const clearTimer = hooks.clearInterval ?? globalThis.clearInterval;
+  const intervalMs =
+    Number.isFinite(hooks.toolTranscriptSyncIntervalMs) &&
+    hooks.toolTranscriptSyncIntervalMs > 0
+      ? hooks.toolTranscriptSyncIntervalMs
+      : DEFAULT_LIVE_TOOL_TRANSCRIPT_SYNC_INTERVAL_MS;
+
+  const timer = setTimer(() => {
+    if (agent.pendingPrompts?.get?.(sessionId) !== pending) {
+      clearTimer(timer);
+      return;
+    }
+    void syncPendingToolCallTranscriptUpdates(agent, sessionId, pending).catch((error) => {
+      agent.log?.(
+        `startPromptToolTranscriptSync: transcript sync failed for ${sessionId}: ${String(error)}`,
+      );
+    });
+  }, intervalMs);
+
+  return () => {
+    clearTimer(timer);
+  };
+}
+
 /**
  * Converts persisted OpenClaw session transcript entries into ACP session updates so
  * `session/load` can reconstruct prior transcript state for any ACP client.
@@ -147,7 +520,7 @@ export function buildHistoryReplayUpdates(messages = []) {
     const content = normalizeHistoryContent(rawMessage.content);
 
     if (role === "user") {
-      const text = readTextFromHistoryContent(content);
+      const text = extractVisibleUserHistoryText(content);
       if (text) {
         updates.push({
           sessionUpdate: "user_message_chunk",
@@ -277,7 +650,7 @@ export function resolveBridgeFallbackSessionKey(sessionId, env = process.env) {
  * actually need it. This prevents initialize-only ACP probes from opening and
  * then abruptly tearing down gateway webchat sessions.
  */
-export function createLazyGatewayController(gateway, hooks = {}) {
+export function createLazyGatewayController(gateway, hooks: LazyGatewayHooks = {}) {
   let ensureReadyPromise = null;
   let stopped = false;
 
@@ -338,8 +711,43 @@ export function buildSpritzOpenclawAcpMetadata(version = "unknown") {
  * Extends OpenClaw's ACP gateway agent so the default ACP session flow maps to
  * normal agent-scoped gateway sessions instead of ACP runtime session keys.
  */
-export function createSpritzAcpGatewayAgentClass(AcpGatewayAgent, env = process.env, hooks = {}) {
+export function createSpritzAcpGatewayAgentClass(
+  AcpGatewayAgent,
+  env = process.env,
+  hooks: GatewayAgentClassHooks = {},
+) {
   return class SpritzOpenclawAcpGatewayAgent extends AcpGatewayAgent {
+    findPendingBySessionKey(sessionKey, runId) {
+      return findPendingPromptBySessionKey(this.pendingPrompts, sessionKey, runId);
+    }
+
+    async handleAgentEvent(evt) {
+      const payload = evt?.payload;
+      const pending =
+        payload?.sessionKey && payload?.stream === "tool"
+          ? this.findPendingBySessionKey(payload.sessionKey, payload.runId)
+          : undefined;
+      const result = await super.handleAgentEvent(evt);
+      if (pending) {
+        rememberObservedToolLifecycleEvent(pending, payload);
+      }
+      return result;
+    }
+
+    async handleDeltaEvent(sessionId, messageData) {
+      const pending = this.pendingPrompts?.get?.(sessionId);
+      if (pending) {
+        await syncPendingToolCallTranscriptUpdates(this, sessionId, pending);
+        await emitLiveToolCallContentUpdates(this, sessionId, pending, messageData);
+      }
+      return await super.handleDeltaEvent(sessionId, messageData);
+    }
+
+    async finishPrompt(sessionId, pending, stopReason) {
+      await syncPendingToolCallTranscriptUpdates(this, sessionId, pending);
+      return await super.finishPrompt(sessionId, pending, stopReason);
+    }
+
     async newSession(params) {
       await hooks.ensureGatewayReady?.();
       if (params.mcpServers.length > 0) {
@@ -377,6 +785,33 @@ export function createSpritzAcpGatewayAgentClass(AcpGatewayAgent, env = process.
       await this.sendAvailableCommands(session.sessionId);
       return {};
     }
+
+    async prompt(params) {
+      await hooks.ensureGatewayReady?.();
+
+      const promptText = extractPromptText(params?.prompt);
+      if (promptText && this.sessionStore?.getSession?.(params.sessionId)) {
+        await this.connection.sessionUpdate({
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: promptText },
+          },
+        });
+      }
+
+      const promptPromise = super.prompt(params);
+      const pending = this.pendingPrompts?.get?.(params.sessionId);
+      const stopPromptToolSync = pending
+        ? startPromptToolTranscriptSync(this, params.sessionId, pending, hooks)
+        : () => {};
+
+      try {
+        return await promptPromise;
+      } finally {
+        stopPromptToolSync();
+      }
+    }
   };
 }
 
@@ -385,9 +820,12 @@ export function createSpritzAcpGatewayAgentClass(AcpGatewayAgent, env = process.
  * accepts the leading `acp` subcommand so it can be dropped in place of the
  * normal `openclaw` binary.
  */
-export function parseArgs(argv, helpers = { readSecretFromFile: defaultReadSecretFromFile }) {
+export function parseArgs(
+  argv,
+  helpers = { readSecretFromFile: defaultReadSecretFromFile },
+): ParsedArgs {
   const args = normalizeCliArgs(argv);
-  const opts = {};
+  const opts: ParsedArgs = {};
   let tokenFile;
   let passwordFile;
 
@@ -480,7 +918,7 @@ export function parseArgs(argv, helpers = { readSecretFromFile: defaultReadSecre
  * the bridge must connect as a Control UI operator session so OpenClaw applies
  * browser-style trusted-proxy auth instead of pairing-oriented CLI auth.
  */
-export function buildGatewayClientOptions(params) {
+export function buildGatewayClientOptions(params: GatewayClientOptionsParams) {
   const base = {
     url: params.connectionUrl,
     clientDisplayName: "ACP",
@@ -573,7 +1011,7 @@ export function readOpenclawPackageVersion(env = process.env) {
   }
 }
 
-async function serveSpritzOpenclawAcp(opts = {}, env = process.env) {
+async function serveSpritzOpenclawAcp(opts: ParsedArgs = {}, env = process.env) {
   const sdk = await loadAcpSdk(env);
   const {
     AcpGatewayAgent,
@@ -613,16 +1051,16 @@ async function serveSpritzOpenclawAcp(opts = {}, env = process.env) {
   });
 
   const trustedProxyControlUi = useTrustedProxyControlUiBridge(env);
-  let agent = null;
-  let onClosed = () => {};
-  const closed = new Promise((resolve) => {
+  let agent: any = null;
+  let onClosed: () => void = () => {};
+  const closed = new Promise<void>((resolve) => {
     onClosed = resolve;
   });
   let stopped = false;
-  let onGatewayReadyResolve = () => {};
-  let onGatewayReadyReject = () => {};
+  let onGatewayReadyResolve: () => void = () => {};
+  let onGatewayReadyReject: (error: Error) => void = () => {};
   let gatewayReadySettled = false;
-  const gatewayReady = new Promise((resolve, reject) => {
+  const gatewayReady = new Promise<void>((resolve, reject) => {
     onGatewayReadyResolve = resolve;
     onGatewayReadyReject = reject;
   });
@@ -695,8 +1133,8 @@ async function serveSpritzOpenclawAcp(opts = {}, env = process.env) {
     ensureGatewayReady: () => gatewayController.ensureReady(),
   });
 
-  new AgentSideConnection((connectionInstance) => {
-    agent = new SpritzAcpGatewayAgent(connectionInstance, gateway, opts);
+  new AgentSideConnection((connectionInstance: unknown) => {
+    agent = new (SpritzAcpGatewayAgent as any)(connectionInstance, gateway, opts);
     agent.start();
     return agent;
   }, stream);

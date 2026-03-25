@@ -1,3 +1,14 @@
+FROM node:22-bookworm-slim AS openclaw-ts-build
+
+WORKDIR /build/examples
+
+COPY examples/package.json examples/package-lock.json examples/tsconfig.json ./
+RUN npm ci
+
+COPY examples/openclaw ./openclaw
+COPY examples/shared ./shared
+RUN npm run build
+
 FROM node:22-bookworm-slim
 
 # Example Spritz image with OpenClaw preinstalled (agnostic).
@@ -12,7 +23,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 ARG OPENCLAW_VERSION=latest
 
-COPY examples/openclaw/generate-openclaw-acp-compat.mjs /usr/local/bin/spritz-generate-openclaw-acp-compat
+COPY --from=openclaw-ts-build --chmod=0755 /build/examples/dist/openclaw/generate-openclaw-acp-compat.js /usr/local/bin/spritz-generate-openclaw-acp-compat
+COPY --from=openclaw-ts-build --chmod=0755 /build/examples/dist/openclaw/resolve-openclaw-acpx-extension-dir.js /usr/local/bin/spritz-resolve-openclaw-acpx-extension-dir
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
@@ -44,12 +56,14 @@ RUN apt-get update \
     xdg-utils \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g "openclaw@${OPENCLAW_VERSION}" \
-  && node /usr/local/bin/spritz-generate-openclaw-acp-compat /usr/local/lib/node_modules/openclaw \
-  && test -f /usr/local/lib/node_modules/openclaw/dist/spritz-acp-compat.js \
-  && cd /usr/local/lib/node_modules/openclaw/extensions/acpx \
+RUN openclaw_dir="/usr/local/lib/node_modules/openclaw" \
+  && npm install -g "openclaw@${OPENCLAW_VERSION}" \
+  && node /usr/local/bin/spritz-generate-openclaw-acp-compat "${openclaw_dir}" \
+  && test -f "${openclaw_dir}/dist/spritz-acp-compat.js" \
+  && extension_dir="$(node /usr/local/bin/spritz-resolve-openclaw-acpx-extension-dir "${openclaw_dir}")" \
+  && cd "${extension_dir}" \
   && npm install --omit=dev --no-save \
-  && test -x /usr/local/lib/node_modules/openclaw/extensions/acpx/node_modules/.bin/acpx
+  && test -x "${extension_dir}/node_modules/.bin/acpx"
 
 RUN useradd -m -s /bin/bash dev \
   && mkdir -p /home/dev/.openclaw \
@@ -63,9 +77,10 @@ WORKDIR /workspace
 
 COPY --chown=dev:dev examples/base/entrypoint.sh /usr/local/bin/spritz-entrypoint
 COPY --chown=dev:dev examples/openclaw/entrypoint.sh /usr/local/bin/spritz-openclaw-entrypoint
-COPY --chown=dev:dev --chmod=0755 examples/shared/spritz-acp-server.mjs /usr/local/shared/spritz-acp-server.mjs
-COPY --chown=dev:dev --chmod=0755 examples/openclaw/acp-server.mjs /usr/local/bin/spritz-openclaw-acp-server
-COPY --chown=dev:dev --chmod=0755 examples/openclaw/acp-wrapper.mjs /usr/local/bin/acp-wrapper.mjs
+COPY --from=openclaw-ts-build --chown=dev:dev --chmod=0755 /build/examples/dist/shared/spritz-acp-server.js /usr/local/shared/spritz-acp-server.js
+COPY --from=openclaw-ts-build --chown=dev:dev --chmod=0755 /build/examples/dist/openclaw/acp-server.js /usr/local/bin/spritz-openclaw-acp-server
+COPY --from=openclaw-ts-build --chown=dev:dev --chmod=0755 /build/examples/dist/openclaw/acp-wrapper.js /usr/local/bin/acp-wrapper.js
+COPY --from=openclaw-ts-build --chown=dev:dev --chmod=0755 /build/examples/dist/openclaw/gateway-proxy.js /usr/local/bin/gateway-proxy.js
 
 ENTRYPOINT ["/usr/local/bin/spritz-openclaw-entrypoint"]
 CMD ["sleep", "infinity"]

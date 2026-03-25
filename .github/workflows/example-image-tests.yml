@@ -1,0 +1,39 @@
+name: example-image-tests
+
+on:
+  pull_request:
+    paths:
+      - "images/examples/**"
+      - ".github/workflows/example-image-tests.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "images/examples/**"
+      - ".github/workflows/example-image-tests.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install example runtime dependencies
+        working-directory: images/examples
+        run: npm ci
+
+      - name: Run example ACP runtime tests
+        working-directory: images/examples
+        run: npm test
+
+      - name: Run OpenClaw entrypoint tests
+        run: bash images/examples/openclaw/entrypoint_test.sh
+
+      - name: Build OpenClaw example image
+        run: docker build -f examples/openclaw/Dockerfile images
