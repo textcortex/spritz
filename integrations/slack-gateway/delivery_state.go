@@ -18,6 +18,18 @@ type dedupeEntry struct {
 	inFlight bool
 }
 
+type slackThreadRootStore struct {
+	ttl     time.Duration
+	now     func() time.Time
+	mu      sync.Mutex
+	entries map[string]slackThreadRootEntry
+}
+
+type slackThreadRootEntry struct {
+	rootConversationID string
+	seenAt             time.Time
+}
+
 type dedupeLease struct {
 	store *dedupeStore
 	key   string
@@ -44,6 +56,14 @@ func newDedupeStore(ttl time.Duration) *dedupeStore {
 	}
 }
 
+func newSlackThreadRootStore(ttl time.Duration) *slackThreadRootStore {
+	return &slackThreadRootStore{
+		ttl:     ttl,
+		now:     time.Now,
+		entries: map[string]slackThreadRootEntry{},
+	}
+}
+
 func (d *dedupeStore) begin(key string) (*dedupeLease, dedupeState) {
 	key = strings.TrimSpace(key)
 	if key == "" {
@@ -66,6 +86,55 @@ func (d *dedupeStore) begin(key string) (*dedupeLease, dedupeState) {
 	}
 	d.entries[key] = dedupeEntry{seenAt: now, inFlight: true}
 	return &dedupeLease{store: d, key: key}, dedupeStateAcquired
+}
+
+func (s *slackThreadRootStore) remember(teamID, channelID, threadTS, rootConversationID string) {
+	key := slackThreadRootKey(teamID, channelID, threadTS)
+	rootConversationID = strings.TrimSpace(rootConversationID)
+	if key == "" || rootConversationID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneExpiredLocked()
+	s.entries[key] = slackThreadRootEntry{
+		rootConversationID: rootConversationID,
+		seenAt:             s.now().UTC(),
+	}
+}
+
+func (s *slackThreadRootStore) lookup(teamID, channelID, threadTS string) string {
+	key := slackThreadRootKey(teamID, channelID, threadTS)
+	if key == "" {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneExpiredLocked()
+	entry, ok := s.entries[key]
+	if !ok {
+		return ""
+	}
+	return entry.rootConversationID
+}
+
+func (s *slackThreadRootStore) pruneExpiredLocked() {
+	cutoff := s.now().UTC().Add(-s.ttl)
+	for key, entry := range s.entries {
+		if entry.seenAt.Before(cutoff) {
+			delete(s.entries, key)
+		}
+	}
+}
+
+func slackThreadRootKey(teamID, channelID, threadTS string) string {
+	teamID = strings.TrimSpace(teamID)
+	channelID = strings.TrimSpace(channelID)
+	threadTS = strings.TrimSpace(threadTS)
+	if teamID == "" || channelID == "" || threadTS == "" {
+		return ""
+	}
+	return strings.Join([]string{teamID, channelID, threadTS}, ":")
 }
 
 func (l *dedupeLease) finish(success bool) {

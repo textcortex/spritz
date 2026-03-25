@@ -13,19 +13,21 @@ import (
 )
 
 const (
-	slackProvider          = "slack"
-	slackWorkspaceScope    = "workspace"
-	defaultSlackPresetID   = "zeno"
-	defaultConversationCWD = "/home/dev"
+	slackProvider             = "slack"
+	slackWorkspaceScope       = "workspace"
+	defaultSlackPresetID      = "zeno"
+	defaultConversationCWD    = "/home/dev"
+	defaultSlackThreadRootTTL = 7 * 24 * time.Hour
 )
 
 type slackGateway struct {
-	cfg        config
-	httpClient *http.Client
-	state      *oauthStateManager
-	dedupe     *dedupeStore
-	logger     *slog.Logger
-	workers    sync.WaitGroup
+	cfg         config
+	httpClient  *http.Client
+	state       *oauthStateManager
+	dedupe      *dedupeStore
+	threadRoots *slackThreadRootStore
+	logger      *slog.Logger
+	workers     sync.WaitGroup
 }
 
 var errSlackEventInFlight = errors.New("slack event is already being processed")
@@ -41,11 +43,12 @@ func newSlackGateway(cfg config, logger *slog.Logger) *slackGateway {
 		cfg.ProcessingTimeout = 60 * time.Second
 	}
 	return &slackGateway{
-		cfg:        cfg,
-		httpClient: &http.Client{Timeout: cfg.HTTPTimeout},
-		state:      newOAuthStateManager(cfg.OAuthStateSecret, 15*time.Minute),
-		dedupe:     newDedupeStore(cfg.DedupeTTL),
-		logger:     logger,
+		cfg:         cfg,
+		httpClient:  &http.Client{Timeout: cfg.HTTPTimeout},
+		state:       newOAuthStateManager(cfg.OAuthStateSecret, 15*time.Minute),
+		dedupe:      newDedupeStore(cfg.DedupeTTL),
+		threadRoots: newSlackThreadRootStore(defaultSlackThreadRootTTL),
+		logger:      logger,
 	}
 }
 

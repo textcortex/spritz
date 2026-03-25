@@ -312,6 +312,9 @@ Phase 1 should keep channel behavior predictable:
   identity
 - threaded channel turns use the thread root `thread_ts` as the conversation
   identity
+- if the gateway posts a visible top-level assistant reply, later user replies
+  threaded off that bot message must map back to the original source-message
+  conversation instead of forking a new one
 - if inbound Slack payload already has `thread_ts`, reuse it for the outbound
   reply so existing threaded follow-ups stay in that thread
 

@@ -357,7 +357,7 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 			slackCalls.Lock()
 			slackCalls.payloads = append(slackCalls.payloads, payload)
 			slackCalls.Unlock()
-			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ts": "1711387376.000100"})
 			return
 		}
 		t.Fatalf("unexpected slack path %s", r.URL.Path)
@@ -542,6 +542,16 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 			}
 			if channelConversationCall.payload["externalConversationId"] != "1711387375.000100" {
 				t.Fatalf("expected root-message conversation identity, got %#v", channelConversationCall.payload["externalConversationId"])
+			}
+			followUpThread := slackEventInner{
+				Type:        "app_mention",
+				Channel:     "C_1",
+				ChannelType: "channel",
+				ThreadTS:    "1711387376.000100",
+				TS:          "1711387377.000100",
+			}
+			if gateway.slackExternalConversationID("T_workspace_1", followUpThread) != "1711387375.000100" {
+				t.Fatalf("expected replies threaded off the bot reply to reuse the original root conversation")
 			}
 			return
 		}
@@ -1259,6 +1269,7 @@ func TestUpsertChannelConversationUsesChannelForDirectMessages(t *testing.T) {
 			TS:          "1711387375.000100",
 		},
 		"T_workspace_1",
+		"D_workspace_bot",
 	)
 	if err != nil {
 		t.Fatalf("upsert channel conversation failed: %v", err)
@@ -1372,6 +1383,10 @@ func TestShouldProcessSlackMessageEventRequiresMentionOutsideDMs(t *testing.T) {
 }
 
 func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
+	gateway := newSlackGateway(
+		config{OAuthStateSecret: "oauth-state-secret"},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
 	fallbackDM := slackEventInner{
 		Type:    "message",
 		Channel: "D_workspace_bot",
@@ -1380,7 +1395,7 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 	if !isSlackDirectMessageEvent(fallbackDM) {
 		t.Fatalf("expected D-prefixed channels to be treated as DMs")
 	}
-	if slackExternalConversationID(fallbackDM) != "D_workspace_bot" {
+	if gateway.slackExternalConversationID("T_workspace_1", fallbackDM) != "D_workspace_bot" {
 		t.Fatalf("expected D-prefixed channels to key conversations by channel id")
 	}
 	if slackReplyThreadTS(fallbackDM) != "" {
@@ -1396,7 +1411,7 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 	if !isSlackDirectMessageEvent(groupDM) {
 		t.Fatalf("expected mpim channels to be treated as direct-message style conversations")
 	}
-	if slackExternalConversationID(groupDM) != "G_workspace_group" {
+	if gateway.slackExternalConversationID("T_workspace_1", groupDM) != "G_workspace_group" {
 		t.Fatalf("expected mpim conversations to key by channel id")
 	}
 	if slackReplyThreadTS(groupDM) != "" {
@@ -1409,7 +1424,7 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 		ChannelType: "channel",
 		TS:          "1711387375.000100",
 	}
-	if slackExternalConversationID(topLevelChannel) != "1711387375.000100" {
+	if gateway.slackExternalConversationID("T_workspace_1", topLevelChannel) != "1711387375.000100" {
 		t.Fatalf("expected top-level channel messages to key by root message ts")
 	}
 	if slackReplyThreadTS(topLevelChannel) != "" {
@@ -1423,11 +1438,29 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 		ThreadTS:    "1711387375.000100",
 		TS:          "1711387376.000100",
 	}
-	if slackExternalConversationID(threadedChannel) != "1711387375.000100" {
+	if gateway.slackExternalConversationID("T_workspace_1", threadedChannel) != "1711387375.000100" {
 		t.Fatalf("expected threaded channel messages to key by thread root ts")
 	}
 	if slackReplyThreadTS(threadedChannel) != "1711387375.000100" {
 		t.Fatalf("expected threaded channel mentions to reply in-thread")
+	}
+
+	gateway.rememberSlackReplyThreadRoot(
+		"T_workspace_1",
+		topLevelChannel,
+		"",
+		"1711387376.000100",
+		"1711387375.000100",
+	)
+	replyThread := slackEventInner{
+		Type:        "app_mention",
+		Channel:     "C_workspace_channel",
+		ChannelType: "channel",
+		ThreadTS:    "1711387376.000100",
+		TS:          "1711387377.000100",
+	}
+	if gateway.slackExternalConversationID("T_workspace_1", replyThread) != "1711387375.000100" {
+		t.Fatalf("expected threads started from the bot's top-level reply to reuse the original conversation root")
 	}
 }
 
