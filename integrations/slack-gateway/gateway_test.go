@@ -256,6 +256,9 @@ func TestOAuthCallbackReturnsBadGatewayWhenBackendUpsertFails(t *testing.T) {
 	if !strings.Contains(logOutput, "backend unavailable") {
 		t.Fatalf("expected backend error details in logs, got %q", logOutput)
 	}
+	if !strings.Contains(logOutput, "installing_user_id=U_installer") {
+		t.Fatalf("expected installing user id in logs, got %q", logOutput)
+	}
 }
 
 func TestExtractACPTextSupportsResourceBlocks(t *testing.T) {
