@@ -308,14 +308,16 @@ Phase 1 should keep channel behavior predictable:
 
 - direct-message conversations reply inline
 - top-level channel turns reply top-level by default
-- channel conversation identity stays channel-scoped so repeated top-level room
-  turns reuse the same concierge context
+- top-level channel turns use the source Slack message ts as the conversation
+  identity
+- threaded channel turns use the thread root `thread_ts` as the conversation
+  identity
 - if inbound Slack payload already has `thread_ts`, reuse it for the outbound
   reply so existing threaded follow-ups stay in that thread
 
 That matches the desired Zenobot-style room behavior: visible top-level replies
-for normal channel turns, but continued in-thread replies when the user is
-already in a real Slack thread.
+for normal channel turns, with stable follow-up context only when the user is
+already continuing the same Slack root message or thread.
 
 ## Persisted Metadata
 

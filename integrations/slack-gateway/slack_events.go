@@ -284,9 +284,13 @@ func slackReplyThreadTS(event slackEventInner) string {
 }
 
 func slackExternalConversationID(event slackEventInner) string {
-	// Keep shared-channel traffic on one stable conversation identity so
-	// top-level replies can stay inline without forking later follow-ups.
-	return strings.TrimSpace(event.Channel)
+	if isSlackDirectMessageEvent(event) {
+		return strings.TrimSpace(event.Channel)
+	}
+	if strings.TrimSpace(event.ThreadTS) != "" {
+		return strings.TrimSpace(event.ThreadTS)
+	}
+	return strings.TrimSpace(event.TS)
 }
 
 func (g *slackGateway) verifySlackSignature(header http.Header, body []byte) error {
