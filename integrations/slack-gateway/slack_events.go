@@ -239,20 +239,24 @@ func (g *slackGateway) processMessageEventWithDelivery(
 		return err
 	}
 	if replyThreadTS == "" && !isSlackDirectMessageEvent(event) && strings.TrimSpace(replyMessageTS) != "" {
+		aliasCtx, cancelAlias := context.WithTimeout(context.WithoutCancel(ctx), g.cfg.HTTPTimeout)
 		if _, err := g.upsertChannelConversation(
-			ctx,
+			aliasCtx,
 			session,
 			event,
 			envelope.TeamID,
 			conversationID,
 			replyMessageTS,
 		); err != nil {
+			cancelAlias()
 			g.logger.Error(
 				"slack reply alias persistence failed",
 				"error", err,
 				"conversation_id", conversationID,
 				"reply_message_ts", replyMessageTS,
 			)
+		} else {
+			cancelAlias()
 		}
 	}
 	success = true

@@ -68,12 +68,15 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 		if err := s.client.Get(c.Request().Context(), clientKey(namespace, normalizedBody.ConversationID), existing); err != nil {
 			return s.writeACPResourceError(c, err)
 		}
-		if !channelConversationMatchesBaseIdentity(existing, identity) {
+		if !channelConversationMatchesBaseIdentity(existing, identity) || !channelConversationBelongsToSpritz(existing, spritz) {
 			return writeError(c, http.StatusConflict, "channel conversation is ambiguous")
 		}
 		changed, err := appendChannelConversationAlias(existing, identity.externalConversationID)
 		if err != nil {
 			return writeError(c, http.StatusInternalServerError, err.Error())
+		}
+		if ensureChannelConversationBaseRouteLabel(existing, identity, spritz) {
+			changed = true
 		}
 		if normalizedBody.RequestID != "" {
 			if existing.Annotations == nil {

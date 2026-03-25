@@ -106,8 +106,14 @@ func normalizeChannelConversationUpsertRequest(body channelConversationUpsertReq
 
 func channelConversationRouteHash(identity normalizedChannelConversationIdentity, ownerID, instanceID string) string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{
-		channelConversationBaseRouteHash(identity, ownerID, instanceID),
+		identity.principalID,
+		identity.provider,
+		identity.externalScopeType,
+		identity.externalTenantID,
+		identity.externalChannelID,
 		identity.externalConversationID,
+		strings.TrimSpace(ownerID),
+		strings.TrimSpace(instanceID),
 	}, "\n")))
 	return hex.EncodeToString(sum[:16])
 }
@@ -210,6 +216,16 @@ func channelConversationMatchesIdentity(conversation *spritzv1.SpritzConversatio
 		channelConversationHasExternalConversationID(conversation, identity.externalConversationID)
 }
 
+func channelConversationBelongsToSpritz(conversation *spritzv1.SpritzConversation, spritz *spritzv1.Spritz) bool {
+	if conversation == nil || spritz == nil {
+		return false
+	}
+	return strings.TrimSpace(conversation.Spec.SpritzName) == spritz.Name &&
+		strings.TrimSpace(conversation.Spec.Owner.ID) == spritz.Spec.Owner.ID &&
+		strings.TrimSpace(conversation.Labels[acpConversationSpritzLabelKey]) == spritz.Name &&
+		strings.TrimSpace(conversation.Labels[acpConversationOwnerLabelKey]) == ownerLabelValue(spritz.Spec.Owner.ID)
+}
+
 func appendChannelConversationAlias(conversation *spritzv1.SpritzConversation, externalConversationID string) (bool, error) {
 	externalConversationID = strings.TrimSpace(externalConversationID)
 	if externalConversationID == "" || conversation == nil {
@@ -230,6 +246,21 @@ func appendChannelConversationAlias(conversation *spritzv1.SpritzConversation, e
 	return true, nil
 }
 
+func ensureChannelConversationBaseRouteLabel(conversation *spritzv1.SpritzConversation, identity normalizedChannelConversationIdentity, spritz *spritzv1.Spritz) bool {
+	if conversation == nil || spritz == nil {
+		return false
+	}
+	if conversation.Labels == nil {
+		conversation.Labels = map[string]string{}
+	}
+	expected := channelConversationBaseRouteHash(identity, spritz.Spec.Owner.ID, spritz.Name)
+	if strings.TrimSpace(conversation.Labels[channelConversationBaseRouteLabelKey]) == expected {
+		return false
+	}
+	conversation.Labels[channelConversationBaseRouteLabelKey] = expected
+	return true
+}
+
 func (s *server) getAdminScopedACPReadySpritz(c echo.Context, namespace, instanceID, ownerID string) (*spritzv1.Spritz, error) {
 	spritz := &spritzv1.Spritz{}
 	if err := s.client.Get(c.Request().Context(), clientKey(namespace, instanceID), spritz); err != nil {
@@ -245,10 +276,39 @@ func (s *server) getAdminScopedACPReadySpritz(c echo.Context, namespace, instanc
 }
 
 func (s *server) findChannelConversation(c echo.Context, namespace string, spritz *spritzv1.Spritz, identity normalizedChannelConversationIdentity) (*spritzv1.SpritzConversation, bool, error) {
-	list := &spritzv1.SpritzConversationList{}
+	exactList := &spritzv1.SpritzConversationList{}
 	if err := s.client.List(
 		c.Request().Context(),
-		list,
+		exactList,
+		client.InNamespace(namespace),
+		client.MatchingLabels{
+			acpConversationLabelKey:          acpConversationLabelValue,
+			acpConversationOwnerLabelKey:     ownerLabelValue(spritz.Spec.Owner.ID),
+			acpConversationSpritzLabelKey:    spritz.Name,
+			channelConversationRouteLabelKey: channelConversationRouteHash(identity, spritz.Spec.Owner.ID, spritz.Name),
+		},
+	); err != nil {
+		return nil, false, err
+	}
+	var match *spritzv1.SpritzConversation
+	for i := range exactList.Items {
+		item := &exactList.Items[i]
+		if !channelConversationMatchesIdentity(item, identity) {
+			continue
+		}
+		if match != nil {
+			return nil, true, echo.NewHTTPError(http.StatusConflict, "channel conversation is ambiguous")
+		}
+		match = item.DeepCopy()
+	}
+	if match != nil {
+		return match, true, nil
+	}
+
+	baseList := &spritzv1.SpritzConversationList{}
+	if err := s.client.List(
+		c.Request().Context(),
+		baseList,
 		client.InNamespace(namespace),
 		client.MatchingLabels{
 			acpConversationLabelKey:       acpConversationLabelValue,
@@ -263,9 +323,8 @@ func (s *server) findChannelConversation(c echo.Context, namespace string, sprit
 	); err != nil {
 		return nil, false, err
 	}
-	var match *spritzv1.SpritzConversation
-	for i := range list.Items {
-		item := &list.Items[i]
+	for i := range baseList.Items {
+		item := &baseList.Items[i]
 		if !channelConversationMatchesIdentity(item, identity) {
 			continue
 		}

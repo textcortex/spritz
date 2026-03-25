@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -266,6 +268,133 @@ func TestUpsertChannelConversationPersistsAndResolvesReplyAliases(t *testing.T) 
 	aliases := channelConversationExternalConversationAliases(&reusePayload.Data.Conversation)
 	if len(aliases) != 1 || aliases[0] != "1711387376.000100" {
 		t.Fatalf("expected persisted alias, got %#v", aliases)
+	}
+}
+
+func legacyChannelConversationRouteHash(identity normalizedChannelConversationIdentity, ownerID, instanceID string) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		identity.principalID,
+		identity.provider,
+		identity.externalScopeType,
+		identity.externalTenantID,
+		identity.externalChannelID,
+		identity.externalConversationID,
+		strings.TrimSpace(ownerID),
+		strings.TrimSpace(instanceID),
+	}, "\n")))
+	return hex.EncodeToString(sum[:16])
+}
+
+func TestUpsertChannelConversationReusesLegacyConversationWithoutBaseRouteLabel(t *testing.T) {
+	spritz := readyACPSpritz("zeno-acme", "owner-123")
+	identity := normalizedChannelConversationIdentity{
+		principalID:            "shared-slack-gateway",
+		provider:               "slack",
+		externalScopeType:      "workspace",
+		externalTenantID:       "T_workspace_1",
+		externalChannelID:      "C_channel_1",
+		externalConversationID: "1711387375.000100",
+	}
+	conversation, err := buildACPConversationResource(spritz, "Slack concierge", "")
+	if err != nil {
+		t.Fatalf("build conversation: %v", err)
+	}
+	conversation.Name = channelConversationName(spritz.Name, spritz.Spec.Owner.ID, identity)
+	conversation.Spec.Owner = spritz.Spec.Owner
+	conversation.Spec.SpritzName = spritz.Name
+	conversation.Labels = map[string]string{
+		acpConversationLabelKey:       acpConversationLabelValue,
+		acpConversationOwnerLabelKey:  ownerLabelValue(spritz.Spec.Owner.ID),
+		acpConversationSpritzLabelKey: spritz.Name,
+		channelConversationRouteLabelKey: legacyChannelConversationRouteHash(
+			identity,
+			spritz.Spec.Owner.ID,
+			spritz.Name,
+		),
+	}
+	conversation.Annotations = map[string]string{
+		channelConversationPrincipalAnnotationKey:              identity.principalID,
+		channelConversationProviderAnnotationKey:               identity.provider,
+		channelConversationExternalScopeTypeAnnotationKey:      identity.externalScopeType,
+		channelConversationExternalTenantIDAnnotationKey:       identity.externalTenantID,
+		channelConversationExternalChannelIDAnnotationKey:      identity.externalChannelID,
+		channelConversationExternalConversationIDAnnotationKey: identity.externalConversationID,
+		requestIDAnnotationKey:                                 "legacy-request",
+	}
+
+	s := newChannelConversationsTestServer(t, spritz, conversation)
+	e := echo.New()
+	s.registerRoutes(e)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, newChannelConversationsRequest(`{
+		"principalId":"shared-slack-gateway",
+		"instanceId":"zeno-acme",
+		"ownerId":"owner-123",
+		"provider":"slack",
+		"externalScopeType":"workspace",
+		"externalTenantId":"T_workspace_1",
+		"externalChannelId":"C_channel_1",
+		"externalConversationId":"1711387375.000100",
+		"title":"Slack concierge"
+	}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected legacy conversation reuse, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Data struct {
+			Created      bool                        `json:"created"`
+			Conversation spritzv1.SpritzConversation `json:"conversation"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Data.Created {
+		t.Fatalf("expected legacy conversation to be reused")
+	}
+	if payload.Data.Conversation.Name != conversation.Name {
+		t.Fatalf("expected legacy conversation %q, got %q", conversation.Name, payload.Data.Conversation.Name)
+	}
+}
+
+func TestUpsertChannelConversationRejectsAliasForWrongSpritzConversation(t *testing.T) {
+	targetSpritz := readyACPSpritz("zeno-acme", "owner-123")
+	otherSpritz := readyACPSpritz("zeno-other", "owner-999")
+	identity := normalizedChannelConversationIdentity{
+		principalID:            "shared-slack-gateway",
+		provider:               "slack",
+		externalScopeType:      "workspace",
+		externalTenantID:       "T_workspace_1",
+		externalChannelID:      "C_channel_1",
+		externalConversationID: "1711387375.000100",
+	}
+	otherConversation, err := buildACPConversationResource(otherSpritz, "Slack concierge", "")
+	if err != nil {
+		t.Fatalf("build conversation: %v", err)
+	}
+	otherConversation.Name = channelConversationName(otherSpritz.Name, otherSpritz.Spec.Owner.ID, identity)
+	applyChannelConversationMetadata(otherConversation, identity, "other-request", otherSpritz)
+
+	s := newChannelConversationsTestServer(t, targetSpritz, otherSpritz, otherConversation)
+	e := echo.New()
+	s.registerRoutes(e)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, newChannelConversationsRequest(`{
+		"principalId":"shared-slack-gateway",
+		"instanceId":"zeno-acme",
+		"ownerId":"owner-123",
+		"conversationId":"`+otherConversation.Name+`",
+		"provider":"slack",
+		"externalScopeType":"workspace",
+		"externalTenantId":"T_workspace_1",
+		"externalChannelId":"C_channel_1",
+		"externalConversationId":"1711387376.000100",
+		"title":"Slack concierge"
+	}`))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected alias against wrong spritz to conflict, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
