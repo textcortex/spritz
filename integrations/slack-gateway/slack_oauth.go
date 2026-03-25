@@ -98,6 +98,8 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 			err,
 			"team_id",
 			installation.TeamID,
+			"installing_user_id",
+			installation.InstallingUserID,
 		)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
