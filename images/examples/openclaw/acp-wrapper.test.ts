@@ -417,7 +417,7 @@ test("handleDeltaEvent emits tool_call updates for live assistant tool blocks", 
   ]);
 });
 
-test("handleDeltaEvent backfills transcript tool blocks before assistant text", async () => {
+test("handleDeltaEvent does not wait on transcript fetch before assistant text", async () => {
   class FakeBaseAgent {
     constructor() {
       const updates = [];
@@ -438,29 +438,8 @@ test("handleDeltaEvent backfills transcript tool blocks before assistant text", 
         ],
       ]);
       this.gateway = {
-        async request(method, params) {
-          assert.equal(method, "sessions.get");
-          assert.equal(params.key, "agent:main:spritz-acp:session-1");
-          return {
-            messages: [
-              {
-                role: "assistant",
-                content: [
-                  {
-                    type: "toolCall",
-                    id: "functions.exec:0",
-                    name: "exec",
-                    args: { command: "echo hi" },
-                  },
-                ],
-              },
-              {
-                role: "tool_result",
-                toolCallId: "functions.exec:0",
-                content: [{ type: "text", text: "hi" }],
-              },
-            ],
-          };
+        async request() {
+          throw new Error("handleDeltaEvent must not fetch transcript state");
         },
       };
     }
@@ -503,26 +482,6 @@ test("handleDeltaEvent backfills transcript tool blocks before assistant text", 
     {
       sessionId: "session-1",
       update: {
-        sessionUpdate: "tool_call",
-        toolCallId: "functions.exec:0",
-        title: "exec",
-        status: "in_progress",
-        rawInput: { command: "echo hi" },
-        type: "exec",
-      },
-    },
-    {
-      sessionId: "session-1",
-      update: {
-        sessionUpdate: "tool_call_update",
-        toolCallId: "functions.exec:0",
-        status: "completed",
-        rawOutput: "hi",
-      },
-    },
-    {
-      sessionId: "session-1",
-      update: {
         sessionUpdate: "agent_message_chunk",
         content: {
           type: "text",
@@ -536,6 +495,7 @@ test("handleDeltaEvent backfills transcript tool blocks before assistant text", 
 test("prompt polls transcript for silent tool runs while the prompt is active", async () => {
   class FakeBaseAgent {
     constructor() {
+      let transcriptRequestCount = 0;
       const updates = [];
       this.connection = {
         updates,
@@ -548,6 +508,12 @@ test("prompt polls transcript for silent tool runs while the prompt is active", 
         async request(method, params) {
           assert.equal(method, "sessions.get");
           assert.equal(params.key, "agent:main:spritz-acp:session-1");
+          transcriptRequestCount += 1;
+          if (transcriptRequestCount === 1) {
+            return {
+              messages: [],
+            };
+          }
           return {
             messages: [
               {
@@ -571,7 +537,10 @@ test("prompt polls transcript for silent tool runs while the prompt is active", 
         },
       };
       this.sessionStore = {
-        getSession: (sessionId) => ({ sessionId }),
+        getSession: (sessionId) => ({
+          sessionId,
+          sessionKey: "agent:main:spritz-acp:session-1",
+        }),
       };
       this.resolvePrompt = null;
     }
@@ -718,6 +687,7 @@ test("finishPrompt backfills tool lifecycle from transcript before closing the r
     sessionId: "session-1",
     sessionKey: "agent:main:spritz-acp:session-1",
     idempotencyKey: "client-run-id",
+    transcriptMessageCursor: 0,
     resolve() {},
   };
   agent.pendingPrompts.set("session-1", pending);
@@ -751,6 +721,164 @@ test("finishPrompt backfills tool lifecycle from transcript before closing the r
       sessionId: "session-1",
       snapshot: { title: "session" },
       options: { includeControls: false },
+    },
+  ]);
+});
+
+test("prompt transcript sync ignores tool activity that predates the active prompt", async () => {
+  class FakeBaseAgent {
+    constructor() {
+      let transcriptRequestCount = 0;
+      const updates = [];
+      this.connection = {
+        updates,
+        async sessionUpdate(payload) {
+          updates.push(payload);
+        },
+      };
+      this.pendingPrompts = new Map();
+      this.gateway = {
+        async request(method, params) {
+          assert.equal(method, "sessions.get");
+          assert.equal(params.key, "agent:main:spritz-acp:session-1");
+          transcriptRequestCount += 1;
+          if (transcriptRequestCount === 1) {
+            return {
+              messages: [
+                {
+                  role: "assistant",
+                  content: [
+                    {
+                      type: "toolCall",
+                      id: "functions.exec:old",
+                      name: "exec",
+                      args: { command: "echo old" },
+                    },
+                  ],
+                },
+                {
+                  role: "tool_result",
+                  toolCallId: "functions.exec:old",
+                  content: [{ type: "text", text: "old" }],
+                },
+              ],
+            };
+          }
+          return {
+            messages: [
+              {
+                role: "assistant",
+                content: [
+                  {
+                    type: "toolCall",
+                    id: "functions.exec:old",
+                    name: "exec",
+                    args: { command: "echo old" },
+                  },
+                ],
+              },
+              {
+                role: "tool_result",
+                toolCallId: "functions.exec:old",
+                content: [{ type: "text", text: "old" }],
+              },
+              {
+                role: "assistant",
+                content: [
+                  {
+                    type: "toolCall",
+                    id: "functions.exec:new",
+                    name: "exec",
+                    args: { command: "echo new" },
+                  },
+                ],
+              },
+              {
+                role: "tool_result",
+                toolCallId: "functions.exec:new",
+                content: [{ type: "text", text: "new" }],
+              },
+            ],
+          };
+        },
+      };
+      this.sessionStore = {
+        getSession: (sessionId) => ({
+          sessionId,
+          sessionKey: "agent:main:spritz-acp:session-1",
+        }),
+      };
+      this.resolvePrompt = null;
+    }
+
+    async prompt(params) {
+      return await new Promise((resolve) => {
+        this.pendingPrompts.set(params.sessionId, {
+          sessionId: params.sessionId,
+          sessionKey: "agent:main:spritz-acp:session-1",
+          idempotencyKey: "client-run-id",
+          resolve,
+        });
+        this.resolvePrompt = () => {
+          this.pendingPrompts.delete(params.sessionId);
+          resolve({ stopReason: "end_turn" });
+        };
+      });
+    }
+  }
+
+  const intervalCallbacks = [];
+  const SpritzAgent = createSpritzAcpGatewayAgentClass(FakeBaseAgent, {}, {
+    setInterval(callback) {
+      intervalCallbacks.push(callback);
+      return callback;
+    },
+    clearInterval() {},
+    toolTranscriptSyncIntervalMs: 1,
+  });
+  const agent = new SpritzAgent();
+
+  const promptPromise = agent.prompt({
+    sessionId: "session-1",
+    prompt: [{ type: "text", text: "run it" }],
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(intervalCallbacks.length, 1);
+  await intervalCallbacks[0]();
+  agent.resolvePrompt();
+  await assert.doesNotReject(promptPromise);
+
+  assert.deepEqual(agent.connection.updates, [
+    {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        content: {
+          type: "text",
+          text: "run it",
+        },
+      },
+    },
+    {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "functions.exec:new",
+        title: "exec",
+        status: "in_progress",
+        rawInput: { command: "echo new" },
+        type: "exec",
+      },
+    },
+    {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "functions.exec:new",
+        status: "completed",
+        rawOutput: "new",
+      },
     },
   ]);
 });

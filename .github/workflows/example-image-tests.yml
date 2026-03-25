@@ -36,4 +36,4 @@ jobs:
         run: bash images/examples/openclaw/entrypoint_test.sh
 
       - name: Build OpenClaw example image
-        run: docker build -f examples/openclaw/Dockerfile images
+        run: docker build -f images/examples/openclaw/Dockerfile images

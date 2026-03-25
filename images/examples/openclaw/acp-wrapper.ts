@@ -44,6 +44,11 @@ type ParsedArgs = {
   verbose?: boolean;
 };
 
+type PromptTranscriptSyncState = {
+  transcriptMessageCursor?: number;
+  transcriptSyncDisabled?: boolean;
+};
+
 type PromptToolTranscriptSyncHooks = {
   clearInterval?: typeof globalThis.clearInterval;
   setInterval?: typeof globalThis.setInterval;
@@ -357,7 +362,12 @@ export async function emitLiveToolCallContentUpdates(agent, sessionId, pending, 
  * closes the gap for the live stream.
  */
 export async function syncPendingToolCallTranscriptUpdates(agent, sessionId, pending) {
-  if (!pending?.sessionKey || !agent?.gateway?.request) {
+  if (
+    !pending?.sessionKey ||
+    !agent?.gateway?.request ||
+    pending.transcriptSyncDisabled ||
+    !Number.isInteger(pending.transcriptMessageCursor)
+  ) {
     return;
   }
 
@@ -374,6 +384,7 @@ export async function syncPendingToolCallTranscriptUpdates(agent, sessionId, pen
       });
     } catch (error) {
       if (hasMissingOperatorReadScope(error)) {
+        pending.transcriptSyncDisabled = true;
         agent.log?.(
           `syncPendingToolCallTranscriptUpdates: skipping transcript fetch for ${sessionId}; gateway transcript read requires operator.read`,
         );
@@ -382,12 +393,21 @@ export async function syncPendingToolCallTranscriptUpdates(agent, sessionId, pen
       throw error;
     }
 
+    const transcriptMessages = Array.isArray(transcript?.messages) ? transcript.messages : [];
+    const baselineCursor = Math.max(0, pending.transcriptMessageCursor ?? 0);
+    const nextCursor = transcriptMessages.length;
+    const candidateMessages =
+      baselineCursor >= nextCursor
+        ? []
+        : transcriptMessages.slice(Math.min(baselineCursor, nextCursor));
+    pending.transcriptMessageCursor = nextCursor;
+
     const { toolCalls, startedToolCallIds, completedToolCallIds } =
       ensurePendingToolLifecycleState(pending);
     const transcriptToolCalls = [];
     const transcriptToolResults = [];
 
-    for (const rawMessage of transcript?.messages ?? []) {
+    for (const rawMessage of candidateMessages) {
       if (!rawMessage || typeof rawMessage !== "object") {
         continue;
       }
@@ -462,6 +482,40 @@ export async function syncPendingToolCallTranscriptUpdates(agent, sessionId, pen
     if (pending.transcriptToolSyncPromise === syncPromise) {
       delete pending.transcriptToolSyncPromise;
     }
+  }
+}
+
+async function capturePromptTranscriptSyncState(
+  agent,
+  sessionId,
+  sessionKey,
+): Promise<PromptTranscriptSyncState> {
+  if (!sessionKey || !agent?.gateway?.request) {
+    return { transcriptSyncDisabled: true };
+  }
+
+  try {
+    const transcript = await agent.gateway.request("sessions.get", {
+      key: sessionKey,
+      limit: 1000,
+    });
+    const messages = Array.isArray(transcript?.messages) ? transcript.messages : [];
+    return {
+      transcriptMessageCursor: messages.length,
+      transcriptSyncDisabled: false,
+    };
+  } catch (error) {
+    if (hasMissingOperatorReadScope(error)) {
+      agent.log?.(
+        `prompt: disabling transcript sync for ${sessionId}; gateway transcript read requires operator.read`,
+      );
+      return { transcriptSyncDisabled: true };
+    }
+
+    agent.log?.(
+      `prompt: disabling transcript sync for ${sessionId}; failed to capture transcript baseline: ${String(error)}`,
+    );
+    return { transcriptSyncDisabled: true };
   }
 }
 
@@ -737,7 +791,6 @@ export function createSpritzAcpGatewayAgentClass(
     async handleDeltaEvent(sessionId, messageData) {
       const pending = this.pendingPrompts?.get?.(sessionId);
       if (pending) {
-        await syncPendingToolCallTranscriptUpdates(this, sessionId, pending);
         await emitLiveToolCallContentUpdates(this, sessionId, pending, messageData);
       }
       return await super.handleDeltaEvent(sessionId, messageData);
@@ -788,9 +841,15 @@ export function createSpritzAcpGatewayAgentClass(
 
     async prompt(params) {
       await hooks.ensureGatewayReady?.();
+      const session = this.sessionStore?.getSession?.(params.sessionId);
+      const transcriptSyncState = await capturePromptTranscriptSyncState(
+        this,
+        params.sessionId,
+        session?.sessionKey,
+      );
 
       const promptText = extractPromptText(params?.prompt);
-      if (promptText && this.sessionStore?.getSession?.(params.sessionId)) {
+      if (promptText && session) {
         await this.connection.sessionUpdate({
           sessionId: params.sessionId,
           update: {
@@ -802,9 +861,14 @@ export function createSpritzAcpGatewayAgentClass(
 
       const promptPromise = super.prompt(params);
       const pending = this.pendingPrompts?.get?.(params.sessionId);
-      const stopPromptToolSync = pending
-        ? startPromptToolTranscriptSync(this, params.sessionId, pending, hooks)
-        : () => {};
+      if (pending) {
+        pending.transcriptMessageCursor = transcriptSyncState.transcriptMessageCursor;
+        pending.transcriptSyncDisabled = transcriptSyncState.transcriptSyncDisabled;
+      }
+      const stopPromptToolSync =
+        pending && !pending.transcriptSyncDisabled
+          ? startPromptToolTranscriptSync(this, params.sessionId, pending, hooks)
+          : () => {};
 
       try {
         return await promptPromise;
