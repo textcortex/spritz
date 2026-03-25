@@ -53,16 +53,6 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 			return s.writeACPResourceError(c, err)
 		}
 	}
-	conversation, found, err := s.findChannelConversation(c, namespace, spritz, identity)
-	if err != nil {
-		if httpErr, ok := err.(*echo.HTTPError); ok {
-			return writeError(c, httpErr.Code, httpErr.Message.(string))
-		}
-		return writeError(c, http.StatusInternalServerError, err.Error())
-	}
-	if found {
-		return writeJSON(c, http.StatusOK, map[string]any{"created": false, "conversation": conversation})
-	}
 	if normalizedBody.ConversationID != "" {
 		existing := &spritzv1.SpritzConversation{}
 		if err := s.client.Get(c.Request().Context(), clientKey(namespace, normalizedBody.ConversationID), existing); err != nil {
@@ -71,13 +61,22 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 		if !channelConversationMatchesBaseIdentity(existing, identity) || !channelConversationBelongsToSpritz(existing, spritz) {
 			return writeError(c, http.StatusConflict, "channel conversation is ambiguous")
 		}
-		changed, err := appendChannelConversationAlias(existing, identity.externalConversationID)
+		conversation, found, err := s.findChannelConversation(c, namespace, spritz, identity)
+		if err != nil {
+			if httpErr, ok := err.(*echo.HTTPError); ok {
+				return writeError(c, httpErr.Code, httpErr.Message.(string))
+			}
+			return writeError(c, http.StatusInternalServerError, err.Error())
+		}
+		if found && conversation.Name != existing.Name {
+			return writeError(c, http.StatusConflict, "channel conversation is ambiguous")
+		}
+		changed := ensureChannelConversationBaseRouteLabel(existing, identity, spritz)
+		aliasChanged, err := appendChannelConversationAlias(existing, identity.externalConversationID)
 		if err != nil {
 			return writeError(c, http.StatusInternalServerError, err.Error())
 		}
-		if ensureChannelConversationBaseRouteLabel(existing, identity, spritz) {
-			changed = true
-		}
+		changed = changed || aliasChanged
 		if normalizedBody.RequestID != "" {
 			if existing.Annotations == nil {
 				existing.Annotations = map[string]string{}
@@ -91,6 +90,16 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 			}
 		}
 		return writeJSON(c, http.StatusOK, map[string]any{"created": false, "conversation": existing})
+	}
+	conversation, found, err := s.findChannelConversation(c, namespace, spritz, identity)
+	if err != nil {
+		if httpErr, ok := err.(*echo.HTTPError); ok {
+			return writeError(c, httpErr.Code, httpErr.Message.(string))
+		}
+		return writeError(c, http.StatusInternalServerError, err.Error())
+	}
+	if found {
+		return writeJSON(c, http.StatusOK, map[string]any{"created": false, "conversation": conversation})
 	}
 
 	conversation, err = buildACPConversationResource(spritz, normalizedBody.Title, normalizedBody.CWD)

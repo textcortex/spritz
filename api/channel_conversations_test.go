@@ -398,6 +398,55 @@ func TestUpsertChannelConversationRejectsAliasForWrongSpritzConversation(t *test
 	}
 }
 
+func TestUpsertChannelConversationRejectsAliasWhenAnotherConversationAlreadyOwnsIt(t *testing.T) {
+	spritz := readyACPSpritz("zeno-acme", "owner-123")
+	rootIdentity := normalizedChannelConversationIdentity{
+		principalID:            "shared-slack-gateway",
+		provider:               "slack",
+		externalScopeType:      "workspace",
+		externalTenantID:       "T_workspace_1",
+		externalChannelID:      "C_channel_1",
+		externalConversationID: "1711387375.000100",
+	}
+	aliasIdentity := rootIdentity
+	aliasIdentity.externalConversationID = "1711387376.000100"
+
+	rootConversation, err := buildACPConversationResource(spritz, "Slack concierge", "")
+	if err != nil {
+		t.Fatalf("build root conversation: %v", err)
+	}
+	rootConversation.Name = channelConversationName(spritz.Name, spritz.Spec.Owner.ID, rootIdentity)
+	applyChannelConversationMetadata(rootConversation, rootIdentity, "root-request", spritz)
+
+	aliasConversation, err := buildACPConversationResource(spritz, "Slack concierge", "")
+	if err != nil {
+		t.Fatalf("build alias conversation: %v", err)
+	}
+	aliasConversation.Name = channelConversationName(spritz.Name, spritz.Spec.Owner.ID, aliasIdentity)
+	applyChannelConversationMetadata(aliasConversation, aliasIdentity, "alias-request", spritz)
+
+	s := newChannelConversationsTestServer(t, spritz, rootConversation, aliasConversation)
+	e := echo.New()
+	s.registerRoutes(e)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, newChannelConversationsRequest(`{
+		"principalId":"shared-slack-gateway",
+		"instanceId":"zeno-acme",
+		"ownerId":"owner-123",
+		"conversationId":"`+rootConversation.Name+`",
+		"provider":"slack",
+		"externalScopeType":"workspace",
+		"externalTenantId":"T_workspace_1",
+		"externalChannelId":"C_channel_1",
+		"externalConversationId":"1711387376.000100",
+		"title":"Slack concierge"
+	}`))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected alias conflict when another conversation already owns it, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestUpsertChannelConversationPreservesExistingTitleAndCWD(t *testing.T) {
 	s := newChannelConversationsTestServer(t, readyACPSpritz("zeno-acme", "owner-123"))
 	e := echo.New()
