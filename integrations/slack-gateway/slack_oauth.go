@@ -74,23 +74,40 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
 	code := strings.TrimSpace(r.URL.Query().Get("code"))
 	if err := g.state.validate(state); err != nil {
+		g.logger.ErrorContext(r.Context(), "slack oauth callback state validation failed", "err", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if code == "" {
+		g.logger.ErrorContext(r.Context(), "slack oauth callback missing code")
 		http.Error(w, "code is required", http.StatusBadRequest)
 		return
 	}
 
 	installation, err := g.exchangeSlackOAuthCode(r.Context(), code)
 	if err != nil {
+		g.logger.ErrorContext(r.Context(), "slack oauth callback code exchange failed", "err", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	if err := g.upsertInstallation(r.Context(), &installation); err != nil {
+		g.logger.ErrorContext(
+			r.Context(),
+			"slack oauth callback installation upsert failed",
+			"err",
+			err,
+			"team_id",
+			installation.TeamID,
+		)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	g.logger.InfoContext(
+		r.Context(),
+		"slack oauth callback installed workspace",
+		"team_id",
+		installation.TeamID,
+	)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":             "installed",
 		"teamId":             installation.TeamID,

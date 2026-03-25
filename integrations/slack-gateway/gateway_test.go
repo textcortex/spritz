@@ -235,7 +235,8 @@ func TestOAuthCallbackReturnsBadGatewayWhenBackendUpsertFails(t *testing.T) {
 		HTTPTimeout:          5 * time.Second,
 		DedupeTTL:            time.Minute,
 	}
-	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	var logBuffer bytes.Buffer
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(&logBuffer, nil)))
 	state, err := gateway.state.generate()
 	if err != nil {
 		t.Fatalf("state generate failed: %v", err)
@@ -247,6 +248,13 @@ func TestOAuthCallbackReturnsBadGatewayWhenBackendUpsertFails(t *testing.T) {
 
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
+	}
+	logOutput := logBuffer.String()
+	if !strings.Contains(logOutput, "slack oauth callback installation upsert failed") {
+		t.Fatalf("expected upsert failure to be logged, got %q", logOutput)
+	}
+	if !strings.Contains(logOutput, "backend unavailable") {
+		t.Fatalf("expected backend error details in logs, got %q", logOutput)
 	}
 }
 
