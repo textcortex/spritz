@@ -53,6 +53,44 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 			return s.writeACPResourceError(c, err)
 		}
 	}
+	if normalizedBody.ConversationID != "" {
+		existing := &spritzv1.SpritzConversation{}
+		if err := s.client.Get(c.Request().Context(), clientKey(namespace, normalizedBody.ConversationID), existing); err != nil {
+			return s.writeACPResourceError(c, err)
+		}
+		if !channelConversationMatchesBaseIdentity(existing, identity) || !channelConversationBelongsToSpritz(existing, spritz) {
+			return writeError(c, http.StatusConflict, "channel conversation is ambiguous")
+		}
+		conversation, found, err := s.findChannelConversation(c, namespace, spritz, identity)
+		if err != nil {
+			if httpErr, ok := err.(*echo.HTTPError); ok {
+				return writeError(c, httpErr.Code, httpErr.Message.(string))
+			}
+			return writeError(c, http.StatusInternalServerError, err.Error())
+		}
+		if found && conversation.Name != existing.Name {
+			return writeError(c, http.StatusConflict, "channel conversation is ambiguous")
+		}
+		changed := ensureChannelConversationBaseRouteLabel(existing, identity, spritz)
+		aliasChanged, err := appendChannelConversationAlias(existing, identity.externalConversationID)
+		if err != nil {
+			return writeError(c, http.StatusInternalServerError, err.Error())
+		}
+		changed = changed || aliasChanged
+		if normalizedBody.RequestID != "" {
+			if existing.Annotations == nil {
+				existing.Annotations = map[string]string{}
+			}
+			existing.Annotations[requestIDAnnotationKey] = normalizedBody.RequestID
+			changed = true
+		}
+		if changed {
+			if err := s.client.Update(c.Request().Context(), existing); err != nil {
+				return s.writeACPResourceError(c, err)
+			}
+		}
+		return writeJSON(c, http.StatusOK, map[string]any{"created": false, "conversation": existing})
+	}
 	conversation, found, err := s.findChannelConversation(c, namespace, spritz, identity)
 	if err != nil {
 		if httpErr, ok := err.(*echo.HTTPError); ok {

@@ -207,7 +207,8 @@ product requirement says otherwise:
    - event type
    - `channel_type`
    - channel id
-   - message ts or thread ts
+   - message ts
+   - thread ts when present
    - external sender id
 4. Gateway rejects the request if `api_app_id` or `team_id` do not match the
    expected shared Slack app installation.
@@ -306,13 +307,20 @@ include it directly in the inbound payload.
 Phase 1 should keep channel behavior predictable:
 
 - direct-message conversations reply inline
-- channel conversations reply in thread by default
-- if inbound Slack payload already has `thread_ts`, reuse it
-- if inbound channel message is not already threaded, use the source message
-  `ts` as `thread_ts`
+- top-level channel turns reply top-level by default
+- top-level channel turns use the source Slack message ts as the conversation
+  identity
+- threaded channel turns use the thread root `thread_ts` as the conversation
+  identity
+- if the gateway posts a visible top-level assistant reply, later user replies
+  threaded off that bot message must map back to the original source-message
+  conversation instead of forking a new one
+- if inbound Slack payload already has `thread_ts`, reuse it for the outbound
+  reply so existing threaded follow-ups stay in that thread
 
-That keeps public channels cleaner and gives the concierge a consistent reply
-target.
+That matches the desired Zenobot-style room behavior: visible top-level replies
+for normal channel turns, with stable follow-up context only when the user is
+already continuing the same Slack root message or thread.
 
 ## Persisted Metadata
 

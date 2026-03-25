@@ -110,9 +110,10 @@ func (g *slackGateway) exchangeChannelSession(ctx context.Context, teamID string
 	}, nil
 }
 
-func (g *slackGateway) upsertChannelConversation(ctx context.Context, session channelSession, event slackEventInner, teamID string) (string, error) {
+func (g *slackGateway) upsertChannelConversation(ctx context.Context, session channelSession, event slackEventInner, teamID, conversationID, externalConversationID string) (string, error) {
 	body := map[string]any{
 		"namespace":              session.Namespace,
+		"conversationId":         strings.TrimSpace(conversationID),
 		"principalId":            g.cfg.PrincipalID,
 		"instanceId":             session.InstanceID,
 		"ownerId":                session.OwnerAuthID,
@@ -120,7 +121,7 @@ func (g *slackGateway) upsertChannelConversation(ctx context.Context, session ch
 		"externalScopeType":      slackWorkspaceScope,
 		"externalTenantId":       strings.TrimSpace(teamID),
 		"externalChannelId":      strings.TrimSpace(event.Channel),
-		"externalConversationId": slackExternalConversationID(event),
+		"externalConversationId": strings.TrimSpace(externalConversationID),
 		"title":                  fmt.Sprintf("Slack %s", strings.TrimSpace(event.Channel)),
 		"cwd":                    defaultConversationCWD,
 	}
@@ -150,7 +151,7 @@ func (g *slackGateway) bootstrapConversation(ctx context.Context, serviceToken, 
 	return sessionID, cwd, nil
 }
 
-func (g *slackGateway) postSlackMessage(ctx context.Context, token, channel, text, threadTS string) error {
+func (g *slackGateway) postSlackMessage(ctx context.Context, token, channel, text, threadTS string) (string, error) {
 	body := map[string]any{
 		"channel": strings.TrimSpace(channel),
 		"text":    strings.TrimSpace(text),
@@ -161,33 +162,34 @@ func (g *slackGateway) postSlackMessage(ctx context.Context, token, channel, tex
 	target := g.cfg.SlackAPIBaseURL + "/chat.postMessage"
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return err
+		return "", err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := g.httpClient.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("slack chat.postMessage failed: %s", resp.Status)
+		return "", fmt.Errorf("slack chat.postMessage failed: %s", resp.Status)
 	}
 	var result struct {
 		OK    bool   `json:"ok"`
+		TS    string `json:"ts,omitempty"`
 		Error string `json:"error,omitempty"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return err
+		return "", err
 	}
 	if !result.OK {
-		return fmt.Errorf("slack chat.postMessage failed: %s", strings.TrimSpace(result.Error))
+		return "", fmt.Errorf("slack chat.postMessage failed: %s", strings.TrimSpace(result.Error))
 	}
-	return nil
+	return strings.TrimSpace(result.TS), nil
 }
 
 func (g *slackGateway) postBackendJSON(ctx context.Context, path string, body any, target any) error {

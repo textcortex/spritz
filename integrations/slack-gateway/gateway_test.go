@@ -345,8 +345,8 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 	}
 	var channelConversationCall struct {
 		sync.Mutex
-		authHeader string
-		payload    map[string]any
+		authHeaders []string
+		payloads    []map[string]any
 	}
 	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/chat.postMessage" {
@@ -357,7 +357,7 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 			slackCalls.Lock()
 			slackCalls.payloads = append(slackCalls.payloads, payload)
 			slackCalls.Unlock()
-			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ts": "1711387376.000100"})
 			return
 		}
 		t.Fatalf("unexpected slack path %s", r.URL.Path)
@@ -396,13 +396,19 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 				t.Fatalf("decode channel conversation body: %v", err)
 			}
 			channelConversationCall.Lock()
-			channelConversationCall.authHeader = r.Header.Get("Authorization")
-			channelConversationCall.payload = payload
+			channelConversationCall.authHeaders = append(channelConversationCall.authHeaders, r.Header.Get("Authorization"))
+			channelConversationCall.payloads = append(channelConversationCall.payloads, payload)
 			channelConversationCall.Unlock()
-			writeJSON(w, http.StatusCreated, map[string]any{
+			statusCode := http.StatusCreated
+			created := true
+			if strings.TrimSpace(fmt.Sprint(payload["conversationId"])) != "" {
+				statusCode = http.StatusOK
+				created = false
+			}
+			writeJSON(w, statusCode, map[string]any{
 				"status": "success",
 				"data": map[string]any{
-					"created": true,
+					"created": created,
 					"conversation": map[string]any{
 						"metadata": map[string]any{"name": "conv-1"},
 						"spec":     map[string]any{"cwd": "/home/dev"},
@@ -519,8 +525,8 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 			if !strings.Contains(fmt.Sprint(payload["text"]), "Hello from concierge") {
 				t.Fatalf("expected assistant reply, got %#v", payload["text"])
 			}
-			if payload["thread_ts"] != "1711387375.000100" {
-				t.Fatalf("expected thread reply, got %#v", payload["thread_ts"])
+			if _, ok := payload["thread_ts"]; ok {
+				t.Fatalf("expected top-level channel reply, got %#v", payload["thread_ts"])
 			}
 			acpAuthHeaders.Lock()
 			defer acpAuthHeaders.Unlock()
@@ -534,11 +540,25 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 			}
 			channelConversationCall.Lock()
 			defer channelConversationCall.Unlock()
-			if channelConversationCall.authHeader != "Bearer owner-token" {
-				t.Fatalf("expected owner token for channel conversation upsert, got %q", channelConversationCall.authHeader)
+			if len(channelConversationCall.authHeaders) != 2 {
+				t.Fatalf("expected root upsert plus alias upsert, got %#v", channelConversationCall.authHeaders)
 			}
-			if channelConversationCall.payload["principalId"] != "shared-slack-gateway" {
-				t.Fatalf("expected shared gateway principal in channel conversation payload, got %#v", channelConversationCall.payload["principalId"])
+			for _, authHeader := range channelConversationCall.authHeaders {
+				if authHeader != "Bearer owner-token" {
+					t.Fatalf("expected owner token for channel conversation upsert, got %q", authHeader)
+				}
+			}
+			if channelConversationCall.payloads[0]["principalId"] != "shared-slack-gateway" {
+				t.Fatalf("expected shared gateway principal in first channel conversation payload, got %#v", channelConversationCall.payloads[0]["principalId"])
+			}
+			if channelConversationCall.payloads[0]["externalConversationId"] != "1711387375.000100" {
+				t.Fatalf("expected root-message conversation identity, got %#v", channelConversationCall.payloads[0]["externalConversationId"])
+			}
+			if channelConversationCall.payloads[1]["conversationId"] != "conv-1" {
+				t.Fatalf("expected alias upsert to target the created conversation, got %#v", channelConversationCall.payloads[1]["conversationId"])
+			}
+			if channelConversationCall.payloads[1]["externalConversationId"] != "1711387376.000100" {
+				t.Fatalf("expected alias upsert to persist the bot reply ts, got %#v", channelConversationCall.payloads[1]["externalConversationId"])
 			}
 			return
 		}
@@ -1256,6 +1276,8 @@ func TestUpsertChannelConversationUsesChannelForDirectMessages(t *testing.T) {
 			TS:          "1711387375.000100",
 		},
 		"T_workspace_1",
+		"",
+		"D_workspace_bot",
 	)
 	if err != nil {
 		t.Fatalf("upsert channel conversation failed: %v", err)
@@ -1398,6 +1420,33 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 	}
 	if slackReplyThreadTS(groupDM) != "" {
 		t.Fatalf("expected mpim replies to stay inline")
+	}
+
+	topLevelChannel := slackEventInner{
+		Type:        "app_mention",
+		Channel:     "C_workspace_channel",
+		ChannelType: "channel",
+		TS:          "1711387375.000100",
+	}
+	if slackExternalConversationID(topLevelChannel) != "1711387375.000100" {
+		t.Fatalf("expected top-level channel messages to key by root message ts")
+	}
+	if slackReplyThreadTS(topLevelChannel) != "" {
+		t.Fatalf("expected top-level channel mentions to reply inline")
+	}
+
+	threadedChannel := slackEventInner{
+		Type:        "app_mention",
+		Channel:     "C_workspace_channel",
+		ChannelType: "channel",
+		ThreadTS:    "1711387375.000100",
+		TS:          "1711387376.000100",
+	}
+	if slackExternalConversationID(threadedChannel) != "1711387375.000100" {
+		t.Fatalf("expected threaded channel messages to key by thread root ts")
+	}
+	if slackReplyThreadTS(threadedChannel) != "1711387375.000100" {
+		t.Fatalf("expected threaded channel mentions to reply in-thread")
 	}
 }
 
@@ -1676,8 +1725,179 @@ func TestProcessMessageEventPostsFallbackAfterPromptTimeout(t *testing.T) {
 	if got := slackPayloads.items[0]["text"]; got != "I hit an internal error while processing that request." {
 		t.Fatalf("expected fallback reply text, got %#v", got)
 	}
-	if got := slackPayloads.items[0]["thread_ts"]; got != "1711387375.000100" {
-		t.Fatalf("expected threaded fallback reply, got %#v", got)
+	if _, ok := slackPayloads.items[0]["thread_ts"]; ok {
+		t.Fatalf("expected top-level fallback reply, got %#v", slackPayloads.items[0]["thread_ts"])
+	}
+}
+
+func TestProcessMessageEventPersistsReplyAliasAfterPromptTimeout(t *testing.T) {
+	var channelConversationCalls struct {
+		sync.Mutex
+		payloads []map[string]any
+	}
+	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat.postMessage" {
+			t.Fatalf("unexpected slack path %s", r.URL.Path)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ts": "1711387376.000100"})
+	}))
+	defer slackAPI.Close()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v1/spritz/channel-sessions/exchange" {
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"session": map[string]any{
+				"accessToken": "owner-token",
+				"ownerAuthId": "owner-123",
+				"namespace":   "spritz-staging",
+				"instanceId":  "zeno-acme",
+				"providerAuth": map[string]any{
+					"providerInstallRef": "cred_slack_workspace_1",
+					"apiAppId":           "A_app_1",
+					"teamId":             "T_workspace_1",
+					"botUserId":          "U_bot",
+					"botAccessToken":     "xoxb-installed",
+				},
+			},
+		})
+	}))
+	defer backend.Close()
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	spritz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/channel-conversations/upsert":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode channel conversation payload: %v", err)
+			}
+			channelConversationCalls.Lock()
+			channelConversationCalls.payloads = append(channelConversationCalls.payloads, payload)
+			channelConversationCalls.Unlock()
+			statusCode := http.StatusCreated
+			created := true
+			if strings.TrimSpace(fmt.Sprint(payload["conversationId"])) != "" {
+				statusCode = http.StatusOK
+				created = false
+			}
+			writeJSON(w, statusCode, map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"created": created,
+					"conversation": map[string]any{
+						"metadata": map[string]any{"name": "conv-1"},
+						"spec":     map[string]any{"cwd": "/home/dev"},
+					},
+				},
+			})
+		case "/api/acp/conversations/conv-1/bootstrap":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"effectiveSessionId": "session-1",
+					"conversation": map[string]any{
+						"metadata": map[string]any{"name": "conv-1"},
+						"spec":     map[string]any{"sessionId": "session-1", "cwd": "/home/dev"},
+					},
+				},
+			})
+		case "/api/acp/conversations/conv-1/connect":
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				t.Fatalf("upgrade failed: %v", err)
+			}
+			defer conn.Close()
+			for {
+				_, payload, err := conn.ReadMessage()
+				if err != nil {
+					return
+				}
+				var message map[string]any
+				if err := json.Unmarshal(payload, &message); err != nil {
+					t.Fatalf("decode ws payload: %v", err)
+				}
+				switch message["method"] {
+				case "initialize":
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{"protocolVersion": 1}})
+				case "session/load":
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
+				case "session/prompt":
+					_ = conn.WriteJSON(map[string]any{
+						"jsonrpc": "2.0",
+						"method":  "session/update",
+						"params": map[string]any{
+							"update": map[string]any{
+								"sessionUpdate": "agent_message_chunk",
+								"content": []map[string]any{{
+									"type": "text",
+									"text": "partial reply",
+								}},
+							},
+						},
+					})
+					time.Sleep(40 * time.Millisecond)
+					return
+				default:
+					t.Fatalf("unexpected ACP method %#v", message["method"])
+				}
+			}
+		default:
+			t.Fatalf("unexpected spritz path %s", r.URL.Path)
+		}
+	}))
+	defer spritz.Close()
+
+	cfg := config{
+		SlackAPIBaseURL:      slackAPI.URL,
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        spritz.URL,
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          200 * time.Millisecond,
+		DedupeTTL:            time.Minute,
+	}
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	envelope := slackEnvelope{
+		APIAppID: "A_app_1",
+		TeamID:   "T_workspace_1",
+		Event: slackEventInner{
+			Type:        "app_mention",
+			User:        "U_user",
+			Text:        "<@U_bot> hello",
+			Channel:     "C_channel_1",
+			ChannelType: "channel",
+			TS:          "1711387375.000100",
+		},
+	}
+	delivery, process, err := gateway.beginMessageEventDelivery(envelope)
+	if err != nil {
+		t.Fatalf("beginMessageEventDelivery returned error: %v", err)
+	}
+	if !process {
+		t.Fatal("expected app mention to be processed")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := gateway.processMessageEventWithDelivery(ctx, envelope, delivery); err != nil {
+		t.Fatalf("expected fallback reply flow to succeed, got %v", err)
+	}
+
+	channelConversationCalls.Lock()
+	defer channelConversationCalls.Unlock()
+	if len(channelConversationCalls.payloads) != 2 {
+		t.Fatalf("expected root upsert plus alias persistence, got %#v", channelConversationCalls.payloads)
+	}
+	if channelConversationCalls.payloads[1]["conversationId"] != "conv-1" {
+		t.Fatalf("expected alias persistence to target conv-1, got %#v", channelConversationCalls.payloads[1]["conversationId"])
+	}
+	if channelConversationCalls.payloads[1]["externalConversationId"] != "1711387376.000100" {
+		t.Fatalf("expected alias persistence to use the bot reply ts, got %#v", channelConversationCalls.payloads[1]["externalConversationId"])
 	}
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -14,18 +15,21 @@ import (
 )
 
 const (
-	channelConversationRouteLabelKey                       = "spritz.sh/channel-route"
-	channelConversationPrincipalAnnotationKey              = "spritz.sh/channel-principal-id"
-	channelConversationProviderAnnotationKey               = "spritz.sh/channel-provider"
-	channelConversationExternalScopeTypeAnnotationKey      = "spritz.sh/channel-external-scope-type"
-	channelConversationExternalTenantIDAnnotationKey       = "spritz.sh/channel-external-tenant-id"
-	channelConversationExternalChannelIDAnnotationKey      = "spritz.sh/channel-external-channel-id"
-	channelConversationExternalConversationIDAnnotationKey = "spritz.sh/channel-external-conversation-id"
+	channelConversationRouteLabelKey                            = "spritz.sh/channel-route"
+	channelConversationPrincipalAnnotationKey                   = "spritz.sh/channel-principal-id"
+	channelConversationProviderAnnotationKey                    = "spritz.sh/channel-provider"
+	channelConversationExternalScopeTypeAnnotationKey           = "spritz.sh/channel-external-scope-type"
+	channelConversationExternalTenantIDAnnotationKey            = "spritz.sh/channel-external-tenant-id"
+	channelConversationExternalChannelIDAnnotationKey           = "spritz.sh/channel-external-channel-id"
+	channelConversationExternalConversationIDAnnotationKey      = "spritz.sh/channel-external-conversation-id"
+	channelConversationExternalConversationAliasesAnnotationKey = "spritz.sh/channel-external-conversation-aliases"
+	channelConversationBaseRouteLabelKey                        = "spritz.sh/channel-route-base"
 )
 
 type channelConversationUpsertRequest struct {
 	RequestID              string `json:"requestId,omitempty"`
 	Namespace              string `json:"namespace,omitempty"`
+	ConversationID         string `json:"conversationId,omitempty"`
 	PrincipalID            string `json:"principalId"`
 	InstanceID             string `json:"instanceId"`
 	OwnerID                string `json:"ownerId"`
@@ -52,6 +56,7 @@ type normalizedChannelConversationIdentity struct {
 func normalizeChannelConversationUpsertRequest(body channelConversationUpsertRequest) (channelConversationUpsertRequest, normalizedChannelConversationIdentity, error) {
 	body.RequestID = strings.TrimSpace(body.RequestID)
 	body.Namespace = strings.TrimSpace(body.Namespace)
+	body.ConversationID = strings.TrimSpace(body.ConversationID)
 	body.PrincipalID = strings.TrimSpace(body.PrincipalID)
 	body.InstanceID = sanitizeSpritzNameToken(body.InstanceID)
 	body.OwnerID = strings.TrimSpace(body.OwnerID)
@@ -113,6 +118,19 @@ func channelConversationRouteHash(identity normalizedChannelConversationIdentity
 	return hex.EncodeToString(sum[:16])
 }
 
+func channelConversationBaseRouteHash(identity normalizedChannelConversationIdentity, ownerID, instanceID string) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		identity.principalID,
+		identity.provider,
+		identity.externalScopeType,
+		identity.externalTenantID,
+		identity.externalChannelID,
+		strings.TrimSpace(ownerID),
+		strings.TrimSpace(instanceID),
+	}, "\n")))
+	return hex.EncodeToString(sum[:16])
+}
+
 func channelConversationName(spritzName, ownerID string, identity normalizedChannelConversationIdentity) string {
 	prefix := strings.ToLower(strings.TrimSpace(spritzName))
 	prefix = strings.Trim(prefix, "-")
@@ -137,7 +155,7 @@ func channelConversationName(spritzName, ownerID string, identity normalizedChan
 	return fmt.Sprintf("%s-%s", prefix, suffix)
 }
 
-func channelConversationMatchesIdentity(conversation *spritzv1.SpritzConversation, identity normalizedChannelConversationIdentity) bool {
+func channelConversationMatchesBaseIdentity(conversation *spritzv1.SpritzConversation, identity normalizedChannelConversationIdentity) bool {
 	if conversation == nil {
 		return false
 	}
@@ -145,8 +163,102 @@ func channelConversationMatchesIdentity(conversation *spritzv1.SpritzConversatio
 		strings.TrimSpace(conversation.Annotations[channelConversationProviderAnnotationKey]) == identity.provider &&
 		strings.TrimSpace(conversation.Annotations[channelConversationExternalScopeTypeAnnotationKey]) == identity.externalScopeType &&
 		strings.TrimSpace(conversation.Annotations[channelConversationExternalTenantIDAnnotationKey]) == identity.externalTenantID &&
-		strings.TrimSpace(conversation.Annotations[channelConversationExternalChannelIDAnnotationKey]) == identity.externalChannelID &&
-		strings.TrimSpace(conversation.Annotations[channelConversationExternalConversationIDAnnotationKey]) == identity.externalConversationID
+		strings.TrimSpace(conversation.Annotations[channelConversationExternalChannelIDAnnotationKey]) == identity.externalChannelID
+}
+
+func channelConversationExternalConversationAliases(conversation *spritzv1.SpritzConversation) []string {
+	if conversation == nil {
+		return nil
+	}
+	raw := strings.TrimSpace(conversation.Annotations[channelConversationExternalConversationAliasesAnnotationKey])
+	if raw == "" {
+		return nil
+	}
+	var payload []string
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return nil
+	}
+	primary := strings.TrimSpace(conversation.Annotations[channelConversationExternalConversationIDAnnotationKey])
+	aliases := make([]string, 0, len(payload))
+	seen := map[string]struct{}{}
+	for _, candidate := range payload {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || candidate == primary {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		aliases = append(aliases, candidate)
+	}
+	return aliases
+}
+
+func channelConversationHasExternalConversationID(conversation *spritzv1.SpritzConversation, externalConversationID string) bool {
+	externalConversationID = strings.TrimSpace(externalConversationID)
+	if externalConversationID == "" || conversation == nil {
+		return false
+	}
+	if strings.TrimSpace(conversation.Annotations[channelConversationExternalConversationIDAnnotationKey]) == externalConversationID {
+		return true
+	}
+	for _, alias := range channelConversationExternalConversationAliases(conversation) {
+		if alias == externalConversationID {
+			return true
+		}
+	}
+	return false
+}
+
+func channelConversationMatchesIdentity(conversation *spritzv1.SpritzConversation, identity normalizedChannelConversationIdentity) bool {
+	return channelConversationMatchesBaseIdentity(conversation, identity) &&
+		channelConversationHasExternalConversationID(conversation, identity.externalConversationID)
+}
+
+func channelConversationBelongsToSpritz(conversation *spritzv1.SpritzConversation, spritz *spritzv1.Spritz) bool {
+	if conversation == nil || spritz == nil {
+		return false
+	}
+	return strings.TrimSpace(conversation.Spec.SpritzName) == spritz.Name &&
+		strings.TrimSpace(conversation.Spec.Owner.ID) == spritz.Spec.Owner.ID &&
+		strings.TrimSpace(conversation.Labels[acpConversationSpritzLabelKey]) == spritz.Name &&
+		strings.TrimSpace(conversation.Labels[acpConversationOwnerLabelKey]) == ownerLabelValue(spritz.Spec.Owner.ID)
+}
+
+func appendChannelConversationAlias(conversation *spritzv1.SpritzConversation, externalConversationID string) (bool, error) {
+	externalConversationID = strings.TrimSpace(externalConversationID)
+	if externalConversationID == "" || conversation == nil {
+		return false, nil
+	}
+	if conversation.Annotations == nil {
+		conversation.Annotations = map[string]string{}
+	}
+	if channelConversationHasExternalConversationID(conversation, externalConversationID) {
+		return false, nil
+	}
+	aliases := append(channelConversationExternalConversationAliases(conversation), externalConversationID)
+	payload, err := json.Marshal(aliases)
+	if err != nil {
+		return false, err
+	}
+	conversation.Annotations[channelConversationExternalConversationAliasesAnnotationKey] = string(payload)
+	return true, nil
+}
+
+func ensureChannelConversationBaseRouteLabel(conversation *spritzv1.SpritzConversation, identity normalizedChannelConversationIdentity, spritz *spritzv1.Spritz) bool {
+	if conversation == nil || spritz == nil {
+		return false
+	}
+	if conversation.Labels == nil {
+		conversation.Labels = map[string]string{}
+	}
+	expected := channelConversationBaseRouteHash(identity, spritz.Spec.Owner.ID, spritz.Name)
+	if strings.TrimSpace(conversation.Labels[channelConversationBaseRouteLabelKey]) == expected {
+		return false
+	}
+	conversation.Labels[channelConversationBaseRouteLabelKey] = expected
+	return true
 }
 
 func (s *server) getAdminScopedACPReadySpritz(c echo.Context, namespace, instanceID, ownerID string) (*spritzv1.Spritz, error) {
@@ -164,10 +276,10 @@ func (s *server) getAdminScopedACPReadySpritz(c echo.Context, namespace, instanc
 }
 
 func (s *server) findChannelConversation(c echo.Context, namespace string, spritz *spritzv1.Spritz, identity normalizedChannelConversationIdentity) (*spritzv1.SpritzConversation, bool, error) {
-	list := &spritzv1.SpritzConversationList{}
+	exactList := &spritzv1.SpritzConversationList{}
 	if err := s.client.List(
 		c.Request().Context(),
-		list,
+		exactList,
 		client.InNamespace(namespace),
 		client.MatchingLabels{
 			acpConversationLabelKey:          acpConversationLabelValue,
@@ -179,9 +291,41 @@ func (s *server) findChannelConversation(c echo.Context, namespace string, sprit
 		return nil, false, err
 	}
 	var match *spritzv1.SpritzConversation
-	for i := range list.Items {
-		item := &list.Items[i]
+	for i := range exactList.Items {
+		item := &exactList.Items[i]
 		if !channelConversationMatchesIdentity(item, identity) {
+			continue
+		}
+		if match != nil {
+			return nil, true, echo.NewHTTPError(http.StatusConflict, "channel conversation is ambiguous")
+		}
+		match = item.DeepCopy()
+	}
+
+	baseList := &spritzv1.SpritzConversationList{}
+	if err := s.client.List(
+		c.Request().Context(),
+		baseList,
+		client.InNamespace(namespace),
+		client.MatchingLabels{
+			acpConversationLabelKey:       acpConversationLabelValue,
+			acpConversationOwnerLabelKey:  ownerLabelValue(spritz.Spec.Owner.ID),
+			acpConversationSpritzLabelKey: spritz.Name,
+			channelConversationBaseRouteLabelKey: channelConversationBaseRouteHash(
+				identity,
+				spritz.Spec.Owner.ID,
+				spritz.Name,
+			),
+		},
+	); err != nil {
+		return nil, false, err
+	}
+	for i := range baseList.Items {
+		item := &baseList.Items[i]
+		if !channelConversationMatchesIdentity(item, identity) {
+			continue
+		}
+		if match != nil && item.Name == match.Name {
 			continue
 		}
 		if match != nil {
@@ -203,6 +347,7 @@ func applyChannelConversationMetadata(conversation *spritzv1.SpritzConversation,
 	conversation.Labels[acpConversationSpritzLabelKey] = spritz.Name
 	conversation.Labels[acpConversationLabelKey] = acpConversationLabelValue
 	conversation.Labels[channelConversationRouteLabelKey] = channelConversationRouteHash(identity, spritz.Spec.Owner.ID, spritz.Name)
+	conversation.Labels[channelConversationBaseRouteLabelKey] = channelConversationBaseRouteHash(identity, spritz.Spec.Owner.ID, spritz.Name)
 
 	if conversation.Annotations == nil {
 		conversation.Annotations = map[string]string{}

@@ -211,7 +211,8 @@ func (g *slackGateway) processMessageEventWithDelivery(
 		return nil
 	}
 
-	conversationID, err := g.upsertChannelConversation(ctx, session, event, envelope.TeamID)
+	externalConversationID := slackExternalConversationID(event)
+	conversationID, err := g.upsertChannelConversation(ctx, session, event, envelope.TeamID, "", externalConversationID)
 	if err != nil {
 		return err
 	}
@@ -227,13 +228,36 @@ func (g *slackGateway) processMessageEventWithDelivery(
 		reply = "I hit an internal error while processing that request."
 		g.logger.Error("acp prompt failed", "error", err, "conversation_id", conversationID)
 	}
+	replyThreadTS := slackReplyThreadTS(event)
 	replyCtx, cancelReply := context.WithTimeout(context.WithoutCancel(ctx), g.cfg.HTTPTimeout)
 	defer cancelReply()
-	if err := g.postSlackMessage(replyCtx, session.ProviderAuth.BotAccessToken, event.Channel, reply, slackReplyThreadTS(event)); err != nil {
+	replyMessageTS, err := g.postSlackMessage(replyCtx, session.ProviderAuth.BotAccessToken, event.Channel, reply, replyThreadTS)
+	if err != nil {
 		// Once the ACP prompt has already been delivered, suppress duplicate
 		// Slack retries from re-running the same agent side effects.
 		success = promptSent
 		return err
+	}
+	if replyThreadTS == "" && !isSlackDirectMessageEvent(event) && strings.TrimSpace(replyMessageTS) != "" {
+		aliasCtx, cancelAlias := context.WithTimeout(context.WithoutCancel(ctx), g.cfg.HTTPTimeout)
+		if _, err := g.upsertChannelConversation(
+			aliasCtx,
+			session,
+			event,
+			envelope.TeamID,
+			conversationID,
+			replyMessageTS,
+		); err != nil {
+			cancelAlias()
+			g.logger.Error(
+				"slack reply alias persistence failed",
+				"error", err,
+				"conversation_id", conversationID,
+				"reply_message_ts", replyMessageTS,
+			)
+		} else {
+			cancelAlias()
+		}
 	}
 	success = true
 	return nil
@@ -280,17 +304,17 @@ func slackReplyThreadTS(event slackEventInner) string {
 	if strings.TrimSpace(event.ThreadTS) != "" {
 		return strings.TrimSpace(event.ThreadTS)
 	}
-	if isSlackDirectMessageEvent(event) {
-		return ""
-	}
-	return strings.TrimSpace(event.TS)
+	return ""
 }
 
 func slackExternalConversationID(event slackEventInner) string {
 	if isSlackDirectMessageEvent(event) {
 		return strings.TrimSpace(event.Channel)
 	}
-	return firstNonEmpty(strings.TrimSpace(event.ThreadTS), strings.TrimSpace(event.TS))
+	if threadTS := strings.TrimSpace(event.ThreadTS); threadTS != "" {
+		return threadTS
+	}
+	return strings.TrimSpace(event.TS)
 }
 
 func (g *slackGateway) verifySlackSignature(header http.Header, body []byte) error {
