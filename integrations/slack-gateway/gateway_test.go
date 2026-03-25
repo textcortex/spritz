@@ -236,7 +236,10 @@ func TestOAuthCallbackReturnsBadGatewayWhenBackendUpsertFails(t *testing.T) {
 		DedupeTTL:            time.Minute,
 	}
 	var logBuffer bytes.Buffer
-	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(&logBuffer, nil)))
+	gateway := newSlackGateway(
+		cfg,
+		slog.New(slog.NewTextHandler(&logBuffer, &slog.HandlerOptions{Level: slog.LevelDebug})),
+	)
 	state, err := gateway.state.generate()
 	if err != nil {
 		t.Fatalf("state generate failed: %v", err)
