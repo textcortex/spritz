@@ -447,6 +447,57 @@ func TestUpsertChannelConversationRejectsAliasWhenAnotherConversationAlreadyOwns
 	}
 }
 
+func TestUpsertChannelConversationRejectsWhenExactAndAliasedMatchesConflict(t *testing.T) {
+	spritz := readyACPSpritz("zeno-acme", "owner-123")
+	exactIdentity := normalizedChannelConversationIdentity{
+		principalID:            "shared-slack-gateway",
+		provider:               "slack",
+		externalScopeType:      "workspace",
+		externalTenantID:       "T_workspace_1",
+		externalChannelID:      "C_channel_1",
+		externalConversationID: "1711387376.000100",
+	}
+	aliasedIdentity := exactIdentity
+	aliasedIdentity.externalConversationID = "1711387375.000100"
+
+	exactConversation, err := buildACPConversationResource(spritz, "Slack concierge", "")
+	if err != nil {
+		t.Fatalf("build exact conversation: %v", err)
+	}
+	exactConversation.Name = channelConversationName(spritz.Name, spritz.Spec.Owner.ID, exactIdentity)
+	applyChannelConversationMetadata(exactConversation, exactIdentity, "exact-request", spritz)
+
+	aliasedConversation, err := buildACPConversationResource(spritz, "Slack concierge", "")
+	if err != nil {
+		t.Fatalf("build aliased conversation: %v", err)
+	}
+	aliasedConversation.Name = channelConversationName(spritz.Name, spritz.Spec.Owner.ID, aliasedIdentity)
+	applyChannelConversationMetadata(aliasedConversation, aliasedIdentity, "aliased-request", spritz)
+	if _, err := appendChannelConversationAlias(aliasedConversation, exactIdentity.externalConversationID); err != nil {
+		t.Fatalf("append alias: %v", err)
+	}
+
+	s := newChannelConversationsTestServer(t, spritz, exactConversation, aliasedConversation)
+	e := echo.New()
+	s.registerRoutes(e)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, newChannelConversationsRequest(`{
+		"principalId":"shared-slack-gateway",
+		"instanceId":"zeno-acme",
+		"ownerId":"owner-123",
+		"provider":"slack",
+		"externalScopeType":"workspace",
+		"externalTenantId":"T_workspace_1",
+		"externalChannelId":"C_channel_1",
+		"externalConversationId":"1711387376.000100",
+		"title":"Slack concierge"
+	}`))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected ambiguity conflict when exact and aliased matches disagree, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestUpsertChannelConversationPreservesExistingTitleAndCWD(t *testing.T) {
 	s := newChannelConversationsTestServer(t, readyACPSpritz("zeno-acme", "owner-123"))
 	e := echo.New()

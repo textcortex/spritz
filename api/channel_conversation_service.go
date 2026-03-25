@@ -301,9 +301,6 @@ func (s *server) findChannelConversation(c echo.Context, namespace string, sprit
 		}
 		match = item.DeepCopy()
 	}
-	if match != nil {
-		return match, true, nil
-	}
 
 	baseList := &spritzv1.SpritzConversationList{}
 	if err := s.client.List(
@@ -326,6 +323,9 @@ func (s *server) findChannelConversation(c echo.Context, namespace string, sprit
 	for i := range baseList.Items {
 		item := &baseList.Items[i]
 		if !channelConversationMatchesIdentity(item, identity) {
+			continue
+		}
+		if match != nil && item.Name == match.Name {
 			continue
 		}
 		if match != nil {
