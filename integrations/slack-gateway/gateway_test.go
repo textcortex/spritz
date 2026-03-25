@@ -540,6 +540,9 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 			if channelConversationCall.payload["principalId"] != "shared-slack-gateway" {
 				t.Fatalf("expected shared gateway principal in channel conversation payload, got %#v", channelConversationCall.payload["principalId"])
 			}
+			if channelConversationCall.payload["externalConversationId"] != "C_1" {
+				t.Fatalf("expected channel-scoped conversation identity, got %#v", channelConversationCall.payload["externalConversationId"])
+			}
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -1406,6 +1409,9 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 		ChannelType: "channel",
 		TS:          "1711387375.000100",
 	}
+	if slackExternalConversationID(topLevelChannel) != "C_workspace_channel" {
+		t.Fatalf("expected top-level channel messages to key by channel id")
+	}
 	if slackReplyThreadTS(topLevelChannel) != "" {
 		t.Fatalf("expected top-level channel mentions to reply inline")
 	}
@@ -1416,6 +1422,9 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 		ChannelType: "channel",
 		ThreadTS:    "1711387375.000100",
 		TS:          "1711387376.000100",
+	}
+	if slackExternalConversationID(threadedChannel) != "C_workspace_channel" {
+		t.Fatalf("expected threaded channel messages to stay on the channel conversation")
 	}
 	if slackReplyThreadTS(threadedChannel) != "1711387375.000100" {
 		t.Fatalf("expected threaded channel mentions to reply in-thread")
