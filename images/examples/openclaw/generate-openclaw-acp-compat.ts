@@ -88,10 +88,15 @@ export function selectAcpCliBundle(distDir) {
 export function resolveAcpCliDependencies(acpCliSource) {
   const namedImports = parseNamedImports(acpCliSource);
   return {
-    callBasename: requireImportBasename(
+    gatewayClientBasename: requireImportBasename(
       namedImports,
-      ["GatewayClient", "buildGatewayConnectionDetails"],
-      "GatewayClient/buildGatewayConnectionDetails bundle",
+      ["GatewayClient"],
+      "GatewayClient bundle",
+    ),
+    gatewayConnectionBasename: requireImportBasename(
+      namedImports,
+      ["buildGatewayConnectionDetails"],
+      "buildGatewayConnectionDetails bundle",
     ),
     connectionAuthBasename: requireImportBasename(
       namedImports,
@@ -119,7 +124,8 @@ export function buildAcpCliCompatSource(acpCliSource) {
 
 export function buildCompatModuleSource(params) {
   return `import * as configModule from "./${params.loadConfigBasename}";
-import * as callModule from "./${params.callBasename}";
+import * as gatewayClientModule from "./${params.gatewayClientBasename}";
+import * as gatewayConnectionModule from "./${params.gatewayConnectionBasename}";
 import * as connectionAuthModule from "./${params.connectionAuthBasename}";
 import * as gatewayConstantsModule from "./${params.gatewayConstantsBasename}";
 import {
@@ -147,9 +153,9 @@ function pickNamedObject(moduleNs, name) {
 }
 
 const loadConfig = pickNamedFunction(configModule, "loadConfig");
-const GatewayClient = pickNamedFunction(callModule, "GatewayClient");
+const GatewayClient = pickNamedFunction(gatewayClientModule, "GatewayClient");
 const buildGatewayConnectionDetails = pickNamedFunction(
-  callModule,
+  gatewayConnectionModule,
   "buildGatewayConnectionDetails",
 );
 const resolveGatewayConnectionAuth = pickNamedFunction(
@@ -183,12 +189,14 @@ export function generateOpenclawAcpCompat(packageRoot) {
   const acpCliSource = fs.readFileSync(acpCliPath, "utf8");
   const dependencies = resolveAcpCliDependencies(acpCliSource);
 
-  const callPath = path.join(distDir, dependencies.callBasename);
+  const gatewayClientPath = path.join(distDir, dependencies.gatewayClientBasename);
+  const gatewayConnectionPath = path.join(distDir, dependencies.gatewayConnectionBasename);
   const connectionAuthPath = path.join(distDir, dependencies.connectionAuthBasename);
   const gatewayConstantsPath = path.join(distDir, dependencies.gatewayConstantsBasename);
   const loadConfigPath = path.join(distDir, dependencies.loadConfigBasename);
 
-  assertReadableFile(callPath, "OpenClaw call bundle");
+  assertReadableFile(gatewayClientPath, "OpenClaw gateway client bundle");
+  assertReadableFile(gatewayConnectionPath, "OpenClaw gateway connection bundle");
   assertReadableFile(connectionAuthPath, "OpenClaw connection-auth bundle");
   assertReadableFile(gatewayConstantsPath, "OpenClaw gateway-constants bundle");
   assertReadableFile(loadConfigPath, "OpenClaw loadConfig bundle");
@@ -221,7 +229,8 @@ async function main() {
       packageRoot,
       compatPath: result.compatPath,
       acpCliCompatPath: result.acpCliCompatPath,
-      callBasename: result.callBasename,
+      gatewayClientBasename: result.gatewayClientBasename,
+      gatewayConnectionBasename: result.gatewayConnectionBasename,
       connectionAuthBasename: result.connectionAuthBasename,
       gatewayConstantsBasename: result.gatewayConstantsBasename,
       loadConfigBasename: result.loadConfigBasename,

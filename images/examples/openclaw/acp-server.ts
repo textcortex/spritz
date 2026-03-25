@@ -6,10 +6,14 @@ import { PassThrough, Readable, Writable } from "node:stream";
 import { pathToFileURL } from "node:url";
 
 import {
+  parseGatewayHeaders,
+  startGatewayProxy,
+} from "./gateway-proxy.js";
+import {
   normalizePath,
   resolveWSExports,
   serveSpritzACPServer,
-} from "../shared/spritz-acp-server.mjs";
+} from "../shared/spritz-acp-server.js";
 import {
   buildGatewayClientOptions,
   buildSpritzOpenclawAcpMetadata,
@@ -21,7 +25,7 @@ import {
   parseArgs,
   readOpenclawPackageVersion,
   useTrustedProxyControlUiBridge,
-} from "./acp-wrapper.mjs";
+} from "./acp-wrapper.js";
 
 const DEFAULT_LISTEN_ADDR = "0.0.0.0:2529";
 const DEFAULT_ACP_PATH = "/";
@@ -29,6 +33,13 @@ const DEFAULT_HEALTH_PATH = "/healthz";
 const DEFAULT_METADATA_PATH = "/.well-known/spritz-acp";
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 500;
 const WEBSOCKET_OPEN = 1;
+
+type GatewayAgent = {
+  handleGatewayDisconnect: (reason: string) => void;
+  handleGatewayEvent: (event: unknown) => Promise<void> | void;
+  handleGatewayReconnect: () => void;
+  start: () => void;
+};
 
 function parseBoolEnv(key, fallback, env = process.env) {
   const value = env[key];
@@ -51,184 +62,8 @@ function parseBoolEnv(key, fallback, env = process.env) {
   }
 }
 
-function parseGatewayHeaders(raw) {
-  if (typeof raw !== "string" || raw.trim() === "") {
-    return null;
-  }
-  const decoded = JSON.parse(raw);
-  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
-    throw new Error(
-      "SPRITZ_OPENCLAW_ACP_GATEWAY_HEADERS_JSON must be a JSON object of string header values",
-    );
-  }
-  const headers = {};
-  for (const [key, value] of Object.entries(decoded)) {
-    if (typeof key !== "string" || typeof value !== "string") {
-      continue;
-    }
-    const trimmedKey = key.trim();
-    const trimmedValue = value.trim();
-    if (!trimmedKey || !trimmedValue) {
-      continue;
-    }
-    headers[trimmedKey] = trimmedValue;
-  }
-  return Object.keys(headers).length > 0 ? headers : null;
-}
-
-export function normalizeGatewayProxyHeaders(headers, upstreamURL, trustedProxyControlUi) {
-  if (!headers || Object.keys(headers).length === 0) {
-    return undefined;
-  }
-  const normalized = { ...headers };
-  if (!trustedProxyControlUi || normalized.Origin || normalized.origin) {
-    return normalized;
-  }
-
-  try {
-    const parsed = new URL(upstreamURL);
-    if (parsed.protocol === "ws:") {
-      normalized.Origin = `http://${parsed.host}`;
-      return normalized;
-    }
-    if (parsed.protocol === "wss:") {
-      normalized.Origin = `https://${parsed.host}`;
-      return normalized;
-    }
-    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-      normalized.Origin = `${parsed.protocol}//${parsed.host}`;
-      return normalized;
-    }
-  } catch {
-    // Fall through to forwarded headers.
-  }
-
-  const scheme = normalized["X-Forwarded-Proto"] || normalized["x-forwarded-proto"] || "https";
-  const host = normalized["X-Forwarded-Host"] || normalized["x-forwarded-host"] || "localhost";
-  normalized.Origin = `${scheme}://${host}`;
-  return normalized;
-}
-
-export function rewriteConnectFrameAsTrustedProxyControlUi(payload) {
-  let frame;
-  try {
-    frame = JSON.parse(payload.toString("utf8"));
-  } catch {
-    return payload;
-  }
-  if (frame?.type !== "req" || frame?.method !== "connect" || !frame.params?.client) {
-    return payload;
-  }
-  frame.params.client.id = "openclaw-control-ui";
-  frame.params.client.mode = "webchat";
-  return Buffer.from(JSON.stringify(frame), "utf8");
-}
-
 async function loadWSModule(env = process.env) {
   return await importOpenclawDependency("ws", env);
-}
-
-async function startGatewayProxy(params) {
-  const { upstreamURL, headers, trustedProxyControlUi, env, logger } = params;
-  const wsModule = await loadWSModule(env);
-  const { WebSocket, WebSocketServer } = resolveWSExports(wsModule);
-  if (!WebSocket || !WebSocketServer) {
-    throw new Error("Failed to load ws module for the Spritz OpenClaw gateway proxy.");
-  }
-
-  const upstream = new URL(upstreamURL);
-  const proxyServer = http.createServer((req, res) => {
-    res.writeHead(404);
-    res.end();
-  });
-  const wss = new WebSocketServer({ noServer: true });
-
-  wss.on("connection", (clientSocket) => {
-    const upstreamSocket = new WebSocket(
-      upstreamURL,
-      normalizeGatewayProxyHeaders(headers, upstreamURL, trustedProxyControlUi)
-        ? { headers: normalizeGatewayProxyHeaders(headers, upstreamURL, trustedProxyControlUi) }
-        : undefined,
-    );
-
-    let closed = false;
-    const closeBoth = () => {
-      if (closed) {
-        return;
-      }
-      closed = true;
-      try {
-        clientSocket.close();
-      } catch {}
-      try {
-        upstreamSocket.close();
-      } catch {}
-    };
-
-    upstreamSocket.on("message", (data, isBinary) => {
-      if (clientSocket.readyState !== WEBSOCKET_OPEN) {
-        closeBoth();
-        return;
-      }
-      clientSocket.send(data, { binary: isBinary });
-    });
-    upstreamSocket.on("close", () => {
-      closeBoth();
-    });
-    upstreamSocket.on("error", (error) => {
-      logger?.error?.(`gateway proxy upstream dial failed: ${String(error)}`);
-      closeBoth();
-    });
-
-    clientSocket.on("message", (data, isBinary) => {
-      if (upstreamSocket.readyState !== WEBSOCKET_OPEN) {
-        return;
-      }
-      const payload = Buffer.isBuffer(data) ? data : Buffer.from(data);
-      const nextPayload = trustedProxyControlUi
-        ? rewriteConnectFrameAsTrustedProxyControlUi(payload)
-        : payload;
-      upstreamSocket.send(nextPayload, { binary: isBinary });
-    });
-    clientSocket.on("close", () => {
-      closeBoth();
-    });
-    clientSocket.on("error", () => {
-      closeBoth();
-    });
-  });
-
-  proxyServer.on("upgrade", (request, socket, head) => {
-    if ((request.url ?? upstream.pathname) !== upstream.pathname) {
-      socket.destroy();
-      return;
-    }
-    wss.handleUpgrade(request, socket, head, (websocket) => {
-      wss.emit("connection", websocket, request);
-    });
-  });
-
-  await new Promise((resolve, reject) => {
-    proxyServer.once("error", reject);
-    proxyServer.listen(0, "127.0.0.1", resolve);
-  });
-  const address = proxyServer.address();
-  if (!address || typeof address === "string") {
-    throw new Error("failed to bind local gateway proxy");
-  }
-  const localURL = `ws://127.0.0.1:${address.port}${upstream.pathname || "/"}${upstream.search || ""}`;
-
-  return {
-    localURL,
-    close: async () => {
-      for (const client of wss.clients) {
-        try {
-          client.close();
-        } catch {}
-      }
-      await new Promise((resolve) => proxyServer.close(resolve));
-    },
-  };
 }
 
 function encodeFrameForACPInput(data) {
@@ -280,7 +115,7 @@ async function createRuntime(config, env = process.env, logger = console) {
     urlOverrideSource: gatewayURLOverrideSource,
   });
 
-  let gatewayCleanup = async () => {};
+  let gatewayCleanup: () => Promise<void> = async () => {};
   let effectiveGatewayURL = connection.url;
   if (config.gatewayHeaders) {
     const proxy = await startGatewayProxy({
@@ -294,12 +129,12 @@ async function createRuntime(config, env = process.env, logger = console) {
     gatewayCleanup = proxy.close;
   }
 
-  const agents = new Set();
+  const agents = new Set<GatewayAgent>();
   let stopped = false;
-  let onGatewayReadyResolve = () => {};
-  let onGatewayReadyReject = () => {};
+  let onGatewayReadyResolve: () => void = () => {};
+  let onGatewayReadyReject: (error: Error) => void = () => {};
   let gatewayReadySettled = false;
-  const gatewayReady = new Promise((resolve, reject) => {
+  const gatewayReady = new Promise<void>((resolve, reject) => {
     onGatewayReadyResolve = resolve;
     onGatewayReadyReject = reject;
   });
@@ -375,7 +210,7 @@ async function createRuntime(config, env = process.env, logger = console) {
     attachWebSocket(websocket) {
       const inbound = new PassThrough();
       const outbound = new PassThrough();
-      let agent = null;
+      let agent: GatewayAgent | null = null;
       let closed = false;
       let pendingOutput = Buffer.alloc(0);
 
@@ -424,8 +259,12 @@ async function createRuntime(config, env = process.env, logger = console) {
       websocket.on("error", () => cleanup("ACP websocket failed"));
 
       const stream = ndJsonStream(Writable.toWeb(outbound), Readable.toWeb(inbound));
-      new AgentSideConnection((connectionInstance) => {
-        agent = new SpritzAcpGatewayAgent(connectionInstance, gateway, config.agentOptions);
+      new AgentSideConnection((connectionInstance: unknown) => {
+        agent = new (SpritzAcpGatewayAgent as any)(
+          connectionInstance,
+          gateway,
+          config.agentOptions,
+        );
         agents.add(agent);
         agent.start();
         return agent;
@@ -451,7 +290,7 @@ async function checkUpstreamReachability(rawURL, timeoutMs) {
       ? 443
       : 80;
 
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     const socket = net.createConnection({ host: parsed.hostname, port });
     const timeout = setTimeout(() => {
       socket.destroy();
