@@ -23,6 +23,26 @@ describe('createTranscript', () => {
 });
 
 describe('applySessionUpdate', () => {
+  it('turns HTML error message chunks into toasts instead of transcript text', () => {
+    const t = createTranscript();
+    const result = applySessionUpdate(t, {
+      sessionUpdate: 'agent_message_chunk',
+      content: `<!DOCTYPE html>
+<html lang="en-US">
+  <head><title>example.com | 525: SSL handshake failed</title></head>
+  <body><div>Error code 525</div></body>
+</html>`,
+    });
+
+    expect(result).toEqual({
+      toast: {
+        type: 'error',
+        message: 'HTTP 525 · example.com | 525: SSL handshake failed · example.com',
+      },
+    });
+    expect(t.messages).toHaveLength(0);
+  });
+
   it('stores available_commands_update without adding messages', () => {
     const t = createTranscript();
     applySessionUpdate(t, {

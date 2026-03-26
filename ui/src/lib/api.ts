@@ -1,4 +1,5 @@
 import { config } from './config';
+import { normalizeHtmlErrorText } from './html-error';
 
 function parseBoolean(value: unknown, fallback: boolean): boolean {
   if (value === undefined || value === null || value === '') return fallback;
@@ -338,6 +339,12 @@ interface ApiError extends Error {
   payload?: unknown;
 }
 
+function normalizeErrorMessage(value: unknown): string {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return normalizeHtmlErrorText(text);
+}
+
 export async function request<T = unknown>(path: string, options: RequestOptions = {}): Promise<T | null> {
   const headers = new Headers(options.headers || {});
   const token = getAuthToken();
@@ -354,10 +361,10 @@ export async function request<T = unknown>(path: string, options: RequestOptions
 
   if (res.ok && jsend && jsend.status !== 'success') {
     const message =
-      jsend.message ||
-      (jsend.data as Record<string, unknown>)?.message ||
-      (jsend.data as Record<string, unknown>)?.error ||
-      text ||
+      normalizeErrorMessage(jsend.message) ||
+      normalizeErrorMessage((jsend.data as Record<string, unknown>)?.message) ||
+      normalizeErrorMessage((jsend.data as Record<string, unknown>)?.error) ||
+      normalizeErrorMessage(text) ||
       res.statusText ||
       'Request failed';
     const err = new Error(String(message)) as ApiError;
@@ -369,12 +376,12 @@ export async function request<T = unknown>(path: string, options: RequestOptions
   if (!res.ok) {
     const message =
       (jsend &&
-        (jsend.message ||
-          (jsend.data as Record<string, unknown>)?.message ||
-          (jsend.data as Record<string, unknown>)?.error)) ||
-      (data as Record<string, unknown>)?.error ||
-      (data as Record<string, unknown>)?.message ||
-      text ||
+        (normalizeErrorMessage(jsend.message) ||
+          normalizeErrorMessage((jsend.data as Record<string, unknown>)?.message) ||
+          normalizeErrorMessage((jsend.data as Record<string, unknown>)?.error))) ||
+      normalizeErrorMessage((data as Record<string, unknown>)?.error) ||
+      normalizeErrorMessage((data as Record<string, unknown>)?.message) ||
+      normalizeErrorMessage(text) ||
       res.statusText ||
       'Request failed';
 

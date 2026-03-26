@@ -2,13 +2,10 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { MenuIcon, RotateCwIcon, ExternalLinkIcon } from 'lucide-react';
-import { request, getAuthToken, refreshAuthTokenForWebSocket, authBearerTokenParam } from '@/lib/api';
+import { request } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useConfig } from '@/lib/config';
-import { createACPClient } from '@/lib/acp-client';
-import { buildApiWebSocketUrl } from '@/lib/network';
-import { createTranscript, applySessionUpdate, finalizeStreaming, finalizeHistoricalThinking, getPreviewText, isTranscriptBearingUpdate } from '@/lib/acp-transcript';
-import { readCachedTranscript, writeCachedTranscript, evictCachedTranscript } from '@/lib/acp-cache';
+import { useChatConnection } from '@/lib/use-chat-connection';
 import { readChatDraft, writeChatDraft, clearChatDraft } from '@/lib/chat-draft';
 import { buildFallbackConversationTitle, hasDurableConversationTitle } from '@/lib/conversation-title';
 import { chatConversationPath } from '@/lib/urls';
@@ -22,15 +19,13 @@ import { PermissionDialog } from '@/components/acp/permission-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
-import type { ACPClient, ACPTranscript, ConversationInfo, PermissionEntry } from '@/types/acp';
+import type { ConversationInfo } from '@/types/acp';
 import type { Spritz } from '@/types/spritz';
 
 interface AgentGroup {
   spritz: Spritz;
   conversations: ConversationInfo[];
 }
-
-const RECONNECT_DELAY_MS = 2000;
 
 export function ChatPage() {
   const { name, conversationId: urlConversationId } = useParams<{ name: string; conversationId: string }>();
@@ -41,27 +36,15 @@ export function ChatPage() {
   const [agents, setAgents] = useState<AgentGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedConversation, setSelectedConversation] = useState<ConversationInfo | null>(null);
-  const [transcript, setTranscript] = useState<ACPTranscript>(createTranscript());
-  const [promptInFlight, setPromptInFlight] = useState(false);
-  const [clientReady, setClientReady] = useState(false);
-  const [status, setStatus] = useState('');
-  const [permissionQueue, setPermissionQueue] = useState<PermissionEntry[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [creatingConversationFor, setCreatingConversationFor] = useState<string | null>(null);
   const [composerText, setComposerText] = useState('');
 
-  const clientRef = useRef<ACPClient | null>(null);
-  const transcriptRef = useRef<ACPTranscript>(transcript);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<ComposerHandle>(null);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedConversationRef = useRef<ConversationInfo | null>(null);
-  // Track whether cached transcript has been replaced by durable replay data.
-  const cacheHydratedRef = useRef(false);
-  const replaySawTranscriptUpdateRef = useRef(false);
 
-  transcriptRef.current = transcript;
   selectedConversationRef.current = selectedConversation;
 
   const selectedSpritzName = selectedConversation?.spec?.spritzName || name || '';
@@ -139,267 +122,42 @@ export function ChatPage() {
     fetchAgents();
   }, [fetchAgents]);
 
-  // Connect to ACP when conversation selected
-  useEffect(() => {
-    if (!selectedConversation) return;
+  const applyConversationTitle = useCallback((conversationId: string, title?: string | null) => {
+    const normalized = String(title || '').trim();
+    if (!conversationId || !normalized) return;
+    setSelectedConversation((prev) =>
+      prev && prev.metadata.name === conversationId
+        ? { ...prev, spec: { ...prev.spec, title: normalized } }
+        : prev,
+    );
+    setAgents((prev) =>
+      prev.map((group) => ({
+        ...group,
+        conversations: group.conversations.map((conv) =>
+          conv.metadata.name === conversationId
+            ? { ...conv, spec: { ...conv.spec, title: normalized } }
+            : conv,
+        ),
+      })),
+    );
+  }, []);
 
-    let cancelled = false;
-    let retryCount = 0;
-    const conversationId = selectedConversation.metadata.name;
-    const spritzName = selectedConversation.spec?.spritzName || '';
-
-    // Try loading from cache
-    const cached = readCachedTranscript(conversationId);
-    const newTranscript = cached || createTranscript();
-    setTranscript(newTranscript);
-    transcriptRef.current = newTranscript;
-    cacheHydratedRef.current = newTranscript.messages.length > 0;
-    replaySawTranscriptUpdateRef.current = false;
-
-    const apiBase = config.apiBaseUrl || '';
-    const websocketBase = config.websocketBaseUrl || '';
-
-    function needsBootstrap(conv: ConversationInfo, force?: boolean): boolean {
-      if (force) return true;
-      const sessionId = String(conv.spec?.sessionId || '').trim();
-      if (!sessionId) return true;
-      return String(conv.status?.bindingState || '').trim().toLowerCase() !== 'active';
-    }
-
-    async function connect(options: {
-      forceBootstrap?: boolean;
-      allowAuthRefreshRetry?: boolean;
-    } = {}) {
-      if (cancelled) return;
-      const { forceBootstrap = false, allowAuthRefreshRetry = true } = options;
-
-      let effectiveConversation = selectedConversation!;
-      let effectiveSessionId = String(effectiveConversation.spec?.sessionId || '').trim();
-
-      // Step 1: Bootstrap if needed
-      if (needsBootstrap(effectiveConversation, forceBootstrap)) {
-        setStatus('Bootstrapping…');
-        let bootstrapData: Record<string, unknown>;
-        try {
-          bootstrapData = (await request<Record<string, unknown>>(
-            `/acp/conversations/${encodeURIComponent(conversationId)}/bootstrap`,
-            { method: 'POST' },
-          )) || {};
-        } catch (err) {
-          if (!cancelled) setStatus(err instanceof Error ? err.message : 'Bootstrap failed');
-          return;
-        }
-        if (cancelled) return;
-
-        const newSessionId = String(bootstrapData.effectiveSessionId || '');
-        const replaced = Boolean(bootstrapData.replaced) ||
-          (effectiveSessionId && newSessionId && effectiveSessionId !== newSessionId);
-
-        // If session was replaced, clear stale cache
-        if (replaced) {
-          evictCachedTranscript(conversationId);
-          const freshTranscript = createTranscript();
-          setTranscript(freshTranscript);
-          transcriptRef.current = freshTranscript;
-          cacheHydratedRef.current = false;
-          replaySawTranscriptUpdateRef.current = false;
-        }
-
-        effectiveSessionId = newSessionId;
-        effectiveConversation = {
-          metadata: selectedConversation!.metadata,
-          spec: { ...selectedConversation!.spec, sessionId: effectiveSessionId },
-          status: { ...selectedConversation!.status, bindingState: 'active' },
-        };
-        setSelectedConversation(effectiveConversation);
-      }
-
-      if (cancelled) return;
-
-      // Step 2: Connect WebSocket
-      const wsUrl = buildApiWebSocketUrl(
-        apiBase,
-        `/acp/conversations/${encodeURIComponent(conversationId)}/connect`,
-        {
-          bearerToken: getAuthToken(),
-          bearerTokenParam: authBearerTokenParam,
-          websocketBaseUrl: websocketBase,
-        },
-      );
-
-      replaySawTranscriptUpdateRef.current = false;
-      let socketReady = false;
-
-      function scheduleReconnect() {
-        if (cancelled) return;
-        setStatus('Disconnected. Reconnecting…');
-        if (reconnectTimerRef.current) {
-          clearTimeout(reconnectTimerRef.current);
-        }
-        reconnectTimerRef.current = setTimeout(() => {
-          if (cancelled) return;
-          retryCount++;
-          connect({ forceBootstrap: retryCount > 1 }).catch((err) => {
-            if (!cancelled) setStatus(err instanceof Error ? err.message : 'Reconnect failed');
-          });
-        }, RECONNECT_DELAY_MS);
-      }
-
-      const client = createACPClient({
-        wsUrl,
-        conversation: effectiveConversation,
-        onStatus: (text) => { if (!cancelled) setStatus(text); },
-        onReadyChange: (ready) => {
-          if (ready) {
-            socketReady = true;
-          }
-          if (!cancelled) setClientReady(ready);
-        },
-        onReplayStateChange: (replaying) => {
-          if (cancelled) return;
-          if (replaying) {
-            replaySawTranscriptUpdateRef.current = false;
-          }
-        },
-        onUpdate: (update, opts) => {
-          if (cancelled) return;
-          const updateObj = update as Record<string, unknown>;
-
-          if (opts?.historical && isTranscriptBearingUpdate(updateObj)) {
-            replaySawTranscriptUpdateRef.current = true;
-          }
-
-          const t = transcriptRef.current;
-          const result = applySessionUpdate(t, updateObj, { historical: opts?.historical });
-          setTranscript({ ...t });
-
-          if (result?.toast) {
-            toast[result.toast.type === 'error' ? 'error' : 'info'](result.toast.message);
-          }
-          // Persist title to server (matching staging behavior)
-          if (result?.conversationTitle) {
-            const newTitle = result.conversationTitle;
-            setSelectedConversation((prev) =>
-              prev ? { ...prev, spec: { ...prev.spec, title: newTitle } } : prev,
-            );
-            // Update sidebar conversation list with new title
-            setAgents((prev) =>
-              prev.map((group) => ({
-                ...group,
-                conversations: group.conversations.map((conv) =>
-                  conv.metadata.name === conversationId
-                    ? { ...conv, spec: { ...conv.spec, title: newTitle } }
-                    : conv,
-                ),
-              })),
-            );
-            request(`/acp/conversations/${encodeURIComponent(conversationId)}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ title: newTitle }),
-            }).catch(() => {});
-          }
-
-          // Cache
-          writeCachedTranscript(conversationId, t, {
-            spritzName,
-            sessionId: effectiveSessionId,
-            preview: getPreviewText(t),
-          });
-        },
-        onPermissionRequest: (entry) => {
-          if (!cancelled) setPermissionQueue((prev) => [...prev, entry]);
-        },
-        onPromptStateChange: (inFlight) => {
-          if (!cancelled) {
-            setPromptInFlight(inFlight);
-            if (!inFlight) {
-              finalizeStreaming(transcriptRef.current);
-              setTranscript({ ...transcriptRef.current });
-            }
-          }
-        },
-        onClose: () => {
-          if (cancelled) return;
-          if (!socketReady && allowAuthRefreshRetry) {
-            void (async () => {
-              try {
-                const refreshed = await refreshAuthTokenForWebSocket();
-                if (cancelled) return;
-                if (refreshed.refreshed && refreshed.token) {
-                  clientRef.current = null;
-                  await connect({ forceBootstrap, allowAuthRefreshRetry: false });
-                  return;
-                }
-              } catch {
-                // Fall through to the normal reconnect timer when refresh fails.
-              }
-              scheduleReconnect();
-            })();
-            return;
-          }
-          scheduleReconnect();
-        },
-      });
-
-      clientRef.current = client;
-
-      try {
-        await client.start();
-      } catch (err) {
-        const error = err as Error & { code?: string };
-        // Auto-retry with forced bootstrap if session is missing
-        if (error.code === 'ACP_SESSION_MISSING' && retryCount === 0) {
-          retryCount++;
-          client.dispose();
-          clientRef.current = null;
-          await connect({ forceBootstrap: true });
-          return;
-        }
-        if (!cancelled) {
-          setStatus(error.message || 'Connection failed');
-        }
-        return;
-      }
-
-      if (cancelled) return;
-
-      // If cache was hydrated but replay sent no real messages, clear stale cache
-      if (cacheHydratedRef.current && !replaySawTranscriptUpdateRef.current) {
-        const freshTranscript = createTranscript();
-        setTranscript(freshTranscript);
-        transcriptRef.current = freshTranscript;
-      }
-
-      // Bake any leftover thinking chunks from replay into thinking_done messages
-      finalizeHistoricalThinking(transcriptRef.current);
-      setTranscript({ ...transcriptRef.current });
-
-      cacheHydratedRef.current = false;
-      retryCount = 0;
-
-      // Write final cache after bootstrap+replay complete
-      writeCachedTranscript(conversationId, transcriptRef.current, {
-        spritzName,
-        sessionId: effectiveSessionId,
-        preview: getPreviewText(transcriptRef.current),
-      });
-    }
-
-    connect();
-
-    return () => {
-      cancelled = true;
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = null;
-      }
-      clientRef.current?.dispose();
-      clientRef.current = null;
-      setClientReady(false);
-      setPromptInFlight(false);
-    };
-  }, [selectedConversation?.metadata?.name, config.apiBaseUrl, config.websocketBaseUrl]);
+  const {
+    transcript,
+    clientReady,
+    promptInFlight,
+    status,
+    permissionQueue,
+    sendPrompt,
+    cancelPrompt,
+    shiftPermissionQueue,
+  } = useChatConnection({
+    conversation: selectedConversation,
+    apiBaseUrl: config.apiBaseUrl || '',
+    websocketBaseUrl: config.websocketBaseUrl || '',
+    onConversationUpdate: setSelectedConversation,
+    onConversationTitle: applyConversationTitle,
+  });
 
   useEffect(() => {
     if (!selectedSpritzName || !selectedConversationId) {
@@ -426,63 +184,36 @@ export function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transcript.messages.length]);
 
-  const applyConversationTitle = useCallback((conversationId: string, title?: string | null) => {
-    const normalized = String(title || '').trim();
-    if (!conversationId || !normalized) return;
-    setSelectedConversation((prev) =>
-      prev && prev.metadata.name === conversationId
-        ? { ...prev, spec: { ...prev.spec, title: normalized } }
-        : prev,
-    );
-    setAgents((prev) =>
-      prev.map((group) => ({
-        ...group,
-        conversations: group.conversations.map((conv) =>
-          conv.metadata.name === conversationId
-            ? { ...conv, spec: { ...conv.spec, title: normalized } }
-            : conv,
-        ),
-      })),
-    );
-  }, []);
-
   const handleSend = useCallback(
     async (text: string) => {
-      const client = clientRef.current;
-      if (!client || !client.isReady()) return;
       const activeConversation = selectedConversationRef.current;
       const activeConversationId = activeConversation?.metadata?.name || '';
       const activeSpritzName = activeConversation?.spec?.spritzName || name || '';
       const previousComposerText = composerText;
+      const currentTitle = activeConversation?.spec?.title || '';
+      const fallbackTitle = hasDurableConversationTitle(currentTitle)
+        ? ''
+        : buildFallbackConversationTitle(text);
 
       // ACP owns durable transcript entries, including the echoed user prompt.
       // Keep send feedback in ephemeral UI state and wait for ACP to write the
       // real message so the transcript cannot diverge or duplicate.
-
-      // Set title from first message if conversation has no real title
-      const currentTitle = selectedConversationRef.current?.spec?.title || '';
-      if (!hasDurableConversationTitle(currentTitle)) {
-        const fallbackTitle = buildFallbackConversationTitle(text);
-        const convId = selectedConversationRef.current?.metadata?.name || '';
-        if (convId && fallbackTitle) {
-          applyConversationTitle(convId, fallbackTitle);
-          request<ConversationInfo>(`/acp/conversations/${encodeURIComponent(convId)}`, {
+      try {
+        await sendPrompt(text);
+        if (activeConversationId && fallbackTitle) {
+          applyConversationTitle(activeConversationId, fallbackTitle);
+          request<ConversationInfo>(`/acp/conversations/${encodeURIComponent(activeConversationId)}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title: fallbackTitle }),
-          })
-            .catch(() => {});
+          }).catch(() => {});
         }
-      }
-
-      if (activeConversationId && activeSpritzName) {
-        clearChatDraft(activeSpritzName, activeConversationId);
-      }
-      setComposerText('');
-      setStatus('Waiting for agent\u2026');
-      try {
-        await client.sendPrompt(text);
-        setStatus('Completed');
+        if (activeConversationId && activeSpritzName) {
+          clearChatDraft(activeSpritzName, activeConversationId);
+          if (selectedConversationRef.current?.metadata?.name === activeConversationId) {
+            setComposerText('');
+          }
+        }
       } catch (err) {
         if (activeConversationId && activeSpritzName) {
           writeChatDraft(activeSpritzName, activeConversationId, previousComposerText);
@@ -493,16 +224,11 @@ export function ChatPage() {
         toast.error(err instanceof Error ? err.message : 'Failed to send message.');
       }
     },
-    [applyConversationTitle, composerText, name],
+    [applyConversationTitle, composerText, name, sendPrompt],
   );
-
-  const handleCancel = useCallback(() => {
-    clientRef.current?.cancelPrompt();
-  }, []);
 
   const handleSelectConversation = useCallback((conv: ConversationInfo) => {
     setSelectedConversation(conv);
-    setPermissionQueue([]);
     const spritzName = conv.spec?.spritzName || name || '';
     if (spritzName) {
       navigate(chatConversationPath(spritzName, conv.metadata.name), { replace: true });
@@ -537,10 +263,6 @@ export function ChatPage() {
     },
     [creatingConversationFor, fetchAgents, navigate],
   );
-
-  const handlePermissionRespond = useCallback(() => {
-    setPermissionQueue((prev) => prev.slice(1));
-  }, []);
 
   if (loading) {
     return (
@@ -722,7 +444,7 @@ export function ChatPage() {
               <div className="mx-auto max-w-[880px] px-6 pb-2">
                 <PermissionDialog
                   entry={permissionQueue[0]}
-                  onRespond={handlePermissionRespond}
+                  onRespond={shiftPermissionQueue}
                 />
               </div>
             )}
@@ -731,7 +453,7 @@ export function ChatPage() {
               value={composerText}
               onValueChange={setComposerText}
               onSend={handleSend}
-              onCancel={handleCancel}
+              onCancel={cancelPrompt}
               disabled={!clientReady}
               promptInFlight={promptInFlight}
               status={status}
