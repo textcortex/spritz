@@ -222,7 +222,29 @@ const CONVERSATIONS = [
   },
 ];
 
-function setupRequestMock() {
+function createConversation(
+  overrides: Partial<(typeof CONVERSATIONS)[number]> & {
+    metadata?: Partial<(typeof CONVERSATIONS)[number]['metadata']>;
+    spec?: Partial<(typeof CONVERSATIONS)[number]['spec']>;
+    status?: Partial<(typeof CONVERSATIONS)[number]['status']>;
+  } = {},
+) {
+  return {
+    metadata: { name: 'conv-1', ...(overrides.metadata || {}) },
+    spec: {
+      sessionId: 'sess-1',
+      title: 'Conversation One',
+      spritzName: 'covo',
+      ...(overrides.spec || {}),
+    },
+    status: {
+      bindingState: 'active',
+      ...(overrides.status || {}),
+    },
+  };
+}
+
+function setupRequestMock(conversations = CONVERSATIONS) {
   requestMock.mockImplementation((path: string, options?: { method?: string }) => {
     if (path === '/spritzes') {
       return Promise.resolve({
@@ -235,7 +257,44 @@ function setupRequestMock() {
       });
     }
     if (path === '/acp/conversations?spritz=covo') {
-      return Promise.resolve({ items: CONVERSATIONS });
+      return Promise.resolve({ items: conversations });
+    }
+    return Promise.resolve({});
+  });
+}
+
+function countBootstrapCalls(conversationId: string) {
+  return requestMock.mock.calls.filter(
+    ([path, options]) => path === `/acp/conversations/${conversationId}/bootstrap` && options?.method === 'POST',
+  ).length;
+}
+
+function setupBootstrapRetryMock(conversationId: string, title: string) {
+  const conversation = createConversation({
+    metadata: { name: conversationId },
+    spec: { sessionId: '', title, spritzName: 'covo' },
+    status: { bindingState: 'pending' },
+  });
+  setupRequestMock([conversation]);
+  requestMock.mockImplementation((path: string, options?: { method?: string }) => {
+    if (path === '/spritzes') {
+      return Promise.resolve({
+        items: [
+          {
+            metadata: { name: 'covo' },
+            status: { phase: 'Ready', acp: { state: 'ready', agentInfo: { version: '1.0.0' } } },
+          },
+        ],
+      });
+    }
+    if (path === '/acp/conversations?spritz=covo') {
+      return Promise.resolve({ items: [conversation] });
+    }
+    if (path === `/acp/conversations/${conversationId}/bootstrap` && options?.method === 'POST') {
+      if (countBootstrapCalls(conversationId) === 1) {
+        return Promise.reject(new Error('HTTP 525 · example.com · Cloudflare'));
+      }
+      return Promise.resolve({ effectiveSessionId: `${conversationId}-session-2` });
     }
     return Promise.resolve({});
   });
@@ -381,41 +440,7 @@ describe('ChatPage draft persistence', () => {
   });
 
   it('retries bootstrap failures automatically and recovers without a refresh', async () => {
-    requestMock.mockImplementation((path: string, options?: { method?: string }) => {
-      if (path === '/spritzes') {
-        return Promise.resolve({
-          items: [
-            {
-              metadata: { name: 'covo' },
-              status: { phase: 'Ready', acp: { state: 'ready', agentInfo: { version: '1.0.0' } } },
-            },
-          ],
-        });
-      }
-      if (path === '/acp/conversations?spritz=covo') {
-        return Promise.resolve({
-          items: [
-            {
-              metadata: { name: 'conv-bootstrap' },
-              spec: { sessionId: '', title: 'Bootstrap Me', spritzName: 'covo' },
-              status: { bindingState: 'pending' },
-            },
-          ],
-        });
-      }
-      if (path === '/acp/conversations/conv-bootstrap/bootstrap' && options?.method === 'POST') {
-        const callCount = requestMock.mock.calls.filter(
-          ([calledPath, calledOptions]) =>
-            calledPath === '/acp/conversations/conv-bootstrap/bootstrap' &&
-            calledOptions?.method === 'POST',
-        ).length;
-        if (callCount === 1) {
-          return Promise.reject(new Error('HTTP 525 · example.com · Cloudflare'));
-        }
-        return Promise.resolve({ effectiveSessionId: 'sess-bootstrap-2' });
-      }
-      return Promise.resolve({});
-    });
+    setupBootstrapRetryMock('conv-bootstrap', 'Bootstrap Me');
 
     render(
       <MemoryRouter initialEntries={['/c/covo/conv-bootstrap']}>
@@ -435,51 +460,13 @@ describe('ChatPage draft persistence', () => {
     });
 
     await waitFor(() => {
-      expect(
-        requestMock.mock.calls.filter(
-          ([path, options]) => path === '/acp/conversations/conv-bootstrap/bootstrap' && options?.method === 'POST',
-        ),
-      ).toHaveLength(2);
+      expect(countBootstrapCalls('conv-bootstrap')).toBe(2);
       expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).disabled).toBe(false);
     }, { timeout: 4000 });
   });
 
   it('retries immediately on focus after a transient bootstrap failure', async () => {
-    requestMock.mockImplementation((path: string, options?: { method?: string }) => {
-      if (path === '/spritzes') {
-        return Promise.resolve({
-          items: [
-            {
-              metadata: { name: 'covo' },
-              status: { phase: 'Ready', acp: { state: 'ready', agentInfo: { version: '1.0.0' } } },
-            },
-          ],
-        });
-      }
-      if (path === '/acp/conversations?spritz=covo') {
-        return Promise.resolve({
-          items: [
-            {
-              metadata: { name: 'conv-focus' },
-              spec: { sessionId: '', title: 'Focus Me', spritzName: 'covo' },
-              status: { bindingState: 'pending' },
-            },
-          ],
-        });
-      }
-      if (path === '/acp/conversations/conv-focus/bootstrap' && options?.method === 'POST') {
-        const callCount = requestMock.mock.calls.filter(
-          ([calledPath, calledOptions]) =>
-            calledPath === '/acp/conversations/conv-focus/bootstrap' &&
-            calledOptions?.method === 'POST',
-        ).length;
-        if (callCount === 1) {
-          return Promise.reject(new Error('HTTP 525 · example.com · Cloudflare'));
-        }
-        return Promise.resolve({ effectiveSessionId: 'sess-focus-2' });
-      }
-      return Promise.resolve({});
-    });
+    setupBootstrapRetryMock('conv-focus', 'Focus Me');
 
     render(
       <MemoryRouter initialEntries={['/c/covo/conv-focus']}>
@@ -503,11 +490,7 @@ describe('ChatPage draft persistence', () => {
     });
 
     await waitFor(() => {
-      expect(
-        requestMock.mock.calls.filter(
-          ([path, options]) => path === '/acp/conversations/conv-focus/bootstrap' && options?.method === 'POST',
-        ),
-      ).toHaveLength(2);
+      expect(countBootstrapCalls('conv-focus')).toBe(2);
       expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).disabled).toBe(false);
     });
   });
