@@ -11,6 +11,10 @@ This repository is open-source and must remain provider- and organization-agnost
 - Never use TextCortex hostnames in test fixtures.
 - New or changed data structures, schemas, DTOs, CRDs, and API models must use `type` as the field name, never `kind`. If an external payload already sends `kind`, convert it at the boundary with an alias and keep the internal field named `type`.
 
+Exception:
+
+- Documentation `author` front matter may use a real maintainer identity, including a real email address, when the document is intentionally attributed to that maintainer.
+
 Use neutral placeholders instead:
 
 - domains: `example.com`, `console.example.com`

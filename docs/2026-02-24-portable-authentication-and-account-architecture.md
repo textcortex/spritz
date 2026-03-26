@@ -1,6 +1,6 @@
 ---
 date: 2026-02-24
-author: Onur Solmaz
+author: Onur Solmaz <onur@textcortex.com>
 title: Portable Authentication and Account Architecture
 tags: [spritz, auth, oidc, deployment, architecture]
 ---

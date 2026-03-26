@@ -1,6 +1,6 @@
 ---
 date: 2026-03-24
-author: Spritz Maintainers <user@example.com>
+author: Onur Solmaz <onur@textcortex.com>
 title: Spritz-Native Conversation Broker Architecture
 tags: [spritz, conversations, broker, api, acp, architecture]
 ---
