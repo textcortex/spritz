@@ -318,7 +318,7 @@ describe('ChatPage draft persistence', () => {
     });
   });
 
-  it('replaces the transcript on each historical replay cycle instead of duplicating it', async () => {
+  it('deduplicates replayed history without dropping a newer live user message', async () => {
     await renderChat('/c/covo/conv-1');
 
     emitReplayState(true);
@@ -339,6 +339,20 @@ describe('ChatPage draft persistence', () => {
       expect(messages).toEqual(['user:who is this', "assistant:I'm Zeno."]);
     });
 
+    emitUpdate({
+      sessionUpdate: 'user_message_chunk',
+      content: { type: 'text', text: 'and what can you do?' },
+    });
+
+    await waitFor(() => {
+      const messages = screen.getAllByTestId('chat-message').map((element) => element.textContent);
+      expect(messages).toEqual([
+        'user:who is this',
+        "assistant:I'm Zeno.",
+        'user:and what can you do?',
+      ]);
+    });
+
     emitReplayState(true);
     emitUpdate({
       sessionUpdate: 'user_message_chunk',
@@ -354,7 +368,11 @@ describe('ChatPage draft persistence', () => {
 
     await waitFor(() => {
       const messages = screen.getAllByTestId('chat-message').map((element) => element.textContent);
-      expect(messages).toEqual(['user:who is this', "assistant:I'm Zeno."]);
+      expect(messages).toEqual([
+        'user:who is this',
+        "assistant:I'm Zeno.",
+        'user:and what can you do?',
+      ]);
     });
   });
 

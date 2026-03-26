@@ -46,6 +46,32 @@ function findHistoricalMessageIndex(
   );
 }
 
+function getMessageText(message: ACPTranscript['messages'][number]): string {
+  const textBlock = message.blocks.find((block) => block.type === 'text');
+  return String(textBlock?.text || '');
+}
+
+function canUpgradeLiveMessage(existingText: string, incomingText: string): boolean {
+  if (!existingText || !incomingText) return false;
+  return (
+    existingText === incomingText ||
+    existingText.startsWith(incomingText) ||
+    incomingText.startsWith(existingText)
+  );
+}
+
+function findLiveReplayCandidateIndex(
+  transcript: ACPTranscript,
+  role: 'user' | 'assistant',
+  incomingText: string,
+): number {
+  return transcript.messages.findIndex((message) => (
+    message.role === role &&
+    !message._historyMessageId &&
+    canUpgradeLiveMessage(getMessageText(message), incomingText)
+  ));
+}
+
 function hasHistoricalThinkingToolCall(transcript: ACPTranscript, toolCallId: string): boolean {
   if (!toolCallId) return false;
   if (transcript.thinkingChunks.some((chunk) => chunk._toolCallId === toolCallId)) {
@@ -264,6 +290,24 @@ function appendHistoricalText(
   }
   if (normalizedKey && findHistoricalMessageIndex(transcript, role, normalizedKey) !== -1) {
     return;
+  }
+  if (normalizedKey) {
+    const liveCandidateIndex = findLiveReplayCandidateIndex(transcript, role, value);
+    if (liveCandidateIndex !== -1) {
+      const liveCandidate = transcript.messages[liveCandidateIndex];
+      const textBlock = liveCandidate.blocks.find((block) => block.type === 'text');
+      const currentText = textBlock?.text || '';
+      if (textBlock) {
+        if (!currentText || (value.length > currentText.length && value.startsWith(currentText))) {
+          textBlock.text = value;
+        }
+      } else {
+        liveCandidate.blocks.push({ type: 'text', text: value });
+      }
+      liveCandidate._historyMessageId = normalizedKey;
+      liveCandidate.streaming = false;
+      return;
+    }
   }
   transcript.messages.push({
     role,

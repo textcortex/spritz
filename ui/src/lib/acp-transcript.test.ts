@@ -198,6 +198,40 @@ describe('applySessionUpdate', () => {
     ]);
   });
 
+  it('upgrades matching live messages when historical replay catches up', () => {
+    const t = createTranscript();
+
+    applySessionUpdate(t, { sessionUpdate: 'user_message_chunk', content: 'who is this' });
+    applySessionUpdate(t, { sessionUpdate: 'agent_message_chunk', content: "I'm Zeno." });
+    finalizeStreaming(t);
+
+    applySessionUpdate(t, {
+      sessionUpdate: 'user_message_chunk',
+      content: 'who is this',
+      historyMessageId: 'msg-user-1',
+    }, { historical: true });
+    applySessionUpdate(t, {
+      sessionUpdate: 'agent_message_chunk',
+      content: "I'm ",
+      historyMessageId: 'msg-assistant-1',
+    }, { historical: true });
+    applySessionUpdate(t, {
+      sessionUpdate: 'agent_message_chunk',
+      content: 'Zeno.',
+      historyMessageId: 'msg-assistant-1',
+    }, { historical: true });
+
+    expect(t.messages).toHaveLength(2);
+    expect(t.messages.map((message) => message.blocks[0].text)).toEqual([
+      'who is this',
+      "I'm Zeno.",
+    ]);
+    expect(t.messages.map((message) => message._historyMessageId)).toEqual([
+      'msg-user-1',
+      'msg-assistant-1',
+    ]);
+  });
+
   it('adds plan messages', () => {
     const t = createTranscript();
     applySessionUpdate(t, {
