@@ -1,6 +1,6 @@
 ---
 date: 2026-02-24
-author: Spritz Maintainers <user@example.com>
+author: Onur Solmaz <user@example.com>
 title: Portable Authentication and Account Architecture
 tags: [spritz, auth, oidc, deployment, architecture]
 ---
