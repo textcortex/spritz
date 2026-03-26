@@ -29,6 +29,36 @@ function rebuildToolCallIndex(transcript: ACPTranscript) {
   });
 }
 
+function findHistoricalMessageIndex(
+  transcript: ACPTranscript,
+  role: 'user' | 'assistant',
+  messageKey: string,
+): number {
+  if (!messageKey) return -1;
+  return transcript.messages.findIndex(
+    (message) =>
+      message.role === role &&
+      (
+        message._historyMessageId === messageKey ||
+        // Older cached transcripts stored message ids in _toolCallId.
+        message._toolCallId === messageKey
+      ),
+  );
+}
+
+function hasHistoricalThinkingToolCall(transcript: ACPTranscript, toolCallId: string): boolean {
+  if (!toolCallId) return false;
+  if (transcript.thinkingChunks.some((chunk) => chunk._toolCallId === toolCallId)) {
+    return true;
+  }
+  return transcript.messages.some(
+    (message) =>
+      message.role === 'thinking_done' &&
+      Array.isArray(message._thinkingChunks) &&
+      message._thinkingChunks.some((chunk) => chunk._toolCallId === toolCallId),
+  );
+}
+
 function stringifyDetails(value: unknown): string {
   if (value === undefined || value === null || value === '') return '';
   if (typeof value === 'string') return value;
@@ -218,20 +248,28 @@ function appendHistoricalText(
   if (!value) return;
   const normalizedKey = String(messageKey || '').trim();
   const last = transcript.messages[transcript.messages.length - 1];
-  if (normalizedKey && last && last.role === role && last._toolCallId === normalizedKey) {
+  if (normalizedKey && last && last.role === role && last._historyMessageId === normalizedKey) {
     const textBlock = last.blocks.find((b) => b.type === 'text');
+    const currentText = textBlock?.text || '';
+    // Ignore repeated session/load replays of the same historical message.
+    if (currentText === value || (currentText.length > value.length && currentText.includes(value))) {
+      return;
+    }
     if (textBlock) {
-      textBlock.text = (textBlock.text || '') + value;
+      textBlock.text = currentText + value;
     } else {
       last.blocks.push({ type: 'text', text: value });
     }
+    return;
+  }
+  if (normalizedKey && findHistoricalMessageIndex(transcript, role, normalizedKey) !== -1) {
     return;
   }
   transcript.messages.push({
     role,
     blocks: [{ type: 'text', text: value }],
     streaming: false,
-    _toolCallId: normalizedKey,
+    _historyMessageId: normalizedKey,
   });
 }
 
@@ -329,6 +367,9 @@ export function applySessionUpdate(
 
     // Add to thinking chunks with full metadata (tools render inside the thinking timeline only)
     const toolCallId = (update.toolCallId as string) || createId('tool');
+    if (historical && hasHistoricalThinkingToolCall(transcript, toolCallId)) {
+      return null;
+    }
     const toolName = String(update.name || update.title || update.type || 'Tool call');
     const status = (update.status as string) || 'pending';
     const inputText = stringifyDetails(update.rawInput);

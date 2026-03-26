@@ -54,6 +54,7 @@ export function createACPClient(options: ACPClientOptions): ACPClient {
     onStatus,
     onReadyChange,
     onUpdate,
+    onReplayStateChange,
     onPermissionRequest,
     onPromptStateChange,
     onClose,
@@ -178,6 +179,7 @@ export function createACPClient(options: ACPClientOptions): ACPClient {
             if (sessionId) {
               onStatus?.('Loading session…');
               replaying = true;
+              onReplayStateChange?.(true);
               try {
                 await requestRPC('session/load', {
                   sessionId,
@@ -186,6 +188,7 @@ export function createACPClient(options: ACPClientOptions): ACPClient {
                 });
               } finally {
                 replaying = false;
+                onReplayStateChange?.(false);
               }
             }
 

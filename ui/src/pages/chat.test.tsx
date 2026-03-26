@@ -8,20 +8,27 @@ import { ConfigProvider, config } from '@/lib/config';
 import { NoticeProvider } from '@/components/notice-banner';
 import { ChatPage } from './chat';
 
-const { requestMock, sendPromptMock, emitUpdate, setUpdateHandler } = vi.hoisted(() => {
+const { requestMock, sendPromptMock, emitUpdate, emitReplayState, setUpdateHandler, setReplayStateHandler } = vi.hoisted(() => {
   let updateHandler:
     | ((update: Record<string, unknown>, options?: { historical?: boolean }) => void)
     | undefined;
+  let replayStateHandler: ((replaying: boolean) => void) | undefined;
   return {
     requestMock: vi.fn(),
     sendPromptMock: vi.fn(),
     emitUpdate: (update: Record<string, unknown>, options?: { historical?: boolean }) => {
       updateHandler?.(update, options);
     },
+    emitReplayState: (replaying: boolean) => {
+      replayStateHandler?.(replaying);
+    },
     setUpdateHandler: (
       handler?: (update: Record<string, unknown>, options?: { historical?: boolean }) => void,
     ) => {
       updateHandler = handler;
+    },
+    setReplayStateHandler: (handler?: (replaying: boolean) => void) => {
+      replayStateHandler = handler;
     },
   };
 });
@@ -45,12 +52,15 @@ vi.mock('@/lib/acp-client', () => ({
     onReadyChange,
     onStatus,
     onUpdate,
+    onReplayStateChange,
   }: {
     onReadyChange?: (ready: boolean) => void;
     onStatus?: (status: string) => void;
     onUpdate?: (update: Record<string, unknown>, options?: { historical?: boolean }) => void;
+    onReplayStateChange?: (replaying: boolean) => void;
   }) => {
     setUpdateHandler(onUpdate);
+    setReplayStateHandler(onReplayStateChange);
     return {
       start: vi.fn(async () => {
         onStatus?.('Connected');
@@ -62,7 +72,10 @@ vi.mock('@/lib/acp-client', () => ({
       isReady: () => true,
       sendPrompt: sendPromptMock,
       cancelPrompt: vi.fn(),
-      dispose: vi.fn(() => setUpdateHandler(undefined)),
+      dispose: vi.fn(() => {
+        setUpdateHandler(undefined);
+        setReplayStateHandler(undefined);
+      }),
     };
   },
 }));
@@ -215,6 +228,7 @@ describe('ChatPage draft persistence', () => {
     requestMock.mockReset();
     sendPromptMock.mockReset();
     setUpdateHandler(undefined);
+    setReplayStateHandler(undefined);
     sendPromptMock.mockResolvedValue({});
     setupRequestMock();
   });
@@ -301,6 +315,46 @@ describe('ChatPage draft persistence', () => {
         .getAllByTestId('chat-message')
         .filter((element) => element.textContent === 'user:test');
       expect(userMessages).toHaveLength(1);
+    });
+  });
+
+  it('replaces the transcript on each historical replay cycle instead of duplicating it', async () => {
+    await renderChat('/c/covo/conv-1');
+
+    emitReplayState(true);
+    emitUpdate({
+      sessionUpdate: 'user_message_chunk',
+      historyMessageId: 'user-1',
+      content: { type: 'text', text: 'who is this' },
+    }, { historical: true });
+    emitUpdate({
+      sessionUpdate: 'agent_message_chunk',
+      historyMessageId: 'assistant-1',
+      content: { type: 'text', text: "I'm Zeno." },
+    }, { historical: true });
+    emitReplayState(false);
+
+    await waitFor(() => {
+      const messages = screen.getAllByTestId('chat-message').map((element) => element.textContent);
+      expect(messages).toEqual(['user:who is this', "assistant:I'm Zeno."]);
+    });
+
+    emitReplayState(true);
+    emitUpdate({
+      sessionUpdate: 'user_message_chunk',
+      historyMessageId: 'user-1',
+      content: { type: 'text', text: 'who is this' },
+    }, { historical: true });
+    emitUpdate({
+      sessionUpdate: 'agent_message_chunk',
+      historyMessageId: 'assistant-1',
+      content: { type: 'text', text: "I'm Zeno." },
+    }, { historical: true });
+    emitReplayState(false);
+
+    await waitFor(() => {
+      const messages = screen.getAllByTestId('chat-message').map((element) => element.textContent);
+      expect(messages).toEqual(['user:who is this', "assistant:I'm Zeno."]);
     });
   });
 

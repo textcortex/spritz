@@ -3,6 +3,10 @@ import { FakeWebSocket } from '@/test/helpers';
 import { extractACPText, createACPClient } from './acp-client';
 import type { ACPClientOptions, ConversationInfo } from '@/types/acp';
 
+async function flushMicrotasks() {
+  await Promise.resolve();
+}
+
 describe('extractACPText', () => {
   it('returns empty string for null', () => {
     expect(extractACPText(null)).toBe('');
@@ -142,6 +146,39 @@ describe('createACPClient', () => {
     });
 
     expect(onUpdate).toHaveBeenCalledWith({ sessionUpdate: 'heartbeat' }, { historical: false });
+  });
+
+  it('marks session/load updates as historical during replay', async () => {
+    const onUpdate = vi.fn();
+    const onReplayStateChange = vi.fn();
+    const client = createTestClient({ onUpdate, onReplayStateChange });
+
+    const startPromise = client.start();
+    lastWs.simulateOpen();
+
+    const initializeMessage = JSON.parse(lastWs.sent[0]);
+    lastWs.simulateMessage({ jsonrpc: '2.0', id: initializeMessage.id, result: {} });
+    await flushMicrotasks();
+
+    const sessionLoadMessage = JSON.parse(lastWs.sent[1]);
+    expect(sessionLoadMessage.method).toBe('session/load');
+    expect(onReplayStateChange).toHaveBeenNthCalledWith(1, true);
+
+    lastWs.simulateMessage({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: { update: { sessionUpdate: 'user_message_chunk', content: 'hello' } },
+    });
+
+    expect(onUpdate).toHaveBeenCalledWith(
+      { sessionUpdate: 'user_message_chunk', content: 'hello' },
+      { historical: true },
+    );
+
+    lastWs.simulateMessage({ jsonrpc: '2.0', id: sessionLoadMessage.id, result: {} });
+    await startPromise;
+
+    expect(onReplayStateChange).toHaveBeenNthCalledWith(2, false);
   });
 
   it('dispatches session/request_permission to onPermissionRequest', async () => {
