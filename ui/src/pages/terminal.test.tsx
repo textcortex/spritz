@@ -10,11 +10,14 @@ const {
   fitAddonConstructor,
   getAuthTokenMock,
   setAuthToken,
+  emitTerminalData,
   refreshAuthTokenForWebSocketMock,
   setRefreshAuthResult,
+  setOnDataHandler,
 } = vi.hoisted(() => {
   let authToken = '';
   let refreshResult = { token: '', refreshed: false };
+  let onDataHandler: ((data: string) => void) | null = null;
   return {
     terminalConstructor: vi.fn(),
     fitAddonConstructor: vi.fn(),
@@ -22,9 +25,15 @@ const {
     setAuthToken: (value: string) => {
       authToken = value;
     },
+    emitTerminalData: (data: string) => {
+      onDataHandler?.(data);
+    },
     refreshAuthTokenForWebSocketMock: vi.fn(async () => refreshResult),
     setRefreshAuthResult: (value: { token: string; refreshed: boolean }) => {
       refreshResult = value;
+    },
+    setOnDataHandler: (handler: ((data: string) => void) | null) => {
+      onDataHandler = handler;
     },
   };
 });
@@ -36,7 +45,12 @@ vi.mock('@xterm/xterm', () => ({
       loadAddon: vi.fn(),
       open: vi.fn(),
       write: vi.fn(),
-      onData: vi.fn(() => ({ dispose: vi.fn() })),
+      onData: vi.fn((handler: (data: string) => void) => {
+        setOnDataHandler(handler);
+        return {
+          dispose: vi.fn(),
+        };
+      }),
       onBinary: vi.fn(() => ({ dispose: vi.fn() })),
       onResize: vi.fn(() => ({ dispose: vi.fn() })),
       dispose: vi.fn(),
@@ -62,6 +76,8 @@ vi.mock('@/lib/api', () => ({
 
 describe('TerminalPage branding', () => {
   let lastSocket: FakeWebSocket | null = null;
+  let sockets: FakeWebSocket[] = [];
+  let deferCloseEvents = false;
 
   beforeEach(() => {
     terminalConstructor.mockReset();
@@ -69,11 +85,26 @@ describe('TerminalPage branding', () => {
     refreshAuthTokenForWebSocketMock.mockClear();
     setAuthToken('');
     setRefreshAuthResult({ token: '', refreshed: false });
+    setOnDataHandler(null);
+    lastSocket = null;
+    sockets = [];
+    deferCloseEvents = false;
     Object.defineProperty(globalThis, 'WebSocket', {
       value: class extends FakeWebSocket {
         constructor(url: string) {
           super(url);
+          sockets.push(this);
           lastSocket = this;
+        }
+
+        close() {
+          this.readyState = FakeWebSocket.CLOSED;
+          const fireClose = () => this.onclose?.(new CloseEvent('close'));
+          if (deferCloseEvents) {
+            queueMicrotask(fireClose);
+            return;
+          }
+          fireClose();
         }
       },
       writable: true,
@@ -111,10 +142,36 @@ describe('TerminalPage branding', () => {
     expect(fitAddonConstructor).toHaveBeenCalled();
   });
 
-  it('uses the configured absolute api host and bearer token for terminal websocket connections', () => {
+  it('keeps terminal websocket connections on the current host by default', () => {
     setAuthToken('external-ui-token');
     const config = resolveConfig({
       apiBaseUrl: 'https://spritz.example.com/api',
+      auth: {
+        mode: 'bearer',
+        tokenStorageKeys: 'spritz-token',
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/terminal/example-instance']}>
+        <ConfigProvider value={config}>
+          <Routes>
+            <Route path="/terminal/:name" element={<TerminalPage />} />
+          </Routes>
+        </ConfigProvider>
+      </MemoryRouter>,
+    );
+
+    expect(lastSocket?.url).toBe(
+      'ws://localhost:3000/api/spritzes/example-instance/terminal?token=external-ui-token',
+    );
+  });
+
+  it('uses an explicit websocket base url for cross-host terminal websocket connections', () => {
+    setAuthToken('external-ui-token');
+    const config = resolveConfig({
+      apiBaseUrl: 'https://spritz.example.com/api',
+      websocketBaseUrl: 'https://spritz.example.com/api',
       auth: {
         mode: 'bearer',
         tokenStorageKeys: 'spritz-token',
@@ -146,6 +203,7 @@ describe('TerminalPage branding', () => {
 
     const config = resolveConfig({
       apiBaseUrl: 'https://spritz.example.com/api',
+      websocketBaseUrl: 'https://spritz.example.com/api',
       auth: {
         mode: 'bearer',
         tokenStorageKeys: 'spritz-token',
@@ -181,5 +239,70 @@ describe('TerminalPage branding', () => {
         'wss://spritz.example.com/api/spritzes/example-instance/terminal?token=refreshed-token',
       );
     });
+  });
+
+  it('keeps the active terminal socket when an earlier socket closes late', async () => {
+    deferCloseEvents = true;
+    setAuthToken('external-ui-token');
+
+    const firstConfig = resolveConfig({
+      apiBaseUrl: 'https://spritz.example.com/api',
+      websocketBaseUrl: 'https://first.example.com/api',
+      auth: {
+        mode: 'bearer',
+        tokenStorageKeys: 'spritz-token',
+      },
+    });
+
+    const secondConfig = resolveConfig({
+      apiBaseUrl: 'https://spritz.example.com/api',
+      websocketBaseUrl: 'https://second.example.com/api',
+      auth: {
+        mode: 'bearer',
+        tokenStorageKeys: 'spritz-token',
+      },
+    });
+
+    const view = render(
+      <MemoryRouter initialEntries={['/terminal/example-instance']}>
+        <ConfigProvider value={firstConfig}>
+          <Routes>
+            <Route path="/terminal/:name" element={<TerminalPage />} />
+          </Routes>
+        </ConfigProvider>
+      </MemoryRouter>,
+    );
+
+    expect(sockets[0]?.url).toBe(
+      'wss://first.example.com/api/spritzes/example-instance/terminal?token=external-ui-token',
+    );
+
+    view.rerender(
+      <MemoryRouter initialEntries={['/terminal/example-instance']}>
+        <ConfigProvider value={secondConfig}>
+          <Routes>
+            <Route path="/terminal/:name" element={<TerminalPage />} />
+          </Routes>
+        </ConfigProvider>
+      </MemoryRouter>,
+    );
+
+    expect(sockets[1]?.url).toBe(
+      'wss://second.example.com/api/spritzes/example-instance/terminal?token=external-ui-token',
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    act(() => {
+      sockets[1]?.simulateOpen();
+    });
+
+    act(() => {
+      emitTerminalData('pwd\n');
+    });
+
+    expect(sockets[1]?.sent).toContain('pwd\n');
   });
 });

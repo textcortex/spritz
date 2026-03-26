@@ -68,6 +68,7 @@ export function TerminalPage() {
           {
             bearerToken,
             bearerTokenParam: authBearerTokenParam,
+            websocketBaseUrl: config.websocketBaseUrl,
           },
         ),
       );
@@ -93,7 +94,9 @@ export function TerminalPage() {
       };
 
       ws.onclose = () => {
-        wsRef.current = null;
+        if (wsRef.current === ws) {
+          wsRef.current = null;
+        }
         if (disposed) return;
         if (!opened && allowAuthRefreshRetry) {
           void (async () => {
@@ -155,7 +158,14 @@ export function TerminalPage() {
       fitAddonRef.current = null;
       wsRef.current = null;
     };
-  }, [name, config.apiBaseUrl, terminalTheme.background, terminalTheme.cursor, terminalTheme.foreground]);
+  }, [
+    name,
+    config.apiBaseUrl,
+    config.websocketBaseUrl,
+    terminalTheme.background,
+    terminalTheme.cursor,
+    terminalTheme.foreground,
+  ]);
 
   if (!name) {
     return (

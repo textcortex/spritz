@@ -14,6 +14,24 @@ function normalizeApiBaseUrl(apiBaseUrl: string, locationHref?: string): URL {
   return new URL(base, resolveLocationHref(locationHref));
 }
 
+function normalizeWebSocketBaseUrl(
+  apiBaseUrl: string,
+  websocketBaseUrl?: string,
+  locationHref?: string,
+): URL {
+  const location = new URL(resolveLocationHref(locationHref));
+  const explicitBase = String(websocketBaseUrl || '').trim();
+  if (explicitBase) {
+    return new URL(explicitBase, location.href);
+  }
+  const apiUrl = normalizeApiBaseUrl(apiBaseUrl, locationHref);
+  const sameHostUrl = new URL(location.origin);
+  sameHostUrl.pathname = apiUrl.pathname;
+  sameHostUrl.search = apiUrl.search;
+  sameHostUrl.hash = apiUrl.hash;
+  return sameHostUrl;
+}
+
 function normalizeRelativePath(path: string): URL {
   const trimmed = String(path || '').trim();
   const normalized = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
@@ -34,10 +52,15 @@ export function buildApiWebSocketUrl(
   options?: {
     bearerToken?: string;
     bearerTokenParam?: string;
+    websocketBaseUrl?: string;
     locationHref?: string;
   },
 ): string {
-  const url = normalizeApiBaseUrl(apiBaseUrl, options?.locationHref);
+  const url = normalizeWebSocketBaseUrl(
+    apiBaseUrl,
+    options?.websocketBaseUrl,
+    options?.locationHref,
+  );
   const relative = normalizeRelativePath(path);
   url.pathname = joinPaths(url.pathname, relative.pathname);
   url.search = relative.search;

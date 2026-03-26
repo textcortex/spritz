@@ -286,11 +286,30 @@ describe('ChatPage draft persistence', () => {
     setupRequestMock();
   });
 
-  it('uses the configured absolute api host and bearer token for ACP websocket connections', async () => {
+  it('keeps ACP websocket connections on the current host by default', async () => {
     setAuthToken('external-ui-token');
 
     await renderChat('/c/covo/conv-1', {
       apiBaseUrl: 'https://spritz.example.com/api',
+      auth: {
+        mode: 'bearer',
+        tokenStorageKeys: 'spritz-token',
+      },
+    });
+
+    await waitFor(() => {
+      expect(getLastACPOptions()?.wsUrl).toBe(
+        'ws://localhost:3000/api/acp/conversations/conv-1/connect?token=external-ui-token',
+      );
+    });
+  });
+
+  it('uses an explicit websocket base url for cross-host ACP websocket connections', async () => {
+    setAuthToken('external-ui-token');
+
+    await renderChat('/c/covo/conv-1', {
+      apiBaseUrl: 'https://spritz.example.com/api',
+      websocketBaseUrl: 'https://spritz.example.com/api',
       auth: {
         mode: 'bearer',
         tokenStorageKeys: 'spritz-token',
@@ -316,6 +335,7 @@ describe('ChatPage draft persistence', () => {
     const resolvedConfig = resolveConfig({
       ...config,
       apiBaseUrl: 'https://spritz.example.com/api',
+      websocketBaseUrl: 'https://spritz.example.com/api',
       auth: {
         mode: 'bearer',
         tokenStorageKeys: 'spritz-token',

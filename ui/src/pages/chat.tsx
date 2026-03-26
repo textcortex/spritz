@@ -157,6 +157,7 @@ export function ChatPage() {
     replaySawTranscriptUpdateRef.current = false;
 
     const apiBase = config.apiBaseUrl || '';
+    const websocketBase = config.websocketBaseUrl || '';
 
     function needsBootstrap(conv: ConversationInfo, force?: boolean): boolean {
       if (force) return true;
@@ -222,6 +223,7 @@ export function ChatPage() {
         {
           bearerToken: getAuthToken(),
           bearerTokenParam: authBearerTokenParam,
+          websocketBaseUrl: websocketBase,
         },
       );
 
@@ -397,7 +399,7 @@ export function ChatPage() {
       setClientReady(false);
       setPromptInFlight(false);
     };
-  }, [selectedConversation?.metadata?.name, config.apiBaseUrl]);
+  }, [selectedConversation?.metadata?.name, config.apiBaseUrl, config.websocketBaseUrl]);
 
   useEffect(() => {
     if (!selectedSpritzName || !selectedConversationId) {
