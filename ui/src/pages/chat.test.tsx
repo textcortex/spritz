@@ -396,4 +396,16 @@ describe('ChatPage draft persistence', () => {
     await waitFor(() => expect(localStorage.getItem('spritz:chat-drafts') || '').toContain('retry me later'));
     expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).value).toBe('');
   });
+
+  it('uses the branded empty-state shell for a selected conversation with no messages', async () => {
+    await renderChat('/c/covo/conv-1');
+
+    const title = screen.getByText('Start a conversation');
+    const card = title.parentElement as HTMLDivElement;
+
+    expect(card.className).toContain('bg-[var(--surface-emphasis)]');
+    expect(card.className).toContain(
+      'border-[color-mix(in_srgb,var(--primary)_12%,var(--border))]',
+    );
+  });
 });

@@ -62,7 +62,7 @@ export function Sidebar({
                 type="button"
                 aria-label="Expand sidebar"
                 onClick={onToggleCollapse}
-                className="flex size-9 items-center justify-center rounded-[var(--radius-lg)] text-foreground/70 transition-colors hover:bg-sidebar-accent"
+                className="flex size-9 items-center justify-center rounded-[var(--radius-lg)] text-foreground/70 transition-colors hover:bg-[var(--surface-emphasis)] hover:text-primary"
               />
             }
           >
@@ -77,7 +77,7 @@ export function Sidebar({
                 type="button"
                 aria-label="New chat"
                 disabled={!firstAgentName || creatingConversationFor === firstAgentName}
-                className="flex size-9 items-center justify-center rounded-[var(--radius-lg)] text-foreground/70 transition-colors hover:bg-sidebar-accent disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex size-9 items-center justify-center rounded-[var(--radius-lg)] text-foreground/70 transition-colors hover:bg-[var(--surface-emphasis)] hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => { if (firstAgentName && creatingConversationFor !== firstAgentName) onNewConversation(firstAgentName); }}
               />
             }
@@ -107,7 +107,7 @@ export function Sidebar({
                 type="button"
                 aria-label="Collapse sidebar"
                 onClick={onToggleCollapse}
-                className="hidden size-8 items-center justify-center rounded-[var(--radius-lg)] text-foreground/60 transition-colors hover:bg-sidebar-accent md:flex"
+                className="hidden size-8 items-center justify-center rounded-[var(--radius-lg)] text-foreground/60 transition-colors hover:bg-[var(--surface-emphasis)] hover:text-primary md:flex"
               />
             }
           >
@@ -122,7 +122,7 @@ export function Sidebar({
           <button
             type="button"
             disabled={!firstAgentName || creatingConversationFor === firstAgentName}
-            className="flex w-full items-center gap-3 rounded-[var(--radius-lg)] px-3 py-2 text-[14px] text-foreground/80 transition-colors hover:bg-sidebar-accent disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex w-full items-center gap-3 rounded-[var(--radius-lg)] px-3 py-2 text-[14px] text-foreground/80 transition-colors hover:bg-[var(--surface-emphasis)] hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
             onClick={() => {
               if (firstAgentName && creatingConversationFor !== firstAgentName) onNewConversation(firstAgentName);
               close();
@@ -134,7 +134,7 @@ export function Sidebar({
           <Link
             to="/create"
             onClick={close}
-            className="flex w-full items-center gap-3 rounded-[var(--radius-lg)] px-3 py-2 text-[14px] text-foreground/80 no-underline transition-colors hover:bg-sidebar-accent"
+            className="flex w-full items-center gap-3 rounded-[var(--radius-lg)] px-3 py-2 text-[14px] text-foreground/80 no-underline transition-colors hover:bg-[var(--surface-emphasis)] hover:text-primary"
           >
             <LayoutGridIcon aria-hidden="true" className="size-[18px] shrink-0" />
             <span>Instances</span>
@@ -216,7 +216,7 @@ function AgentSection({
           type="button"
           aria-expanded={expanded}
           aria-label={`${name} conversations`}
-          className="flex flex-1 items-center gap-2 rounded-[var(--radius-lg)] px-3 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent"
+          className="flex flex-1 items-center gap-2 rounded-[var(--radius-lg)] px-3 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-[var(--surface-emphasis)] hover:text-primary"
           onClick={() => setExpanded(!expanded)}
         >
           <ChevronRightIcon
@@ -269,9 +269,9 @@ function AgentSection({
                     type="button"
                     aria-current={isActive ? 'true' : undefined}
                     className={cn(
-                      'flex w-full items-center gap-2 rounded-[var(--radius-lg)] px-8 py-1.5 text-left text-[13px] transition-colors hover:bg-sidebar-accent',
+                      'flex w-full items-center gap-2 rounded-[var(--radius-lg)] px-8 py-1.5 text-left text-[13px] transition-colors hover:bg-[var(--surface-emphasis)]',
                       isActive
-                        ? 'bg-sidebar-accent'
+                        ? 'bg-[var(--surface-emphasis)] text-primary shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--primary)_14%,transparent)]'
                         : 'bg-transparent',
                     )}
                     onClick={() => onSelectConversation(conv)}

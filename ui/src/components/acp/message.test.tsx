@@ -74,4 +74,19 @@ describe('ChatMessage', () => {
 
     expect(screen.queryByRole('button', { name: 'Copy message' })).toBeNull();
   });
+
+  it('uses the brand accent treatment for neutral status pills', () => {
+    const message: ACPMessage = {
+      role: 'system',
+      title: 'Update',
+      status: 'in_progress',
+      blocks: [{ type: 'text', text: 'Provisioning instance' }],
+    };
+
+    render(<ChatMessage message={message} />);
+
+    const pill = screen.getByText('in progress');
+    expect(pill.className).toContain('bg-[color-mix(in_srgb,var(--primary)_12%,transparent)]');
+    expect(pill.className).toContain('text-primary');
+  });
 });

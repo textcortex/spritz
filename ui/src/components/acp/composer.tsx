@@ -77,7 +77,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       <div className="mx-auto flex w-[90%] max-w-[880px] flex-col gap-2.5 px-0 py-3 sm:py-4">
         {/* Composer input */}
         <div
-          className="mx-3 flex cursor-text flex-col rounded-[var(--radius-2xl)] border border-border bg-background shadow-[0_2px_8px_rgba(15,23,42,0.08)] focus-within:border-primary sm:mx-0"
+          className="mx-3 flex cursor-text flex-col rounded-[var(--radius-2xl)] border border-border bg-background shadow-[0_6px_24px_color-mix(in_srgb,var(--primary)_10%,transparent)] focus-within:border-primary sm:mx-0"
           onClick={(e) => {
             if ((e.target as HTMLElement).closest('button')) return;
             textareaRef.current?.focus();

@@ -615,7 +615,7 @@ export function ChatPage() {
                   <button
                     key={name}
                     type="button"
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-[var(--radius-2xl)] border border-border bg-background px-2.5 py-1.5 text-xs transition-colors hover:bg-muted"
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-[var(--radius-2xl)] border border-[color-mix(in_srgb,var(--primary)_14%,var(--border))] bg-[var(--surface-emphasis)] px-2.5 py-1.5 text-xs text-primary transition-colors hover:bg-[color-mix(in_srgb,var(--primary)_16%,var(--background))]"
                     title={description}
                     onClick={() => composerRef.current?.fillText(`/${name} `)}
                   >
@@ -634,7 +634,7 @@ export function ChatPage() {
               Select a conversation or create a new instance.
             </div>
           ) : transcript.messages.length === 0 ? (
-            <div className="m-auto flex max-w-[540px] flex-col gap-1.5 text-center">
+            <div className="m-auto flex max-w-[540px] flex-col gap-1.5 rounded-[var(--radius-2xl)] border border-[color-mix(in_srgb,var(--primary)_12%,var(--border))] bg-[var(--surface-emphasis)] px-6 py-7 text-center shadow-[0_10px_30px_color-mix(in_srgb,var(--primary)_8%,transparent)]">
               <strong className="block text-base font-medium">Start a conversation</strong>
               <p className="m-0 text-sm text-muted-foreground">Send a message to begin.</p>
             </div>
