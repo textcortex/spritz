@@ -1,6 +1,6 @@
 ---
 date: 2026-03-26
-author: Onur Solmaz <user@example.com>
+author: Onur Solmaz
 title: Native Browser and External UI Auth Model
 tags: [spritz, auth, cookies, bearer, ui, architecture]
 ---
