@@ -35,6 +35,17 @@ interface UseChatConnectionResult {
   shiftPermissionQueue: () => void;
 }
 
+function getErrorStatus(error: unknown): number | null {
+  const status = (error as { status?: unknown })?.status;
+  return typeof status === 'number' ? status : null;
+}
+
+function shouldRetryBootstrap(error: unknown): boolean {
+  const status = getErrorStatus(error);
+  if (status === null) return true;
+  return status >= 500 || status === 408 || status === 425 || status === 429;
+}
+
 /**
  * Owns chat bootstrap, ACP websocket lifecycle, reconnect policy, and transcript updates.
  */
@@ -69,7 +80,9 @@ export function useChatConnection({
 
   const sendPrompt = useCallback(async (text: string) => {
     const client = clientRef.current;
-    if (!client || !client.isReady()) return;
+    if (!client || !client.isReady()) {
+      throw new Error('ACP session is not ready yet.');
+    }
     setStatus('Waiting for agent…');
     await client.sendPrompt(text);
     setStatus('Completed');
@@ -97,6 +110,7 @@ export function useChatConnection({
     let cancelled = false;
     let retryCount = 0;
     let connectInFlight = false;
+    let autoReconnectEnabled = true;
     const activeConversation = conversation;
     const conversationId = activeConversation.metadata.name;
     const spritzName = activeConversation.spec?.spritzName || '';
@@ -117,7 +131,7 @@ export function useChatConnection({
       immediate?: boolean;
       statusText?: string;
     } = {}) {
-      if (cancelled) return;
+      if (cancelled || !autoReconnectEnabled) return;
       const {
         forceBootstrap = false,
         immediate = false,
@@ -145,7 +159,7 @@ export function useChatConnection({
     }
 
     function triggerForegroundRecovery() {
-      if (cancelled || connectInFlight || clientReadyRef.current) return;
+      if (cancelled || !autoReconnectEnabled || connectInFlight || clientReadyRef.current) return;
       scheduleReconnect({ immediate: true, statusText: 'Reconnecting…' });
     }
 
@@ -172,10 +186,15 @@ export function useChatConnection({
           } catch (err) {
             if (!cancelled) {
               const message = err instanceof Error ? err.message : 'Bootstrap failed';
-              scheduleReconnect({
-                forceBootstrap: true,
-                statusText: `${message} Retrying…`,
-              });
+              if (shouldRetryBootstrap(err)) {
+                scheduleReconnect({
+                  forceBootstrap: true,
+                  statusText: `${message} Retrying…`,
+                });
+              } else {
+                autoReconnectEnabled = false;
+                setStatus(message);
+              }
             }
             return;
           }
@@ -213,6 +232,7 @@ export function useChatConnection({
 
         noteReplayState(transcriptSessionRef.current, true);
         let socketReady = false;
+        let closeHandledReconnect = false;
 
         const client = createACPClient({
           wsUrl,
@@ -271,6 +291,11 @@ export function useChatConnection({
           },
           onClose: () => {
             clientReadyRef.current = false;
+            clientRef.current = null;
+            if (!socketReady) {
+              connectInFlight = false;
+              closeHandledReconnect = true;
+            }
             if (cancelled) return;
             if (!socketReady && allowAuthRefreshRetry) {
               void (async () => {
@@ -298,6 +323,9 @@ export function useChatConnection({
         try {
           await client.start();
         } catch (err) {
+          if (closeHandledReconnect) {
+            return;
+          }
           const error = err as Error & { code?: string };
           if (error.code === 'ACP_SESSION_MISSING' && retryCount === 0) {
             retryCount += 1;

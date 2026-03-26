@@ -190,33 +190,30 @@ export function ChatPage() {
       const activeConversationId = activeConversation?.metadata?.name || '';
       const activeSpritzName = activeConversation?.spec?.spritzName || name || '';
       const previousComposerText = composerText;
+      const currentTitle = activeConversation?.spec?.title || '';
+      const fallbackTitle = hasDurableConversationTitle(currentTitle)
+        ? ''
+        : buildFallbackConversationTitle(text);
 
       // ACP owns durable transcript entries, including the echoed user prompt.
       // Keep send feedback in ephemeral UI state and wait for ACP to write the
       // real message so the transcript cannot diverge or duplicate.
-
-      // Set title from first message if conversation has no real title
-      const currentTitle = selectedConversationRef.current?.spec?.title || '';
-      if (!hasDurableConversationTitle(currentTitle)) {
-        const fallbackTitle = buildFallbackConversationTitle(text);
-        const convId = selectedConversationRef.current?.metadata?.name || '';
-        if (convId && fallbackTitle) {
-          applyConversationTitle(convId, fallbackTitle);
-          request<ConversationInfo>(`/acp/conversations/${encodeURIComponent(convId)}`, {
+      try {
+        await sendPrompt(text);
+        if (activeConversationId && fallbackTitle) {
+          applyConversationTitle(activeConversationId, fallbackTitle);
+          request<ConversationInfo>(`/acp/conversations/${encodeURIComponent(activeConversationId)}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title: fallbackTitle }),
-          })
-            .catch(() => {});
+          }).catch(() => {});
         }
-      }
-
-      if (activeConversationId && activeSpritzName) {
-        clearChatDraft(activeSpritzName, activeConversationId);
-      }
-      setComposerText('');
-      try {
-        await sendPrompt(text);
+        if (activeConversationId && activeSpritzName) {
+          clearChatDraft(activeSpritzName, activeConversationId);
+          if (selectedConversationRef.current?.metadata?.name === activeConversationId) {
+            setComposerText('');
+          }
+        }
       } catch (err) {
         if (activeConversationId && activeSpritzName) {
           writeChatDraft(activeSpritzName, activeConversationId, previousComposerText);

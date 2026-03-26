@@ -1,6 +1,6 @@
 import type React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vite-plus/test';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { createMockStorage } from '@/test/helpers';
@@ -20,9 +20,13 @@ const {
   refreshAuthTokenForWebSocketMock,
   setRefreshAuthResult,
   setACPStartReady,
+  setACPStartPending,
+  closeLastACPConnection,
   getACPStartReady,
+  getACPStartPending,
   captureACPOptions,
   getLastACPOptions,
+  setCloseLastACPConnection,
   resetACPMockState,
 } = vi.hoisted(() => {
   let updateHandler:
@@ -32,7 +36,9 @@ const {
   let authToken = '';
   let refreshResult = { token: '', refreshed: false };
   let acpStartReady = true;
+  let acpStartPending = false;
   let lastACPOptions: Record<string, unknown> | null = null;
+  let closeLastACPConnection: (() => void) | null = null;
   return {
     requestMock: vi.fn(),
     sendPromptMock: vi.fn(),
@@ -61,19 +67,31 @@ const {
     setACPStartReady: (value: boolean) => {
       acpStartReady = value;
     },
+    setACPStartPending: (value: boolean) => {
+      acpStartPending = value;
+    },
     captureACPOptions: (options: Record<string, unknown>) => {
       lastACPOptions = options;
     },
     getLastACPOptions: () => lastACPOptions,
+    closeLastACPConnection: () => {
+      closeLastACPConnection?.();
+    },
     resetACPMockState: () => {
       authToken = '';
       refreshResult = { token: '', refreshed: false };
       acpStartReady = true;
+      acpStartPending = false;
       lastACPOptions = null;
+      closeLastACPConnection = null;
       updateHandler = undefined;
       replayStateHandler = undefined;
     },
     getACPStartReady: () => acpStartReady,
+    getACPStartPending: () => acpStartPending,
+    setCloseLastACPConnection: (handler: (() => void) | null) => {
+      closeLastACPConnection = handler;
+    },
   };
 });
 
@@ -101,6 +119,7 @@ vi.mock('@/lib/acp-client', () => ({
     onStatus,
     onUpdate,
     onReplayStateChange,
+    onClose,
     ...rest
   }: {
     wsUrl: string;
@@ -108,23 +127,38 @@ vi.mock('@/lib/acp-client', () => ({
     onStatus?: (status: string) => void;
     onUpdate?: (update: Record<string, unknown>, options?: { historical?: boolean }) => void;
     onReplayStateChange?: (replaying: boolean) => void;
+    onClose?: (reason?: string) => void;
   }) => {
     captureACPOptions({ wsUrl, ...rest });
     setUpdateHandler(onUpdate);
     setReplayStateHandler(onReplayStateChange);
+    let ready = false;
+    const closeConnection = () => {
+      ready = false;
+      onReadyChange?.(false);
+      onClose?.('ACP connection closed.');
+    };
+    setCloseLastACPConnection(closeConnection);
     return {
       start: vi.fn(async () => {
+        if (getACPStartPending()) {
+          await new Promise<void>(() => {});
+          return;
+        }
         if (!getACPStartReady()) return;
+        ready = true;
         onStatus?.('Connected');
         onReadyChange?.(true);
       }),
       getConversationId: () => 'conv-1',
       getSessionId: () => 'sess-1',
       matchesConversation: () => true,
-      isReady: () => true,
+      isReady: () => ready,
       sendPrompt: sendPromptMock,
       cancelPrompt: vi.fn(),
       dispose: vi.fn(() => {
+        ready = false;
+        setCloseLastACPConnection(null);
         setUpdateHandler(undefined);
         setReplayStateHandler(undefined);
       }),
@@ -300,6 +334,40 @@ function setupBootstrapRetryMock(conversationId: string, title: string) {
   });
 }
 
+function createApiError(message: string, status: number) {
+  const error = new Error(message) as Error & { status: number };
+  error.status = status;
+  return error;
+}
+
+function setupBootstrapTerminalFailureMock(conversationId: string, title: string) {
+  const conversation = createConversation({
+    metadata: { name: conversationId },
+    spec: { sessionId: '', title, spritzName: 'covo' },
+    status: { bindingState: 'pending' },
+  });
+  setupRequestMock([conversation]);
+  requestMock.mockImplementation((path: string, options?: { method?: string }) => {
+    if (path === '/spritzes') {
+      return Promise.resolve({
+        items: [
+          {
+            metadata: { name: 'covo' },
+            status: { phase: 'Ready', acp: { state: 'ready', agentInfo: { version: '1.0.0' } } },
+          },
+        ],
+      });
+    }
+    if (path === '/acp/conversations?spritz=covo') {
+      return Promise.resolve({ items: [conversation] });
+    }
+    if (path === `/acp/conversations/${conversationId}/bootstrap` && options?.method === 'POST') {
+      return Promise.reject(createApiError('Conversation not found.', 404));
+    }
+    return Promise.resolve({});
+  });
+}
+
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -383,11 +451,12 @@ describe('ChatPage draft persistence', () => {
   });
 
   it('refreshes bearer auth and reconnects ACP websocket when the socket closes before ready', async () => {
-    setACPStartReady(false);
+    setACPStartPending(true);
     setAuthToken('expired-token');
     setRefreshAuthResult({ token: 'refreshed-token', refreshed: true });
     refreshAuthTokenForWebSocketMock.mockImplementation(async () => {
       setAuthToken('refreshed-token');
+      setACPStartPending(false);
       return { token: 'refreshed-token', refreshed: true };
     });
 
@@ -424,11 +493,8 @@ describe('ChatPage draft persistence', () => {
       );
     });
 
-    const onClose = getLastACPOptions()?.onClose as (() => void) | undefined;
-    expect(onClose).toEqual(expect.any(Function));
-
     act(() => {
-      onClose?.();
+      closeLastACPConnection();
     });
 
     await waitFor(() => {
@@ -463,6 +529,41 @@ describe('ChatPage draft persistence', () => {
       expect(countBootstrapCalls('conv-bootstrap')).toBe(2);
       expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).disabled).toBe(false);
     }, { timeout: 4000 });
+  });
+
+  it('surfaces terminal bootstrap failures without retrying again in the background', async () => {
+    setupBootstrapTerminalFailureMock('conv-terminal', 'Terminal Me');
+
+    render(
+      <MemoryRouter initialEntries={['/c/covo/conv-terminal']}>
+        <ConfigProvider value={config}>
+          <NoticeProvider>
+            <Routes>
+              <Route path="/c/:name/:conversationId" element={<ChatPage />} />
+            </Routes>
+          </NoticeProvider>
+        </ConfigProvider>
+      </MemoryRouter>,
+    );
+
+    await screen.findByLabelText('Message input');
+    await waitFor(() => {
+      expect(countBootstrapCalls('conv-terminal')).toBe(1);
+    });
+
+    vi.useFakeTimers();
+    act(() => {
+      vi.advanceTimersByTime(2200);
+    });
+    vi.useRealTimers();
+
+    expect(countBootstrapCalls('conv-terminal')).toBe(1);
+
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+
+    expect(countBootstrapCalls('conv-terminal')).toBe(1);
   });
 
   it('retries immediately on focus after a transient bootstrap failure', async () => {
@@ -555,6 +656,26 @@ describe('ChatPage draft persistence', () => {
     await waitFor(() => expect(sendPromptMock).toHaveBeenCalledWith('send me'));
     await waitFor(() => expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).value).toBe(''));
     expect(localStorage.getItem('spritz:chat-drafts')).toBeNull();
+  });
+
+  it('restores the draft when send races a disconnect before ready state propagates', async () => {
+    const user = userEvent.setup();
+    await renderChat('/c/covo/conv-1');
+
+    await user.type(screen.getByLabelText('Message input'), 'retry me');
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    expect((sendButton as HTMLButtonElement).disabled).toBe(false);
+
+    act(() => {
+      closeLastACPConnection();
+      fireEvent.click(sendButton);
+    });
+
+    await waitFor(() => {
+      expect(sendPromptMock).not.toHaveBeenCalled();
+      expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).value).toBe('retry me');
+    });
+    expect(localStorage.getItem('spritz:chat-drafts') || '').toContain('retry me');
   });
 
   it('renders the echoed ACP user message only once', async () => {
