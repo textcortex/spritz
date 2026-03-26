@@ -3,6 +3,7 @@ import {
   createTranscript,
   applySessionUpdate,
   finalizeStreaming,
+  finalizeHistoricalThinking,
   getPreviewText,
   serializeTranscript,
   hydrateTranscript,
@@ -162,6 +163,41 @@ describe('applySessionUpdate', () => {
     expect(t.messages[0].streaming).toBe(false);
   });
 
+  it('ignores repeated historical replay for the same message ids', () => {
+    const t = createTranscript();
+    const firstReplay = [
+      {
+        sessionUpdate: 'user_message_chunk',
+        content: 'who is this',
+        historyMessageId: 'msg-user-1',
+      },
+      {
+        sessionUpdate: 'agent_message_chunk',
+        content: "I'm Zeno.",
+        historyMessageId: 'msg-assistant-1',
+      },
+      {
+        sessionUpdate: 'agent_message_chunk',
+        content: 'How can I help?',
+        historyMessageId: 'msg-assistant-2',
+      },
+    ] as const;
+
+    for (const update of firstReplay) {
+      applySessionUpdate(t, update, { historical: true });
+    }
+    for (const update of firstReplay) {
+      applySessionUpdate(t, update, { historical: true });
+    }
+
+    expect(t.messages).toHaveLength(3);
+    expect(t.messages.map((message) => message.blocks[0].text)).toEqual([
+      'who is this',
+      "I'm Zeno.",
+      'How can I help?',
+    ]);
+  });
+
   it('adds plan messages', () => {
     const t = createTranscript();
     applySessionUpdate(t, {
@@ -221,6 +257,55 @@ describe('finalizeStreaming', () => {
     const thinkingDone = t.messages.find((m) => m.role === 'thinking_done');
     expect(thinkingDone).toBeDefined();
     expect(thinkingDone!._thinkingChunks).toHaveLength(1);
+  });
+
+  it('ignores repeated historical replay for the same tool call ids', () => {
+    const t = createTranscript();
+    const replay = [
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'tool-1',
+        title: 'read',
+        status: 'pending',
+      },
+      {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'tool-1',
+        title: 'read',
+        status: 'completed',
+        rawOutput: 'contents',
+      },
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'tool-2',
+        title: 'write',
+        status: 'pending',
+      },
+      {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'tool-2',
+        title: 'write',
+        status: 'completed',
+        rawOutput: 'ok',
+      },
+    ] as const;
+
+    for (const update of replay) {
+      applySessionUpdate(t, update, { historical: true });
+    }
+    finalizeStreaming(t);
+
+    for (const update of replay) {
+      applySessionUpdate(t, update, { historical: true });
+    }
+    finalizeHistoricalThinking(t);
+
+    const thinkingDoneMessages = t.messages.filter((message) => message.role === 'thinking_done');
+    expect(thinkingDoneMessages).toHaveLength(1);
+    expect(thinkingDoneMessages[0]._thinkingChunks?.map((chunk) => chunk._toolCallId)).toEqual([
+      'tool-1',
+      'tool-2',
+    ]);
   });
 });
 

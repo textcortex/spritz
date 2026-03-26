@@ -56,9 +56,11 @@ export function ChatPage() {
   const composerRef = useRef<ComposerHandle>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedConversationRef = useRef<ConversationInfo | null>(null);
-  // Track whether cached transcript has been replaced by live replay data
+  // Track whether cached transcript has been replaced by live replay data.
   const cacheHydratedRef = useRef(false);
   const cacheReplacedByReplayRef = useRef(false);
+  const replayActiveRef = useRef(false);
+  const replayTranscriptResetRef = useRef(false);
 
   transcriptRef.current = transcript;
   selectedConversationRef.current = selectedConversation;
@@ -154,6 +156,8 @@ export function ChatPage() {
     transcriptRef.current = newTranscript;
     cacheHydratedRef.current = newTranscript.messages.length > 0;
     cacheReplacedByReplayRef.current = false;
+    replayActiveRef.current = false;
+    replayTranscriptResetRef.current = false;
 
     const apiBase = config.apiBaseUrl || '';
 
@@ -215,26 +219,40 @@ export function ChatPage() {
       const wsHost = window.location.host;
       const wsUrl = `${wsProtocol}//${wsHost}${apiBase}/acp/conversations/${encodeURIComponent(conversationId)}/connect`;
 
+      const resetTranscriptForReplay = () => {
+        const freshTranscript = createTranscript();
+        transcriptRef.current = freshTranscript;
+        setTranscript(freshTranscript);
+        cacheReplacedByReplayRef.current = true;
+        replayTranscriptResetRef.current = true;
+      };
+
       const client = createACPClient({
         wsUrl,
         conversation: effectiveConversation,
         onStatus: (text) => { if (!cancelled) setStatus(text); },
         onReadyChange: (ready) => { if (!cancelled) setClientReady(ready); },
+        onReplayStateChange: (replaying) => {
+          if (cancelled) return;
+          replayActiveRef.current = replaying;
+          if (replaying) {
+            replayTranscriptResetRef.current = false;
+          }
+        },
         onUpdate: (update, opts) => {
           if (cancelled) return;
           const updateObj = update as Record<string, unknown>;
 
-          // Cache/replay disambiguation: if we hydrated from cache and the
-          // server is now replaying real transcript data, clear the stale
-          // cached transcript so it doesn't mix with the fresh replay.
+          // A reconnect replays the full session transcript. Replace any
+          // existing in-memory transcript exactly once per replay cycle so the
+          // replay becomes the source of truth instead of duplicating history.
           if (
-            cacheHydratedRef.current &&
-            !cacheReplacedByReplayRef.current &&
+            opts?.historical &&
+            replayActiveRef.current &&
+            !replayTranscriptResetRef.current &&
             isTranscriptBearingUpdate(updateObj)
           ) {
-            const freshTranscript = createTranscript();
-            transcriptRef.current = freshTranscript;
-            cacheReplacedByReplayRef.current = true;
+            resetTranscriptForReplay();
           }
 
           const t = transcriptRef.current;

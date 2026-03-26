@@ -19,6 +19,7 @@ export interface ACPMessage {
   tone?: string;
   meta?: string;
   streaming?: boolean;
+  _historyMessageId?: string;
   _toolCallId?: string;
   _thinkingChunks?: ThinkingChunk[];
   _thinkingElapsedSeconds?: number;
@@ -92,6 +93,7 @@ export interface ACPClientOptions {
   onReadyChange?: (ready: boolean) => void;
   onAgentInfo?: (info: AgentInfo | null) => void;
   onUpdate?: (update: SessionUpdate, options?: { historical?: boolean }) => void;
+  onReplayStateChange?: (replaying: boolean) => void;
   onPermissionRequest?: (entry: PermissionEntry) => void;
   onPromptStateChange?: (inFlight: boolean) => void;
   onClose?: (reason: string) => void;
