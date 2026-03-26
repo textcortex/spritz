@@ -31,6 +31,7 @@ interface AgentGroup {
 }
 
 const RECONNECT_DELAY_MS = 2000;
+const MAX_RECONNECT_DELAY_MS = 15000;
 
 export function ChatPage() {
   const { name, conversationId: urlConversationId } = useParams<{ name: string; conversationId: string }>();
@@ -57,12 +58,14 @@ export function ChatPage() {
   const composerRef = useRef<ComposerHandle>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedConversationRef = useRef<ConversationInfo | null>(null);
+  const clientReadyRef = useRef(false);
   // Track whether cached transcript has been replaced by durable replay data.
   const cacheHydratedRef = useRef(false);
   const replaySawTranscriptUpdateRef = useRef(false);
 
   transcriptRef.current = transcript;
   selectedConversationRef.current = selectedConversation;
+  clientReadyRef.current = clientReady;
 
   const selectedSpritzName = selectedConversation?.spec?.spritzName || name || '';
   const selectedConversationId = selectedConversation?.metadata?.name || '';
@@ -145,6 +148,7 @@ export function ChatPage() {
 
     let cancelled = false;
     let retryCount = 0;
+    let connectInFlight = false;
     const conversationId = selectedConversation.metadata.name;
     const spritzName = selectedConversation.spec?.spritzName || '';
 
@@ -166,236 +170,295 @@ export function ChatPage() {
       return String(conv.status?.bindingState || '').trim().toLowerCase() !== 'active';
     }
 
+    function reconnectDelayMs(): number {
+      return Math.min(RECONNECT_DELAY_MS * (2 ** Math.max(retryCount - 1, 0)), MAX_RECONNECT_DELAY_MS);
+    }
+
+    function scheduleReconnect(options: {
+      forceBootstrap?: boolean;
+      immediate?: boolean;
+      statusText?: string;
+    } = {}) {
+      if (cancelled) return;
+      const {
+        forceBootstrap = retryCount > 1,
+        immediate = false,
+        statusText = 'Disconnected. Reconnecting…',
+      } = options;
+      setStatus(statusText);
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      const runReconnect = () => {
+        if (cancelled || connectInFlight) return;
+        retryCount += 1;
+        void connect({ forceBootstrap: forceBootstrap || retryCount > 1 }).catch((err) => {
+          if (!cancelled) setStatus(err instanceof Error ? err.message : 'Reconnect failed');
+        });
+      };
+      if (immediate) {
+        queueMicrotask(runReconnect);
+        return;
+      }
+      reconnectTimerRef.current = setTimeout(runReconnect, reconnectDelayMs());
+    }
+
+    function triggerForegroundRecovery() {
+      if (cancelled || connectInFlight || clientReadyRef.current) return;
+      scheduleReconnect({ immediate: true, statusText: 'Reconnecting…' });
+    }
+
     async function connect(options: {
       forceBootstrap?: boolean;
       allowAuthRefreshRetry?: boolean;
     } = {}) {
-      if (cancelled) return;
+      if (cancelled || connectInFlight) return;
+      connectInFlight = true;
       const { forceBootstrap = false, allowAuthRefreshRetry = true } = options;
 
-      let effectiveConversation = selectedConversation!;
-      let effectiveSessionId = String(effectiveConversation.spec?.sessionId || '').trim();
+      try {
+        let effectiveConversation = selectedConversation!;
+        let effectiveSessionId = String(effectiveConversation.spec?.sessionId || '').trim();
 
-      // Step 1: Bootstrap if needed
-      if (needsBootstrap(effectiveConversation, forceBootstrap)) {
-        setStatus('Bootstrapping…');
-        let bootstrapData: Record<string, unknown>;
-        try {
-          bootstrapData = (await request<Record<string, unknown>>(
-            `/acp/conversations/${encodeURIComponent(conversationId)}/bootstrap`,
-            { method: 'POST' },
-          )) || {};
-        } catch (err) {
-          if (!cancelled) setStatus(err instanceof Error ? err.message : 'Bootstrap failed');
-          return;
+        // Step 1: Bootstrap if needed
+        if (needsBootstrap(effectiveConversation, forceBootstrap)) {
+          setStatus('Bootstrapping…');
+          let bootstrapData: Record<string, unknown>;
+          try {
+            bootstrapData = (await request<Record<string, unknown>>(
+              `/acp/conversations/${encodeURIComponent(conversationId)}/bootstrap`,
+              { method: 'POST' },
+            )) || {};
+          } catch (err) {
+            if (!cancelled) {
+              const message = err instanceof Error ? err.message : 'Bootstrap failed';
+              scheduleReconnect({
+                forceBootstrap: true,
+                statusText: `${message} Retrying…`,
+              });
+            }
+            return;
+          }
+          if (cancelled) return;
+
+          const newSessionId = String(bootstrapData.effectiveSessionId || '');
+          const replaced = Boolean(bootstrapData.replaced) ||
+            (effectiveSessionId && newSessionId && effectiveSessionId !== newSessionId);
+
+          // If session was replaced, clear stale cache
+          if (replaced) {
+            evictCachedTranscript(conversationId);
+            const freshTranscript = createTranscript();
+            setTranscript(freshTranscript);
+            transcriptRef.current = freshTranscript;
+            cacheHydratedRef.current = false;
+            replaySawTranscriptUpdateRef.current = false;
+          }
+
+          effectiveSessionId = newSessionId;
+          effectiveConversation = {
+            metadata: selectedConversation!.metadata,
+            spec: { ...selectedConversation!.spec, sessionId: effectiveSessionId },
+            status: { ...selectedConversation!.status, bindingState: 'active' },
+          };
+          setSelectedConversation(effectiveConversation);
         }
+
         if (cancelled) return;
 
-        const newSessionId = String(bootstrapData.effectiveSessionId || '');
-        const replaced = Boolean(bootstrapData.replaced) ||
-          (effectiveSessionId && newSessionId && effectiveSessionId !== newSessionId);
+        // Step 2: Connect WebSocket
+        const wsUrl = buildApiWebSocketUrl(
+          apiBase,
+          `/acp/conversations/${encodeURIComponent(conversationId)}/connect`,
+          {
+            bearerToken: getAuthToken(),
+            bearerTokenParam: authBearerTokenParam,
+            websocketBaseUrl: websocketBase,
+          },
+        );
 
-        // If session was replaced, clear stale cache
-        if (replaced) {
-          evictCachedTranscript(conversationId);
+        replaySawTranscriptUpdateRef.current = false;
+        let socketReady = false;
+
+        const client = createACPClient({
+          wsUrl,
+          conversation: effectiveConversation,
+          onStatus: (text) => { if (!cancelled) setStatus(text); },
+          onReadyChange: (ready) => {
+            if (ready) {
+              socketReady = true;
+            }
+            clientReadyRef.current = ready;
+            if (!cancelled) setClientReady(ready);
+          },
+          onReplayStateChange: (replaying) => {
+            if (cancelled) return;
+            if (replaying) {
+              replaySawTranscriptUpdateRef.current = false;
+            }
+          },
+          onUpdate: (update, opts) => {
+            if (cancelled) return;
+            const updateObj = update as Record<string, unknown>;
+
+            if (opts?.historical && isTranscriptBearingUpdate(updateObj)) {
+              replaySawTranscriptUpdateRef.current = true;
+            }
+
+            const t = transcriptRef.current;
+            const result = applySessionUpdate(t, updateObj, { historical: opts?.historical });
+            setTranscript({ ...t });
+
+            if (result?.toast) {
+              toast[result.toast.type === 'error' ? 'error' : 'info'](result.toast.message);
+            }
+            // Persist title to server (matching staging behavior)
+            if (result?.conversationTitle) {
+              const newTitle = result.conversationTitle;
+              setSelectedConversation((prev) =>
+                prev ? { ...prev, spec: { ...prev.spec, title: newTitle } } : prev,
+              );
+              // Update sidebar conversation list with new title
+              setAgents((prev) =>
+                prev.map((group) => ({
+                  ...group,
+                  conversations: group.conversations.map((conv) =>
+                    conv.metadata.name === conversationId
+                      ? { ...conv, spec: { ...conv.spec, title: newTitle } }
+                      : conv,
+                  ),
+                })),
+              );
+              request(`/acp/conversations/${encodeURIComponent(conversationId)}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title: newTitle }),
+              }).catch(() => {});
+            }
+
+            // Cache
+            writeCachedTranscript(conversationId, t, {
+              spritzName,
+              sessionId: effectiveSessionId,
+              preview: getPreviewText(t),
+            });
+          },
+          onPermissionRequest: (entry) => {
+            if (!cancelled) setPermissionQueue((prev) => [...prev, entry]);
+          },
+          onPromptStateChange: (inFlight) => {
+            if (!cancelled) {
+              setPromptInFlight(inFlight);
+              if (!inFlight) {
+                finalizeStreaming(transcriptRef.current);
+                setTranscript({ ...transcriptRef.current });
+              }
+            }
+          },
+          onClose: () => {
+            clientReadyRef.current = false;
+            if (cancelled) return;
+            if (!socketReady && allowAuthRefreshRetry) {
+              void (async () => {
+                try {
+                  const refreshed = await refreshAuthTokenForWebSocket();
+                  if (cancelled) return;
+                  if (refreshed.refreshed && refreshed.token) {
+                    clientRef.current = null;
+                    await connect({ forceBootstrap, allowAuthRefreshRetry: false });
+                    return;
+                  }
+                } catch {
+                  // Fall through to the normal reconnect timer when refresh fails.
+                }
+                scheduleReconnect();
+              })();
+              return;
+            }
+            scheduleReconnect();
+          },
+        });
+
+        clientRef.current = client;
+
+        try {
+          await client.start();
+        } catch (err) {
+          const error = err as Error & { code?: string };
+          // Auto-retry with forced bootstrap if session is missing
+          if (error.code === 'ACP_SESSION_MISSING' && retryCount === 0) {
+            retryCount++;
+            client.dispose();
+            clientRef.current = null;
+            await connect({ forceBootstrap: true });
+            return;
+          }
+          if (!cancelled) {
+            scheduleReconnect({
+              statusText: `${error.message || 'Connection failed'} Reconnecting…`,
+            });
+          }
+          return;
+        }
+
+        if (cancelled) return;
+
+        // If cache was hydrated but replay sent no real messages, clear stale cache
+        if (cacheHydratedRef.current && !replaySawTranscriptUpdateRef.current) {
           const freshTranscript = createTranscript();
           setTranscript(freshTranscript);
           transcriptRef.current = freshTranscript;
-          cacheHydratedRef.current = false;
-          replaySawTranscriptUpdateRef.current = false;
         }
 
-        effectiveSessionId = newSessionId;
-        effectiveConversation = {
-          metadata: selectedConversation!.metadata,
-          spec: { ...selectedConversation!.spec, sessionId: effectiveSessionId },
-          status: { ...selectedConversation!.status, bindingState: 'active' },
-        };
-        setSelectedConversation(effectiveConversation);
+        // Bake any leftover thinking chunks from replay into thinking_done messages
+        finalizeHistoricalThinking(transcriptRef.current);
+        setTranscript({ ...transcriptRef.current });
+
+        cacheHydratedRef.current = false;
+        retryCount = 0;
+
+        // Write final cache after bootstrap+replay complete
+        writeCachedTranscript(conversationId, transcriptRef.current, {
+          spritzName,
+          sessionId: effectiveSessionId,
+          preview: getPreviewText(transcriptRef.current),
+        });
+      } finally {
+        connectInFlight = false;
       }
-
-      if (cancelled) return;
-
-      // Step 2: Connect WebSocket
-      const wsUrl = buildApiWebSocketUrl(
-        apiBase,
-        `/acp/conversations/${encodeURIComponent(conversationId)}/connect`,
-        {
-          bearerToken: getAuthToken(),
-          bearerTokenParam: authBearerTokenParam,
-          websocketBaseUrl: websocketBase,
-        },
-      );
-
-      replaySawTranscriptUpdateRef.current = false;
-      let socketReady = false;
-
-      function scheduleReconnect() {
-        if (cancelled) return;
-        setStatus('Disconnected. Reconnecting…');
-        if (reconnectTimerRef.current) {
-          clearTimeout(reconnectTimerRef.current);
-        }
-        reconnectTimerRef.current = setTimeout(() => {
-          if (cancelled) return;
-          retryCount++;
-          connect({ forceBootstrap: retryCount > 1 }).catch((err) => {
-            if (!cancelled) setStatus(err instanceof Error ? err.message : 'Reconnect failed');
-          });
-        }, RECONNECT_DELAY_MS);
-      }
-
-      const client = createACPClient({
-        wsUrl,
-        conversation: effectiveConversation,
-        onStatus: (text) => { if (!cancelled) setStatus(text); },
-        onReadyChange: (ready) => {
-          if (ready) {
-            socketReady = true;
-          }
-          if (!cancelled) setClientReady(ready);
-        },
-        onReplayStateChange: (replaying) => {
-          if (cancelled) return;
-          if (replaying) {
-            replaySawTranscriptUpdateRef.current = false;
-          }
-        },
-        onUpdate: (update, opts) => {
-          if (cancelled) return;
-          const updateObj = update as Record<string, unknown>;
-
-          if (opts?.historical && isTranscriptBearingUpdate(updateObj)) {
-            replaySawTranscriptUpdateRef.current = true;
-          }
-
-          const t = transcriptRef.current;
-          const result = applySessionUpdate(t, updateObj, { historical: opts?.historical });
-          setTranscript({ ...t });
-
-          if (result?.toast) {
-            toast[result.toast.type === 'error' ? 'error' : 'info'](result.toast.message);
-          }
-          // Persist title to server (matching staging behavior)
-          if (result?.conversationTitle) {
-            const newTitle = result.conversationTitle;
-            setSelectedConversation((prev) =>
-              prev ? { ...prev, spec: { ...prev.spec, title: newTitle } } : prev,
-            );
-            // Update sidebar conversation list with new title
-            setAgents((prev) =>
-              prev.map((group) => ({
-                ...group,
-                conversations: group.conversations.map((conv) =>
-                  conv.metadata.name === conversationId
-                    ? { ...conv, spec: { ...conv.spec, title: newTitle } }
-                    : conv,
-                ),
-              })),
-            );
-            request(`/acp/conversations/${encodeURIComponent(conversationId)}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ title: newTitle }),
-            }).catch(() => {});
-          }
-
-          // Cache
-          writeCachedTranscript(conversationId, t, {
-            spritzName,
-            sessionId: effectiveSessionId,
-            preview: getPreviewText(t),
-          });
-        },
-        onPermissionRequest: (entry) => {
-          if (!cancelled) setPermissionQueue((prev) => [...prev, entry]);
-        },
-        onPromptStateChange: (inFlight) => {
-          if (!cancelled) {
-            setPromptInFlight(inFlight);
-            if (!inFlight) {
-              finalizeStreaming(transcriptRef.current);
-              setTranscript({ ...transcriptRef.current });
-            }
-          }
-        },
-        onClose: () => {
-          if (cancelled) return;
-          if (!socketReady && allowAuthRefreshRetry) {
-            void (async () => {
-              try {
-                const refreshed = await refreshAuthTokenForWebSocket();
-                if (cancelled) return;
-                if (refreshed.refreshed && refreshed.token) {
-                  clientRef.current = null;
-                  await connect({ forceBootstrap, allowAuthRefreshRetry: false });
-                  return;
-                }
-              } catch {
-                // Fall through to the normal reconnect timer when refresh fails.
-              }
-              scheduleReconnect();
-            })();
-            return;
-          }
-          scheduleReconnect();
-        },
-      });
-
-      clientRef.current = client;
-
-      try {
-        await client.start();
-      } catch (err) {
-        const error = err as Error & { code?: string };
-        // Auto-retry with forced bootstrap if session is missing
-        if (error.code === 'ACP_SESSION_MISSING' && retryCount === 0) {
-          retryCount++;
-          client.dispose();
-          clientRef.current = null;
-          await connect({ forceBootstrap: true });
-          return;
-        }
-        if (!cancelled) {
-          setStatus(error.message || 'Connection failed');
-        }
-        return;
-      }
-
-      if (cancelled) return;
-
-      // If cache was hydrated but replay sent no real messages, clear stale cache
-      if (cacheHydratedRef.current && !replaySawTranscriptUpdateRef.current) {
-        const freshTranscript = createTranscript();
-        setTranscript(freshTranscript);
-        transcriptRef.current = freshTranscript;
-      }
-
-      // Bake any leftover thinking chunks from replay into thinking_done messages
-      finalizeHistoricalThinking(transcriptRef.current);
-      setTranscript({ ...transcriptRef.current });
-
-      cacheHydratedRef.current = false;
-      retryCount = 0;
-
-      // Write final cache after bootstrap+replay complete
-      writeCachedTranscript(conversationId, transcriptRef.current, {
-        spritzName,
-        sessionId: effectiveSessionId,
-        preview: getPreviewText(transcriptRef.current),
-      });
     }
 
     connect();
 
+    const handleWindowFocus = () => {
+      triggerForegroundRecovery();
+    };
+    const handleOnline = () => {
+      triggerForegroundRecovery();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        triggerForegroundRecovery();
+      }
+    };
+
+    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('online', handleOnline);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
       cancelled = true;
+      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('online', handleOnline);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
       clientRef.current?.dispose();
       clientRef.current = null;
+      clientReadyRef.current = false;
       setClientReady(false);
       setPromptInFlight(false);
     };

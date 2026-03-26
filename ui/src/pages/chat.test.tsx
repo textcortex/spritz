@@ -380,6 +380,138 @@ describe('ChatPage draft persistence', () => {
     });
   });
 
+  it('retries bootstrap failures automatically and recovers without a refresh', async () => {
+    requestMock.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === '/spritzes') {
+        return Promise.resolve({
+          items: [
+            {
+              metadata: { name: 'covo' },
+              status: { phase: 'Ready', acp: { state: 'ready', agentInfo: { version: '1.0.0' } } },
+            },
+          ],
+        });
+      }
+      if (path === '/acp/conversations?spritz=covo') {
+        return Promise.resolve({
+          items: [
+            {
+              metadata: { name: 'conv-bootstrap' },
+              spec: { sessionId: '', title: 'Bootstrap Me', spritzName: 'covo' },
+              status: { bindingState: 'pending' },
+            },
+          ],
+        });
+      }
+      if (path === '/acp/conversations/conv-bootstrap/bootstrap' && options?.method === 'POST') {
+        const callCount = requestMock.mock.calls.filter(
+          ([calledPath, calledOptions]) =>
+            calledPath === '/acp/conversations/conv-bootstrap/bootstrap' &&
+            calledOptions?.method === 'POST',
+        ).length;
+        if (callCount === 1) {
+          return Promise.reject(new Error('HTTP 525 · example.com · Cloudflare'));
+        }
+        return Promise.resolve({ effectiveSessionId: 'sess-bootstrap-2' });
+      }
+      return Promise.resolve({});
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/c/covo/conv-bootstrap']}>
+        <ConfigProvider value={config}>
+          <NoticeProvider>
+            <Routes>
+              <Route path="/c/:name/:conversationId" element={<ChatPage />} />
+            </Routes>
+          </NoticeProvider>
+        </ConfigProvider>
+      </MemoryRouter>,
+    );
+
+    await screen.findByLabelText('Message input');
+    await waitFor(() => {
+      expect(screen.getByText('HTTP 525 · example.com · Cloudflare Retrying…')).toBeTruthy();
+    });
+
+    await waitFor(() => {
+      expect(
+        requestMock.mock.calls.filter(
+          ([path, options]) => path === '/acp/conversations/conv-bootstrap/bootstrap' && options?.method === 'POST',
+        ),
+      ).toHaveLength(2);
+      expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).disabled).toBe(false);
+    }, { timeout: 4000 });
+  });
+
+  it('retries immediately on focus after a transient bootstrap failure', async () => {
+    requestMock.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === '/spritzes') {
+        return Promise.resolve({
+          items: [
+            {
+              metadata: { name: 'covo' },
+              status: { phase: 'Ready', acp: { state: 'ready', agentInfo: { version: '1.0.0' } } },
+            },
+          ],
+        });
+      }
+      if (path === '/acp/conversations?spritz=covo') {
+        return Promise.resolve({
+          items: [
+            {
+              metadata: { name: 'conv-focus' },
+              spec: { sessionId: '', title: 'Focus Me', spritzName: 'covo' },
+              status: { bindingState: 'pending' },
+            },
+          ],
+        });
+      }
+      if (path === '/acp/conversations/conv-focus/bootstrap' && options?.method === 'POST') {
+        const callCount = requestMock.mock.calls.filter(
+          ([calledPath, calledOptions]) =>
+            calledPath === '/acp/conversations/conv-focus/bootstrap' &&
+            calledOptions?.method === 'POST',
+        ).length;
+        if (callCount === 1) {
+          return Promise.reject(new Error('HTTP 525 · example.com · Cloudflare'));
+        }
+        return Promise.resolve({ effectiveSessionId: 'sess-focus-2' });
+      }
+      return Promise.resolve({});
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/c/covo/conv-focus']}>
+        <ConfigProvider value={config}>
+          <NoticeProvider>
+            <Routes>
+              <Route path="/c/:name/:conversationId" element={<ChatPage />} />
+            </Routes>
+          </NoticeProvider>
+        </ConfigProvider>
+      </MemoryRouter>,
+    );
+
+    await screen.findByLabelText('Message input');
+    await waitFor(() => {
+      expect(screen.getByText('HTTP 525 · example.com · Cloudflare Retrying…')).toBeTruthy();
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+
+    await waitFor(() => {
+      expect(
+        requestMock.mock.calls.filter(
+          ([path, options]) => path === '/acp/conversations/conv-focus/bootstrap' && options?.method === 'POST',
+        ),
+      ).toHaveLength(2);
+      expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).disabled).toBe(false);
+    });
+  });
+
   it('restores the draft after remounting the same conversation route', async () => {
     const user = userEvent.setup();
     const firstRender = render(
