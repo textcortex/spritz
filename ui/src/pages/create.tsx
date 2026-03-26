@@ -16,7 +16,7 @@ export function CreatePage() {
         <BrandHeader />
         <h2 className="mt-4 text-2xl font-semibold">Create Instance</h2>
         <p className="text-[15px] text-muted-foreground">
-          Spin up an ephemeral instance managed by the API.
+          Open-source Kubernetes orchestrator for disposable agent instances.
         </p>
       </div>
 

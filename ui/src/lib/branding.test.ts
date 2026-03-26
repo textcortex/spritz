@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vite-plus/test';
-import { buildTerminalTheme, getProductName } from '@/lib/branding';
+import { buildTerminalTheme, getLogoUrl, getProductName } from '@/lib/branding';
 
 describe('branding helpers', () => {
   it('falls back to default product name', () => {
@@ -15,6 +15,27 @@ describe('branding helpers', () => {
       destructive: '',
       radius: '',
     }, terminal: { background: '', foreground: '', cursor: '' } })).toBe('Spritz');
+  });
+
+  it('falls back to the bundled default logo', () => {
+    expect(getLogoUrl()).toBe('/agentol.svg');
+    expect(getLogoUrl({
+      productName: '',
+      logoUrl: '',
+      faviconUrl: '',
+      theme: {
+        background: '',
+        foreground: '',
+        muted: '',
+        mutedForeground: '',
+        primary: '',
+        primaryForeground: '',
+        border: '',
+        destructive: '',
+        radius: '',
+      },
+      terminal: { background: '', foreground: '', cursor: '' },
+    })).toBe('/agentol.svg');
   });
 
   it('builds terminal theme with defaults and overrides', () => {

@@ -5,6 +5,7 @@ import type {
 } from '@/lib/config';
 
 const DEFAULT_PRODUCT_NAME = 'Spritz';
+const DEFAULT_LOGO_URL = '/agentol.svg';
 const MANAGED_FAVICON_ATTR = 'data-spritz-branding-favicon';
 
 const DEFAULT_TERMINAL_THEME = {
@@ -34,7 +35,7 @@ export function getProductName(branding?: BrandingConfig | null): string {
 }
 
 export function getLogoUrl(branding?: BrandingConfig | null): string {
-  return normalize(branding?.logoUrl);
+  return normalize(branding?.logoUrl) || DEFAULT_LOGO_URL;
 }
 
 export function applyBrandingTheme(

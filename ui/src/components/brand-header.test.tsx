@@ -4,6 +4,12 @@ import { BrandHeader } from '@/components/brand-header';
 import { renderWithProviders } from '@/test/helpers';
 
 describe('BrandHeader', () => {
+  it('renders the bundled default logo when no custom logo is configured', () => {
+    renderWithProviders(<BrandHeader />);
+
+    expect(screen.getByAltText('Spritz logo').getAttribute('src')).toBe('/agentol.svg');
+  });
+
   it('renders the configured brand name and logo', () => {
     renderWithProviders(<BrandHeader />, {
       config: {
