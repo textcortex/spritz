@@ -56,11 +56,9 @@ export function ChatPage() {
   const composerRef = useRef<ComposerHandle>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedConversationRef = useRef<ConversationInfo | null>(null);
-  // Track whether cached transcript has been replaced by live replay data.
+  // Track whether cached transcript has been replaced by durable replay data.
   const cacheHydratedRef = useRef(false);
-  const cacheReplacedByReplayRef = useRef(false);
-  const replayActiveRef = useRef(false);
-  const replayTranscriptResetRef = useRef(false);
+  const replaySawTranscriptUpdateRef = useRef(false);
 
   transcriptRef.current = transcript;
   selectedConversationRef.current = selectedConversation;
@@ -155,9 +153,7 @@ export function ChatPage() {
     setTranscript(newTranscript);
     transcriptRef.current = newTranscript;
     cacheHydratedRef.current = newTranscript.messages.length > 0;
-    cacheReplacedByReplayRef.current = false;
-    replayActiveRef.current = false;
-    replayTranscriptResetRef.current = false;
+    replaySawTranscriptUpdateRef.current = false;
 
     const apiBase = config.apiBaseUrl || '';
 
@@ -200,7 +196,7 @@ export function ChatPage() {
           setTranscript(freshTranscript);
           transcriptRef.current = freshTranscript;
           cacheHydratedRef.current = false;
-          cacheReplacedByReplayRef.current = false;
+          replaySawTranscriptUpdateRef.current = false;
         }
 
         effectiveSessionId = newSessionId;
@@ -219,13 +215,7 @@ export function ChatPage() {
       const wsHost = window.location.host;
       const wsUrl = `${wsProtocol}//${wsHost}${apiBase}/acp/conversations/${encodeURIComponent(conversationId)}/connect`;
 
-      const resetTranscriptForReplay = () => {
-        const freshTranscript = createTranscript();
-        transcriptRef.current = freshTranscript;
-        setTranscript(freshTranscript);
-        cacheReplacedByReplayRef.current = true;
-        replayTranscriptResetRef.current = true;
-      };
+      replaySawTranscriptUpdateRef.current = false;
 
       const client = createACPClient({
         wsUrl,
@@ -234,25 +224,16 @@ export function ChatPage() {
         onReadyChange: (ready) => { if (!cancelled) setClientReady(ready); },
         onReplayStateChange: (replaying) => {
           if (cancelled) return;
-          replayActiveRef.current = replaying;
           if (replaying) {
-            replayTranscriptResetRef.current = false;
+            replaySawTranscriptUpdateRef.current = false;
           }
         },
         onUpdate: (update, opts) => {
           if (cancelled) return;
           const updateObj = update as Record<string, unknown>;
 
-          // A reconnect replays the full session transcript. Replace any
-          // existing in-memory transcript exactly once per replay cycle so the
-          // replay becomes the source of truth instead of duplicating history.
-          if (
-            opts?.historical &&
-            replayActiveRef.current &&
-            !replayTranscriptResetRef.current &&
-            isTranscriptBearingUpdate(updateObj)
-          ) {
-            resetTranscriptForReplay();
+          if (opts?.historical && isTranscriptBearingUpdate(updateObj)) {
+            replaySawTranscriptUpdateRef.current = true;
           }
 
           const t = transcriptRef.current;
@@ -342,7 +323,7 @@ export function ChatPage() {
       if (cancelled) return;
 
       // If cache was hydrated but replay sent no real messages, clear stale cache
-      if (cacheHydratedRef.current && !cacheReplacedByReplayRef.current) {
+      if (cacheHydratedRef.current && !replaySawTranscriptUpdateRef.current) {
         const freshTranscript = createTranscript();
         setTranscript(freshTranscript);
         transcriptRef.current = freshTranscript;
