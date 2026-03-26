@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { MenuIcon, RotateCwIcon, ExternalLinkIcon } from 'lucide-react';
-import { request, getAuthToken, authBearerTokenParam } from '@/lib/api';
+import { request, getAuthToken, refreshAuthTokenForWebSocket, authBearerTokenParam } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useConfig } from '@/lib/config';
 import { createACPClient } from '@/lib/acp-client';
@@ -165,14 +165,18 @@ export function ChatPage() {
       return String(conv.status?.bindingState || '').trim().toLowerCase() !== 'active';
     }
 
-    async function connect(options: { forceBootstrap?: boolean } = {}) {
+    async function connect(options: {
+      forceBootstrap?: boolean;
+      allowAuthRefreshRetry?: boolean;
+    } = {}) {
       if (cancelled) return;
+      const { forceBootstrap = false, allowAuthRefreshRetry = true } = options;
 
       let effectiveConversation = selectedConversation!;
       let effectiveSessionId = String(effectiveConversation.spec?.sessionId || '').trim();
 
       // Step 1: Bootstrap if needed
-      if (needsBootstrap(effectiveConversation, options.forceBootstrap)) {
+      if (needsBootstrap(effectiveConversation, forceBootstrap)) {
         setStatus('Bootstrapping…');
         let bootstrapData: Record<string, unknown>;
         try {
@@ -222,12 +226,33 @@ export function ChatPage() {
       );
 
       replaySawTranscriptUpdateRef.current = false;
+      let socketReady = false;
+
+      function scheduleReconnect() {
+        if (cancelled) return;
+        setStatus('Disconnected. Reconnecting…');
+        if (reconnectTimerRef.current) {
+          clearTimeout(reconnectTimerRef.current);
+        }
+        reconnectTimerRef.current = setTimeout(() => {
+          if (cancelled) return;
+          retryCount++;
+          connect({ forceBootstrap: retryCount > 1 }).catch((err) => {
+            if (!cancelled) setStatus(err instanceof Error ? err.message : 'Reconnect failed');
+          });
+        }, RECONNECT_DELAY_MS);
+      }
 
       const client = createACPClient({
         wsUrl,
         conversation: effectiveConversation,
         onStatus: (text) => { if (!cancelled) setStatus(text); },
-        onReadyChange: (ready) => { if (!cancelled) setClientReady(ready); },
+        onReadyChange: (ready) => {
+          if (ready) {
+            socketReady = true;
+          }
+          if (!cancelled) setClientReady(ready);
+        },
         onReplayStateChange: (replaying) => {
           if (cancelled) return;
           if (replaying) {
@@ -294,15 +319,24 @@ export function ChatPage() {
         },
         onClose: () => {
           if (cancelled) return;
-          setStatus('Disconnected. Reconnecting…');
-          // Auto-reconnect after delay (matching staging behavior)
-          reconnectTimerRef.current = setTimeout(() => {
-            if (cancelled) return;
-            retryCount++;
-            connect({ forceBootstrap: retryCount > 1 }).catch((err) => {
-              if (!cancelled) setStatus(err instanceof Error ? err.message : 'Reconnect failed');
-            });
-          }, RECONNECT_DELAY_MS);
+          if (!socketReady && allowAuthRefreshRetry) {
+            void (async () => {
+              try {
+                const refreshed = await refreshAuthTokenForWebSocket();
+                if (cancelled) return;
+                if (refreshed.refreshed && refreshed.token) {
+                  clientRef.current = null;
+                  await connect({ forceBootstrap, allowAuthRefreshRetry: false });
+                  return;
+                }
+              } catch {
+                // Fall through to the normal reconnect timer when refresh fails.
+              }
+              scheduleReconnect();
+            })();
+            return;
+          }
+          scheduleReconnect();
         },
       });
 

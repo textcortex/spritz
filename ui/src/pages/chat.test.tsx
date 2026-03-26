@@ -1,6 +1,6 @@
 import type React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vite-plus/test';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { createMockStorage } from '@/test/helpers';
@@ -17,6 +17,10 @@ const {
   setReplayStateHandler,
   getAuthTokenMock,
   setAuthToken,
+  refreshAuthTokenForWebSocketMock,
+  setRefreshAuthResult,
+  setACPStartReady,
+  getACPStartReady,
   captureACPOptions,
   getLastACPOptions,
   resetACPMockState,
@@ -26,6 +30,8 @@ const {
     | undefined;
   let replayStateHandler: ((replaying: boolean) => void) | undefined;
   let authToken = '';
+  let refreshResult = { token: '', refreshed: false };
+  let acpStartReady = true;
   let lastACPOptions: Record<string, unknown> | null = null;
   return {
     requestMock: vi.fn(),
@@ -48,22 +54,33 @@ const {
     setAuthToken: (value: string) => {
       authToken = value;
     },
+    refreshAuthTokenForWebSocketMock: vi.fn(async () => refreshResult),
+    setRefreshAuthResult: (value: { token: string; refreshed: boolean }) => {
+      refreshResult = value;
+    },
+    setACPStartReady: (value: boolean) => {
+      acpStartReady = value;
+    },
     captureACPOptions: (options: Record<string, unknown>) => {
       lastACPOptions = options;
     },
     getLastACPOptions: () => lastACPOptions,
     resetACPMockState: () => {
       authToken = '';
+      refreshResult = { token: '', refreshed: false };
+      acpStartReady = true;
       lastACPOptions = null;
       updateHandler = undefined;
       replayStateHandler = undefined;
     },
+    getACPStartReady: () => acpStartReady,
   };
 });
 
 vi.mock('@/lib/api', () => ({
   request: requestMock,
   getAuthToken: getAuthTokenMock,
+  refreshAuthTokenForWebSocket: refreshAuthTokenForWebSocketMock,
   authBearerTokenParam: 'token',
 }));
 
@@ -97,6 +114,7 @@ vi.mock('@/lib/acp-client', () => ({
     setReplayStateHandler(onReplayStateChange);
     return {
       start: vi.fn(async () => {
+        if (!getACPStartReady()) return;
         onStatus?.('Connected');
         onReadyChange?.(true);
       }),
@@ -262,6 +280,7 @@ describe('ChatPage draft persistence', () => {
     });
     requestMock.mockReset();
     sendPromptMock.mockReset();
+    refreshAuthTokenForWebSocketMock.mockClear();
     resetACPMockState();
     sendPromptMock.mockResolvedValue({});
     setupRequestMock();
@@ -281,6 +300,62 @@ describe('ChatPage draft persistence', () => {
     await waitFor(() => {
       expect(getLastACPOptions()?.wsUrl).toBe(
         'wss://spritz.example.com/api/acp/conversations/conv-1/connect?token=external-ui-token',
+      );
+    });
+  });
+
+  it('refreshes bearer auth and reconnects ACP websocket when the socket closes before ready', async () => {
+    setACPStartReady(false);
+    setAuthToken('expired-token');
+    setRefreshAuthResult({ token: 'refreshed-token', refreshed: true });
+    refreshAuthTokenForWebSocketMock.mockImplementation(async () => {
+      setAuthToken('refreshed-token');
+      return { token: 'refreshed-token', refreshed: true };
+    });
+
+    const resolvedConfig = resolveConfig({
+      ...config,
+      apiBaseUrl: 'https://spritz.example.com/api',
+      auth: {
+        mode: 'bearer',
+        tokenStorageKeys: 'spritz-token',
+        refresh: {
+          enabled: 'true',
+          url: '/oauth/refresh',
+          tokenStorageKeys: 'spritz-refresh-token',
+        },
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/c/covo/conv-1']}>
+        <ConfigProvider value={resolvedConfig}>
+          <NoticeProvider>
+            <Routes>
+              <Route path="/c/:name/:conversationId" element={<ChatPage />} />
+            </Routes>
+          </NoticeProvider>
+        </ConfigProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(getLastACPOptions()?.wsUrl).toBe(
+        'wss://spritz.example.com/api/acp/conversations/conv-1/connect?token=expired-token',
+      );
+    });
+
+    const onClose = getLastACPOptions()?.onClose as (() => void) | undefined;
+    expect(onClose).toEqual(expect.any(Function));
+
+    act(() => {
+      onClose?.();
+    });
+
+    await waitFor(() => {
+      expect(refreshAuthTokenForWebSocketMock).toHaveBeenCalledTimes(1);
+      expect(getLastACPOptions()?.wsUrl).toBe(
+        'wss://spritz.example.com/api/acp/conversations/conv-1/connect?token=refreshed-token',
       );
     });
   });
