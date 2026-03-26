@@ -6,23 +6,13 @@ import '@xterm/xterm/css/xterm.css';
 import { useConfig } from '@/lib/config';
 import { getAuthToken, authBearerTokenParam } from '@/lib/api';
 import { buildTerminalTheme } from '@/lib/branding';
+import { buildApiWebSocketUrl } from '@/lib/network';
 import { chatPath } from '@/lib/urls';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ArrowLeftIcon } from 'lucide-react';
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
-
-function buildTerminalWsUrl(apiBaseUrl: string, name: string): string {
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsHost = window.location.host;
-  const apiBase = apiBaseUrl || '';
-  const token = getAuthToken();
-  const params = new URLSearchParams();
-  if (token) params.set(authBearerTokenParam, token);
-  const qs = params.toString();
-  return `${wsProtocol}//${wsHost}${apiBase}/spritzes/${encodeURIComponent(name)}/terminal${qs ? `?${qs}` : ''}`;
-}
 
 export function TerminalPage() {
   const { name } = useParams<{ name: string }>();
@@ -37,6 +27,7 @@ export function TerminalPage() {
 
   useEffect(() => {
     if (!name || !terminalRef.current) return;
+    const instanceName = name;
 
     const term = new Terminal({
       cursorBlink: true,
@@ -57,7 +48,16 @@ export function TerminalPage() {
 
     function connect() {
       setStatus('connecting');
-      const ws = new WebSocket(buildTerminalWsUrl(config.apiBaseUrl, name!));
+      const ws = new WebSocket(
+        buildApiWebSocketUrl(
+          config.apiBaseUrl,
+          `/spritzes/${encodeURIComponent(instanceName)}/terminal`,
+          {
+            bearerToken: getAuthToken(),
+            bearerTokenParam: authBearerTokenParam,
+          },
+        ),
+      );
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
 

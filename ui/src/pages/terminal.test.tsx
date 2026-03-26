@@ -5,10 +5,17 @@ import { ConfigProvider, resolveConfig } from '@/lib/config';
 import { TerminalPage } from './terminal';
 import { FakeWebSocket } from '@/test/helpers';
 
-const { terminalConstructor, fitAddonConstructor } = vi.hoisted(() => ({
-  terminalConstructor: vi.fn(),
-  fitAddonConstructor: vi.fn(),
-}));
+const { terminalConstructor, fitAddonConstructor, getAuthTokenMock, setAuthToken } = vi.hoisted(() => {
+  let authToken = '';
+  return {
+    terminalConstructor: vi.fn(),
+    fitAddonConstructor: vi.fn(),
+    getAuthTokenMock: () => authToken,
+    setAuthToken: (value: string) => {
+      authToken = value;
+    },
+  };
+});
 
 vi.mock('@xterm/xterm', () => ({
   Terminal: function MockTerminal(options: unknown) {
@@ -36,16 +43,24 @@ vi.mock('@xterm/addon-fit', () => ({
 }));
 
 vi.mock('@/lib/api', () => ({
-  getAuthToken: () => '',
+  getAuthToken: getAuthTokenMock,
   authBearerTokenParam: 'token',
 }));
 
 describe('TerminalPage branding', () => {
+  let lastSocket: FakeWebSocket | null = null;
+
   beforeEach(() => {
     terminalConstructor.mockReset();
     fitAddonConstructor.mockReset();
+    setAuthToken('');
     Object.defineProperty(globalThis, 'WebSocket', {
-      value: FakeWebSocket,
+      value: class extends FakeWebSocket {
+        constructor(url: string) {
+          super(url);
+          lastSocket = this;
+        }
+      },
       writable: true,
     });
   });
@@ -79,5 +94,30 @@ describe('TerminalPage branding', () => {
       }),
     }));
     expect(fitAddonConstructor).toHaveBeenCalled();
+  });
+
+  it('uses the configured absolute api host and bearer token for terminal websocket connections', () => {
+    setAuthToken('external-ui-token');
+    const config = resolveConfig({
+      apiBaseUrl: 'https://spritz.example.com/api',
+      auth: {
+        mode: 'bearer',
+        tokenStorageKeys: 'spritz-token',
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/terminal/example-instance']}>
+        <ConfigProvider value={config}>
+          <Routes>
+            <Route path="/terminal/:name" element={<TerminalPage />} />
+          </Routes>
+        </ConfigProvider>
+      </MemoryRouter>,
+    );
+
+    expect(lastSocket?.url).toBe(
+      'wss://spritz.example.com/api/spritzes/example-instance/terminal?token=external-ui-token',
+    );
   });
 });

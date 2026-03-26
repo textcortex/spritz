@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { MenuIcon, RotateCwIcon, ExternalLinkIcon } from 'lucide-react';
-import { request } from '@/lib/api';
+import { request, getAuthToken, authBearerTokenParam } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useConfig } from '@/lib/config';
 import { createACPClient } from '@/lib/acp-client';
+import { buildApiWebSocketUrl } from '@/lib/network';
 import { createTranscript, applySessionUpdate, finalizeStreaming, finalizeHistoricalThinking, getPreviewText, isTranscriptBearingUpdate } from '@/lib/acp-transcript';
 import { readCachedTranscript, writeCachedTranscript, evictCachedTranscript } from '@/lib/acp-cache';
 import { readChatDraft, writeChatDraft, clearChatDraft } from '@/lib/chat-draft';
@@ -211,9 +212,14 @@ export function ChatPage() {
       if (cancelled) return;
 
       // Step 2: Connect WebSocket
-      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsHost = window.location.host;
-      const wsUrl = `${wsProtocol}//${wsHost}${apiBase}/acp/conversations/${encodeURIComponent(conversationId)}/connect`;
+      const wsUrl = buildApiWebSocketUrl(
+        apiBase,
+        `/acp/conversations/${encodeURIComponent(conversationId)}/connect`,
+        {
+          bearerToken: getAuthToken(),
+          bearerTokenParam: authBearerTokenParam,
+        },
+      );
 
       replaySawTranscriptUpdateRef.current = false;
 
