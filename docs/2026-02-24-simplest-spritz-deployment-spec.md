@@ -1,6 +1,6 @@
 ---
 date: 2026-02-24
-author: Spritz Contributors <user@example.com>
+author: Onur Solmaz <onur@textcortex.com>
 title: Simplest Spritz Deployment Specification
 tags: [spritz, deployment, architecture]
 ---

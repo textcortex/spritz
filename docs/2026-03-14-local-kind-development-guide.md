@@ -1,6 +1,6 @@
 ---
 date: 2026-03-14
-author: Spritz Contributors <user@example.com>
+author: Onur Solmaz <onur@textcortex.com>
 title: Local kind Development Guide
 tags: [spritz, kind, kubernetes, local-development]
 ---

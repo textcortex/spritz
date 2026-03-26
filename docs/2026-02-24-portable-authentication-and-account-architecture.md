@@ -1,6 +1,6 @@
 ---
 date: 2026-02-24
-author: Spritz Maintainers <user@example.com>
+author: Onur Solmaz <onur@textcortex.com>
 title: Portable Authentication and Account Architecture
 tags: [spritz, auth, oidc, deployment, architecture]
 ---
@@ -258,6 +258,22 @@ Use JWT validation when possible (JWKS) and introspection only when required.
 
 If bearer mode is enabled for UI traffic, token lifecycle (acquisition, refresh, storage) must be
 explicitly designed and documented for that deployment.
+
+## Mixed Client Model
+
+Some deployments need both:
+
+- a native Spritz browser UI on the canonical Spritz host, and
+- an external UI on a different host that acts as a client of Spritz
+
+The preferred model is:
+
+- native Spritz browser flows use gateway-managed cookies
+- external UI clients use bearer tokens
+
+See
+[Native Browser and External UI Auth Model](2026-03-26-native-browser-and-external-ui-auth-model.md)
+for the full architecture.
 
 ## Migration Guidance (From Path-Mounted Login Flows)
 
