@@ -29,4 +29,14 @@ describe('resolveConfig', () => {
     expect(config.branding.theme.background).toBe('');
     expect(config.branding.terminal.background).toBe('');
   });
+
+  it('preserves websocket base overrides separately from the api base url', () => {
+    const config = resolveConfig({
+      apiBaseUrl: 'https://api.example.com/base',
+      websocketBaseUrl: 'https://ws.example.com/base',
+    });
+
+    expect(config.apiBaseUrl).toBe('https://api.example.com/base');
+    expect(config.websocketBaseUrl).toBe('https://ws.example.com/base');
+  });
 });

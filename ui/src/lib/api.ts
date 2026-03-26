@@ -102,6 +102,25 @@ export function getAuthToken(): string {
   return readTokenFromStorage(authTokenStorageKeys);
 }
 
+/**
+ * Attempts the configured bearer refresh flow for direct WebSocket connections.
+ * Returns the latest stored bearer token and whether a refresh succeeded.
+ */
+export async function refreshAuthTokenForWebSocket(): Promise<{
+  token: string;
+  refreshed: boolean;
+}> {
+  const token = getAuthToken();
+  if (!shouldAttemptAuthRefresh()) {
+    return { token, refreshed: false };
+  }
+  const refreshResult = await runAuthRefresh();
+  return {
+    token: getAuthToken(),
+    refreshed: refreshResult.ok,
+  };
+}
+
 function getAuthRefreshToken(): string {
   return readTokenFromStorage(authRefreshTokenStorageKeys);
 }
