@@ -1,14 +1,14 @@
 ---
 date: 2026-03-26
 author: Onur Solmaz <onur@textcortex.com>
-title: Bearer Token Contract and Migration
-tags: [spritz, auth, bearer, jwks, migration]
+title: Bearer Token Contract
+tags: [spritz, auth, bearer, jwks]
 ---
 
 ## Overview
 
 This document defines the preferred bearer-token contract for Spritz and the
-migration path from legacy upstream tokens.
+transition guidance for legacy upstream tokens.
 
 The core decision is simple:
 
@@ -82,7 +82,7 @@ Good uses for introspection:
 Introspection should not be the preferred steady-state path for external UI or
 service clients once a Spritz-scoped JWT can be issued.
 
-## Migration Plan
+## Transition Guidance
 
 ### Phase 1: Compatibility Bridge
 
