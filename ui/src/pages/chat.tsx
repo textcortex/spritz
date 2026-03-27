@@ -85,7 +85,7 @@ export function ChatPage() {
   const provisioningStatusLine = getProvisioningStatusLine(provisioningSpritz);
 
   // Fetch agents and conversations
-  const fetchAgents = useCallback(async () => {
+  const fetchAgents = useCallback(async (): Promise<boolean> => {
     try {
       const spritzList = await request<{ items: Spritz[] }>('/spritzes');
       let items = spritzList?.items || [];
@@ -121,30 +121,30 @@ export function ChatPage() {
       setAgents(groups);
 
       if (!name) {
-        return;
+        return false;
       }
 
       const routeSpritz = items.find((spritz) => spritz.metadata.name === name);
       if (!routeSpritz) {
         setSelectedConversation(null);
-        return;
+        return true;
       }
       if (!isSpritzChatReady(routeSpritz)) {
         setSelectedConversation(null);
-        return;
+        return true;
       }
 
       const group = groups.find((entry) => entry.spritz.metadata.name === name);
       if (!group) {
         setSelectedConversation(null);
-        return;
+        return false;
       }
 
       if (urlConversationId) {
         const match = group.conversations.find((conversation) => conversation.metadata.name === urlConversationId);
         if (match) {
           setSelectedConversation(match);
-          return;
+          return false;
         }
       }
 
@@ -154,11 +154,11 @@ export function ChatPage() {
         if (urlConversationId !== latestConversation.metadata.name) {
           navigate(chatConversationPath(name, latestConversation.metadata.name), { replace: true });
         }
-        return;
+        return false;
       }
 
       if (autoCreatingConversationForRef.current === name) {
-        return;
+        return false;
       }
 
       autoCreatingConversationForRef.current = name;
@@ -189,8 +189,10 @@ export function ChatPage() {
         autoCreatingConversationForRef.current = null;
         setCreatingConversationFor((current) => (current === name ? null : current));
       }
+      return false;
     } catch (err) {
       showNotice(err instanceof Error ? err.message : 'Failed to load agents.');
+      return false;
     } finally {
       setLoading(false);
     }
@@ -204,17 +206,31 @@ export function ChatPage() {
     if (!provisioningSpritz) {
       return;
     }
-    const timer = window.setTimeout(() => {
-      void fetchAgents();
-    }, PROVISIONING_POLL_INTERVAL_MS);
-    return () => window.clearTimeout(timer);
-  }, [
-    fetchAgents,
-    provisioningSpritz?.metadata.name,
-    provisioningSpritz?.status?.phase,
-    provisioningSpritz?.status?.acp?.state,
-    provisioningSpritz?.status?.message,
-  ]);
+    let cancelled = false;
+    let timerId: number | null = null;
+
+    const scheduleNextPoll = () => {
+      timerId = window.setTimeout(() => {
+        void pollUntilReady();
+      }, PROVISIONING_POLL_INTERVAL_MS);
+    };
+
+    const pollUntilReady = async () => {
+      const shouldContinuePolling = await fetchAgents();
+      if (cancelled || !shouldContinuePolling) {
+        return;
+      }
+      scheduleNextPoll();
+    };
+
+    scheduleNextPoll();
+    return () => {
+      cancelled = true;
+      if (timerId !== null) {
+        window.clearTimeout(timerId);
+      }
+    };
+  }, [fetchAgents, provisioningSpritz?.metadata.name]);
 
   const applyConversationTitle = useCallback((conversationId: string, title?: string | null) => {
     const normalized = String(title || '').trim();
