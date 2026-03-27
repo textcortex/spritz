@@ -121,6 +121,10 @@ This is better than reusing a broad product token directly because it gives:
 - cleaner separation between the upstream product and Spritz,
 - easier future support for multiple external clients.
 
+See [Bearer Token Contract](2026-03-26-bearer-token-contract.md) for the
+preferred token contract and transition guidance for legacy upstream bearer
+formats.
+
 ## API Expectations
 
 To support this model, Spritz should treat bearer auth as a first-class client
