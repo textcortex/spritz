@@ -28,6 +28,7 @@ const {
   getLastACPOptions,
   setCloseLastACPConnection,
   resetACPMockState,
+  showNoticeMock,
 } = vi.hoisted(() => {
   let updateHandler:
     | ((update: Record<string, unknown>, options?: { historical?: boolean }) => void)
@@ -42,6 +43,7 @@ const {
   return {
     requestMock: vi.fn(),
     sendPromptMock: vi.fn(),
+    showNoticeMock: vi.fn(),
     emitUpdate: (update: Record<string, unknown>, options?: { historical?: boolean }) => {
       updateHandler?.(update, options);
     },
@@ -170,7 +172,7 @@ vi.mock('@/components/notice-banner', async () => {
   const actual = await vi.importActual<typeof import('@/components/notice-banner')>('@/components/notice-banner');
   return {
     ...actual,
-    useNotice: () => ({ showNotice: vi.fn() }),
+    useNotice: () => ({ showNotice: showNoticeMock }),
   };
 });
 
@@ -466,6 +468,7 @@ describe('ChatPage draft persistence', () => {
     });
     requestMock.mockReset();
     sendPromptMock.mockReset();
+    showNoticeMock.mockReset();
     refreshAuthTokenForWebSocketMock.mockClear();
     resetACPMockState();
     sendPromptMock.mockResolvedValue({});
@@ -783,6 +786,142 @@ describe('ChatPage draft persistence', () => {
         expect((screen.getByTestId('selected-conversation') as HTMLDivElement).textContent).toBe('conv-created');
       });
       expect((screen.getByTestId('selected-conversation') as HTMLDivElement).textContent).toBe('conv-created');
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
+  it('keeps polling until a provisioning agent becomes ready and then opens a conversation', async () => {
+    const createdConversation = createConversation({
+      metadata: { name: 'conv-created-late' },
+      spec: { sessionId: 'sess-created-late', title: 'Created after repeated polling', spritzName: 'covo' },
+      status: { bindingState: 'active', lastActivityAt: '2026-03-27T10:10:00Z' },
+    });
+    let spritzRequestCount = 0;
+    requestMock.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === '/spritzes') {
+        spritzRequestCount += 1;
+        return Promise.resolve({
+          items: [
+            spritzRequestCount < 4
+              ? createSpritz({
+                  status: {
+                    phase: 'Provisioning',
+                    message: 'Allocating the instance.',
+                    acp: { state: 'starting' },
+                  },
+                })
+              : createSpritz(),
+          ],
+        });
+      }
+      if (path === '/acp/conversations?spritz=covo') {
+        return Promise.resolve({ items: [] });
+      }
+      if (path === '/acp/conversations' && options?.method === 'POST') {
+        return Promise.resolve(createdConversation);
+      }
+      return Promise.resolve({});
+    });
+    const realSetTimeout = window.setTimeout.bind(window);
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout').mockImplementation(((
+      handler: TimerHandler,
+      timeout?: number,
+      ...args: unknown[]
+    ) => {
+      if (timeout === 2000 && typeof handler === 'function') {
+        queueMicrotask(() => {
+          handler(...args as []);
+        });
+        return 1 as unknown as number;
+      }
+      return realSetTimeout(handler, timeout, ...(args as []));
+    }) as typeof window.setTimeout);
+
+    try {
+      renderChatPage('/c/covo');
+      await waitFor(() => {
+        expect(requestMock).toHaveBeenCalledWith(
+          '/acp/conversations',
+          expect.objectContaining({ method: 'POST' }),
+        );
+      });
+      await waitFor(() => {
+        expect((screen.getByTestId('selected-conversation') as HTMLDivElement).textContent).toBe('conv-created-late');
+      });
+      expect(spritzRequestCount).toBeGreaterThanOrEqual(3);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
+  it('keeps polling while a direct route spritz is still undiscoverable and starts a conversation once it appears', async () => {
+    const createdConversation = createConversation({
+      metadata: { name: 'conv-created-after-lookup' },
+      spec: {
+        sessionId: 'sess-created-after-lookup',
+        title: 'Created after lookup recovery',
+        spritzName: 'zeno-fresh-ridge',
+      },
+      status: { bindingState: 'active', lastActivityAt: '2026-03-27T10:12:00Z' },
+    });
+    let routeLookupCount = 0;
+    requestMock.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === '/spritzes') {
+        return Promise.resolve({ items: [] });
+      }
+      if (path === '/spritzes/zeno-fresh-ridge') {
+        routeLookupCount += 1;
+        if (routeLookupCount < 4) {
+          return Promise.reject(new Error('Not found.'));
+        }
+        return Promise.resolve(
+          createSpritz({
+            metadata: { name: 'zeno-fresh-ridge' },
+            status: {
+              phase: 'Ready',
+              acp: { state: 'ready' },
+            },
+          }),
+        );
+      }
+      if (path === '/acp/conversations?spritz=zeno-fresh-ridge') {
+        return Promise.resolve({ items: [] });
+      }
+      if (path === '/acp/conversations' && options?.method === 'POST') {
+        return Promise.resolve(createdConversation);
+      }
+      return Promise.resolve({});
+    });
+    const realSetTimeout = window.setTimeout.bind(window);
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout').mockImplementation(((
+      handler: TimerHandler,
+      timeout?: number,
+      ...args: unknown[]
+    ) => {
+      if (timeout === 2000 && typeof handler === 'function') {
+        queueMicrotask(() => {
+          handler(...args as []);
+        });
+        return 1 as unknown as number;
+      }
+      return realSetTimeout(handler, timeout, ...(args as []));
+    }) as typeof window.setTimeout);
+
+    try {
+      renderChatPage('/c/zeno-fresh-ridge');
+      await waitFor(() => {
+        expect(requestMock).toHaveBeenCalledWith(
+          '/acp/conversations',
+          expect.objectContaining({ method: 'POST' }),
+        );
+      });
+      await waitFor(() => {
+        expect((screen.getByTestId('selected-conversation') as HTMLDivElement).textContent).toBe(
+          'conv-created-after-lookup',
+        );
+      });
+      expect(routeLookupCount).toBeGreaterThanOrEqual(4);
     } finally {
       setTimeoutSpy.mockRestore();
     }
