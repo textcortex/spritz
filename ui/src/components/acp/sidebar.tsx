@@ -5,8 +5,11 @@ import {
   PencilIcon,
   LayoutGridIcon,
   ChevronRightIcon,
+  LoaderCircleIcon,
 } from 'lucide-react';
 import { cn, timeAgo } from '@/lib/utils';
+import { describeChatAction } from '@/lib/urls';
+import { buildProvisioningPlaceholderSpritz, getProvisioningStatusLine } from '@/lib/provisioning';
 import { BrandHeader } from '@/components/brand-header';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import type { ConversationInfo } from '@/types/acp';
@@ -68,9 +71,10 @@ export function Sidebar({
   const focusedAgentInList = Boolean(
     focusedSpritzName && orderedAgents.some((group) => group.spritz.metadata.name === focusedSpritzName),
   );
-  const showFocusedProvisioningSection = Boolean(
-    focusedSpritz && focusedSpritzName && !focusedAgentInList,
-  );
+  const focusedProvisioningSpritz = focusedSpritzName && !focusedAgentInList
+    ? focusedSpritz || buildProvisioningPlaceholderSpritz(focusedSpritzName)
+    : null;
+  const showFocusedProvisioningSection = Boolean(focusedProvisioningSpritz);
 
   /* ── Collapsed desktop sidebar ── */
   function renderCollapsed() {
@@ -165,8 +169,11 @@ export function Sidebar({
 
         {/* Conversation list */}
       <div role="list" aria-label="Conversations" className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
-          {showFocusedProvisioningSection && focusedSpritz && (
-            <FocusedAgentProvisioningSection spritz={focusedSpritz} />
+          {showFocusedProvisioningSection && focusedProvisioningSpritz && (
+            <FocusedAgentProvisioningSection
+              spritz={focusedProvisioningSpritz}
+              selectedConversationId={selectedConversationId}
+            />
           )}
           {orderedAgents.length === 0 && !showFocusedProvisioningSection && (
             <div className="p-6 text-center text-xs text-muted-foreground">
@@ -216,16 +223,42 @@ export function Sidebar({
   );
 }
 
-function FocusedAgentProvisioningSection({ spritz }: { spritz: Spritz }) {
+function FocusedAgentProvisioningSection({
+  spritz,
+  selectedConversationId,
+}: {
+  spritz: Spritz;
+  selectedConversationId: string | null;
+}) {
   const name = spritz.metadata.name;
-  const statusLine = String(spritz.status?.message || '').trim()
-    || [spritz.status?.phase, spritz.status?.acp?.state].filter(Boolean).join(' · ')
-    || 'Preparing chat';
+  const statusLine = getProvisioningStatusLine(spritz);
+  const conversationLabel = describeChatAction(spritz).label;
+  const conversationSelected = !selectedConversationId;
 
   return (
-    <div role="listitem" className="rounded-[var(--radius-lg)] border border-sidebar-border bg-sidebar-accent px-3 py-2">
-      <div className="text-xs font-medium text-foreground" aria-current="true">{name}</div>
-      <div className="mt-1 text-xs text-muted-foreground">{statusLine}</div>
+    <div role="listitem" className="flex flex-col gap-0.5">
+      <div className="flex items-center gap-1">
+        <div
+          aria-current="true"
+          className="flex flex-1 items-center gap-2 rounded-[var(--radius-lg)] bg-sidebar-accent px-3 py-1.5 text-left text-xs font-medium text-foreground"
+        >
+          <ChevronRightIcon aria-hidden="true" className="size-3 shrink-0 rotate-90" />
+          <span className="truncate">{name}</span>
+        </div>
+      </div>
+      <div className="flex flex-col gap-1">
+        <div
+          aria-current={conversationSelected ? 'true' : undefined}
+          className={cn(
+            'ml-8 flex items-center gap-2 rounded-[var(--radius-lg)] px-3 py-1.5 text-[13px] text-foreground',
+            conversationSelected ? 'bg-sidebar-accent' : 'bg-transparent',
+          )}
+        >
+          <LoaderCircleIcon aria-hidden="true" className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+          <span className="truncate">{conversationLabel}</span>
+        </div>
+        <div className="px-11 text-xs text-muted-foreground">{statusLine}</div>
+      </div>
     </div>
   );
 }

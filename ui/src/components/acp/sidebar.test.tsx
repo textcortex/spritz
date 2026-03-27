@@ -86,4 +86,27 @@ describe('Sidebar', () => {
     expect(screen.getByRole('button', { name: 'beta conversations' }).getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByRole('button', { name: 'alpha conversations' }).getAttribute('aria-expanded')).toBe('false');
   });
+
+  it('shows a selected optimistic provisioning conversation for a focused route before the agent is discoverable', () => {
+    render(
+      <MemoryRouter>
+        <SidebarWithFocus
+          agents={[]}
+          selectedConversationId={null}
+          onSelectConversation={vi.fn()}
+          onNewConversation={vi.fn()}
+          collapsed={false}
+          onToggleCollapse={vi.fn()}
+          mobileOpen={false}
+          onCloseMobile={vi.fn()}
+          focusedSpritzName="zeno-fresh-ridge"
+          focusedSpritz={null}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('zeno-fresh-ridge')).toBeTruthy();
+    expect(screen.getByText('Creating your agent instance.')).toBeTruthy();
+    expect(screen.getByText('Starting…').closest('[aria-current="true"]')).toBeTruthy();
+  });
 });

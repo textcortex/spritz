@@ -704,6 +704,26 @@ describe('ChatPage draft persistence', () => {
     expect(screen.queryByText('Select a conversation or create a new instance.')).toBeNull();
   });
 
+  it('keeps the provisioning route visible while the spritz resource is not discoverable yet', async () => {
+    requestMock.mockImplementation((path: string) => {
+      if (path === '/spritzes') {
+        return Promise.resolve({ items: [] });
+      }
+      if (path === '/spritzes/zeno-fresh-ridge') {
+        return Promise.reject(new Error('Not found.'));
+      }
+      return Promise.resolve({});
+    });
+
+    renderChatPage('/c/zeno-fresh-ridge');
+
+    expect(await screen.findByText('Your agent is being created now')).toBeTruthy();
+    expect(screen.getByText('We will start a chat automatically as soon as it is ready.')).toBeTruthy();
+    expect(screen.getAllByText('Creating your agent instance.').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('sidebar-focused-spritz').textContent).toBe('zeno-fresh-ridge');
+    expect(screen.queryByText('Select a conversation or create a new instance.')).toBeNull();
+  });
+
   it('automatically creates and opens a conversation once a provisioning agent becomes ready', async () => {
     const createdConversation = createConversation({
       metadata: { name: 'conv-created' },

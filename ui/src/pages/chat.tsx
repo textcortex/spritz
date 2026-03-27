@@ -8,6 +8,11 @@ import { useConfig } from '@/lib/config';
 import { useChatConnection } from '@/lib/use-chat-connection';
 import { readChatDraft, writeChatDraft, clearChatDraft } from '@/lib/chat-draft';
 import { buildFallbackConversationTitle, hasDurableConversationTitle } from '@/lib/conversation-title';
+import {
+  buildProvisioningPlaceholderSpritz,
+  getProvisioningStatusLine,
+  isSpritzChatReady,
+} from '@/lib/provisioning';
 import { chatConversationPath } from '@/lib/urls';
 import { useNotice } from '@/components/notice-banner';
 import { Sidebar } from '@/components/acp/sidebar';
@@ -28,11 +33,6 @@ interface AgentGroup {
 }
 
 const PROVISIONING_POLL_INTERVAL_MS = 2000;
-
-function isSpritzChatReady(spritz: Spritz | null | undefined): boolean {
-  if (!spritz) return false;
-  return spritz.status?.phase === 'Ready' && spritz.status?.acp?.state === 'ready';
-}
 
 function getConversationActivityTime(conversation: ConversationInfo): number {
   const raw = String(conversation.status?.lastActivityAt || '').trim();
@@ -77,11 +77,12 @@ export function ChatPage() {
   const selectedSpritzName = selectedConversation?.spec?.spritzName || name || '';
   const selectedConversationId = selectedConversation?.metadata?.name || '';
   const focusedSpritz = name
-    ? spritzes.find((spritz) => spritz.metadata.name === name) || null
+    ? spritzes.find((spritz) => spritz.metadata.name === name) || buildProvisioningPlaceholderSpritz(name)
     : null;
   const provisioningSpritz = focusedSpritz && !isSpritzChatReady(focusedSpritz)
     ? focusedSpritz
     : null;
+  const provisioningStatusLine = getProvisioningStatusLine(provisioningSpritz);
 
   // Fetch agents and conversations
   const fetchAgents = useCallback(async () => {
@@ -441,7 +442,7 @@ export function ChatPage() {
               })()}
               {!selectedConversation && provisioningSpritz && (
                 <p className="m-0 truncate text-xs opacity-60">
-                  {provisioningSpritz.status?.message || 'Preparing the agent chat...'}
+                  {provisioningStatusLine}
                 </p>
               )}
             </div>
@@ -513,9 +514,9 @@ export function ChatPage() {
                 <p className="m-0 text-sm text-muted-foreground">
                   We will start a chat automatically as soon as it is ready.
                 </p>
-                {provisioningSpritz.status?.message && (
+                {provisioningStatusLine && (
                   <p className="m-0 text-xs text-muted-foreground">
-                    {provisioningSpritz.status.message}
+                    {provisioningStatusLine}
                   </p>
                 )}
               </div>
