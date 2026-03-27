@@ -109,7 +109,7 @@ function StatusPill({ status, tone }: { status: string; tone?: string }) {
       ? 'bg-[rgba(22,163,74,0.14)] text-[#166534]'
       : key === 'danger' || key === 'failed' || key === 'error'
         ? 'bg-[rgba(220,38,38,0.12)] text-[#991b1b]'
-        : 'bg-[rgba(55,130,255,0.12)] text-[#1c3f8a]';
+        : 'bg-[color-mix(in_srgb,var(--primary)_12%,transparent)] text-primary';
 
   return (
     <span className={cn('inline-flex items-center rounded-[var(--radius-2xl)] px-2 py-1 text-[11px] capitalize', colors)}>
