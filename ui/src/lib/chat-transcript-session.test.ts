@@ -33,6 +33,21 @@ describe('chat-transcript-session', () => {
     expect(session.transcript.messages[0].streaming).toBe(false);
   });
 
+  it('replaces stale local transcript state when canonical replay starts', () => {
+    const session = createChatTranscriptSession('');
+    applyChatTranscriptUpdate(session, {
+      sessionUpdate: 'agent_message_chunk',
+      content: 'Based on the German residence law documents...',
+    });
+    finalizePromptStreaming(session);
+
+    noteReplayState(session, true);
+
+    expect(session.transcript.messages).toEqual([]);
+    expect(session.cacheHydrated).toBe(false);
+    expect(session.replaySawTranscriptUpdate).toBe(false);
+  });
+
   it('drops stale cached state when replay had no transcript-bearing updates', () => {
     const session = createChatTranscriptSession('');
     session.cacheHydrated = true;
