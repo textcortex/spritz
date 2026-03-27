@@ -27,6 +27,31 @@ interface AgentGroup {
   conversations: ConversationInfo[];
 }
 
+const PROVISIONING_POLL_INTERVAL_MS = 2000;
+
+function isSpritzChatReady(spritz: Spritz | null | undefined): boolean {
+  if (!spritz) return false;
+  return spritz.status?.phase === 'Ready' && spritz.status?.acp?.state === 'ready';
+}
+
+function getConversationActivityTime(conversation: ConversationInfo): number {
+  const raw = String(conversation.status?.lastActivityAt || '').trim();
+  if (!raw) return Number.NEGATIVE_INFINITY;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+}
+
+function sortConversationsByRecency(conversations: ConversationInfo[]): ConversationInfo[] {
+  return [...conversations].sort((left, right) => {
+    const diff = getConversationActivityTime(right) - getConversationActivityTime(left);
+    return Number.isFinite(diff) ? diff : 0;
+  });
+}
+
+function getLatestConversation(conversations: ConversationInfo[]): ConversationInfo | null {
+  return sortConversationsByRecency(conversations)[0] || null;
+}
+
 export function ChatPage() {
   const { name, conversationId: urlConversationId } = useParams<{ name: string; conversationId: string }>();
   const navigate = useNavigate();
@@ -34,6 +59,7 @@ export function ChatPage() {
   const { showNotice } = useNotice();
 
   const [agents, setAgents] = useState<AgentGroup[]>([]);
+  const [spritzes, setSpritzes] = useState<Spritz[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedConversation, setSelectedConversation] = useState<ConversationInfo | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -44,20 +70,36 @@ export function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<ComposerHandle>(null);
   const selectedConversationRef = useRef<ConversationInfo | null>(null);
+  const autoCreatingConversationForRef = useRef<string | null>(null);
 
   selectedConversationRef.current = selectedConversation;
 
   const selectedSpritzName = selectedConversation?.spec?.spritzName || name || '';
   const selectedConversationId = selectedConversation?.metadata?.name || '';
+  const focusedSpritz = name
+    ? spritzes.find((spritz) => spritz.metadata.name === name) || null
+    : null;
+  const provisioningSpritz = focusedSpritz && !isSpritzChatReady(focusedSpritz)
+    ? focusedSpritz
+    : null;
 
   // Fetch agents and conversations
   const fetchAgents = useCallback(async () => {
     try {
-      const spritzes = await request<{ items: Spritz[] }>('/spritzes');
-      const items = spritzes?.items || [];
-      const acpReady = items.filter(
-        (s) => s.status?.phase === 'Ready' && s.status?.acp?.state === 'ready',
-      );
+      const spritzList = await request<{ items: Spritz[] }>('/spritzes');
+      let items = spritzList?.items || [];
+      if (name && !items.some((spritz) => spritz.metadata.name === name)) {
+        try {
+          const routeSpritz = await request<Spritz>(`/spritzes/${encodeURIComponent(name)}`);
+          if (routeSpritz?.metadata?.name === name) {
+            items = [routeSpritz, ...items];
+          }
+        } catch {
+          // Fall back to the list result when the route lookup is unavailable.
+        }
+      }
+      setSpritzes(items);
+      const acpReady = items.filter((spritz) => isSpritzChatReady(spritz));
 
       const groups: AgentGroup[] = await Promise.all(
         acpReady.map(async (spritz) => {
@@ -65,7 +107,10 @@ export function ChatPage() {
             const convData = await request<{ items: ConversationInfo[] }>(
               `/acp/conversations?spritz=${encodeURIComponent(spritz.metadata.name)}`,
             );
-            return { spritz, conversations: convData?.items || [] };
+            return {
+              spritz,
+              conversations: sortConversationsByRecency(convData?.items || []),
+            };
           } catch {
             return { spritz, conversations: [] };
           }
@@ -74,42 +119,74 @@ export function ChatPage() {
 
       setAgents(groups);
 
-      // Auto-select or auto-create conversation if name param matches a spritz
-      if (name) {
-        for (const group of groups) {
-          if (group.spritz.metadata.name === name) {
-            // If a specific conversation was requested via URL, prefer it
-            if (urlConversationId) {
-              const match = group.conversations.find((c) => c.metadata.name === urlConversationId);
-              if (match) {
-                setSelectedConversation(match);
-                break;
-              }
-            }
-            if (group.conversations.length > 0) {
-              const conv = group.conversations[0];
-              setSelectedConversation(conv);
-              navigate(chatConversationPath(name, conv.metadata.name), { replace: true });
-            } else {
-              // Auto-create a conversation for this spritz
-              try {
-                const conv = await request<ConversationInfo>('/acp/conversations', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ spritzName: name }),
-                });
-                if (conv) {
-                  group.conversations.push(conv);
-                  setSelectedConversation(conv);
-                  navigate(chatConversationPath(name, conv.metadata.name), { replace: true });
-                }
-              } catch {
-                // Failed to auto-create, user can do it manually
-              }
-            }
-            break;
-          }
+      if (!name) {
+        return;
+      }
+
+      const routeSpritz = items.find((spritz) => spritz.metadata.name === name);
+      if (!routeSpritz) {
+        setSelectedConversation(null);
+        return;
+      }
+      if (!isSpritzChatReady(routeSpritz)) {
+        setSelectedConversation(null);
+        return;
+      }
+
+      const group = groups.find((entry) => entry.spritz.metadata.name === name);
+      if (!group) {
+        setSelectedConversation(null);
+        return;
+      }
+
+      if (urlConversationId) {
+        const match = group.conversations.find((conversation) => conversation.metadata.name === urlConversationId);
+        if (match) {
+          setSelectedConversation(match);
+          return;
         }
+      }
+
+      const latestConversation = getLatestConversation(group.conversations);
+      if (latestConversation) {
+        setSelectedConversation(latestConversation);
+        if (urlConversationId !== latestConversation.metadata.name) {
+          navigate(chatConversationPath(name, latestConversation.metadata.name), { replace: true });
+        }
+        return;
+      }
+
+      if (autoCreatingConversationForRef.current === name) {
+        return;
+      }
+
+      autoCreatingConversationForRef.current = name;
+      setCreatingConversationFor(name);
+      try {
+        const conv = await request<ConversationInfo>('/acp/conversations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ spritzName: name }),
+        });
+        if (conv) {
+          setAgents((currentGroups) =>
+            currentGroups.map((currentGroup) =>
+              currentGroup.spritz.metadata.name === name
+                ? {
+                    ...currentGroup,
+                    conversations: sortConversationsByRecency([...currentGroup.conversations, conv]),
+                  }
+                : currentGroup,
+            ),
+          );
+          setSelectedConversation(conv);
+          navigate(chatConversationPath(name, conv.metadata.name), { replace: true });
+        }
+      } catch (err) {
+        showNotice(err instanceof Error ? err.message : 'Failed to start a conversation.');
+      } finally {
+        autoCreatingConversationForRef.current = null;
+        setCreatingConversationFor((current) => (current === name ? null : current));
       }
     } catch (err) {
       showNotice(err instanceof Error ? err.message : 'Failed to load agents.');
@@ -121,6 +198,22 @@ export function ChatPage() {
   useEffect(() => {
     fetchAgents();
   }, [fetchAgents]);
+
+  useEffect(() => {
+    if (!provisioningSpritz) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void fetchAgents();
+    }, PROVISIONING_POLL_INTERVAL_MS);
+    return () => window.clearTimeout(timer);
+  }, [
+    fetchAgents,
+    provisioningSpritz?.metadata.name,
+    provisioningSpritz?.status?.phase,
+    provisioningSpritz?.status?.acp?.state,
+    provisioningSpritz?.status?.message,
+  ]);
 
   const applyConversationTitle = useCallback((conversationId: string, title?: string | null) => {
     const normalized = String(title || '').trim();
@@ -166,6 +259,16 @@ export function ChatPage() {
     }
     setComposerText(readChatDraft(selectedSpritzName, selectedConversationId) || '');
   }, [selectedSpritzName, selectedConversationId]);
+
+  useEffect(() => {
+    if (!name || !selectedConversation) return;
+    const conversationSpritzName = selectedConversation.spec?.spritzName || name;
+    const targetConversationId = selectedConversation.metadata?.name || '';
+    if (conversationSpritzName !== name || !targetConversationId || urlConversationId === targetConversationId) {
+      return;
+    }
+    navigate(chatConversationPath(name, targetConversationId), { replace: true });
+  }, [name, navigate, selectedConversation, urlConversationId]);
 
   useEffect(() => {
     if (!selectedSpritzName || !selectedConversationId) return;
@@ -300,6 +403,8 @@ export function ChatPage() {
           onSelectConversation={handleSelectConversation}
           onNewConversation={handleNewConversation}
           creatingConversationFor={creatingConversationFor}
+          focusedSpritzName={name || null}
+          focusedSpritz={focusedSpritz}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
         mobileOpen={mobileMenuOpen}
@@ -320,7 +425,10 @@ export function ChatPage() {
             </button>
             <div className="min-w-0 flex-1">
               <h2 className="m-0 truncate text-sm font-medium">
-                {selectedConversation?.spec?.title || selectedConversation?.metadata?.name || 'Select a conversation'}
+                {selectedConversation?.spec?.title
+                  || selectedConversation?.metadata?.name
+                  || focusedSpritz?.metadata?.name
+                  || 'Select a conversation'}
               </h2>
               {selectedConversation && (() => {
                 const spritzName = selectedConversation.spec?.spritzName || '';
@@ -331,6 +439,11 @@ export function ChatPage() {
                   <p className="m-0 truncate text-xs opacity-60">{parts.join(' · ')}</p>
                 ) : null;
               })()}
+              {!selectedConversation && provisioningSpritz && (
+                <p className="m-0 truncate text-xs opacity-60">
+                  {provisioningSpritz.status?.message || 'Preparing the agent chat...'}
+                </p>
+              )}
             </div>
             <div className="flex shrink-0 gap-2">
               <Tooltip>
@@ -394,9 +507,23 @@ export function ChatPage() {
         {/* Messages area */}
         <div role="log" aria-label="Chat messages" aria-live="polite" className="flex flex-1 flex-col overflow-auto px-6 pt-7 pb-3" style={{ scrollbarGutter: 'stable' }}>
           {!selectedConversation ? (
-            <div className="m-auto max-w-[420px] text-center text-sm opacity-70">
-              Select a conversation or create a new instance.
-            </div>
+            provisioningSpritz ? (
+              <div className="m-auto flex max-w-[540px] flex-col gap-1.5 text-center">
+                <strong className="block text-base font-medium">Your agent is being created now</strong>
+                <p className="m-0 text-sm text-muted-foreground">
+                  We will start a chat automatically as soon as it is ready.
+                </p>
+                {provisioningSpritz.status?.message && (
+                  <p className="m-0 text-xs text-muted-foreground">
+                    {provisioningSpritz.status.message}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="m-auto max-w-[420px] text-center text-sm opacity-70">
+                Select a conversation or create a new instance.
+              </div>
+            )
           ) : transcript.messages.length === 0 ? (
             <div className="m-auto flex max-w-[540px] flex-col gap-1.5 text-center">
               <strong className="block text-base font-medium">Start a conversation</strong>
