@@ -249,7 +249,10 @@ export function useChatConnection({
           },
           onReplayStateChange: (replaying) => {
             if (cancelled) return;
-            noteReplayState(transcriptSessionRef.current, replaying);
+            const nextTranscript = noteReplayState(transcriptSessionRef.current, replaying);
+            if (replaying && nextTranscript) {
+              syncTranscript(nextTranscript);
+            }
           },
           onUpdate: (update, updateOptions) => {
             if (cancelled) return;

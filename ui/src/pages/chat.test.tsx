@@ -759,6 +759,51 @@ describe('ChatPage draft persistence', () => {
     });
   });
 
+  it('replaces stale live assistant turns with canonical replay order on reconnect', async () => {
+    await renderChat('/c/covo/conv-1');
+
+    act(() => {
+      emitUpdate({
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Based on the German residence law documents...' },
+      });
+    });
+
+    await waitFor(() => {
+      const messages = screen.getAllByTestId('chat-message').map((element) => element.textContent);
+      expect(messages).toEqual(['assistant:Based on the German residence law documents...']);
+    });
+
+    act(() => {
+      emitReplayState(true);
+      emitUpdate({
+        sessionUpdate: 'agent_message_chunk',
+        historyMessageId: 'assistant-1',
+        content: { type: 'text', text: 'I need to clarify: tc is the TextCortex CLI.' },
+      }, { historical: true });
+      emitUpdate({
+        sessionUpdate: 'agent_message_chunk',
+        historyMessageId: 'assistant-2',
+        content: { type: 'text', text: "You're right — `tc kb search` lets you search your own knowledge bases." },
+      }, { historical: true });
+      emitUpdate({
+        sessionUpdate: 'agent_message_chunk',
+        historyMessageId: 'assistant-3',
+        content: { type: 'text', text: 'Based on the German residence law documents...' },
+      }, { historical: true });
+      emitReplayState(false);
+    });
+
+    await waitFor(() => {
+      const messages = screen.getAllByTestId('chat-message').map((element) => element.textContent);
+      expect(messages).toEqual([
+        'assistant:I need to clarify: tc is the TextCortex CLI.',
+        "assistant:You're right — `tc kb search` lets you search your own knowledge bases.",
+        'assistant:Based on the German residence law documents...',
+      ]);
+    });
+  });
+
   it('restores the original conversation draft when send fails after switching chats', async () => {
     const user = userEvent.setup();
     const deferred = createDeferred<unknown>();

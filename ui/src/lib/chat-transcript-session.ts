@@ -44,10 +44,30 @@ export function replaceChatTranscriptSession(conversationId: string): ChatTransc
 /**
  * Resets replay bookkeeping when ACP begins replaying historical updates.
  */
-export function noteReplayState(session: ChatTranscriptSession, replaying: boolean): void {
-  if (replaying) {
-    session.replaySawTranscriptUpdate = false;
+export function noteReplayState(session: ChatTranscriptSession, replaying: boolean): ACPTranscript | null {
+  if (!replaying) {
+    return null;
   }
+
+  session.replaySawTranscriptUpdate = false;
+
+  const shouldReplaceTranscript =
+    session.cacheHydrated ||
+    session.transcript.messages.length > 0 ||
+    session.transcript.thinkingChunks.length > 0 ||
+    session.transcript.availableCommands.length > 0 ||
+    session.transcript.currentMode !== '' ||
+    session.transcript.usage !== null;
+
+  if (!shouldReplaceTranscript) {
+    return null;
+  }
+
+  // Backend replay is the source of truth, so drop any cached/live transcript
+  // state before historical updates start arriving.
+  session.transcript = createTranscript();
+  session.cacheHydrated = false;
+  return session.transcript;
 }
 
 /**
