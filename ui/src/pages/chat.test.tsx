@@ -2,7 +2,7 @@ import type React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vite-plus/test';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { createMockStorage } from '@/test/helpers';
 import { ConfigProvider, config, resolveConfig, type RawSpritzConfig } from '@/lib/config';
 import { NoticeProvider } from '@/components/notice-banner';
@@ -179,12 +179,22 @@ vi.mock('@/components/acp/sidebar', () => ({
     agents,
     selectedConversationId,
     onSelectConversation,
+    focusedSpritzName,
+    focusedSpritz,
   }: {
     agents: Array<{ spritz: { metadata: { name: string } }; conversations: Array<{ metadata: { name: string }; spec?: { title?: string } }> }>;
     selectedConversationId: string | null;
     onSelectConversation: (conversation: { metadata: { name: string } }) => void;
+    focusedSpritzName?: string | null;
+    focusedSpritz?: { metadata: { name: string } } | null;
   }) => (
     <div>
+      <div data-testid="sidebar-agent-order">
+        {agents.map((group) => group.spritz.metadata.name).join(',')}
+      </div>
+      <div data-testid="sidebar-focused-spritz">
+        {focusedSpritz?.metadata?.name || focusedSpritzName || ''}
+      </div>
       {agents.flatMap((group) =>
         group.conversations.map((conversation) => (
           <div key={conversation.metadata.name}>
@@ -256,11 +266,50 @@ const CONVERSATIONS = [
   },
 ];
 
+function createSpritz(
+  overrides: {
+    metadata?: Partial<{ name: string; namespace: string }>;
+    spec?: Partial<{ image: string }>;
+    status?: Partial<{
+      phase: string;
+      message: string;
+      acp: {
+        state: string;
+        agentInfo?: {
+          name?: string;
+          title?: string;
+          version?: string;
+        };
+      };
+    }>;
+  } = {},
+) {
+  return {
+    metadata: {
+      name: 'covo',
+      namespace: 'default',
+      ...(overrides.metadata || {}),
+    },
+    spec: {
+      image: 'example.com/covo:latest',
+      ...(overrides.spec || {}),
+    },
+    status: {
+      phase: 'Ready',
+      acp: {
+        state: 'ready',
+        agentInfo: { version: '1.0.0' },
+      },
+      ...(overrides.status || {}),
+    },
+  };
+}
+
 function createConversation(
   overrides: Partial<(typeof CONVERSATIONS)[number]> & {
     metadata?: Partial<(typeof CONVERSATIONS)[number]['metadata']>;
     spec?: Partial<(typeof CONVERSATIONS)[number]['spec']>;
-    status?: Partial<(typeof CONVERSATIONS)[number]['status']>;
+    status?: Partial<(typeof CONVERSATIONS)[number]['status'] & { lastActivityAt?: string }>;
   } = {},
 ) {
   return {
@@ -278,17 +327,16 @@ function createConversation(
   };
 }
 
-function setupRequestMock(conversations = CONVERSATIONS) {
+function setupRequestMock({
+  spritzes = [createSpritz()],
+  conversations = CONVERSATIONS,
+}: {
+  spritzes?: ReturnType<typeof createSpritz>[];
+  conversations?: typeof CONVERSATIONS;
+} = {}) {
   requestMock.mockImplementation((path: string, options?: { method?: string }) => {
     if (path === '/spritzes') {
-      return Promise.resolve({
-        items: [
-          {
-            metadata: { name: 'covo' },
-            status: { phase: 'Ready', acp: { state: 'ready', agentInfo: { version: '1.0.0' } } },
-          },
-        ],
-      });
+      return Promise.resolve({ items: spritzes });
     }
     if (path === '/acp/conversations?spritz=covo') {
       return Promise.resolve({ items: conversations });
@@ -309,7 +357,7 @@ function setupBootstrapRetryMock(conversationId: string, title: string) {
     spec: { sessionId: '', title, spritzName: 'covo' },
     status: { bindingState: 'pending' },
   });
-  setupRequestMock([conversation]);
+  setupRequestMock({ conversations: [conversation] });
   requestMock.mockImplementation((path: string, options?: { method?: string }) => {
     if (path === '/spritzes') {
       return Promise.resolve({
@@ -346,7 +394,7 @@ function setupBootstrapTerminalFailureMock(conversationId: string, title: string
     spec: { sessionId: '', title, spritzName: 'covo' },
     status: { bindingState: 'pending' },
   });
-  setupRequestMock([conversation]);
+  setupRequestMock({ conversations: [conversation] });
   requestMock.mockImplementation((path: string, options?: { method?: string }) => {
     if (path === '/spritzes') {
       return Promise.resolve({
@@ -378,12 +426,18 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-async function renderChat(route: string, rawConfig?: RawSpritzConfig) {
+function LocationDisplay() {
+  const location = useLocation();
+  return <div data-testid="location-path">{location.pathname}</div>;
+}
+
+function renderChatPage(route: string, rawConfig?: RawSpritzConfig) {
   const resolvedConfig = rawConfig ? resolveConfig({ ...config, ...rawConfig }) : config;
-  render(
+  return render(
     <MemoryRouter initialEntries={[route]}>
       <ConfigProvider value={resolvedConfig}>
         <NoticeProvider>
+          <LocationDisplay />
           <Routes>
             <Route path="/c/:name/:conversationId" element={<ChatPage />} />
             <Route path="/c/:name" element={<ChatPage />} />
@@ -393,12 +447,17 @@ async function renderChat(route: string, rawConfig?: RawSpritzConfig) {
       </ConfigProvider>
     </MemoryRouter>,
   );
+}
+
+async function renderChat(route: string, rawConfig?: RawSpritzConfig) {
+  renderChatPage(route, rawConfig);
   await screen.findByLabelText('Message input');
   await waitFor(() => expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).disabled).toBe(false));
 }
 
 describe('ChatPage draft persistence', () => {
   beforeEach(() => {
+    vi.useRealTimers();
     Object.defineProperty(globalThis, 'localStorage', { value: createMockStorage(), writable: true });
     Object.defineProperty(globalThis, 'sessionStorage', { value: createMockStorage(), writable: true });
     Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
@@ -594,6 +653,140 @@ describe('ChatPage draft persistence', () => {
       expect(countBootstrapCalls('conv-focus')).toBe(2);
       expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).disabled).toBe(false);
     });
+  });
+
+  it('shows a provisioning state for direct agent chat routes before ACP is ready', async () => {
+    setupRequestMock({
+      spritzes: [
+        createSpritz({
+          status: {
+            phase: 'Provisioning',
+            message: 'Allocating the instance.',
+            acp: { state: 'starting' },
+          },
+        }),
+      ],
+      conversations: [],
+    });
+
+    renderChatPage('/c/covo');
+
+    expect(await screen.findByText('Your agent is being created now')).toBeTruthy();
+    expect(screen.getByText('We will start a chat automatically as soon as it is ready.')).toBeTruthy();
+    expect(screen.getAllByText('Allocating the instance.').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('sidebar-focused-spritz').textContent).toBe('covo');
+  });
+
+  it('shows a provisioning state when the route spritz is only resolvable by direct lookup', async () => {
+    requestMock.mockImplementation((path: string) => {
+      if (path === '/spritzes') {
+        return Promise.resolve({ items: [] });
+      }
+      if (path === '/spritzes/zeno-ken-bison') {
+        return Promise.resolve(
+          createSpritz({
+            metadata: { name: 'zeno-ken-bison' },
+            status: {
+              phase: 'Provisioning',
+              message: 'Creating your agent instance.',
+              acp: { state: 'starting' },
+            },
+          }),
+        );
+      }
+      return Promise.resolve({});
+    });
+
+    renderChatPage('/c/zeno-ken-bison');
+
+    expect(await screen.findByText('Your agent is being created now')).toBeTruthy();
+    expect(screen.getAllByText('Creating your agent instance.').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Select a conversation or create a new instance.')).toBeNull();
+  });
+
+  it('automatically creates and opens a conversation once a provisioning agent becomes ready', async () => {
+    const createdConversation = createConversation({
+      metadata: { name: 'conv-created' },
+      spec: { sessionId: 'sess-created', title: 'Created automatically', spritzName: 'covo' },
+      status: { bindingState: 'active', lastActivityAt: '2026-03-27T10:05:00Z' },
+    });
+    let spritzRequestCount = 0;
+    requestMock.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === '/spritzes') {
+        spritzRequestCount += 1;
+        return Promise.resolve({
+          items: [
+            spritzRequestCount === 1
+              ? createSpritz({
+                  status: {
+                    phase: 'Provisioning',
+                    message: 'Allocating the instance.',
+                    acp: { state: 'starting' },
+                  },
+                })
+              : createSpritz(),
+          ],
+        });
+      }
+      if (path === '/acp/conversations?spritz=covo') {
+        return Promise.resolve({ items: [] });
+      }
+      if (path === '/acp/conversations' && options?.method === 'POST') {
+        return Promise.resolve(createdConversation);
+      }
+      return Promise.resolve({});
+    });
+    const realSetTimeout = window.setTimeout.bind(window);
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout').mockImplementation(((
+      handler: TimerHandler,
+      timeout?: number,
+      ...args: unknown[]
+    ) => {
+      if (timeout === 2000 && typeof handler === 'function') {
+        queueMicrotask(() => {
+          handler(...args as []);
+        });
+        return 1 as unknown as number;
+      }
+      return realSetTimeout(handler, timeout, ...(args as []));
+    }) as typeof window.setTimeout);
+
+    try {
+      renderChatPage('/c/covo');
+      await waitFor(() => {
+        expect(requestMock).toHaveBeenCalledWith(
+          '/acp/conversations',
+          expect.objectContaining({ method: 'POST' }),
+        );
+      });
+      await waitFor(() => {
+        expect((screen.getByTestId('selected-conversation') as HTMLDivElement).textContent).toBe('conv-created');
+      });
+      expect((screen.getByTestId('selected-conversation') as HTMLDivElement).textContent).toBe('conv-created');
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
+  it('opens the latest conversation when an agent chat route omits the conversation id', async () => {
+    setupRequestMock({
+      conversations: [
+        createConversation({
+          metadata: { name: 'conv-older' },
+          spec: { sessionId: 'sess-older', title: 'Older conversation', spritzName: 'covo' },
+          status: { bindingState: 'active', lastActivityAt: '2026-03-26T08:00:00Z' },
+        }),
+        createConversation({
+          metadata: { name: 'conv-latest' },
+          spec: { sessionId: 'sess-latest', title: 'Latest conversation', spritzName: 'covo' },
+          status: { bindingState: 'active', lastActivityAt: '2026-03-27T09:30:00Z' },
+        }),
+      ],
+    });
+
+    await renderChat('/c/covo');
+
+    expect((screen.getByTestId('selected-conversation') as HTMLDivElement).textContent).toBe('conv-latest');
   });
 
   it('restores the draft after remounting the same conversation route', async () => {
