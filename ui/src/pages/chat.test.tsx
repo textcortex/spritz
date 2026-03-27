@@ -1,21 +1,49 @@
 import type React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vite-plus/test';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { createMockStorage } from '@/test/helpers';
-import { ConfigProvider, config } from '@/lib/config';
+import { ConfigProvider, config, resolveConfig, type RawSpritzConfig } from '@/lib/config';
 import { NoticeProvider } from '@/components/notice-banner';
 import { ChatPage } from './chat';
 
-const { requestMock, sendPromptMock, emitUpdate, emitReplayState, setUpdateHandler, setReplayStateHandler } = vi.hoisted(() => {
+const {
+  requestMock,
+  sendPromptMock,
+  emitUpdate,
+  emitReplayState,
+  setUpdateHandler,
+  setReplayStateHandler,
+  getAuthTokenMock,
+  setAuthToken,
+  refreshAuthTokenForWebSocketMock,
+  setRefreshAuthResult,
+  setACPStartReady,
+  setACPStartPending,
+  closeLastACPConnection,
+  getACPStartReady,
+  getACPStartPending,
+  captureACPOptions,
+  getLastACPOptions,
+  setCloseLastACPConnection,
+  resetACPMockState,
+  showNoticeMock,
+} = vi.hoisted(() => {
   let updateHandler:
     | ((update: Record<string, unknown>, options?: { historical?: boolean }) => void)
     | undefined;
   let replayStateHandler: ((replaying: boolean) => void) | undefined;
+  let authToken = '';
+  let refreshResult = { token: '', refreshed: false };
+  let acpStartReady = true;
+  let acpStartPending = false;
+  let lastACPOptions: Record<string, unknown> | null = null;
+  let closeLastACPConnection: (() => void) | null = null;
   return {
     requestMock: vi.fn(),
     sendPromptMock: vi.fn(),
+    showNoticeMock: vi.fn(),
     emitUpdate: (update: Record<string, unknown>, options?: { historical?: boolean }) => {
       updateHandler?.(update, options);
     },
@@ -30,11 +58,50 @@ const { requestMock, sendPromptMock, emitUpdate, emitReplayState, setUpdateHandl
     setReplayStateHandler: (handler?: (replaying: boolean) => void) => {
       replayStateHandler = handler;
     },
+    getAuthTokenMock: () => authToken,
+    setAuthToken: (value: string) => {
+      authToken = value;
+    },
+    refreshAuthTokenForWebSocketMock: vi.fn(async () => refreshResult),
+    setRefreshAuthResult: (value: { token: string; refreshed: boolean }) => {
+      refreshResult = value;
+    },
+    setACPStartReady: (value: boolean) => {
+      acpStartReady = value;
+    },
+    setACPStartPending: (value: boolean) => {
+      acpStartPending = value;
+    },
+    captureACPOptions: (options: Record<string, unknown>) => {
+      lastACPOptions = options;
+    },
+    getLastACPOptions: () => lastACPOptions,
+    closeLastACPConnection: () => {
+      closeLastACPConnection?.();
+    },
+    resetACPMockState: () => {
+      authToken = '';
+      refreshResult = { token: '', refreshed: false };
+      acpStartReady = true;
+      acpStartPending = false;
+      lastACPOptions = null;
+      closeLastACPConnection = null;
+      updateHandler = undefined;
+      replayStateHandler = undefined;
+    },
+    getACPStartReady: () => acpStartReady,
+    getACPStartPending: () => acpStartPending,
+    setCloseLastACPConnection: (handler: (() => void) | null) => {
+      closeLastACPConnection = handler;
+    },
   };
 });
 
 vi.mock('@/lib/api', () => ({
   request: requestMock,
+  getAuthToken: getAuthTokenMock,
+  refreshAuthTokenForWebSocket: refreshAuthTokenForWebSocketMock,
+  authBearerTokenParam: 'token',
 }));
 
 vi.mock('@/lib/acp-client', () => ({
@@ -49,30 +116,51 @@ vi.mock('@/lib/acp-client', () => ({
     return '';
   },
   createACPClient: ({
+    wsUrl,
     onReadyChange,
     onStatus,
     onUpdate,
     onReplayStateChange,
+    onClose,
+    ...rest
   }: {
+    wsUrl: string;
     onReadyChange?: (ready: boolean) => void;
     onStatus?: (status: string) => void;
     onUpdate?: (update: Record<string, unknown>, options?: { historical?: boolean }) => void;
     onReplayStateChange?: (replaying: boolean) => void;
+    onClose?: (reason?: string) => void;
   }) => {
+    captureACPOptions({ wsUrl, ...rest });
     setUpdateHandler(onUpdate);
     setReplayStateHandler(onReplayStateChange);
+    let ready = false;
+    const closeConnection = () => {
+      ready = false;
+      onReadyChange?.(false);
+      onClose?.('ACP connection closed.');
+    };
+    setCloseLastACPConnection(closeConnection);
     return {
       start: vi.fn(async () => {
+        if (getACPStartPending()) {
+          await new Promise<void>(() => {});
+          return;
+        }
+        if (!getACPStartReady()) return;
+        ready = true;
         onStatus?.('Connected');
         onReadyChange?.(true);
       }),
       getConversationId: () => 'conv-1',
       getSessionId: () => 'sess-1',
       matchesConversation: () => true,
-      isReady: () => true,
+      isReady: () => ready,
       sendPrompt: sendPromptMock,
       cancelPrompt: vi.fn(),
       dispose: vi.fn(() => {
+        ready = false;
+        setCloseLastACPConnection(null);
         setUpdateHandler(undefined);
         setReplayStateHandler(undefined);
       }),
@@ -84,7 +172,7 @@ vi.mock('@/components/notice-banner', async () => {
   const actual = await vi.importActual<typeof import('@/components/notice-banner')>('@/components/notice-banner');
   return {
     ...actual,
-    useNotice: () => ({ showNotice: vi.fn() }),
+    useNotice: () => ({ showNotice: showNoticeMock }),
   };
 });
 
@@ -93,12 +181,22 @@ vi.mock('@/components/acp/sidebar', () => ({
     agents,
     selectedConversationId,
     onSelectConversation,
+    focusedSpritzName,
+    focusedSpritz,
   }: {
     agents: Array<{ spritz: { metadata: { name: string } }; conversations: Array<{ metadata: { name: string }; spec?: { title?: string } }> }>;
     selectedConversationId: string | null;
     onSelectConversation: (conversation: { metadata: { name: string } }) => void;
+    focusedSpritzName?: string | null;
+    focusedSpritz?: { metadata: { name: string } } | null;
   }) => (
     <div>
+      <div data-testid="sidebar-agent-order">
+        {agents.map((group) => group.spritz.metadata.name).join(',')}
+      </div>
+      <div data-testid="sidebar-focused-spritz">
+        {focusedSpritz?.metadata?.name || focusedSpritzName || ''}
+      </div>
       {agents.flatMap((group) =>
         group.conversations.map((conversation) => (
           <div key={conversation.metadata.name}>
@@ -170,7 +268,98 @@ const CONVERSATIONS = [
   },
 ];
 
-function setupRequestMock() {
+function createSpritz(
+  overrides: {
+    metadata?: Partial<{ name: string; namespace: string }>;
+    spec?: Partial<{ image: string }>;
+    status?: Partial<{
+      phase: string;
+      message: string;
+      acp: {
+        state: string;
+        agentInfo?: {
+          name?: string;
+          title?: string;
+          version?: string;
+        };
+      };
+    }>;
+  } = {},
+) {
+  return {
+    metadata: {
+      name: 'covo',
+      namespace: 'default',
+      ...(overrides.metadata || {}),
+    },
+    spec: {
+      image: 'example.com/covo:latest',
+      ...(overrides.spec || {}),
+    },
+    status: {
+      phase: 'Ready',
+      acp: {
+        state: 'ready',
+        agentInfo: { version: '1.0.0' },
+      },
+      ...(overrides.status || {}),
+    },
+  };
+}
+
+function createConversation(
+  overrides: Partial<(typeof CONVERSATIONS)[number]> & {
+    metadata?: Partial<(typeof CONVERSATIONS)[number]['metadata']>;
+    spec?: Partial<(typeof CONVERSATIONS)[number]['spec']>;
+    status?: Partial<(typeof CONVERSATIONS)[number]['status'] & { lastActivityAt?: string }>;
+  } = {},
+) {
+  return {
+    metadata: { name: 'conv-1', ...(overrides.metadata || {}) },
+    spec: {
+      sessionId: 'sess-1',
+      title: 'Conversation One',
+      spritzName: 'covo',
+      ...(overrides.spec || {}),
+    },
+    status: {
+      bindingState: 'active',
+      ...(overrides.status || {}),
+    },
+  };
+}
+
+function setupRequestMock({
+  spritzes = [createSpritz()],
+  conversations = CONVERSATIONS,
+}: {
+  spritzes?: ReturnType<typeof createSpritz>[];
+  conversations?: typeof CONVERSATIONS;
+} = {}) {
+  requestMock.mockImplementation((path: string, options?: { method?: string }) => {
+    if (path === '/spritzes') {
+      return Promise.resolve({ items: spritzes });
+    }
+    if (path === '/acp/conversations?spritz=covo') {
+      return Promise.resolve({ items: conversations });
+    }
+    return Promise.resolve({});
+  });
+}
+
+function countBootstrapCalls(conversationId: string) {
+  return requestMock.mock.calls.filter(
+    ([path, options]) => path === `/acp/conversations/${conversationId}/bootstrap` && options?.method === 'POST',
+  ).length;
+}
+
+function setupBootstrapRetryMock(conversationId: string, title: string) {
+  const conversation = createConversation({
+    metadata: { name: conversationId },
+    spec: { sessionId: '', title, spritzName: 'covo' },
+    status: { bindingState: 'pending' },
+  });
+  setupRequestMock({ conversations: [conversation] });
   requestMock.mockImplementation((path: string, options?: { method?: string }) => {
     if (path === '/spritzes') {
       return Promise.resolve({
@@ -183,7 +372,47 @@ function setupRequestMock() {
       });
     }
     if (path === '/acp/conversations?spritz=covo') {
-      return Promise.resolve({ items: CONVERSATIONS });
+      return Promise.resolve({ items: [conversation] });
+    }
+    if (path === `/acp/conversations/${conversationId}/bootstrap` && options?.method === 'POST') {
+      if (countBootstrapCalls(conversationId) === 1) {
+        return Promise.reject(new Error('HTTP 525 · example.com · Cloudflare'));
+      }
+      return Promise.resolve({ effectiveSessionId: `${conversationId}-session-2` });
+    }
+    return Promise.resolve({});
+  });
+}
+
+function createApiError(message: string, status: number) {
+  const error = new Error(message) as Error & { status: number };
+  error.status = status;
+  return error;
+}
+
+function setupBootstrapTerminalFailureMock(conversationId: string, title: string) {
+  const conversation = createConversation({
+    metadata: { name: conversationId },
+    spec: { sessionId: '', title, spritzName: 'covo' },
+    status: { bindingState: 'pending' },
+  });
+  setupRequestMock({ conversations: [conversation] });
+  requestMock.mockImplementation((path: string, options?: { method?: string }) => {
+    if (path === '/spritzes') {
+      return Promise.resolve({
+        items: [
+          {
+            metadata: { name: 'covo' },
+            status: { phase: 'Ready', acp: { state: 'ready', agentInfo: { version: '1.0.0' } } },
+          },
+        ],
+      });
+    }
+    if (path === '/acp/conversations?spritz=covo') {
+      return Promise.resolve({ items: [conversation] });
+    }
+    if (path === `/acp/conversations/${conversationId}/bootstrap` && options?.method === 'POST') {
+      return Promise.reject(createApiError('Conversation not found.', 404));
     }
     return Promise.resolve({});
   });
@@ -199,11 +428,18 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-async function renderChat(route: string) {
-  render(
+function LocationDisplay() {
+  const location = useLocation();
+  return <div data-testid="location-path">{location.pathname}</div>;
+}
+
+function renderChatPage(route: string, rawConfig?: RawSpritzConfig) {
+  const resolvedConfig = rawConfig ? resolveConfig({ ...config, ...rawConfig }) : config;
+  return render(
     <MemoryRouter initialEntries={[route]}>
-      <ConfigProvider value={config}>
+      <ConfigProvider value={resolvedConfig}>
         <NoticeProvider>
+          <LocationDisplay />
           <Routes>
             <Route path="/c/:name/:conversationId" element={<ChatPage />} />
             <Route path="/c/:name" element={<ChatPage />} />
@@ -213,12 +449,17 @@ async function renderChat(route: string) {
       </ConfigProvider>
     </MemoryRouter>,
   );
+}
+
+async function renderChat(route: string, rawConfig?: RawSpritzConfig) {
+  renderChatPage(route, rawConfig);
   await screen.findByLabelText('Message input');
   await waitFor(() => expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).disabled).toBe(false));
 }
 
 describe('ChatPage draft persistence', () => {
   beforeEach(() => {
+    vi.useRealTimers();
     Object.defineProperty(globalThis, 'localStorage', { value: createMockStorage(), writable: true });
     Object.defineProperty(globalThis, 'sessionStorage', { value: createMockStorage(), writable: true });
     Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
@@ -227,10 +468,484 @@ describe('ChatPage draft persistence', () => {
     });
     requestMock.mockReset();
     sendPromptMock.mockReset();
-    setUpdateHandler(undefined);
-    setReplayStateHandler(undefined);
+    showNoticeMock.mockReset();
+    refreshAuthTokenForWebSocketMock.mockClear();
+    resetACPMockState();
     sendPromptMock.mockResolvedValue({});
     setupRequestMock();
+  });
+
+  it('keeps ACP websocket connections on the current host by default', async () => {
+    setAuthToken('external-ui-token');
+
+    await renderChat('/c/covo/conv-1', {
+      apiBaseUrl: 'https://spritz.example.com/api',
+      auth: {
+        mode: 'bearer',
+        tokenStorageKeys: 'spritz-token',
+      },
+    });
+
+    await waitFor(() => {
+      expect(getLastACPOptions()?.wsUrl).toBe(
+        'ws://localhost:3000/api/acp/conversations/conv-1/connect?token=external-ui-token',
+      );
+    });
+  });
+
+  it('uses an explicit websocket base url for cross-host ACP websocket connections', async () => {
+    setAuthToken('external-ui-token');
+
+    await renderChat('/c/covo/conv-1', {
+      apiBaseUrl: 'https://spritz.example.com/api',
+      websocketBaseUrl: 'https://spritz.example.com/api',
+      auth: {
+        mode: 'bearer',
+        tokenStorageKeys: 'spritz-token',
+      },
+    });
+
+    await waitFor(() => {
+      expect(getLastACPOptions()?.wsUrl).toBe(
+        'wss://spritz.example.com/api/acp/conversations/conv-1/connect?token=external-ui-token',
+      );
+    });
+  });
+
+  it('refreshes bearer auth and reconnects ACP websocket when the socket closes before ready', async () => {
+    setACPStartPending(true);
+    setAuthToken('expired-token');
+    setRefreshAuthResult({ token: 'refreshed-token', refreshed: true });
+    refreshAuthTokenForWebSocketMock.mockImplementation(async () => {
+      setAuthToken('refreshed-token');
+      setACPStartPending(false);
+      return { token: 'refreshed-token', refreshed: true };
+    });
+
+    const resolvedConfig = resolveConfig({
+      ...config,
+      apiBaseUrl: 'https://spritz.example.com/api',
+      websocketBaseUrl: 'https://spritz.example.com/api',
+      auth: {
+        mode: 'bearer',
+        tokenStorageKeys: 'spritz-token',
+        refresh: {
+          enabled: 'true',
+          url: '/oauth/refresh',
+          tokenStorageKeys: 'spritz-refresh-token',
+        },
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/c/covo/conv-1']}>
+        <ConfigProvider value={resolvedConfig}>
+          <NoticeProvider>
+            <Routes>
+              <Route path="/c/:name/:conversationId" element={<ChatPage />} />
+            </Routes>
+          </NoticeProvider>
+        </ConfigProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(getLastACPOptions()?.wsUrl).toBe(
+        'wss://spritz.example.com/api/acp/conversations/conv-1/connect?token=expired-token',
+      );
+    });
+
+    act(() => {
+      closeLastACPConnection();
+    });
+
+    await waitFor(() => {
+      expect(refreshAuthTokenForWebSocketMock).toHaveBeenCalledTimes(1);
+      expect(getLastACPOptions()?.wsUrl).toBe(
+        'wss://spritz.example.com/api/acp/conversations/conv-1/connect?token=refreshed-token',
+      );
+    });
+  });
+
+  it('retries bootstrap failures automatically and recovers without a refresh', async () => {
+    setupBootstrapRetryMock('conv-bootstrap', 'Bootstrap Me');
+
+    render(
+      <MemoryRouter initialEntries={['/c/covo/conv-bootstrap']}>
+        <ConfigProvider value={config}>
+          <NoticeProvider>
+            <Routes>
+              <Route path="/c/:name/:conversationId" element={<ChatPage />} />
+            </Routes>
+          </NoticeProvider>
+        </ConfigProvider>
+      </MemoryRouter>,
+    );
+
+    await screen.findByLabelText('Message input');
+    await waitFor(() => {
+      expect(screen.getByText('HTTP 525 · example.com · Cloudflare Retrying…')).toBeTruthy();
+    });
+
+    await waitFor(() => {
+      expect(countBootstrapCalls('conv-bootstrap')).toBe(2);
+      expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).disabled).toBe(false);
+    }, { timeout: 4000 });
+  });
+
+  it('surfaces terminal bootstrap failures without retrying again in the background', async () => {
+    setupBootstrapTerminalFailureMock('conv-terminal', 'Terminal Me');
+
+    render(
+      <MemoryRouter initialEntries={['/c/covo/conv-terminal']}>
+        <ConfigProvider value={config}>
+          <NoticeProvider>
+            <Routes>
+              <Route path="/c/:name/:conversationId" element={<ChatPage />} />
+            </Routes>
+          </NoticeProvider>
+        </ConfigProvider>
+      </MemoryRouter>,
+    );
+
+    await screen.findByLabelText('Message input');
+    await waitFor(() => {
+      expect(countBootstrapCalls('conv-terminal')).toBe(1);
+    });
+
+    vi.useFakeTimers();
+    act(() => {
+      vi.advanceTimersByTime(2200);
+    });
+    vi.useRealTimers();
+
+    expect(countBootstrapCalls('conv-terminal')).toBe(1);
+
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+
+    expect(countBootstrapCalls('conv-terminal')).toBe(1);
+  });
+
+  it('retries immediately on focus after a transient bootstrap failure', async () => {
+    setupBootstrapRetryMock('conv-focus', 'Focus Me');
+
+    render(
+      <MemoryRouter initialEntries={['/c/covo/conv-focus']}>
+        <ConfigProvider value={config}>
+          <NoticeProvider>
+            <Routes>
+              <Route path="/c/:name/:conversationId" element={<ChatPage />} />
+            </Routes>
+          </NoticeProvider>
+        </ConfigProvider>
+      </MemoryRouter>,
+    );
+
+    await screen.findByLabelText('Message input');
+    await waitFor(() => {
+      expect(screen.getByText('HTTP 525 · example.com · Cloudflare Retrying…')).toBeTruthy();
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+
+    await waitFor(() => {
+      expect(countBootstrapCalls('conv-focus')).toBe(2);
+      expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).disabled).toBe(false);
+    });
+  });
+
+  it('shows a provisioning state for direct agent chat routes before ACP is ready', async () => {
+    setupRequestMock({
+      spritzes: [
+        createSpritz({
+          status: {
+            phase: 'Provisioning',
+            message: 'Allocating the instance.',
+            acp: { state: 'starting' },
+          },
+        }),
+      ],
+      conversations: [],
+    });
+
+    renderChatPage('/c/covo');
+
+    expect(await screen.findByText('Your agent is being created now')).toBeTruthy();
+    expect(screen.getByText('We will start a chat automatically as soon as it is ready.')).toBeTruthy();
+    expect(screen.getAllByText('Allocating the instance.').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('sidebar-focused-spritz').textContent).toBe('covo');
+  });
+
+  it('shows a provisioning state when the route spritz is only resolvable by direct lookup', async () => {
+    requestMock.mockImplementation((path: string) => {
+      if (path === '/spritzes') {
+        return Promise.resolve({ items: [] });
+      }
+      if (path === '/spritzes/zeno-ken-bison') {
+        return Promise.resolve(
+          createSpritz({
+            metadata: { name: 'zeno-ken-bison' },
+            status: {
+              phase: 'Provisioning',
+              message: 'Creating your agent instance.',
+              acp: { state: 'starting' },
+            },
+          }),
+        );
+      }
+      return Promise.resolve({});
+    });
+
+    renderChatPage('/c/zeno-ken-bison');
+
+    expect(await screen.findByText('Your agent is being created now')).toBeTruthy();
+    expect(screen.getAllByText('Creating your agent instance.').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Select a conversation or create a new instance.')).toBeNull();
+  });
+
+  it('keeps the provisioning route visible while the spritz resource is not discoverable yet', async () => {
+    requestMock.mockImplementation((path: string) => {
+      if (path === '/spritzes') {
+        return Promise.resolve({ items: [] });
+      }
+      if (path === '/spritzes/zeno-fresh-ridge') {
+        return Promise.reject(new Error('Not found.'));
+      }
+      return Promise.resolve({});
+    });
+
+    renderChatPage('/c/zeno-fresh-ridge');
+
+    expect(await screen.findByText('Your agent is being created now')).toBeTruthy();
+    expect(screen.getByText('We will start a chat automatically as soon as it is ready.')).toBeTruthy();
+    expect(screen.getAllByText('Creating your agent instance.').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('sidebar-focused-spritz').textContent).toBe('zeno-fresh-ridge');
+    expect(screen.queryByText('Select a conversation or create a new instance.')).toBeNull();
+  });
+
+  it('automatically creates and opens a conversation once a provisioning agent becomes ready', async () => {
+    const createdConversation = createConversation({
+      metadata: { name: 'conv-created' },
+      spec: { sessionId: 'sess-created', title: 'Created automatically', spritzName: 'covo' },
+      status: { bindingState: 'active', lastActivityAt: '2026-03-27T10:05:00Z' },
+    });
+    let spritzRequestCount = 0;
+    requestMock.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === '/spritzes') {
+        spritzRequestCount += 1;
+        return Promise.resolve({
+          items: [
+            spritzRequestCount === 1
+              ? createSpritz({
+                  status: {
+                    phase: 'Provisioning',
+                    message: 'Allocating the instance.',
+                    acp: { state: 'starting' },
+                  },
+                })
+              : createSpritz(),
+          ],
+        });
+      }
+      if (path === '/acp/conversations?spritz=covo') {
+        return Promise.resolve({ items: [] });
+      }
+      if (path === '/acp/conversations' && options?.method === 'POST') {
+        return Promise.resolve(createdConversation);
+      }
+      return Promise.resolve({});
+    });
+    const realSetTimeout = window.setTimeout.bind(window);
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout').mockImplementation(((
+      handler: TimerHandler,
+      timeout?: number,
+      ...args: unknown[]
+    ) => {
+      if (timeout === 2000 && typeof handler === 'function') {
+        queueMicrotask(() => {
+          handler(...args as []);
+        });
+        return 1 as unknown as number;
+      }
+      return realSetTimeout(handler, timeout, ...(args as []));
+    }) as typeof window.setTimeout);
+
+    try {
+      renderChatPage('/c/covo');
+      await waitFor(() => {
+        expect(requestMock).toHaveBeenCalledWith(
+          '/acp/conversations',
+          expect.objectContaining({ method: 'POST' }),
+        );
+      });
+      await waitFor(() => {
+        expect((screen.getByTestId('selected-conversation') as HTMLDivElement).textContent).toBe('conv-created');
+      });
+      expect((screen.getByTestId('selected-conversation') as HTMLDivElement).textContent).toBe('conv-created');
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
+  it('keeps polling until a provisioning agent becomes ready and then opens a conversation', async () => {
+    const createdConversation = createConversation({
+      metadata: { name: 'conv-created-late' },
+      spec: { sessionId: 'sess-created-late', title: 'Created after repeated polling', spritzName: 'covo' },
+      status: { bindingState: 'active', lastActivityAt: '2026-03-27T10:10:00Z' },
+    });
+    let spritzRequestCount = 0;
+    requestMock.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === '/spritzes') {
+        spritzRequestCount += 1;
+        return Promise.resolve({
+          items: [
+            spritzRequestCount < 4
+              ? createSpritz({
+                  status: {
+                    phase: 'Provisioning',
+                    message: 'Allocating the instance.',
+                    acp: { state: 'starting' },
+                  },
+                })
+              : createSpritz(),
+          ],
+        });
+      }
+      if (path === '/acp/conversations?spritz=covo') {
+        return Promise.resolve({ items: [] });
+      }
+      if (path === '/acp/conversations' && options?.method === 'POST') {
+        return Promise.resolve(createdConversation);
+      }
+      return Promise.resolve({});
+    });
+    const realSetTimeout = window.setTimeout.bind(window);
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout').mockImplementation(((
+      handler: TimerHandler,
+      timeout?: number,
+      ...args: unknown[]
+    ) => {
+      if (timeout === 2000 && typeof handler === 'function') {
+        queueMicrotask(() => {
+          handler(...args as []);
+        });
+        return 1 as unknown as number;
+      }
+      return realSetTimeout(handler, timeout, ...(args as []));
+    }) as typeof window.setTimeout);
+
+    try {
+      renderChatPage('/c/covo');
+      await waitFor(() => {
+        expect(requestMock).toHaveBeenCalledWith(
+          '/acp/conversations',
+          expect.objectContaining({ method: 'POST' }),
+        );
+      });
+      await waitFor(() => {
+        expect((screen.getByTestId('selected-conversation') as HTMLDivElement).textContent).toBe('conv-created-late');
+      });
+      expect(spritzRequestCount).toBeGreaterThanOrEqual(3);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
+  it('keeps polling while a direct route spritz is still undiscoverable and starts a conversation once it appears', async () => {
+    const createdConversation = createConversation({
+      metadata: { name: 'conv-created-after-lookup' },
+      spec: {
+        sessionId: 'sess-created-after-lookup',
+        title: 'Created after lookup recovery',
+        spritzName: 'zeno-fresh-ridge',
+      },
+      status: { bindingState: 'active', lastActivityAt: '2026-03-27T10:12:00Z' },
+    });
+    let routeLookupCount = 0;
+    requestMock.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === '/spritzes') {
+        return Promise.resolve({ items: [] });
+      }
+      if (path === '/spritzes/zeno-fresh-ridge') {
+        routeLookupCount += 1;
+        if (routeLookupCount < 4) {
+          return Promise.reject(new Error('Not found.'));
+        }
+        return Promise.resolve(
+          createSpritz({
+            metadata: { name: 'zeno-fresh-ridge' },
+            status: {
+              phase: 'Ready',
+              acp: { state: 'ready' },
+            },
+          }),
+        );
+      }
+      if (path === '/acp/conversations?spritz=zeno-fresh-ridge') {
+        return Promise.resolve({ items: [] });
+      }
+      if (path === '/acp/conversations' && options?.method === 'POST') {
+        return Promise.resolve(createdConversation);
+      }
+      return Promise.resolve({});
+    });
+    const realSetTimeout = window.setTimeout.bind(window);
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout').mockImplementation(((
+      handler: TimerHandler,
+      timeout?: number,
+      ...args: unknown[]
+    ) => {
+      if (timeout === 2000 && typeof handler === 'function') {
+        queueMicrotask(() => {
+          handler(...args as []);
+        });
+        return 1 as unknown as number;
+      }
+      return realSetTimeout(handler, timeout, ...(args as []));
+    }) as typeof window.setTimeout);
+
+    try {
+      renderChatPage('/c/zeno-fresh-ridge');
+      await waitFor(() => {
+        expect(requestMock).toHaveBeenCalledWith(
+          '/acp/conversations',
+          expect.objectContaining({ method: 'POST' }),
+        );
+      });
+      await waitFor(() => {
+        expect((screen.getByTestId('selected-conversation') as HTMLDivElement).textContent).toBe(
+          'conv-created-after-lookup',
+        );
+      });
+      expect(routeLookupCount).toBeGreaterThanOrEqual(4);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
+  it('opens the latest conversation when an agent chat route omits the conversation id', async () => {
+    setupRequestMock({
+      conversations: [
+        createConversation({
+          metadata: { name: 'conv-older' },
+          spec: { sessionId: 'sess-older', title: 'Older conversation', spritzName: 'covo' },
+          status: { bindingState: 'active', lastActivityAt: '2026-03-26T08:00:00Z' },
+        }),
+        createConversation({
+          metadata: { name: 'conv-latest' },
+          spec: { sessionId: 'sess-latest', title: 'Latest conversation', spritzName: 'covo' },
+          status: { bindingState: 'active', lastActivityAt: '2026-03-27T09:30:00Z' },
+        }),
+      ],
+    });
+
+    await renderChat('/c/covo');
+
+    expect((screen.getByTestId('selected-conversation') as HTMLDivElement).textContent).toBe('conv-latest');
   });
 
   it('restores the draft after remounting the same conversation route', async () => {
@@ -293,6 +1008,26 @@ describe('ChatPage draft persistence', () => {
     await waitFor(() => expect(sendPromptMock).toHaveBeenCalledWith('send me'));
     await waitFor(() => expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).value).toBe(''));
     expect(localStorage.getItem('spritz:chat-drafts')).toBeNull();
+  });
+
+  it('restores the draft when send races a disconnect before ready state propagates', async () => {
+    const user = userEvent.setup();
+    await renderChat('/c/covo/conv-1');
+
+    await user.type(screen.getByLabelText('Message input'), 'retry me');
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    expect((sendButton as HTMLButtonElement).disabled).toBe(false);
+
+    act(() => {
+      closeLastACPConnection();
+      fireEvent.click(sendButton);
+    });
+
+    await waitFor(() => {
+      expect(sendPromptMock).not.toHaveBeenCalled();
+      expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).value).toBe('retry me');
+    });
+    expect(localStorage.getItem('spritz:chat-drafts') || '').toContain('retry me');
   });
 
   it('renders the echoed ACP user message only once', async () => {
@@ -372,6 +1107,51 @@ describe('ChatPage draft persistence', () => {
         'user:who is this',
         "assistant:I'm Zeno.",
         'user:and what can you do?',
+      ]);
+    });
+  });
+
+  it('replaces stale live assistant turns with canonical replay order on reconnect', async () => {
+    await renderChat('/c/covo/conv-1');
+
+    act(() => {
+      emitUpdate({
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Based on the German residence law documents...' },
+      });
+    });
+
+    await waitFor(() => {
+      const messages = screen.getAllByTestId('chat-message').map((element) => element.textContent);
+      expect(messages).toEqual(['assistant:Based on the German residence law documents...']);
+    });
+
+    act(() => {
+      emitReplayState(true);
+      emitUpdate({
+        sessionUpdate: 'agent_message_chunk',
+        historyMessageId: 'assistant-1',
+        content: { type: 'text', text: 'I need to clarify: tc is the TextCortex CLI.' },
+      }, { historical: true });
+      emitUpdate({
+        sessionUpdate: 'agent_message_chunk',
+        historyMessageId: 'assistant-2',
+        content: { type: 'text', text: "You're right — `tc kb search` lets you search your own knowledge bases." },
+      }, { historical: true });
+      emitUpdate({
+        sessionUpdate: 'agent_message_chunk',
+        historyMessageId: 'assistant-3',
+        content: { type: 'text', text: 'Based on the German residence law documents...' },
+      }, { historical: true });
+      emitReplayState(false);
+    });
+
+    await waitFor(() => {
+      const messages = screen.getAllByTestId('chat-message').map((element) => element.textContent);
+      expect(messages).toEqual([
+        'assistant:I need to clarify: tc is the TextCortex CLI.',
+        "assistant:You're right — `tc kb search` lets you search your own knowledge bases.",
+        'assistant:Based on the German residence law documents...',
       ]);
     });
   });

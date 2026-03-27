@@ -80,6 +80,7 @@ export interface Preset {
 
 export interface SpritzConfig {
   apiBaseUrl: string;
+  websocketBaseUrl: string;
   chatPathPrefix: string;
   ownerId: string;
   presets: Preset[] | string;
@@ -100,6 +101,7 @@ declare global {
 export function resolveConfig(raw: RawSpritzConfig = {}): SpritzConfig {
   return {
     apiBaseUrl: raw.apiBaseUrl || '',
+    websocketBaseUrl: raw.websocketBaseUrl || '',
     chatPathPrefix: raw.chatPathPrefix || '/c',
     ownerId: raw.ownerId || '',
     presets: raw.presets || [],

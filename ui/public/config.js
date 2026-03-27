@@ -1,5 +1,6 @@
 window.SPRITZ_CONFIG = {
   apiBaseUrl: '__SPRITZ_API_BASE_URL__',
+  websocketBaseUrl: '__SPRITZ_UI_WEBSOCKET_BASE_URL__',
   chatPathPrefix: '__SPRITZ_UI_CHAT_PATH_PREFIX__',
   ownerId: '__SPRITZ_OWNER_ID__',
   presets: __SPRITZ_UI_PRESETS__,

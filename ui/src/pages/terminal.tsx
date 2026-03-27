@@ -4,25 +4,15 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { useConfig } from '@/lib/config';
-import { getAuthToken, authBearerTokenParam } from '@/lib/api';
+import { getAuthToken, refreshAuthTokenForWebSocket, authBearerTokenParam } from '@/lib/api';
 import { buildTerminalTheme } from '@/lib/branding';
+import { buildApiWebSocketUrl } from '@/lib/network';
 import { chatPath } from '@/lib/urls';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ArrowLeftIcon } from 'lucide-react';
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
-
-function buildTerminalWsUrl(apiBaseUrl: string, name: string): string {
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsHost = window.location.host;
-  const apiBase = apiBaseUrl || '';
-  const token = getAuthToken();
-  const params = new URLSearchParams();
-  if (token) params.set(authBearerTokenParam, token);
-  const qs = params.toString();
-  return `${wsProtocol}//${wsHost}${apiBase}/spritzes/${encodeURIComponent(name)}/terminal${qs ? `?${qs}` : ''}`;
-}
 
 export function TerminalPage() {
   const { name } = useParams<{ name: string }>();
@@ -37,6 +27,8 @@ export function TerminalPage() {
 
   useEffect(() => {
     if (!name || !terminalRef.current) return;
+    const instanceName = name;
+    let disposed = false;
 
     const term = new Terminal({
       cursorBlink: true,
@@ -55,13 +47,37 @@ export function TerminalPage() {
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    function connect() {
+    function scheduleReconnect() {
+      if (disposed) return;
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      term.write('\r\n\x1b[33m--- Connection closed. Reconnecting in 3s... ---\x1b[0m\r\n');
+      reconnectTimerRef.current = setTimeout(() => {
+        void connect();
+      }, 3000);
+    }
+
+    async function connect(options: { allowAuthRefreshRetry?: boolean } = {}) {
+      if (disposed) return;
+      const { allowAuthRefreshRetry = true } = options;
       setStatus('connecting');
-      const ws = new WebSocket(buildTerminalWsUrl(config.apiBaseUrl, name!));
+      const bearerToken = getAuthToken();
+      const ws = new WebSocket(
+        buildApiWebSocketUrl(
+          config.apiBaseUrl,
+          `/spritzes/${encodeURIComponent(instanceName)}/terminal`,
+          {
+            bearerToken,
+            bearerTokenParam: authBearerTokenParam,
+            websocketBaseUrl: config.websocketBaseUrl,
+          },
+        ),
+      );
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
+      let opened = false;
 
       ws.onopen = () => {
+        opened = true;
         setStatus('connected');
         const dims = fitAddon.proposeDimensions();
         const cols = dims?.cols ?? 80;
@@ -78,9 +94,25 @@ export function TerminalPage() {
       };
 
       ws.onclose = () => {
+        if (wsRef.current === ws) {
+          wsRef.current = null;
+        }
+        if (disposed) return;
+        if (!opened && allowAuthRefreshRetry) {
+          void (async () => {
+            const refreshed = await refreshAuthTokenForWebSocket();
+            if (disposed) return;
+            if (refreshed.refreshed && refreshed.token) {
+              void connect({ allowAuthRefreshRetry: false });
+              return;
+            }
+            setStatus('disconnected');
+            scheduleReconnect();
+          })();
+          return;
+        }
         setStatus('disconnected');
-        term.write('\r\n\x1b[33m--- Connection closed. Reconnecting in 3s... ---\x1b[0m\r\n');
-        reconnectTimerRef.current = setTimeout(connect, 3000);
+        scheduleReconnect();
       };
 
       ws.onerror = () => {
@@ -88,7 +120,7 @@ export function TerminalPage() {
       };
     }
 
-    connect();
+    void connect();
 
     const inputDisposable = term.onData((data) => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -114,6 +146,7 @@ export function TerminalPage() {
     window.addEventListener('resize', handleWindowResize);
 
     return () => {
+      disposed = true;
       inputDisposable.dispose();
       binaryDisposable.dispose();
       resizeDisposable.dispose();
@@ -125,7 +158,14 @@ export function TerminalPage() {
       fitAddonRef.current = null;
       wsRef.current = null;
     };
-  }, [name, config.apiBaseUrl, terminalTheme.background, terminalTheme.cursor, terminalTheme.foreground]);
+  }, [
+    name,
+    config.apiBaseUrl,
+    config.websocketBaseUrl,
+    terminalTheme.background,
+    terminalTheme.cursor,
+    terminalTheme.foreground,
+  ]);
 
   if (!name) {
     return (

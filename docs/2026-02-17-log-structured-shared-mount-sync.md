@@ -1,6 +1,6 @@
 ---
 date: 2026-02-17
-author: Spritz Maintainers <user@example.com>
+author: Onur Solmaz <onur@textcortex.com>
 title: Log-Structured Shared Mount Sync (Dropbox-Style, No Separate DB)
 tags: [spritz, shared-mounts, sync, object-storage, design]
 ---

@@ -1,6 +1,6 @@
 ---
 date: 2026-03-20
-author: Spritz Maintainers <user@example.com>
+author: Onur Solmaz <onur@textcortex.com>
 title: Deployment-Wide UI Branding
 tags: [spritz, ui, branding, helm]
 ---

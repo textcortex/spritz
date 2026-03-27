@@ -1,6 +1,6 @@
 ---
 date: 2026-03-10
-author: Spritz Maintainers <user@example.com>
+author: Onur Solmaz <onur@textcortex.com>
 title: ACP Conversation Storage and Replay Model
 tags: [spritz, acp, conversation, transcript, architecture]
 ---

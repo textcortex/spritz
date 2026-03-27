@@ -1,6 +1,6 @@
 ---
 date: 2026-03-12
-author: Spritz Maintainers <user@example.com>
+author: Onur Solmaz <onur@textcortex.com>
 title: External Identity Resolution API Architecture
 tags: [spritz, auth, provisioning, identity, api, architecture]
 ---

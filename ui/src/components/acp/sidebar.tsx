@@ -1,12 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   PlusIcon,
   PencilIcon,
   LayoutGridIcon,
   ChevronRightIcon,
+  LoaderCircleIcon,
 } from 'lucide-react';
 import { cn, timeAgo } from '@/lib/utils';
+import { describeChatAction } from '@/lib/urls';
+import { buildProvisioningPlaceholderSpritz, getProvisioningStatusLine } from '@/lib/provisioning';
 import { BrandHeader } from '@/components/brand-header';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import type { ConversationInfo } from '@/types/acp';
@@ -31,10 +34,22 @@ interface SidebarProps {
   onSelectConversation: (conversation: ConversationInfo) => void;
   onNewConversation: (spritzName: string) => void;
   creatingConversationFor?: string | null;
+  focusedSpritzName?: string | null;
+  focusedSpritz?: Spritz | null;
   collapsed: boolean;
   onToggleCollapse: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
+}
+
+function sortAgentGroupsForFocus(groups: AgentGroup[], focusedSpritzName?: string | null): AgentGroup[] {
+  if (!focusedSpritzName) return groups;
+  return [...groups].sort((left, right) => {
+    const leftFocused = left.spritz.metadata.name === focusedSpritzName;
+    const rightFocused = right.spritz.metadata.name === focusedSpritzName;
+    if (leftFocused === rightFocused) return 0;
+    return leftFocused ? -1 : 1;
+  });
 }
 
 export function Sidebar({
@@ -43,12 +58,23 @@ export function Sidebar({
   onSelectConversation,
   onNewConversation,
   creatingConversationFor,
+  focusedSpritzName,
+  focusedSpritz,
   collapsed,
   onToggleCollapse,
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
-  const firstAgentName = agents.length > 0 ? agents[0].spritz.metadata.name : null;
+  const orderedAgents = sortAgentGroupsForFocus(agents, focusedSpritzName);
+  const firstAgentName = orderedAgents.length > 0 ? orderedAgents[0].spritz.metadata.name : null;
+  const focusMode = Boolean(focusedSpritzName);
+  const focusedAgentInList = Boolean(
+    focusedSpritzName && orderedAgents.some((group) => group.spritz.metadata.name === focusedSpritzName),
+  );
+  const focusedProvisioningSpritz = focusedSpritzName && !focusedAgentInList
+    ? focusedSpritz || buildProvisioningPlaceholderSpritz(focusedSpritzName)
+    : null;
+  const showFocusedProvisioningSection = Boolean(focusedProvisioningSpritz);
 
   /* ── Collapsed desktop sidebar ── */
   function renderCollapsed() {
@@ -143,12 +169,18 @@ export function Sidebar({
 
         {/* Conversation list */}
       <div role="list" aria-label="Conversations" className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
-          {agents.length === 0 && (
+          {showFocusedProvisioningSection && focusedProvisioningSpritz && (
+            <FocusedAgentProvisioningSection
+              spritz={focusedProvisioningSpritz}
+              selectedConversationId={selectedConversationId}
+            />
+          )}
+          {orderedAgents.length === 0 && !showFocusedProvisioningSection && (
             <div className="p-6 text-center text-xs text-muted-foreground">
               No ACP-ready instances found.
             </div>
           )}
-          {agents.map((group) => (
+          {orderedAgents.map((group) => (
             <AgentSection
               key={group.spritz.metadata.name}
               group={group}
@@ -156,6 +188,8 @@ export function Sidebar({
               onSelectConversation={(conv) => { onSelectConversation(conv); close(); }}
               onNewConversation={onNewConversation}
               creatingConversationFor={creatingConversationFor}
+              defaultExpanded={!focusMode || group.spritz.metadata.name === focusedSpritzName}
+              focused={group.spritz.metadata.name === focusedSpritzName}
             />
           ))}
         </div>
@@ -189,6 +223,46 @@ export function Sidebar({
   );
 }
 
+function FocusedAgentProvisioningSection({
+  spritz,
+  selectedConversationId,
+}: {
+  spritz: Spritz;
+  selectedConversationId: string | null;
+}) {
+  const name = spritz.metadata.name;
+  const statusLine = getProvisioningStatusLine(spritz);
+  const conversationLabel = describeChatAction(spritz).label;
+  const conversationSelected = !selectedConversationId;
+
+  return (
+    <div role="listitem" className="flex flex-col gap-0.5">
+      <div className="flex items-center gap-1">
+        <div
+          aria-current="true"
+          className="flex flex-1 items-center gap-2 rounded-[var(--radius-lg)] bg-sidebar-accent px-3 py-1.5 text-left text-xs font-medium text-foreground"
+        >
+          <ChevronRightIcon aria-hidden="true" className="size-3 shrink-0 rotate-90" />
+          <span className="truncate">{name}</span>
+        </div>
+      </div>
+      <div className="flex flex-col gap-1">
+        <div
+          aria-current={conversationSelected ? 'true' : undefined}
+          className={cn(
+            'ml-8 flex items-center gap-2 rounded-[var(--radius-lg)] px-3 py-1.5 text-[13px] text-foreground',
+            conversationSelected ? 'bg-sidebar-accent' : 'bg-transparent',
+          )}
+        >
+          <LoaderCircleIcon aria-hidden="true" className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+          <span className="truncate">{conversationLabel}</span>
+        </div>
+        <div className="px-11 text-xs text-muted-foreground">{statusLine}</div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Agent section with animated expand/collapse ── */
 
 function AgentSection({
@@ -197,16 +271,24 @@ function AgentSection({
   onSelectConversation,
   onNewConversation,
   creatingConversationFor,
+  defaultExpanded,
+  focused,
 }: {
   group: AgentGroup;
   selectedConversationId: string | null;
   onSelectConversation: (conversation: ConversationInfo) => void;
   onNewConversation: (spritzName: string) => void;
   creatingConversationFor?: string | null;
+  defaultExpanded: boolean;
+  focused: boolean;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const name = group.spritz.metadata.name;
   const creatingForThisAgent = creatingConversationFor === name;
+
+  useEffect(() => {
+    setExpanded(defaultExpanded);
+  }, [defaultExpanded]);
 
   return (
     <div role="listitem" className="flex flex-col gap-0.5">
@@ -215,8 +297,16 @@ function AgentSection({
         <button
           type="button"
           aria-expanded={expanded}
+          aria-current={focused ? 'true' : undefined}
           aria-label={`${name} conversations`}
           className="flex flex-1 items-center gap-2 rounded-[var(--radius-lg)] px-3 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-[var(--surface-emphasis)] hover:text-primary"
+          data-active={focused ? 'true' : 'false'}
+          className={cn(
+            'flex flex-1 items-center gap-2 rounded-[var(--radius-lg)] px-3 py-1.5 text-left text-xs font-medium transition-colors hover:bg-sidebar-accent',
+            focused
+              ? 'bg-sidebar-accent text-foreground'
+              : 'text-muted-foreground',
+          )}
           onClick={() => setExpanded(!expanded)}
         >
           <ChevronRightIcon
