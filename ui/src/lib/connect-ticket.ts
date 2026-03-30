@@ -63,6 +63,7 @@ export async function resolveWebSocketConnect(options: {
 
   return {
     wsUrl: buildWebSocketUrlFromConnectPath(ticket.connectPath, {
+      apiBaseUrl,
       websocketBaseUrl,
     }),
     protocols: [ticket.protocol, `spritz-ticket.v1.${ticket.ticket}`],

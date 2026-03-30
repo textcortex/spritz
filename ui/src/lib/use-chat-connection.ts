@@ -46,6 +46,12 @@ function shouldRetryBootstrap(error: unknown): boolean {
   return status >= 500 || status === 408 || status === 425 || status === 429;
 }
 
+function shouldRetryConnectTicket(error: unknown): boolean {
+  const status = getErrorStatus(error);
+  if (status === null) return true;
+  return status === 409 || status >= 500 || status === 408 || status === 425 || status === 429;
+}
+
 /**
  * Owns chat bootstrap, ACP websocket lifecycle, reconnect policy, and transcript updates.
  */
@@ -219,13 +225,30 @@ export function useChatConnection({
 
         if (cancelled) return;
 
-        const { wsUrl, protocols } = await resolveWebSocketConnect({
-          apiBaseUrl,
-          websocketBaseUrl,
-          directConnectPath: `/acp/conversations/${encodeURIComponent(conversationId)}/connect`,
-          ticketPath: `/acp/conversations/${encodeURIComponent(conversationId)}/connect-ticket`,
-          useConnectTicket: Boolean(getAuthToken()),
-        });
+        let wsUrl = '';
+        let protocols: string[] = [];
+        try {
+          ({ wsUrl, protocols } = await resolveWebSocketConnect({
+            apiBaseUrl,
+            websocketBaseUrl,
+            directConnectPath: `/acp/conversations/${encodeURIComponent(conversationId)}/connect`,
+            ticketPath: `/acp/conversations/${encodeURIComponent(conversationId)}/connect-ticket`,
+            useConnectTicket: Boolean(getAuthToken()),
+          }));
+        } catch (err) {
+          if (!cancelled) {
+            const message = err instanceof Error ? err.message : 'Connection failed';
+            if (shouldRetryConnectTicket(err)) {
+              scheduleReconnect({
+                statusText: `${message} Retrying…`,
+              });
+            } else {
+              autoReconnectEnabled = false;
+              setStatus(message);
+            }
+          }
+          return;
+        }
 
         noteReplayState(transcriptSessionRef.current, true);
         let socketReady = false;

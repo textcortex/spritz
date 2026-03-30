@@ -5,6 +5,12 @@ import { ConfigProvider, resolveConfig } from '@/lib/config';
 import { TerminalPage } from './terminal';
 import { FakeWebSocket } from '@/test/helpers';
 
+function createApiError(message: string, status: number) {
+  const error = new Error(message) as Error & { status: number };
+  error.status = status;
+  return error;
+}
+
 const {
   terminalConstructor,
   fitAddonConstructor,
@@ -154,7 +160,7 @@ describe('TerminalPage branding', () => {
   it('uses a terminal connect ticket on the current host by default', async () => {
     setAuthToken('external-ui-token');
     const config = resolveConfig({
-      apiBaseUrl: 'https://spritz.example.com/api',
+      apiBaseUrl: '/api',
       auth: {
         mode: 'bearer',
         tokenStorageKeys: 'spritz-token',
@@ -214,7 +220,7 @@ describe('TerminalPage branding', () => {
     });
   });
 
-  it('mints a fresh terminal connect ticket when the initial socket closes before opening', async () => {
+  it('backs off before minting a fresh terminal connect ticket when the initial socket closes before opening', async () => {
     setAuthToken('expired-token');
 
     const config = resolveConfig({
@@ -251,14 +257,85 @@ describe('TerminalPage branding', () => {
       ]);
     });
 
+    vi.useFakeTimers();
     act(() => {
       lastSocket?.close();
     });
+
+    expect(requestMock.mock.calls.filter(([path]) => path === '/spritzes/example-instance/terminal/connect-ticket')).toHaveLength(1);
+
+    act(() => {
+      vi.advanceTimersByTime(2999);
+    });
+
+    expect(requestMock.mock.calls.filter(([path]) => path === '/spritzes/example-instance/terminal/connect-ticket')).toHaveLength(1);
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    vi.useRealTimers();
 
     await waitFor(() => {
       expect(requestMock.mock.calls.filter(([path]) => path === '/spritzes/example-instance/terminal/connect-ticket')).toHaveLength(2);
       expect(lastSocket?.url).toBe('wss://spritz.example.com/api/spritzes/example-instance/terminal');
     });
+  });
+
+  it('retries terminal connect-ticket failures after backoff', async () => {
+    setAuthToken('external-ui-token');
+    let ticketAttempts = 0;
+    requestMock.mockImplementation((path: string, options?: { method?: string; body?: string }) => {
+      if (path === '/spritzes/example-instance/terminal/connect-ticket' && options?.method === 'POST') {
+        ticketAttempts += 1;
+        if (ticketAttempts === 1) {
+          return Promise.reject(createApiError('Terminal not ready.', 409));
+        }
+        const payload = options?.body ? JSON.parse(options.body) as { session?: string } : {};
+        const connectPath = payload?.session
+          ? `/api/spritzes/example-instance/terminal?session=${encodeURIComponent(payload.session)}`
+          : '/api/spritzes/example-instance/terminal';
+        return Promise.resolve({
+          type: 'connect-ticket',
+          ticket: 'ticket-123',
+          expiresAt: '2026-03-30T12:34:56Z',
+          protocol: 'spritz-terminal.v1',
+          connectPath,
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    const config = resolveConfig({
+      apiBaseUrl: 'https://spritz.example.com/api',
+      websocketBaseUrl: 'https://spritz.example.com/api',
+      auth: {
+        mode: 'bearer',
+        tokenStorageKeys: 'spritz-token',
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/terminal/example-instance']}>
+        <ConfigProvider value={config}>
+          <Routes>
+            <Route path="/terminal/:name" element={<TerminalPage />} />
+          </Routes>
+        </ConfigProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(ticketAttempts).toBe(1);
+    });
+
+    await waitFor(() => {
+      expect(ticketAttempts).toBe(2);
+      expect(lastSocket?.url).toBe('wss://spritz.example.com/api/spritzes/example-instance/terminal');
+      expect(lastSocket?.protocols).toEqual([
+        'spritz-terminal.v1',
+        'spritz-ticket.v1.ticket-123',
+      ]);
+    }, { timeout: 5000 });
   });
 
   it('keeps the active terminal socket when an earlier socket closes late', async () => {

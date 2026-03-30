@@ -19,17 +19,11 @@ function normalizeWebSocketBaseUrl(
   websocketBaseUrl?: string,
   locationHref?: string,
 ): URL {
-  const location = new URL(resolveLocationHref(locationHref));
   const explicitBase = String(websocketBaseUrl || '').trim();
   if (explicitBase) {
-    return new URL(explicitBase, location.href);
+    return new URL(explicitBase, resolveLocationHref(locationHref));
   }
-  const apiUrl = normalizeApiBaseUrl(apiBaseUrl, locationHref);
-  const sameHostUrl = new URL(location.origin);
-  sameHostUrl.pathname = apiUrl.pathname;
-  sameHostUrl.search = apiUrl.search;
-  sameHostUrl.hash = apiUrl.hash;
-  return sameHostUrl;
+  return normalizeApiBaseUrl(apiBaseUrl, locationHref);
 }
 
 function normalizeRelativePath(path: string): URL {
@@ -44,6 +38,37 @@ function joinPaths(basePath: string, relativePath: string): string {
   if (!normalizedRelative) return normalizedBase === '/' ? '/' : normalizedBase;
   if (normalizedBase === '/') return `/${normalizedRelative}`;
   return `${normalizedBase}/${normalizedRelative}`;
+}
+
+function splitPathSegments(path: string): string[] {
+  return String(path || '')
+    .split('/')
+    .filter(Boolean);
+}
+
+function mergeServerConnectPath(basePath: string, connectPath: string): string {
+  const baseSegments = splitPathSegments(basePath);
+  const connectSegments = splitPathSegments(connectPath);
+  if (baseSegments.length === 0) {
+    return normalizeRelativePath(connectPath).pathname;
+  }
+
+  let overlap = 0;
+  const maxOverlap = Math.min(baseSegments.length, connectSegments.length);
+  for (let size = maxOverlap; size > 0; size -= 1) {
+    const baseSuffix = baseSegments.slice(baseSegments.length - size);
+    const connectPrefix = connectSegments.slice(0, size);
+    if (baseSuffix.join('/') === connectPrefix.join('/')) {
+      overlap = size;
+      break;
+    }
+  }
+
+  const mergedSegments = [
+    ...baseSegments.slice(0, baseSegments.length - overlap),
+    ...connectSegments,
+  ];
+  return `/${mergedSegments.join('/')}`.replace(/\/+/g, '/');
 }
 
 export function buildApiWebSocketUrl(
@@ -89,13 +114,18 @@ export function buildApiWebSocketUrl(
 export function buildWebSocketUrlFromConnectPath(
   connectPath: string,
   options?: {
+    apiBaseUrl?: string;
     websocketBaseUrl?: string;
     locationHref?: string;
   },
 ): string {
-  const url = normalizeWebSocketBaseUrl('', options?.websocketBaseUrl, options?.locationHref);
+  const url = normalizeWebSocketBaseUrl(
+    options?.apiBaseUrl || '',
+    options?.websocketBaseUrl,
+    options?.locationHref,
+  );
   const relative = normalizeRelativePath(connectPath);
-  url.pathname = relative.pathname;
+  url.pathname = mergeServerConnectPath(url.pathname, relative.pathname);
   url.search = relative.search;
   url.hash = relative.hash;
   if (url.protocol === 'https:') {

@@ -490,7 +490,7 @@ describe('ChatPage draft persistence', () => {
     setAuthToken('external-ui-token');
 
     await renderChat('/c/covo/conv-1', {
-      apiBaseUrl: 'https://spritz.example.com/api',
+      apiBaseUrl: '/api',
       auth: {
         mode: 'bearer',
         tokenStorageKeys: 'spritz-token',
@@ -506,6 +506,57 @@ describe('ChatPage draft persistence', () => {
         'spritz-ticket.v1.ticket-123',
       ]);
     });
+  });
+
+  it('retries ACP connect-ticket failures automatically', async () => {
+    setAuthToken('external-ui-token');
+    let ticketAttempts = 0;
+    requestMock.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === '/spritzes') {
+        return Promise.resolve({ items: [createSpritz()] });
+      }
+      if (path === '/acp/conversations?spritz=covo') {
+        return Promise.resolve({ items: CONVERSATIONS });
+      }
+      if (path === '/acp/conversations/conv-1/connect-ticket' && options?.method === 'POST') {
+        ticketAttempts += 1;
+        if (ticketAttempts === 1) {
+          return Promise.reject(createApiError('ACP warming up.', 409));
+        }
+        return Promise.resolve({
+          type: 'connect-ticket',
+          ticket: 'ticket-123',
+          expiresAt: '2026-03-30T12:34:56Z',
+          protocol: 'spritz-acp.v1',
+          connectPath: '/api/acp/conversations/conv-1/connect',
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    renderChatPage('/c/covo/conv-1', {
+      apiBaseUrl: 'https://spritz.example.com/api',
+      websocketBaseUrl: 'https://spritz.example.com/api',
+      auth: {
+        mode: 'bearer',
+        tokenStorageKeys: 'spritz-token',
+      },
+    });
+
+    await waitFor(() => {
+      expect(ticketAttempts).toBe(1);
+    });
+
+    await waitFor(() => {
+      expect(ticketAttempts).toBe(2);
+      expect(getLastACPOptions()?.wsUrl).toBe(
+        'wss://spritz.example.com/api/acp/conversations/conv-1/connect',
+      );
+      expect(getLastACPOptions()?.protocols).toEqual([
+        'spritz-acp.v1',
+        'spritz-ticket.v1.ticket-123',
+      ]);
+    }, { timeout: 4000 });
   });
 
   it('uses an explicit websocket base url with ACP connect tickets for cross-host connections', async () => {

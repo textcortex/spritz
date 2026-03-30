@@ -60,14 +60,23 @@ export function TerminalPage() {
       if (disposed) return;
       setStatus('connecting');
       const session = new URLSearchParams(window.location.search).get('session') || undefined;
-      const { wsUrl, protocols } = await resolveWebSocketConnect({
-        apiBaseUrl: config.apiBaseUrl,
-        websocketBaseUrl: config.websocketBaseUrl,
-        directConnectPath: `/spritzes/${encodeURIComponent(instanceName)}/terminal${session ? `?session=${encodeURIComponent(session)}` : ''}`,
-        ticketPath: `/spritzes/${encodeURIComponent(instanceName)}/terminal/connect-ticket`,
-        useConnectTicket: Boolean(getAuthToken()),
-        ticketBody: session ? { session } : undefined,
-      });
+      let wsUrl = '';
+      let protocols: string[] = [];
+      try {
+        ({ wsUrl, protocols } = await resolveWebSocketConnect({
+          apiBaseUrl: config.apiBaseUrl,
+          websocketBaseUrl: config.websocketBaseUrl,
+          directConnectPath: `/spritzes/${encodeURIComponent(instanceName)}/terminal${session ? `?session=${encodeURIComponent(session)}` : ''}`,
+          ticketPath: `/spritzes/${encodeURIComponent(instanceName)}/terminal/connect-ticket`,
+          useConnectTicket: Boolean(getAuthToken()),
+          ticketBody: session ? { session } : undefined,
+        }));
+      } catch {
+        if (disposed) return;
+        setStatus('disconnected');
+        scheduleReconnect();
+        return;
+      }
       const ws = protocols.length ? new WebSocket(wsUrl, protocols) : new WebSocket(wsUrl);
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
@@ -97,13 +106,7 @@ export function TerminalPage() {
         if (disposed) return;
         if (!opened) {
           setStatus('disconnected');
-          if (reconnectTimerRef.current) {
-            clearTimeout(reconnectTimerRef.current);
-            reconnectTimerRef.current = null;
-          }
-          queueMicrotask(() => {
-            void connect();
-          });
+          scheduleReconnect();
           return;
         }
         setStatus('disconnected');
