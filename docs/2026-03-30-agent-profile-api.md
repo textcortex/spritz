@@ -23,6 +23,22 @@ The design keeps three concepts separate:
 - per-instance agent profile
 - ACP runtime identity
 
+## Plain language
+
+- The external service owns the real agent profile.
+- Spritz keeps a synced local copy of that profile for its UIs.
+- The UI reads Spritz, not the external service.
+
+In practice:
+
+1. a Spritz instance can point at an external agent with `agentRef`
+2. Spritz can ask the deployment system for that agent's profile
+3. Spritz stores the result on the instance as `status.profile`
+4. the UI renders from `status.profile`
+
+If local overrides exist, Spritz can replace parts of the synced profile
+without changing the external source.
+
 ## Goals
 
 - Make per-instance agent profile data a first-class Spritz concept.
