@@ -79,3 +79,29 @@ export function buildApiWebSocketUrl(
   }
   return url.toString();
 }
+
+/**
+ * Builds a browser WebSocket URL from a server-supplied connect path.
+ *
+ * The connect path is expected to be rooted at the server API path already, so
+ * we preserve it instead of appending it to the configured API base path.
+ */
+export function buildWebSocketUrlFromConnectPath(
+  connectPath: string,
+  options?: {
+    websocketBaseUrl?: string;
+    locationHref?: string;
+  },
+): string {
+  const url = normalizeWebSocketBaseUrl('', options?.websocketBaseUrl, options?.locationHref);
+  const relative = normalizeRelativePath(connectPath);
+  url.pathname = relative.pathname;
+  url.search = relative.search;
+  url.hash = relative.hash;
+  if (url.protocol === 'https:') {
+    url.protocol = 'wss:';
+  } else if (url.protocol === 'http:') {
+    url.protocol = 'ws:';
+  }
+  return url.toString();
+}

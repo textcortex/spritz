@@ -60,6 +60,7 @@ export class FakeWebSocket {
 
   readyState = FakeWebSocket.CONNECTING;
   url: string;
+  protocols: string[];
   sent: string[] = [];
 
   onopen: ((event: Event) => void) | null = null;
@@ -67,8 +68,15 @@ export class FakeWebSocket {
   onerror: ((event: Event) => void) | null = null;
   onclose: ((event: CloseEvent) => void) | null = null;
 
-  constructor(url: string) {
+  constructor(url: string, protocols?: string | string[]) {
     this.url = url;
+    if (Array.isArray(protocols)) {
+      this.protocols = protocols;
+    } else if (typeof protocols === 'string' && protocols.trim()) {
+      this.protocols = [protocols];
+    } else {
+      this.protocols = [];
+    }
   }
 
   autoRespond = false;

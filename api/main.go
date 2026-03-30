@@ -56,6 +56,7 @@ type server struct {
 	sharedMountsStore           *sharedMountsStore
 	sharedMountsLive            *sharedMountsLatestNotifier
 	userConfigPolicy            userConfigPolicy
+	connectTickets              *connectTicketStore
 	instanceProxyTargetResolver func(*spritzv1.Spritz) (*url.URL, error)
 	instanceProxyTransport      http.RoundTripper
 	nameGeneratorFactory        func(context.Context, string, string) (func() string, error)
@@ -194,6 +195,7 @@ func main() {
 		sharedMountsStore: sharedStore,
 		sharedMountsLive:  sharedMountsLive,
 		userConfigPolicy:  userConfigPolicy,
+		connectTickets:    newConnectTicketStore(k8sClient, controlNamespace),
 	}
 
 	e := echo.New()
@@ -276,11 +278,15 @@ func (s *server) registerRoutes(e *echo.Echo) {
 	secured.GET("/acp/conversations/:id", s.getACPConversation)
 	secured.POST("/acp/conversations/:id/bootstrap", s.bootstrapACPConversation)
 	secured.PATCH("/acp/conversations/:id", s.updateACPConversation)
-	secured.GET("/acp/conversations/:id/connect", s.openACPConversationConnection)
+	secured.POST("/acp/conversations/:id/connect-ticket", s.createACPConnectTicket)
 	secured.POST("/spritzes/:name/ssh", s.mintSSHCert)
 	if s.terminal.enabled {
-		secured.GET("/spritzes/:name/terminal", s.openTerminal)
+		secured.POST("/spritzes/:name/terminal/connect-ticket", s.createTerminalConnectTicket)
 		secured.GET("/spritzes/:name/terminal/sessions", s.listTerminalSessions)
+	}
+	group.GET("/acp/conversations/:id/connect", s.openACPConversationConnection)
+	if s.terminal.enabled {
+		group.GET("/spritzes/:name/terminal", s.openTerminal)
 	}
 	if s.instanceProxy.enabled {
 		rootSecured := e.Group("", s.authMiddleware())

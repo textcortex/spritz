@@ -14,9 +14,13 @@ func (s *server) openACPConversationConnection(c echo.Context) error {
 	if !s.acp.enabled {
 		return writeError(c, http.StatusNotFound, "acp disabled")
 	}
-	principal, ok := principalFromContext(c)
-	if s.auth.enabled() && (!ok || principal.ID == "") {
-		return writeError(c, http.StatusUnauthorized, "unauthenticated")
+	principal, subprotocols, err := s.authenticateWebSocketRequest(
+		c,
+		connectTicketTypeACPConversation,
+		connectTicketACPProtocol,
+	)
+	if err != nil {
+		return writeAuthError(c, err)
 	}
 	namespace := s.requestNamespace(c)
 	conversation, err := s.getAuthorizedACPConversation(c.Request().Context(), principal, namespace, c.Param("id"))
@@ -32,7 +36,10 @@ func (s *server) openACPConversationConnection(c echo.Context) error {
 		return s.writeACPResourceError(c, err)
 	}
 
-	upgrader := websocket.Upgrader{CheckOrigin: s.acp.allowOrigin}
+	upgrader := websocket.Upgrader{
+		CheckOrigin:  s.acp.allowOrigin,
+		Subprotocols: subprotocols,
+	}
 	browserConn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
 	if err != nil {
 		return err

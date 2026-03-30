@@ -8,29 +8,24 @@ import { FakeWebSocket } from '@/test/helpers';
 const {
   terminalConstructor,
   fitAddonConstructor,
+  requestMock,
   getAuthTokenMock,
   setAuthToken,
   emitTerminalData,
-  refreshAuthTokenForWebSocketMock,
-  setRefreshAuthResult,
   setOnDataHandler,
 } = vi.hoisted(() => {
   let authToken = '';
-  let refreshResult = { token: '', refreshed: false };
   let onDataHandler: ((data: string) => void) | null = null;
   return {
     terminalConstructor: vi.fn(),
     fitAddonConstructor: vi.fn(),
+    requestMock: vi.fn(),
     getAuthTokenMock: () => authToken,
     setAuthToken: (value: string) => {
       authToken = value;
     },
     emitTerminalData: (data: string) => {
       onDataHandler?.(data);
-    },
-    refreshAuthTokenForWebSocketMock: vi.fn(async () => refreshResult),
-    setRefreshAuthResult: (value: { token: string; refreshed: boolean }) => {
-      refreshResult = value;
     },
     setOnDataHandler: (handler: ((data: string) => void) | null) => {
       onDataHandler = handler;
@@ -69,9 +64,8 @@ vi.mock('@xterm/addon-fit', () => ({
 }));
 
 vi.mock('@/lib/api', () => ({
+  request: requestMock,
   getAuthToken: getAuthTokenMock,
-  refreshAuthTokenForWebSocket: refreshAuthTokenForWebSocketMock,
-  authBearerTokenParam: 'token',
 }));
 
 describe('TerminalPage branding', () => {
@@ -82,17 +76,32 @@ describe('TerminalPage branding', () => {
   beforeEach(() => {
     terminalConstructor.mockReset();
     fitAddonConstructor.mockReset();
-    refreshAuthTokenForWebSocketMock.mockClear();
+    requestMock.mockReset();
     setAuthToken('');
-    setRefreshAuthResult({ token: '', refreshed: false });
     setOnDataHandler(null);
     lastSocket = null;
     sockets = [];
     deferCloseEvents = false;
+    requestMock.mockImplementation((path: string, options?: { method?: string; body?: string }) => {
+      if (path === '/spritzes/example-instance/terminal/connect-ticket' && options?.method === 'POST') {
+        const payload = options?.body ? JSON.parse(options.body) as { session?: string } : {};
+        const connectPath = payload?.session
+          ? `/api/spritzes/example-instance/terminal?session=${encodeURIComponent(payload.session)}`
+          : '/api/spritzes/example-instance/terminal';
+        return Promise.resolve({
+          type: 'connect-ticket',
+          ticket: 'ticket-123',
+          expiresAt: '2026-03-30T12:34:56Z',
+          protocol: 'spritz-terminal.v1',
+          connectPath,
+        });
+      }
+      return Promise.resolve({});
+    });
     Object.defineProperty(globalThis, 'WebSocket', {
       value: class extends FakeWebSocket {
-        constructor(url: string) {
-          super(url);
+        constructor(url: string, protocols?: string | string[]) {
+          super(url, protocols);
           sockets.push(this);
           lastSocket = this;
         }
@@ -142,7 +151,7 @@ describe('TerminalPage branding', () => {
     expect(fitAddonConstructor).toHaveBeenCalled();
   });
 
-  it('keeps terminal websocket connections on the current host by default', () => {
+  it('uses a terminal connect ticket on the current host by default', async () => {
     setAuthToken('external-ui-token');
     const config = resolveConfig({
       apiBaseUrl: 'https://spritz.example.com/api',
@@ -162,12 +171,18 @@ describe('TerminalPage branding', () => {
       </MemoryRouter>,
     );
 
-    expect(lastSocket?.url).toBe(
-      'ws://localhost:3000/api/spritzes/example-instance/terminal?token=external-ui-token',
-    );
+    await waitFor(() => {
+      expect(lastSocket?.url).toBe(
+        'ws://localhost:3000/api/spritzes/example-instance/terminal',
+      );
+      expect(lastSocket?.protocols).toEqual([
+        'spritz-terminal.v1',
+        'spritz-ticket.v1.ticket-123',
+      ]);
+    });
   });
 
-  it('uses an explicit websocket base url for cross-host terminal websocket connections', () => {
+  it('uses an explicit websocket base url with terminal connect tickets for cross-host connections', async () => {
     setAuthToken('external-ui-token');
     const config = resolveConfig({
       apiBaseUrl: 'https://spritz.example.com/api',
@@ -188,18 +203,19 @@ describe('TerminalPage branding', () => {
       </MemoryRouter>,
     );
 
-    expect(lastSocket?.url).toBe(
-      'wss://spritz.example.com/api/spritzes/example-instance/terminal?token=external-ui-token',
-    );
+    await waitFor(() => {
+      expect(lastSocket?.url).toBe(
+        'wss://spritz.example.com/api/spritzes/example-instance/terminal',
+      );
+      expect(lastSocket?.protocols).toEqual([
+        'spritz-terminal.v1',
+        'spritz-ticket.v1.ticket-123',
+      ]);
+    });
   });
 
-  it('refreshes bearer auth and reconnects when the initial terminal websocket closes before opening', async () => {
+  it('mints a fresh terminal connect ticket when the initial socket closes before opening', async () => {
     setAuthToken('expired-token');
-    setRefreshAuthResult({ token: 'refreshed-token', refreshed: true });
-    refreshAuthTokenForWebSocketMock.mockImplementation(async () => {
-      setAuthToken('refreshed-token');
-      return { token: 'refreshed-token', refreshed: true };
-    });
 
     const config = resolveConfig({
       apiBaseUrl: 'https://spritz.example.com/api',
@@ -225,19 +241,23 @@ describe('TerminalPage branding', () => {
       </MemoryRouter>,
     );
 
-    expect(lastSocket?.url).toBe(
-      'wss://spritz.example.com/api/spritzes/example-instance/terminal?token=expired-token',
-    );
+    await waitFor(() => {
+      expect(lastSocket?.url).toBe(
+        'wss://spritz.example.com/api/spritzes/example-instance/terminal',
+      );
+      expect(lastSocket?.protocols).toEqual([
+        'spritz-terminal.v1',
+        'spritz-ticket.v1.ticket-123',
+      ]);
+    });
 
     act(() => {
       lastSocket?.close();
     });
 
     await waitFor(() => {
-      expect(refreshAuthTokenForWebSocketMock).toHaveBeenCalledTimes(1);
-      expect(lastSocket?.url).toBe(
-        'wss://spritz.example.com/api/spritzes/example-instance/terminal?token=refreshed-token',
-      );
+      expect(requestMock.mock.calls.filter(([path]) => path === '/spritzes/example-instance/terminal/connect-ticket')).toHaveLength(2);
+      expect(lastSocket?.url).toBe('wss://spritz.example.com/api/spritzes/example-instance/terminal');
     });
   });
 
@@ -273,9 +293,15 @@ describe('TerminalPage branding', () => {
       </MemoryRouter>,
     );
 
-    expect(sockets[0]?.url).toBe(
-      'wss://first.example.com/api/spritzes/example-instance/terminal?token=external-ui-token',
-    );
+    await waitFor(() => {
+      expect(sockets[0]?.url).toBe(
+        'wss://first.example.com/api/spritzes/example-instance/terminal',
+      );
+      expect(sockets[0]?.protocols).toEqual([
+        'spritz-terminal.v1',
+        'spritz-ticket.v1.ticket-123',
+      ]);
+    });
 
     view.rerender(
       <MemoryRouter initialEntries={['/terminal/example-instance']}>
@@ -287,9 +313,15 @@ describe('TerminalPage branding', () => {
       </MemoryRouter>,
     );
 
-    expect(sockets[1]?.url).toBe(
-      'wss://second.example.com/api/spritzes/example-instance/terminal?token=external-ui-token',
-    );
+    await waitFor(() => {
+      expect(sockets[1]?.url).toBe(
+        'wss://second.example.com/api/spritzes/example-instance/terminal',
+      );
+      expect(sockets[1]?.protocols).toEqual([
+        'spritz-terminal.v1',
+        'spritz-ticket.v1.ticket-123',
+      ]);
+    });
 
     await act(async () => {
       await Promise.resolve();

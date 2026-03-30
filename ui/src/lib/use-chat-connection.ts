@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { createACPClient } from '@/lib/acp-client';
-import { request, getAuthToken, refreshAuthTokenForWebSocket, authBearerTokenParam } from '@/lib/api';
+import { request, getAuthToken } from '@/lib/api';
 import {
   applyChatTranscriptUpdate,
   createChatTranscriptSession,
@@ -13,7 +13,7 @@ import {
   type ChatTranscriptSession,
 } from '@/lib/chat-transcript-session';
 import { getReconnectDelayMs, shouldForceBootstrapOnRetry } from '@/lib/chat-retry-policy';
-import { buildApiWebSocketUrl } from '@/lib/network';
+import { resolveWebSocketConnect } from '@/lib/connect-ticket';
 import type { ACPClient, ACPTranscript, ConversationInfo, PermissionEntry } from '@/types/acp';
 
 interface UseChatConnectionOptions {
@@ -165,11 +165,10 @@ export function useChatConnection({
 
     async function connect(options: {
       forceBootstrap?: boolean;
-      allowAuthRefreshRetry?: boolean;
     } = {}) {
       if (cancelled || connectInFlight) return;
       connectInFlight = true;
-      const { forceBootstrap = false, allowAuthRefreshRetry = true } = options;
+      const { forceBootstrap = false } = options;
 
       try {
         let effectiveConversation: ConversationInfo = activeConversation;
@@ -220,15 +219,13 @@ export function useChatConnection({
 
         if (cancelled) return;
 
-        const wsUrl = buildApiWebSocketUrl(
+        const { wsUrl, protocols } = await resolveWebSocketConnect({
           apiBaseUrl,
-          `/acp/conversations/${encodeURIComponent(conversationId)}/connect`,
-          {
-            bearerToken: getAuthToken(),
-            bearerTokenParam: authBearerTokenParam,
-            websocketBaseUrl,
-          },
-        );
+          websocketBaseUrl,
+          directConnectPath: `/acp/conversations/${encodeURIComponent(conversationId)}/connect`,
+          ticketPath: `/acp/conversations/${encodeURIComponent(conversationId)}/connect-ticket`,
+          useConnectTicket: Boolean(getAuthToken()),
+        });
 
         noteReplayState(transcriptSessionRef.current, true);
         let socketReady = false;
@@ -236,6 +233,7 @@ export function useChatConnection({
 
         const client = createACPClient({
           wsUrl,
+          protocols,
           conversation: effectiveConversation,
           onStatus: (text) => {
             if (!cancelled) setStatus(text);
@@ -300,21 +298,8 @@ export function useChatConnection({
               closeHandledReconnect = true;
             }
             if (cancelled) return;
-            if (!socketReady && allowAuthRefreshRetry) {
-              void (async () => {
-                try {
-                  const refreshed = await refreshAuthTokenForWebSocket();
-                  if (cancelled) return;
-                  if (refreshed.refreshed && refreshed.token) {
-                    clientRef.current = null;
-                    await connect({ forceBootstrap, allowAuthRefreshRetry: false });
-                    return;
-                  }
-                } catch {
-                  // Fall through to the normal reconnect timer when refresh fails.
-                }
-                scheduleReconnect();
-              })();
+            if (!socketReady) {
+              scheduleReconnect({ immediate: true, statusText: 'Reconnecting…' });
               return;
             }
             scheduleReconnect();
