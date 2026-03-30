@@ -45,6 +45,51 @@ describe('spritz profile helpers', () => {
     ).toBe('ACP Title');
   });
 
+  it('ignores stale profile status and falls back to current overrides', () => {
+    expect(
+      getSpritzProfileName({
+        metadata: { name: 'tidy-otter', namespace: 'spritz-test', generation: 3 },
+        spec: {
+          image: 'example.com/agent:latest',
+          profileOverrides: {
+            name: 'Fresh Otter',
+            imageUrl: 'https://example.com/fresh.png',
+          },
+        },
+        status: {
+          phase: 'Ready',
+          profile: {
+            name: 'Stale Otter',
+            imageUrl: 'https://example.com/stale.png',
+            observedGeneration: 2,
+          },
+          acp: {
+            state: 'ready',
+            agentInfo: { title: 'ACP Title' },
+          },
+        },
+      }),
+    ).toBe('Fresh Otter');
+    expect(
+      getSpritzProfileImageUrl({
+        metadata: { name: 'tidy-otter', namespace: 'spritz-test', generation: 3 },
+        spec: {
+          image: 'example.com/agent:latest',
+          profileOverrides: {
+            imageUrl: 'https://example.com/fresh.png',
+          },
+        },
+        status: {
+          phase: 'Ready',
+          profile: {
+            imageUrl: 'https://example.com/stale.png',
+            observedGeneration: 2,
+          },
+        },
+      }),
+    ).toBe('https://example.com/fresh.png');
+  });
+
   it('uses the spritz profile for conversation rendering', () => {
     const spritz = {
       metadata: { name: 'tidy-otter', namespace: 'spritz-test' },

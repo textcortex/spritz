@@ -2,6 +2,7 @@ export interface Spritz {
   metadata: {
     name: string;
     namespace: string;
+    generation?: number;
   };
   spec: {
     image: string;

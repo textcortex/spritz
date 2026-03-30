@@ -8,12 +8,30 @@ function normalizeText(value: unknown): string {
   return value.trim();
 }
 
+function getCurrentStatusProfile(spritz?: Spritz | null) {
+  const profile = spritz?.status?.profile;
+  if (!profile) {
+    return undefined;
+  }
+  const generation = spritz?.metadata?.generation;
+  const observedGeneration = profile.observedGeneration;
+  if (
+    typeof generation === 'number' &&
+    typeof observedGeneration === 'number' &&
+    observedGeneration < generation
+  ) {
+    return undefined;
+  }
+  return profile;
+}
+
 export function getSpritzProfileName(spritz?: Spritz | null): string {
   if (!spritz) {
     return '';
   }
   return (
-    normalizeText(spritz.status?.profile?.name) ||
+    normalizeText(getCurrentStatusProfile(spritz)?.name) ||
+    normalizeText(spritz.spec?.profileOverrides?.name) ||
     normalizeText(spritz.status?.acp?.agentInfo?.title) ||
     normalizeText(spritz.status?.acp?.agentInfo?.name) ||
     normalizeText(spritz.metadata?.name)
@@ -21,7 +39,10 @@ export function getSpritzProfileName(spritz?: Spritz | null): string {
 }
 
 export function getSpritzProfileImageUrl(spritz?: Spritz | null): string {
-  return normalizeText(spritz?.status?.profile?.imageUrl);
+  return (
+    normalizeText(getCurrentStatusProfile(spritz)?.imageUrl) ||
+    normalizeText(spritz?.spec?.profileOverrides?.imageUrl)
+  );
 }
 
 export function getConversationAgentName(

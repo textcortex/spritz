@@ -321,6 +321,22 @@ func TestDisplayAgentNamePrefersSyncedProfile(t *testing.T) {
 	}
 }
 
+func TestDisplayAgentNameIgnoresStaleProfile(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	spritz.Generation = 2
+	spritz.Spec.ProfileOverrides = &spritzv1.SpritzAgentProfile{
+		Name: "Fresh Otter",
+	}
+	spritz.Status.Profile = &spritzv1.SpritzAgentProfileStatus{
+		Name:               "Stale Otter",
+		ObservedGeneration: 1,
+	}
+
+	if got := displayAgentName(spritz); got != "Fresh Otter" {
+		t.Fatalf("expected stale profile to fall back to overrides, got %q", got)
+	}
+}
+
 func TestCreateACPConversationGeneratesIndependentConversationID(t *testing.T) {
 	spritz := readyACPSpritz("tidy-otter", "user-1")
 	s := newACPTestServer(t, spritz)

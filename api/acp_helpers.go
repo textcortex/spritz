@@ -33,7 +33,10 @@ func displayAgentName(spritz *spritzv1.Spritz) string {
 	if spritz == nil {
 		return ""
 	}
-	if profile := spritz.Status.Profile; profile != nil && strings.TrimSpace(profile.Name) != "" {
+	if profile := currentSpritzStatusProfile(spritz); profile != nil && strings.TrimSpace(profile.Name) != "" {
+		return strings.TrimSpace(profile.Name)
+	}
+	if profile := normalizeSpritzAgentProfile(spritz.Spec.ProfileOverrides); profile != nil && strings.TrimSpace(profile.Name) != "" {
 		return strings.TrimSpace(profile.Name)
 	}
 	if spritz.Status.ACP == nil || spritz.Status.ACP.AgentInfo == nil {

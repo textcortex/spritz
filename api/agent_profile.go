@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"strings"
 
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	spritzv1 "spritz.sh/operator/api/v1"
 )
@@ -146,6 +149,28 @@ func buildSpritzAgentProfileStatus(
 	return status
 }
 
+func copySpritzAgentProfileStatus(value *spritzv1.SpritzAgentProfileStatus) *spritzv1.SpritzAgentProfileStatus {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	if value.LastSyncedAt != nil {
+		copied.LastSyncedAt = value.LastSyncedAt.DeepCopy()
+	}
+	return &copied
+}
+
+func currentSpritzStatusProfile(spritz *spritzv1.Spritz) *spritzv1.SpritzAgentProfileStatus {
+	if spritz == nil || spritz.Status.Profile == nil {
+		return nil
+	}
+	profile := spritz.Status.Profile
+	if spritz.Generation > 0 && profile.ObservedGeneration > 0 && profile.ObservedGeneration < spritz.Generation {
+		return nil
+	}
+	return profile
+}
+
 func parseAgentProfileSyncOutput(raw []byte) (*spritzv1.SpritzAgentProfile, error) {
 	if len(raw) == 0 {
 		return nil, nil
@@ -281,11 +306,25 @@ func (s *server) applyResolvedAgentProfileStatus(
 	if statusProfile == nil {
 		return spritz, nil
 	}
-
-	current := spritz.DeepCopy()
-	current.Status.Profile = statusProfile
-	if err := s.client.Status().Update(ctx, current); err != nil {
+	objectKey := client.ObjectKeyFromObject(spritz)
+	updated := spritz.DeepCopy()
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := &spritzv1.Spritz{}
+		if err := s.client.Get(ctx, objectKey, current); err != nil {
+			return err
+		}
+		if apiequality.Semantic.DeepEqual(current.Status.Profile, statusProfile) {
+			updated = current
+			return nil
+		}
+		current.Status.Profile = copySpritzAgentProfileStatus(statusProfile)
+		if err := s.client.Status().Update(ctx, current); err != nil {
+			return err
+		}
+		updated = current
+		return nil
+	}); err != nil {
 		return spritz, err
 	}
-	return current, nil
+	return updated, nil
 }
