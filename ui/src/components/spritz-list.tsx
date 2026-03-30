@@ -4,7 +4,9 @@ import { toast } from 'sonner';
 import { RefreshCwIcon, Trash2Icon, TerminalIcon, MessageSquareIcon, ExternalLinkIcon, CopyIcon, LoaderIcon, CircleCheckIcon, CircleXIcon, CircleDotIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { request } from '@/lib/api';
+import { getSpritzProfileImageUrl, getSpritzProfileName } from '@/lib/spritz-profile';
 import { buildOpenUrl, describeChatAction, terminalPath, chatPath } from '@/lib/urls';
+import { AgentAvatar } from '@/components/agent-avatar';
 import { useNotice } from '@/components/notice-banner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -55,6 +57,8 @@ interface SpritzItemProps {
 
 function SpritzItem({ spritz, onDelete, deleting }: SpritzItemProps) {
   const name = spritz.metadata?.name || 'unknown';
+  const displayName = getSpritzProfileName(spritz) || name;
+  const imageUrl = getSpritzProfileImageUrl(spritz);
   const namespace = spritz.metadata?.namespace;
   const phase = spritz.status?.phase || 'unknown';
   const image = spritz.spec?.image || '';
@@ -62,6 +66,11 @@ function SpritzItem({ spritz, onDelete, deleting }: SpritzItemProps) {
   const terminalReady = phase === 'Ready';
   const chatAction = describeChatAction(spritz);
   const isDeleting = deleting === name;
+  const metadataParts = [
+    displayName !== name ? name : '',
+    image,
+    message,
+  ].filter(Boolean);
 
   const sshMode = spritz.spec?.ssh?.mode;
   const sshInfo = spritz.status?.ssh;
@@ -107,18 +116,23 @@ function SpritzItem({ spritz, onDelete, deleting }: SpritzItemProps) {
       "flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 transition-colors",
       provisioning && "bg-primary/[0.02]",
     )}>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <PhaseIcon phase={phase} />
-          <span className="sr-only">{`Status: ${phase}`}</span>
-          <span className="font-medium">{name}</span>
-          <Badge variant={phaseBadgeVariant(phase)} className="text-[10px]">
-            {phase}
-          </Badge>
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <AgentAvatar name={displayName} imageUrl={imageUrl} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <PhaseIcon phase={phase} />
+            <span className="sr-only">{`Status: ${phase}`}</span>
+            <span className="truncate font-medium" title={displayName}>{displayName}</span>
+            <Badge variant={phaseBadgeVariant(phase)} className="text-[10px]">
+              {phase}
+            </Badge>
+          </div>
+          {metadataParts.length > 0 && (
+            <p className="truncate text-xs text-muted-foreground">
+              {metadataParts.join(' · ')}
+            </p>
+          )}
         </div>
-        <p className="truncate text-xs text-muted-foreground">
-          {message ? `${image} · ${message}` : image}
-        </p>
       </div>
       <div className="flex flex-wrap gap-1.5">
         <Button variant="outline" size="sm" className="rounded-[var(--radius-lg)]" onClick={handleOpen} title="Open">

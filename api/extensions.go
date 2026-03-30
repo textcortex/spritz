@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	spritzv1 "spritz.sh/operator/api/v1"
 )
 
 const (
@@ -33,6 +35,7 @@ type extensionOperation string
 const (
 	extensionOperationOwnerResolve        extensionOperation = "owner.resolve"
 	extensionOperationPresetCreateResolve extensionOperation = "preset.create.resolve"
+	extensionOperationAgentProfileSync    extensionOperation = "agent.profile.sync"
 	extensionOperationAuthLoginMetadata   extensionOperation = "auth.login.metadata"
 	extensionOperationIdentityLinkResolve extensionOperation = "identity.link.resolve"
 	extensionOperationInstanceNotify      extensionOperation = "instance.lifecycle.notify"
@@ -119,7 +122,8 @@ type extensionResolverMutations struct {
 }
 
 type extensionResolverSpecMutation struct {
-	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+	ServiceAccountName string                   `json:"serviceAccountName,omitempty"`
+	AgentRef           *spritzv1.SpritzAgentRef `json:"agentRef,omitempty"`
 }
 
 type configuredResolver struct {
@@ -241,6 +245,8 @@ func normalizeExtensionOperation(raw string) extensionOperation {
 		return extensionOperationOwnerResolve
 	case extensionOperationPresetCreateResolve:
 		return extensionOperationPresetCreateResolve
+	case extensionOperationAgentProfileSync:
+		return extensionOperationAgentProfileSync
 	case extensionOperationAuthLoginMetadata:
 		return extensionOperationAuthLoginMetadata
 	case extensionOperationIdentityLinkResolve:

@@ -313,6 +313,17 @@ func TestListACPAgentsUsesStoredStatusOnly(t *testing.T) {
 	}
 }
 
+func TestDisplayAgentNamePrefersSyncedProfile(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	spritz.Status.Profile = &spritzv1.SpritzAgentProfileStatus{
+		Name: "Helpful Otter",
+	}
+
+	if got := displayAgentName(spritz); got != "Helpful Otter" {
+		t.Fatalf("expected synced profile name, got %q", got)
+	}
+}
+
 func TestCreateACPConversationGeneratesIndependentConversationID(t *testing.T) {
 	spritz := readyACPSpritz("tidy-otter", "user-1")
 	s := newACPTestServer(t, spritz)

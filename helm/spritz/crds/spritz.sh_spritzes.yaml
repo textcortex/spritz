@@ -57,6 +57,20 @@ spec:
           spec:
             description: SpritzSpec defines the desired state of Spritz.
             properties:
+              agentRef:
+                description: SpritzAgentRef identifies a deployment-owned external
+                  agent record.
+                properties:
+                  id:
+                    maxLength: 256
+                    type: string
+                  provider:
+                    maxLength: 128
+                    type: string
+                  type:
+                    maxLength: 64
+                    type: string
+                type: object
               annotations:
                 additionalProperties:
                   type: string
@@ -309,6 +323,17 @@ spec:
                   - name
                   type: object
                 type: array
+              profileOverrides:
+                description: ProfileOverrides stores optional local overrides for
+                  UI-facing agent profile fields.
+                properties:
+                  imageUrl:
+                    maxLength: 2048
+                    type: string
+                  name:
+                    maxLength: 128
+                    type: string
+                type: object
               repo:
                 description: SpritzRepo describes the repository to clone inside the
                   workload.
@@ -456,6 +481,10 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              serviceAccountName:
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
               sharedMounts:
                 description: SharedMounts configures per-spritz shared directories.
                 items:
@@ -683,6 +712,31 @@ spec:
                 - Terminating
                 - Error
                 type: string
+              profile:
+                description: SpritzAgentProfileStatus stores the synced UI-facing
+                  profile for an instance.
+                properties:
+                  imageUrl:
+                    maxLength: 2048
+                    type: string
+                  lastError:
+                    type: string
+                  lastSyncedAt:
+                    format: date-time
+                    type: string
+                  name:
+                    maxLength: 128
+                    type: string
+                  observedGeneration:
+                    format: int64
+                    type: integer
+                  source:
+                    maxLength: 32
+                    type: string
+                  syncer:
+                    maxLength: 128
+                    type: string
+                type: object
               readyAt:
                 format: date-time
                 type: string

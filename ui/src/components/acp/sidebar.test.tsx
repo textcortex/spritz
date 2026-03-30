@@ -32,10 +32,14 @@ function createSpritz(name: string): Spritz {
       phase: 'Ready',
       acp: { state: 'ready' },
     },
-  } as Spritz;
+  };
 }
 
-function createConversation(name: string, title: string, spritzName: string): ConversationInfo {
+function createConversation(
+  name: string,
+  title: string,
+  spritzName: string,
+): ConversationInfo {
   return {
     metadata: { name },
     spec: {
@@ -46,7 +50,7 @@ function createConversation(name: string, title: string, spritzName: string): Co
     status: {
       bindingState: 'active',
     },
-  } as ConversationInfo;
+  };
 }
 
 const SidebarWithFocus = Sidebar as unknown as (
@@ -106,11 +110,25 @@ describe('Sidebar', () => {
       />,
     );
 
-    const agentHeaders = screen.getAllByRole('button', { name: / conversations$/i });
+    const agentHeaders = screen.getAllByRole('button', {
+      name: / conversations$/i,
+    });
     expect(agentHeaders[0]?.getAttribute('aria-label')).toBe('beta conversations');
-    expect(screen.getByRole('button', { name: 'beta conversations' }).getAttribute('aria-current')).toBe('true');
-    expect(screen.getByRole('button', { name: 'beta conversations' }).getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByRole('button', { name: 'alpha conversations' }).getAttribute('aria-expanded')).toBe('false');
+    expect(
+      screen
+        .getByRole('button', { name: 'beta conversations' })
+        .getAttribute('aria-current'),
+    ).toBe('true');
+    expect(
+      screen
+        .getByRole('button', { name: 'beta conversations' })
+        .getAttribute('aria-expanded'),
+    ).toBe('true');
+    expect(
+      screen
+        .getByRole('button', { name: 'alpha conversations' })
+        .getAttribute('aria-expanded'),
+    ).toBe('false');
   });
 
   it('shows a selected optimistic provisioning conversation for a focused route before the agent is discoverable', () => {
@@ -131,6 +149,8 @@ describe('Sidebar', () => {
 
     expect(screen.getByText('zeno-fresh-ridge')).toBeTruthy();
     expect(screen.getByText('Creating your agent instance.')).toBeTruthy();
-    expect(screen.getByText('Starting…').closest('[aria-current="true"]')).toBeTruthy();
+    expect(
+      screen.getByText('Starting…').closest('[aria-current="true"]'),
+    ).toBeTruthy();
   });
 });

@@ -17,7 +17,7 @@ import (
 	spritzv1 "spritz.sh/operator/api/v1"
 )
 
-func configurePresetResolverTestServer(s *server, resolverURL string) {
+func configurePresetResolverTestServer(s *server, resolverURL, profileResolverURL string) {
 	s.presets = presetCatalog{
 		byID: []runtimePreset{{
 			ID:            "zeno",
@@ -39,9 +39,10 @@ func configurePresetResolverTestServer(s *server, resolverURL string) {
 			},
 		},
 	}
-	if strings.TrimSpace(resolverURL) != "" {
-		s.extensions = extensionRegistry{
-			resolvers: []configuredResolver{{
+	if strings.TrimSpace(resolverURL) != "" || strings.TrimSpace(profileResolverURL) != "" {
+		resolvers := make([]configuredResolver, 0, 2)
+		if strings.TrimSpace(resolverURL) != "" {
+			resolvers = append(resolvers, configuredResolver{
 				id:            "runtime-binding",
 				extensionType: extensionTypeResolver,
 				operation:     extensionOperationPresetCreateResolve,
@@ -52,34 +53,73 @@ func configurePresetResolverTestServer(s *server, resolverURL string) {
 					url:     resolverURL,
 					timeout: time.Second,
 				},
-			}},
+			})
 		}
+		if strings.TrimSpace(profileResolverURL) != "" {
+			resolvers = append(resolvers, configuredResolver{
+				id:            "agent-profile",
+				extensionType: extensionTypeResolver,
+				operation:     extensionOperationAgentProfileSync,
+				match: extensionMatchRule{
+					presetIDs: map[string]struct{}{"zeno": {}},
+				},
+				transport: configuredHTTPTransport{
+					url:     profileResolverURL,
+					timeout: time.Second,
+				},
+			})
+		}
+		s.extensions = extensionRegistry{resolvers: resolvers}
 	}
 }
 
 func TestCreateSpritzAppliesPresetCreateResolverForHumanCaller(t *testing.T) {
 	s := newCreateSpritzTestServer(t)
-	var received map[string]any
+	var presetReceived map[string]any
+	var profileReceived map[string]any
 	resolver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
+		var received map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
 			t.Fatalf("failed to decode resolver request: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": "resolved",
-			"mutations": map[string]any{
-				"spec": map[string]any{
-					"serviceAccountName": "zeno-agent-ag-123",
+		switch received["operation"] {
+		case string(extensionOperationPresetCreateResolve):
+			presetReceived = received
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "resolved",
+				"mutations": map[string]any{
+					"spec": map[string]any{
+						"serviceAccountName": "zeno-agent-ag-123",
+						"agentRef": map[string]string{
+							"type":     "external",
+							"provider": "example-agent-catalog",
+							"id":       "ag-123",
+						},
+					},
+					"annotations": map[string]string{
+						"spritz.sh/resolved-agent-id": "ag-123",
+					},
 				},
-				"annotations": map[string]string{
-					"spritz.sh/resolved-agent-id": "ag-123",
+			})
+		case string(extensionOperationAgentProfileSync):
+			profileReceived = received
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "resolved",
+				"output": map[string]any{
+					"profile": map[string]string{
+						"name":     "Helpful Lake Agent",
+						"imageUrl": "https://example.com/agent.png",
+					},
 				},
-			},
-		})
+			})
+		default:
+			t.Fatalf("unexpected resolver operation %#v", received["operation"])
+		}
 	}))
 	defer resolver.Close()
-	configurePresetResolverTestServer(s, resolver.URL)
+	configurePresetResolverTestServer(s, resolver.URL, resolver.URL)
 
 	e := echo.New()
 	secured := e.Group("", s.authMiddleware())
@@ -101,19 +141,19 @@ func TestCreateSpritzAppliesPresetCreateResolverForHumanCaller(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("expected status 201, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if received["operation"] != string(extensionOperationPresetCreateResolve) {
-		t.Fatalf("expected preset create operation, got %#v", received["operation"])
+	if presetReceived["operation"] != string(extensionOperationPresetCreateResolve) {
+		t.Fatalf("expected preset create operation, got %#v", presetReceived["operation"])
 	}
-	contextPayload, ok := received["context"].(map[string]any)
+	contextPayload, ok := presetReceived["context"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected resolver context payload, got %#v", received["context"])
+		t.Fatalf("expected resolver context payload, got %#v", presetReceived["context"])
 	}
 	if contextPayload["presetId"] != "zeno" {
 		t.Fatalf("expected resolver presetId zeno, got %#v", contextPayload["presetId"])
 	}
-	inputPayload, ok := received["input"].(map[string]any)
+	inputPayload, ok := presetReceived["input"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected resolver input payload, got %#v", received["input"])
+		t.Fatalf("expected resolver input payload, got %#v", presetReceived["input"])
 	}
 	presetInputs, ok := inputPayload["presetInputs"].(map[string]any)
 	if !ok {
@@ -130,6 +170,27 @@ func TestCreateSpritzAppliesPresetCreateResolverForHumanCaller(t *testing.T) {
 	if stored.Spec.ServiceAccountName != "zeno-agent-ag-123" {
 		t.Fatalf("expected resolved service account name, got %q", stored.Spec.ServiceAccountName)
 	}
+	if stored.Spec.AgentRef == nil {
+		t.Fatalf("expected resolved agentRef to be stored")
+	}
+	if stored.Spec.AgentRef.Type != "external" || stored.Spec.AgentRef.Provider != "example-agent-catalog" || stored.Spec.AgentRef.ID != "ag-123" {
+		t.Fatalf("expected resolved agentRef, got %#v", stored.Spec.AgentRef)
+	}
+	if stored.Status.Profile == nil {
+		t.Fatalf("expected synced profile to be stored in status")
+	}
+	if stored.Status.Profile.Name != "Helpful Lake Agent" {
+		t.Fatalf("expected synced profile name, got %#v", stored.Status.Profile.Name)
+	}
+	if stored.Status.Profile.ImageURL != "https://example.com/agent.png" {
+		t.Fatalf("expected synced profile image URL, got %#v", stored.Status.Profile.ImageURL)
+	}
+	if stored.Status.Profile.Source != "synced" {
+		t.Fatalf("expected synced profile source, got %#v", stored.Status.Profile.Source)
+	}
+	if stored.Status.Profile.Syncer != "agent-profile" {
+		t.Fatalf("expected synced profile syncer id, got %#v", stored.Status.Profile.Syncer)
+	}
 	if stored.Annotations["spritz.sh/resolved-agent-id"] != "ag-123" {
 		t.Fatalf("expected resolver annotation, got %#v", stored.Annotations["spritz.sh/resolved-agent-id"])
 	}
@@ -143,11 +204,22 @@ func TestCreateSpritzAppliesPresetCreateResolverForHumanCaller(t *testing.T) {
 	if err := s.client.Get(context.Background(), client.ObjectKey{Name: "zeno-agent-ag-123", Namespace: s.namespace}, serviceAccount); err != nil {
 		t.Fatalf("expected created service account: %v", err)
 	}
+	profileInput, ok := profileReceived["input"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected profile sync input payload, got %#v", profileReceived["input"])
+	}
+	agentRef, ok := profileInput["agentRef"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected profile sync agentRef payload, got %#v", profileInput["agentRef"])
+	}
+	if agentRef["type"] != "external" || agentRef["provider"] != "example-agent-catalog" || agentRef["id"] != "ag-123" {
+		t.Fatalf("expected synced agentRef payload, got %#v", agentRef)
+	}
 }
 
 func TestCreateSpritzRejectsPresetInputsWithoutMatchingResolver(t *testing.T) {
 	s := newCreateSpritzTestServer(t)
-	configurePresetResolverTestServer(s, "")
+	configurePresetResolverTestServer(s, "", "")
 	e := echo.New()
 	secured := e.Group("", s.authMiddleware())
 	secured.POST("/api/spritzes", s.createSpritz)
@@ -472,7 +544,7 @@ func TestPresetCreateResolverIgnoresOwnerMutation(t *testing.T) {
 		})
 	}))
 	defer resolver.Close()
-	configurePresetResolverTestServer(s, resolver.URL)
+	configurePresetResolverTestServer(s, resolver.URL, "")
 
 	e := echo.New()
 	secured := e.Group("", s.authMiddleware())
