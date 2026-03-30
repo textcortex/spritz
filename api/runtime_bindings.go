@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -25,6 +26,7 @@ type runtimeBindingRuntimePrincipal struct {
 type runtimeBindingResponse struct {
 	InstanceID       string                         `json:"instanceId"`
 	Namespace        string                         `json:"namespace"`
+	CreatedAt        string                         `json:"createdAt"`
 	OwnerPrincipal   runtimeBindingOwnerPrincipal   `json:"ownerPrincipal"`
 	RuntimePrincipal runtimeBindingRuntimePrincipal `json:"runtimePrincipal"`
 	PresetID         string                         `json:"presetId"`
@@ -72,6 +74,10 @@ func buildRuntimeBindingResponse(spritz *spritzv1.Spritz) (runtimeBindingRespons
 	if namespace == "" {
 		return runtimeBindingResponse{}, fmt.Errorf("instance namespace is required")
 	}
+	if spritz.CreationTimestamp.IsZero() {
+		return runtimeBindingResponse{}, fmt.Errorf("instance creation timestamp is required")
+	}
+	createdAt := spritz.CreationTimestamp.Time.UTC().Format(time.RFC3339Nano)
 
 	ownerID := strings.TrimSpace(spritz.Spec.Owner.ID)
 	if ownerID == "" {
@@ -96,6 +102,7 @@ func buildRuntimeBindingResponse(spritz *spritzv1.Spritz) (runtimeBindingRespons
 	return runtimeBindingResponse{
 		InstanceID: instanceID,
 		Namespace:  namespace,
+		CreatedAt:  createdAt,
 		OwnerPrincipal: runtimeBindingOwnerPrincipal{
 			ID:   ownerID,
 			Type: "user",
