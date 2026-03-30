@@ -51,8 +51,8 @@ describe('createACPClient', () => {
 
   beforeEach(() => {
     vi.stubGlobal('WebSocket', class extends FakeWebSocket {
-      constructor(url: string) {
-        super(url);
+      constructor(url: string, protocols?: string | string[]) {
+        super(url, protocols);
         lastWs = this;
       }
     });
@@ -93,6 +93,16 @@ describe('createACPClient', () => {
     await startClient({ onReadyChange });
 
     expect(onReadyChange).toHaveBeenCalledWith(true);
+  });
+
+  it('passes websocket subprotocols to the browser socket', async () => {
+    const client = createTestClient({ protocols: ['spritz-acp.v1', 'spritz-ticket.v1.ticket-123'] });
+    const startPromise = client.start();
+    lastWs.autoRespond = true;
+    lastWs.simulateOpen();
+    await startPromise;
+
+    expect(lastWs.protocols).toEqual(['spritz-acp.v1', 'spritz-ticket.v1.ticket-123']);
   });
 
   it('does not send prompts before socket opens', async () => {

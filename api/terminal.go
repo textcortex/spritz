@@ -110,9 +110,13 @@ func (s *server) openTerminal(c echo.Context) error {
 		return writeError(c, http.StatusNotFound, "terminal disabled")
 	}
 
-	principal, ok := principalFromContext(c)
-	if s.auth.enabled() && (!ok || principal.ID == "") {
-		return writeError(c, http.StatusUnauthorized, "unauthenticated")
+	principal, subprotocols, err := s.authenticateWebSocketRequest(
+		c,
+		connectTicketTypeTerminal,
+		connectTicketTerminalProtocol,
+	)
+	if err != nil {
+		return writeAuthError(c, err)
 	}
 
 	name := strings.TrimSpace(c.Param("name"))
@@ -146,7 +150,8 @@ func (s *server) openTerminal(c echo.Context) error {
 	}
 
 	upgrader := websocket.Upgrader{
-		CheckOrigin: s.terminal.allowOrigin,
+		CheckOrigin:  s.terminal.allowOrigin,
+		Subprotocols: subprotocols,
 	}
 	conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
 	if err != nil {

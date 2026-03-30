@@ -88,6 +88,7 @@ export interface SessionUpdate {
 
 export interface ACPClientOptions {
   wsUrl: string;
+  protocols?: string[];
   conversation: ConversationInfo | null;
   onStatus?: (text: string) => void;
   onReadyChange?: (ready: boolean) => void;
