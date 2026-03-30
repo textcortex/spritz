@@ -104,8 +104,13 @@ export function CreateForm({ onCreated }: CreateFormProps) {
       }
       const idx = findPresetIndex(presets, saved.selection);
       if (idx) {
+        const selectedPreset = presets[Number(idx)];
         setPresetIndex(idx);
-        setActivePreset(presets[Number(idx)]);
+        setActivePreset(selectedPreset);
+        setImage(selectedPreset.image || '');
+        if (selectedPreset.image) {
+          generateName(selectedPreset.image);
+        }
       }
       presetInitialized.current = true;
       persistReady.current = true;

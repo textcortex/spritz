@@ -25,19 +25,10 @@ export function parsePresets(raw: Preset[] | string | undefined | null): Preset[
   return [];
 }
 
-function resolveCatalogItems(items: Preset[] | undefined, fallbackPresets: Preset[]): Preset[] {
-  if (Array.isArray(items) && items.length > 0) return items;
-  if (fallbackPresets.length > 0) return fallbackPresets;
-  return Array.isArray(items) ? items : [];
-}
-
 export function usePresetCatalog(): PresetCatalogResult {
   const config = useConfig();
   const fallbackPresets = useMemo(() => parsePresets(config.presets), [config.presets]);
-  const [catalog, setCatalog] = useState<PresetCatalogResult>(() => ({
-    presets: fallbackPresets,
-    loaded: fallbackPresets.length > 0,
-  }));
+  const [catalog, setCatalog] = useState<PresetCatalogResult>({ presets: [], loaded: false });
 
   useEffect(() => {
     let cancelled = false;
@@ -47,7 +38,7 @@ export function usePresetCatalog(): PresetCatalogResult {
         const data = await request<{ items?: Preset[] }>('/presets');
         if (cancelled) return;
         setCatalog({
-          presets: resolveCatalogItems(data?.items, fallbackPresets),
+          presets: Array.isArray(data?.items) ? data.items : [],
           loaded: true,
         });
       } catch {

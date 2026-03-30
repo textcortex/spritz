@@ -46,10 +46,14 @@ vi.mock('@/components/preset-panel', () => ({
     <div data-testid="preset-index">{selectedIndex}</div>
   ),
   findPresetIndex: (
-    presets: Array<{ name?: string; image?: string }>,
-    selection: { mode?: string; presetName?: string; presetImage?: string },
+    presets: Array<{ id?: string; name?: string; image?: string }>,
+    selection: { mode?: string; presetId?: string; presetName?: string; presetImage?: string },
   ) => {
     if (!selection || selection.mode !== 'preset') return '';
+    if (selection.presetId) {
+      const idx = presets.findIndex((preset) => preset.id === selection.presetId);
+      if (idx >= 0) return String(idx);
+    }
     const idx = presets.findIndex((preset) => {
       const matchesImage = selection.presetImage && preset.image === selection.presetImage;
       const matchesName = selection.presetName && preset.name === selection.presetName;
@@ -120,11 +124,12 @@ describe('CreateForm', () => {
     window.localStorage.setItem('spritz:create-form', JSON.stringify({
       selection: {
         mode: 'preset',
-        presetName: 'Codex',
-        presetImage: 'spritz-codex:latest',
+        presetId: 'codex',
+        presetName: 'Old Codex',
+        presetImage: 'spritz-codex:old',
       },
       fields: {
-        image: 'spritz-codex:latest',
+        image: 'spritz-codex:old',
         repo: '',
         branch: '',
         ttl: '',

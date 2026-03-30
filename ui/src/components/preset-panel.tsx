@@ -49,6 +49,11 @@ export function findPresetIndex(
   selection: FormSelection | undefined,
 ): string {
   if (!selection || selection.mode !== 'preset') return '';
+  const presetID = String(selection.presetId || '').trim();
+  if (presetID) {
+    const idMatch = presets.findIndex((preset) => String(preset.id || '').trim() === presetID);
+    if (idMatch >= 0) return String(idMatch);
+  }
   const presetName = String(selection.presetName || '').trim();
   const presetImage = String(selection.presetImage || '').trim();
   const idx = presets.findIndex((preset) => {

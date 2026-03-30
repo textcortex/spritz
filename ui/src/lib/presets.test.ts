@@ -153,7 +153,7 @@ describe('usePresets', () => {
     });
   });
 
-  it('falls back to configured presets when the API catalog is empty', async () => {
+  it('treats an empty API catalog as authoritative', async () => {
     const configuredPreset: Preset = {
       id: 'claude-code',
       name: 'Claude Code',
@@ -179,7 +179,9 @@ describe('usePresets', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Claude Code')).toBeDefined();
+      expect(requestMock).toHaveBeenCalledWith('/presets');
     });
+    expect(screen.queryByText('Claude Code')).toBeNull();
+    expect(screen.getByText('empty')).toBeDefined();
   });
 });
