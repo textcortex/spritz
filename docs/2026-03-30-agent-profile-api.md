@@ -1,36 +1,36 @@
 ---
 date: 2026-03-30
 author: Onur Solmaz <onur@textcortex.com>
-title: Agent Presentation Resolution Architecture
+title: Agent Profile API
 tags: [spritz, agents, ui, api, architecture]
 ---
 
 ## Overview
 
-This document defines a provider-agnostic model for rendering a Spritz instance
-as an agent with deployment-owned presentation metadata such as:
+This document defines a provider-agnostic agent profile API for rendering a
+Spritz instance with deployment-owned cosmetic metadata such as:
 
-- display name
-- avatar URL
+- name
+- image URL
 
 The goal is to let deployment-owned systems tell Spritz how an instance should
-be presented in the UI without making ACP runtime identity or deployment-wide
+appear in the UI without making ACP runtime identity or deployment-wide
 branding carry that responsibility.
 
 The design keeps three concepts separate:
 
 - deployment-wide product branding
-- per-instance agent presentation
+- per-instance agent profile
 - ACP runtime identity
 
 ## Goals
 
-- Make per-instance agent presentation a first-class Spritz concept.
+- Make per-instance agent profile data a first-class Spritz concept.
 - Keep the contract provider-agnostic and safe for open-source use.
-- Preserve a clean control-plane split between desired state and resolved
+- Preserve a clean control-plane split between desired state and synced
   external state.
-- Give all Spritz UIs one canonical read shape for display name and avatar.
-- Allow deployment-owned systems to resolve presentation using the extension
+- Give all Spritz UIs one canonical read shape for agent name and image.
+- Allow deployment-owned systems to sync profile data using the extension
   framework.
 - Keep ACP `agentInfo` focused on runtime protocol identity, not UI branding.
 
@@ -39,7 +39,7 @@ The design keeps three concepts separate:
 - Do not add deployment-specific business logic to Spritz core.
 - Do not turn ACP `agentInfo` into a mutable branding surface.
 - Do not make browser clients call deployment-owned systems directly to fetch
-  presentation data.
+  profile data.
 - Do not introduce per-tenant or per-user global UI theming here.
 - Do not require every instance to have an external agent reference.
 
@@ -51,7 +51,7 @@ Today, Spritz has two nearby but different concepts:
   [2026-03-20-ui-branding-customization.md](2026-03-20-ui-branding-customization.md)
 - ACP runtime identity in `status.acp.agentInfo`
 
-Neither is the right home for per-instance agent presentation.
+Neither is the right home for per-instance agent profile data.
 
 Deployment-wide branding is too coarse because one Spritz install may host many
 instances that should present as different agents.
@@ -61,16 +61,16 @@ identity exposed by the image or ACP adapter. It should not be overloaded to
 carry deployment-owned display choices such as:
 
 - "show this instance as Research Assistant"
-- "use this avatar from an external agent catalog"
+- "use this image from an external agent catalog"
 
 If Spritz keeps using ACP metadata for rendering, UI identity becomes coupled
 to runtime image behavior instead of control-plane state.
 
 ## Design principles
 
-### Presentation is control-plane data
+### Profile data is control-plane data
 
-Per-instance presentation should be resolved and stored in Spritz control-plane
+Per-instance profile data should be synced and stored in Spritz control-plane
 state, not fetched by the browser at render time.
 
 ### Desired and observed state stay separate
@@ -79,26 +79,26 @@ Deployment-owned references and local overrides belong in `spec`.
 
 Resolved display values from external systems belong in `status`.
 
-### Presentation is not runtime identity
+### Profile data is not runtime identity
 
 ACP metadata continues to answer:
 
 - what runtime is this
 - what protocol version and capabilities does it expose
 
-Presentation answers:
+Profile data answers:
 
 - what should the UI call this instance
-- what avatar should the UI show
+- what image should the UI show
 
-### UIs should read one canonical resolved shape
+### UIs should read one canonical profile shape
 
 Native Spritz UI and embedded consumers should use the same precedence and the
-same resolved fields.
+same profile fields.
 
-### External resolution should be explicit
+### External sync should be explicit
 
-If a deployment wants Spritz to present an instance as an external agent, the
+If a deployment wants Spritz to show an instance as an external agent, the
 instance should contain an explicit opaque reference instead of encoding that
 knowledge indirectly in annotations or ACP metadata.
 
@@ -112,18 +112,18 @@ spec:
     type: external
     provider: example-catalog
     id: agent-123
-  presentationOverrides:
-    displayName: "Example Assistant"
-    avatarUrl: "https://console.example.com/assets/example-assistant.png"
+  profileOverrides:
+    name: "Example Assistant"
+    imageUrl: "https://console.example.com/assets/example-assistant.png"
 
 status:
-  resolvedPresentation:
-    displayName: "Example Assistant"
-    avatarUrl: "https://console.example.com/assets/example-assistant.png"
-    source: resolved
+  profile:
+    name: "Example Assistant"
+    imageUrl: "https://console.example.com/assets/example-assistant.png"
+    source: synced
     observedGeneration: 7
-    resolver: deployment-agent-presentation
-    lastResolvedAt: "2026-03-30T12:00:00Z"
+    syncer: deployment-agent-profile
+    lastSyncedAt: "2026-03-30T12:00:00Z"
 ```
 
 Recommended types:
@@ -134,11 +134,11 @@ Recommended types:
   - Spritz validates shape, not business semantics
   - use `type` for the internal field name; if an external payload sends
     `kind`, convert it at the boundary
-- `spec.presentationOverrides`
+- `spec.profileOverrides`
   - optional
-  - operator or caller supplied local override values
+  - operator- or caller-supplied local override values
   - highest-priority desired-state input
-- `status.resolvedPresentation`
+- `status.profile`
   - canonical UI output
   - what every UI should read
 
@@ -153,18 +153,18 @@ type SpritzAgentRef struct {
     ID       string `json:"id,omitempty"`
 }
 
-type SpritzPresentation struct {
-    DisplayName string `json:"displayName,omitempty"`
-    AvatarURL   string `json:"avatarUrl,omitempty"`
+type SpritzAgentProfile struct {
+    Name     string `json:"name,omitempty"`
+    ImageURL string `json:"imageUrl,omitempty"`
 }
 
-type SpritzResolvedPresentation struct {
-    DisplayName        string       `json:"displayName,omitempty"`
-    AvatarURL          string       `json:"avatarUrl,omitempty"`
+type SpritzAgentProfileStatus struct {
+    Name               string       `json:"name,omitempty"`
+    ImageURL           string       `json:"imageUrl,omitempty"`
     Source             string       `json:"source,omitempty"`
-    Resolver           string       `json:"resolver,omitempty"`
+    Syncer             string       `json:"syncer,omitempty"`
     ObservedGeneration int64        `json:"observedGeneration,omitempty"`
-    LastResolvedAt     *metav1.Time `json:"lastResolvedAt,omitempty"`
+    LastSyncedAt       *metav1.Time `json:"lastSyncedAt,omitempty"`
     LastError          string       `json:"lastError,omitempty"`
 }
 ```
@@ -172,22 +172,22 @@ type SpritzResolvedPresentation struct {
 Suggested placements:
 
 - `spritz.spec.agentRef`
-- `spritz.spec.presentationOverrides`
-- `spritz.status.resolvedPresentation`
+- `spritz.spec.profileOverrides`
+- `spritz.status.profile`
 
-If conversation resources need presentation snapshots later, they should carry
-their own optional resolved snapshot as a derived cache, not as the canonical
-source of truth.
+If conversation resources need profile snapshots later, they should carry their
+own optional derived snapshot as a cache, not as the canonical source of
+truth.
 
 ## Why this model is preferred
 
-This model is cleaner than storing resolved presentation in `spec` because:
+This model is cleaner than storing synced profile data in `spec` because:
 
 - `spec` remains caller intent
 - `status` remains observed and reconciled state
-- the system can refresh external presentation later without rewriting desired
+- the system can refresh external profile data later without rewriting desired
   state
-- UIs can trust one stable resolved output
+- UIs can trust one stable profile output
 - overrides remain explicit and inspectable
 
 This is also cleaner than using only `metadata.annotations` because:
@@ -197,20 +197,20 @@ This is also cleaner than using only `metadata.annotations` because:
 - UI consumers need field-specific parsing logic
 - the contract becomes harder to evolve safely
 
-## Resolution model
+## Sync model
 
-Spritz should add one resolver operation for presentation:
+Spritz should add one extension operation for agent profile sync:
 
-- `agent.presentation.resolve`
+- `agent.profile.sync`
 
-Its input should contain only the facts needed for resolution:
+Its input should contain only the facts needed to compute the profile:
 
 ```json
 {
   "version": "v1",
-  "extensionId": "deployment-agent-presentation",
+  "extensionId": "deployment-agent-profile",
   "type": "resolver",
-  "operation": "agent.presentation.resolve",
+  "operation": "agent.profile.sync",
   "context": {
     "namespace": "spritz-system",
     "instanceClassId": "personal-agent"
@@ -222,8 +222,8 @@ Its input should contain only the facts needed for resolution:
       "provider": "example-catalog",
       "id": "agent-123"
     },
-    "presentationOverrides": {
-      "displayName": "Example Assistant"
+    "profileOverrides": {
+      "name": "Example Assistant"
     }
   }
 }
@@ -233,42 +233,49 @@ The response should be narrow:
 
 ```json
 {
-  "status": "resolved",
+  "status": "synced",
   "output": {
-    "presentation": {
-      "displayName": "Example Assistant",
-      "avatarUrl": "https://console.example.com/assets/example-assistant.png"
+    "profile": {
+      "name": "Example Assistant",
+      "imageUrl": "https://console.example.com/assets/example-assistant.png"
     }
   }
 }
 ```
 
-The resolver should return resolved presentation only. It should not mutate
-arbitrary resource state.
+The extension should return profile data only. It should not mutate arbitrary
+resource state.
 
 ## Precedence rules
 
-Canonical precedence should be:
+For the instance name, canonical precedence should be:
 
-1. `spec.presentationOverrides`
-2. resolved extension output from `agent.presentation.resolve`
+1. `spec.profileOverrides.name`
+2. synced extension output from `agent.profile.sync`
 3. ACP `agentInfo.title`
 4. ACP `agentInfo.name`
 5. `metadata.name`
 
-This precedence should be materialized into `status.resolvedPresentation` so
-the UI does not need to re-implement the logic in multiple places.
+For the image URL, canonical precedence should be:
+
+1. `spec.profileOverrides.imageUrl`
+2. synced extension output from `agent.profile.sync`
+3. no image URL
+
+This precedence should be materialized into `status.profile` so the UI does not
+need to re-implement the logic in multiple places.
 
 That means the browser should normally read:
 
-- `status.resolvedPresentation.displayName`
-- `status.resolvedPresentation.avatarUrl`
+- `status.profile.name`
+- `status.profile.imageUrl`
 
-and only fall back further if `resolvedPresentation` is absent.
+If `status.profile.imageUrl` is empty, the UI can fall back to initials or a
+generic placeholder.
 
 ## Conversation model
 
-The canonical source of per-instance presentation should stay on the instance
+The canonical source of per-instance profile data should stay on the instance
 resource, not on `SpritzConversation`.
 
 Conversation resources already reference the parent instance by `spritzName`.
@@ -277,7 +284,7 @@ needed.
 
 If later profiling shows that repeated joins are too expensive, Spritz can add
 an optional derived snapshot to conversation state. That snapshot should still
-be treated as a cache of instance presentation, not the source of truth.
+be treated as a cache of instance profile data, not the source of truth.
 
 ## API and controller changes
 
@@ -285,73 +292,71 @@ be treated as a cache of instance presentation, not the source of truth.
 
 - extend `operator/api/v1/spritz_types.go` with:
   - `SpritzAgentRef`
-  - `SpritzPresentation`
-  - `SpritzResolvedPresentation`
-- update public API serialization so `resolvedPresentation` is included in
+  - `SpritzAgentProfile`
+  - `SpritzAgentProfileStatus`
+- update public API serialization so `profile` is included in
   instance reads and lists
 - keep `status.acp.agentInfo` unchanged
 
 ### Extension framework changes
 
-- add `agent.presentation.resolve` as a supported operation in the extension
-  registry
-- define a typed request and response envelope for presentation resolution
-- validate that the resolver can only return presentation fields
+- add `agent.profile.sync` as a supported operation in the extension registry
+- define a typed request and response envelope for profile sync
+- validate that the extension can only return profile fields
 
 ### Reconciliation changes
 
-Spritz needs a control-plane component that computes
-`status.resolvedPresentation`.
+Spritz needs a control-plane component that computes `status.profile`.
 
 Recommended sequence:
 
-1. normalize `spec.agentRef` and `spec.presentationOverrides`
-2. if overrides fully satisfy presentation, use them directly
-3. else, if `agentRef` is present, call `agent.presentation.resolve`
+1. normalize `spec.agentRef` and `spec.profileOverrides`
+2. if overrides fully satisfy the profile, use them directly
+3. else, if `agentRef` is present, call `agent.profile.sync`
 4. merge using the canonical precedence rules
-5. write the result to `status.resolvedPresentation`
-6. record resolution metadata such as:
+5. write the result to `status.profile`
+6. record sync metadata such as:
    - `source`
-   - `resolver`
+   - `syncer`
    - `observedGeneration`
-   - `lastResolvedAt`
+   - `lastSyncedAt`
    - `lastError`
 
 The first implementation can run this logic in the API create/update path plus
 an explicit refresh endpoint if needed.
 
 The long-term preferred implementation is a reconciliation loop that keeps
-`status.resolvedPresentation` current whenever:
+`status.profile` current whenever:
 
 - `spec.agentRef` changes
-- `spec.presentationOverrides` changes
+- `spec.profileOverrides` changes
 - a caller requests refresh
 
 ## Suggested implementation phases
 
 ### Phase 1: typed model and UI read path
 
-- add typed `agentRef`, `presentationOverrides`, and `resolvedPresentation`
-- add UI helpers that prefer `status.resolvedPresentation`
+- add typed `agentRef`, `profileOverrides`, and `profile`
+- add UI helpers that prefer `status.profile`
 - keep ACP metadata as fallback only
 
 This phase creates the durable contract first.
 
-### Phase 2: resolver integration
+### Phase 2: extension integration
 
-- add `agent.presentation.resolve`
-- resolve presentation during create and update
-- materialize the merged result into `status.resolvedPresentation`
+- add `agent.profile.sync`
+- sync profile data during create and update
+- materialize the merged result into `status.profile`
 
 This phase gives deployments a provider-agnostic hook.
 
 ### Phase 3: refresh and reconciliation
 
 - add explicit refresh semantics
-- reconcile stale or missing presentation after create
-- support background re-resolution without rewriting `spec`
+- reconcile stale or missing profile data after create
+- support background re-sync without rewriting `spec`
 
-This phase makes external presentation durable over time instead of treating it
+This phase makes external profile data durable over time instead of treating it
 as a one-time create artifact.
 
 ## Validation
@@ -359,18 +364,18 @@ as a one-time create artifact.
 Required validation:
 
 - unit tests for precedence logic
-- unit tests for merge behavior between overrides, resolved presentation, ACP
+- unit tests for merge behavior between overrides, synced profile data, ACP
   metadata, and instance name
 - API tests for instance list and get responses
 - extension tests for:
-  - resolved
-  - unresolved
+  - synced
+  - missing
   - forbidden
   - invalid
-- reconciliation tests proving `status.resolvedPresentation` updates when
-  `spec.presentationOverrides` changes
+- reconciliation tests proving `status.profile` updates when
+  `spec.profileOverrides` changes
 - UI tests proving:
-  - resolved presentation is preferred
+  - `status.profile` is preferred
   - ACP metadata remains a fallback
   - instance name remains the final fallback
 
@@ -381,12 +386,12 @@ Existing installations may already render from ACP metadata or instance name.
 Migration should therefore be additive:
 
 1. introduce the new fields
-2. ship UIs that prefer `status.resolvedPresentation`
-3. start writing `resolvedPresentation`
+2. ship UIs that prefer `status.profile`
+3. start writing `status.profile`
 4. keep ACP fallback behavior until the new field is broadly available
 
 This avoids breaking existing runtimes or forcing immediate deployment-specific
-resolver adoption.
+extension adoption.
 
 ## References
 
