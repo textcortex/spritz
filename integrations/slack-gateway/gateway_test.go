@@ -2978,7 +2978,7 @@ func TestProcessMessageEventRetriesWakeUpAfterSlackPostFailure(t *testing.T) {
 	}
 }
 
-func TestProcessMessageEventPostsWakeUpDuringSlowPromptExecution(t *testing.T) {
+func TestProcessMessageEventDoesNotPostWakeUpDuringSlowPromptExecution(t *testing.T) {
 	var slackPayloads struct {
 		sync.Mutex
 		items []map[string]any
@@ -3136,13 +3136,10 @@ func TestProcessMessageEventPostsWakeUpDuringSlowPromptExecution(t *testing.T) {
 
 	slackPayloads.Lock()
 	defer slackPayloads.Unlock()
-	if len(slackPayloads.items) != 2 {
-		t.Fatalf("expected wake-up status and final reply, got %#v", slackPayloads.items)
+	if len(slackPayloads.items) != 1 {
+		t.Fatalf("expected only the final reply for a slow prompt, got %#v", slackPayloads.items)
 	}
-	if got := slackPayloads.items[0]["text"]; got != slackRecoveryStatusText {
-		t.Fatalf("expected wake-up status text, got %#v", got)
-	}
-	if got := slackPayloads.items[1]["text"]; got != "Hello from slow concierge" {
+	if got := slackPayloads.items[0]["text"]; got != "Hello from slow concierge" {
 		t.Fatalf("expected final reply text, got %#v", got)
 	}
 }

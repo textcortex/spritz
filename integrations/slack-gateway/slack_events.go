@@ -47,7 +47,7 @@ type slackEventInner struct {
 
 type channelSessionRecoveryState struct {
 	mu              sync.Mutex
-	startedAt       time.Time
+	recoveryBeganAt time.Time
 	statusAuth      slackInstallation
 	statusAuthReady bool
 	statusPosting   bool
@@ -55,7 +55,18 @@ type channelSessionRecoveryState struct {
 }
 
 func newChannelSessionRecoveryState() *channelSessionRecoveryState {
-	return &channelSessionRecoveryState{startedAt: time.Now()}
+	return &channelSessionRecoveryState{}
+}
+
+func (state *channelSessionRecoveryState) markRecovering() {
+	if state == nil {
+		return
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.recoveryBeganAt.IsZero() {
+		state.recoveryBeganAt = time.Now()
+	}
 }
 
 func (state *channelSessionRecoveryState) rememberProviderAuth(providerAuth slackInstallation) {
@@ -66,21 +77,6 @@ func (state *channelSessionRecoveryState) rememberProviderAuth(providerAuth slac
 	defer state.mu.Unlock()
 	state.statusAuth = providerAuth
 	state.statusAuthReady = true
-}
-
-// remainingStatusDelay reports how much longer the gateway should wait before
-// posting the provider-authored wake-up status message.
-func (state *channelSessionRecoveryState) remainingStatusDelay(delay time.Duration) time.Duration {
-	if state == nil {
-		return delay
-	}
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	remaining := delay - time.Since(state.startedAt)
-	if remaining < 0 {
-		return 0
-	}
-	return remaining
 }
 
 func (state *channelSessionRecoveryState) hasProviderAuth() bool {
@@ -105,7 +101,7 @@ func (state *channelSessionRecoveryState) maybePostStatus(
 		state.mu.Unlock()
 		return nil
 	}
-	if time.Since(state.startedAt) < g.cfg.StatusMessageDelay {
+	if state.recoveryBeganAt.IsZero() || time.Since(state.recoveryBeganAt) < g.cfg.StatusMessageDelay {
 		state.mu.Unlock()
 		return nil
 	}
@@ -145,7 +141,11 @@ func (state *channelSessionRecoveryState) maybePostFailure(
 		state.mu.Unlock()
 		return false, nil
 	}
-	if !state.statusVisible && time.Since(state.startedAt) < g.cfg.StatusMessageDelay {
+	if state.recoveryBeganAt.IsZero() {
+		state.mu.Unlock()
+		return false, nil
+	}
+	if !state.statusVisible && time.Since(state.recoveryBeganAt) < g.cfg.StatusMessageDelay {
 		state.mu.Unlock()
 		return false, nil
 	}
@@ -160,48 +160,6 @@ func (state *channelSessionRecoveryState) maybePostFailure(
 		return false, err
 	}
 	return true, nil
-}
-
-// startPromptStatusTimer posts the provider-authored wake-up status once the
-// visible-delay threshold is crossed while a prompt is still executing.
-func (g *slackGateway) startPromptStatusTimer(
-	ctx context.Context,
-	event slackEventInner,
-	recoveryState *channelSessionRecoveryState,
-) func() {
-	done := make(chan struct{})
-	go func() {
-		remaining := recoveryState.remainingStatusDelay(g.cfg.StatusMessageDelay)
-		if remaining > 0 {
-			timer := time.NewTimer(remaining)
-			defer timer.Stop()
-			select {
-			case <-ctx.Done():
-				return
-			case <-done:
-				return
-			case <-timer.C:
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-done:
-			return
-		default:
-		}
-		if err := recoveryState.maybePostStatus(ctx, g, event); err != nil {
-			g.logger.Error(
-				"slack recovery status post failed",
-				"error", err,
-				"channel_id", strings.TrimSpace(event.Channel),
-				"message_ts", strings.TrimSpace(event.TS),
-			)
-		}
-	}()
-	return func() {
-		close(done)
-	}
 }
 
 func (g *slackGateway) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
@@ -393,10 +351,9 @@ func (g *slackGateway) processMessageEventWithDelivery(
 		return nil
 	}
 
-	stopPromptStatusTimer := g.startPromptStatusTimer(ctx, event, recoveryState)
 	result, err := g.executeConversationPrompt(ctx, envelope, event, session, promptText)
-	stopPromptStatusTimer()
 	for err != nil && !result.promptSent && isSpritzRuntimeMissingError(err) {
+		recoveryState.markRecovering()
 		recoveryState.rememberProviderAuth(session.ProviderAuth)
 		if postErr := recoveryState.maybePostStatus(ctx, g, event); postErr != nil {
 			g.logger.Error(
@@ -448,9 +405,7 @@ func (g *slackGateway) processMessageEventWithDelivery(
 			success = true
 			return nil
 		}
-		stopPromptStatusTimer = g.startPromptStatusTimer(ctx, event, recoveryState)
 		result, err = g.executeConversationPrompt(ctx, envelope, event, session, promptText)
-		stopPromptStatusTimer()
 	}
 	if err != nil {
 		if !result.promptSent {
@@ -587,6 +542,7 @@ func (g *slackGateway) awaitChannelSession(
 				return channelSession{}, false, err
 			}
 		} else {
+			recoveryState.markRecovering()
 			recoveryState.rememberProviderAuth(providerAuth)
 		}
 
