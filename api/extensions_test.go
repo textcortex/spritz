@@ -59,6 +59,26 @@ func TestNewExtensionRegistryAcceptsChannelRouteResolveOperation(t *testing.T) {
 	}
 }
 
+func TestNewExtensionRegistryAcceptsAgentProfileSyncOperation(t *testing.T) {
+	t.Setenv(extensionsEnvKey, `[{
+		"id": "agent-profile",
+		"type": "resolver",
+		"operation": "agent.profile.sync",
+		"transport": {"url": "https://example.com/internal/extensions/agent-profile"}
+	}]`)
+
+	registry, err := newExtensionRegistry()
+	if err != nil {
+		t.Fatalf("expected agent profile sync operation to be accepted, got %v", err)
+	}
+	if len(registry.resolvers) != 1 {
+		t.Fatalf("expected one resolver, got %d", len(registry.resolvers))
+	}
+	if registry.resolvers[0].operation != extensionOperationAgentProfileSync {
+		t.Fatalf("expected agent.profile.sync operation, got %q", registry.resolvers[0].operation)
+	}
+}
+
 func TestNormalizeExtensionMatchSanitizesPresetIDs(t *testing.T) {
 	match, err := normalizeExtensionMatch(extensionMatchInput{PresetIDs: []string{"Zeno", "my_preset"}})
 	if err != nil {

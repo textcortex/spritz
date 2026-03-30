@@ -29,7 +29,10 @@ func newCreateSpritzTestServer(t *testing.T) *server {
 	t.Helper()
 	scheme := newTestSpritzScheme(t)
 	return &server{
-		client:           fake.NewClientBuilder().WithScheme(scheme).Build(),
+		client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&spritzv1.Spritz{}).
+			Build(),
 		scheme:           scheme,
 		namespace:        "spritz-test",
 		controlNamespace: "spritz-test",

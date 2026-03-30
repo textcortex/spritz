@@ -236,6 +236,11 @@ func applyPresetCreateResolverMutations(body *createRequest, response extensionR
 			body.Spec.ServiceAccountName = resolvedServiceAccount
 			result.serviceAccountResolved = true
 		}
+		mergedAgentRef, err := mergeSpritzAgentRefStrict(body.Spec.AgentRef, response.Mutations.Spec.AgentRef)
+		if err != nil {
+			return presetCreateMutationResult{}, err
+		}
+		body.Spec.AgentRef = mergedAgentRef
 	}
 	annotations, err := mergeMetadataStrict(body.Annotations, response.Mutations.Annotations, "annotation")
 	if err != nil {

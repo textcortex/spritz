@@ -30,10 +30,13 @@ func spritzSupportsACPConversations(spritz *spritzv1.Spritz) bool {
 }
 
 func displayAgentName(spritz *spritzv1.Spritz) string {
-	if spritz == nil || spritz.Status.ACP == nil || spritz.Status.ACP.AgentInfo == nil {
-		if spritz == nil {
-			return ""
-		}
+	if spritz == nil {
+		return ""
+	}
+	if profile := spritz.Status.Profile; profile != nil && strings.TrimSpace(profile.Name) != "" {
+		return strings.TrimSpace(profile.Name)
+	}
+	if spritz.Status.ACP == nil || spritz.Status.ACP.AgentInfo == nil {
 		return spritz.Name
 	}
 	info := spritz.Status.ACP.AgentInfo

@@ -33,15 +33,18 @@ type SpritzSpec struct {
 	// +kubebuilder:validation:Pattern="^([0-9]+h)?([0-9]+m)?([0-9]+s)?$"
 	TTL string `json:"ttl,omitempty"`
 	// +kubebuilder:validation:Pattern="^([0-9]+h)?([0-9]+m)?([0-9]+s)?$"
-	IdleTTL     string                      `json:"idleTtl,omitempty"`
-	Resources   corev1.ResourceRequirements `json:"resources,omitempty"`
-	Owner       SpritzOwner                 `json:"owner"`
-	Labels      map[string]string           `json:"labels,omitempty"`
-	Annotations map[string]string           `json:"annotations,omitempty"`
-	Features    *SpritzFeatures             `json:"features,omitempty"`
-	SSH         *SpritzSSH                  `json:"ssh,omitempty"`
-	Ports       []SpritzPort                `json:"ports,omitempty"`
-	Ingress     *SpritzIngress              `json:"ingress,omitempty"`
+	IdleTTL   string                      `json:"idleTtl,omitempty"`
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+	Owner     SpritzOwner                 `json:"owner"`
+	AgentRef  *SpritzAgentRef             `json:"agentRef,omitempty"`
+	// ProfileOverrides stores optional local overrides for UI-facing agent profile fields.
+	ProfileOverrides *SpritzAgentProfile `json:"profileOverrides,omitempty"`
+	Labels           map[string]string   `json:"labels,omitempty"`
+	Annotations      map[string]string   `json:"annotations,omitempty"`
+	Features         *SpritzFeatures     `json:"features,omitempty"`
+	SSH              *SpritzSSH          `json:"ssh,omitempty"`
+	Ports            []SpritzPort        `json:"ports,omitempty"`
+	Ingress          *SpritzIngress      `json:"ingress,omitempty"`
 }
 
 // SpritzRepo describes the repository to clone inside the workload.
@@ -74,6 +77,24 @@ type SpritzOwner struct {
 	// +kubebuilder:validation:MinLength=1
 	ID   string `json:"id"`
 	Team string `json:"team,omitempty"`
+}
+
+// SpritzAgentRef identifies a deployment-owned external agent record.
+type SpritzAgentRef struct {
+	// +kubebuilder:validation:MaxLength=64
+	Type string `json:"type,omitempty"`
+	// +kubebuilder:validation:MaxLength=128
+	Provider string `json:"provider,omitempty"`
+	// +kubebuilder:validation:MaxLength=256
+	ID string `json:"id,omitempty"`
+}
+
+// SpritzAgentProfile stores UI-facing agent profile fields.
+type SpritzAgentProfile struct {
+	// +kubebuilder:validation:MaxLength=128
+	Name string `json:"name,omitempty"`
+	// +kubebuilder:validation:MaxLength=2048
+	ImageURL string `json:"imageUrl,omitempty"`
 }
 
 // SpritzFeatures toggles optional capabilities.
@@ -139,17 +160,33 @@ type SpritzStatus struct {
 	// +kubebuilder:validation:Enum=Provisioning;Ready;Expiring;Expired;Terminating;Error
 	Phase string `json:"phase,omitempty"`
 	// +kubebuilder:validation:Format=uri
-	URL             string             `json:"url,omitempty"`
-	ACP             *SpritzACPStatus   `json:"acp,omitempty"`
-	SSH             *SpritzSSHInfo     `json:"ssh,omitempty"`
-	Message         string             `json:"message,omitempty"`
-	LastActivityAt  *metav1.Time       `json:"lastActivityAt,omitempty"`
-	IdleExpiresAt   *metav1.Time       `json:"idleExpiresAt,omitempty"`
-	MaxExpiresAt    *metav1.Time       `json:"maxExpiresAt,omitempty"`
-	ExpiresAt       *metav1.Time       `json:"expiresAt,omitempty"`
-	LifecycleReason string             `json:"lifecycleReason,omitempty"`
-	ReadyAt         *metav1.Time       `json:"readyAt,omitempty"`
-	Conditions      []metav1.Condition `json:"conditions,omitempty"`
+	URL             string                    `json:"url,omitempty"`
+	Profile         *SpritzAgentProfileStatus `json:"profile,omitempty"`
+	ACP             *SpritzACPStatus          `json:"acp,omitempty"`
+	SSH             *SpritzSSHInfo            `json:"ssh,omitempty"`
+	Message         string                    `json:"message,omitempty"`
+	LastActivityAt  *metav1.Time              `json:"lastActivityAt,omitempty"`
+	IdleExpiresAt   *metav1.Time              `json:"idleExpiresAt,omitempty"`
+	MaxExpiresAt    *metav1.Time              `json:"maxExpiresAt,omitempty"`
+	ExpiresAt       *metav1.Time              `json:"expiresAt,omitempty"`
+	LifecycleReason string                    `json:"lifecycleReason,omitempty"`
+	ReadyAt         *metav1.Time              `json:"readyAt,omitempty"`
+	Conditions      []metav1.Condition        `json:"conditions,omitempty"`
+}
+
+// SpritzAgentProfileStatus stores the synced UI-facing profile for an instance.
+type SpritzAgentProfileStatus struct {
+	// +kubebuilder:validation:MaxLength=128
+	Name string `json:"name,omitempty"`
+	// +kubebuilder:validation:MaxLength=2048
+	ImageURL string `json:"imageUrl,omitempty"`
+	// +kubebuilder:validation:MaxLength=32
+	Source string `json:"source,omitempty"`
+	// +kubebuilder:validation:MaxLength=128
+	Syncer             string       `json:"syncer,omitempty"`
+	ObservedGeneration int64        `json:"observedGeneration,omitempty"`
+	LastSyncedAt       *metav1.Time `json:"lastSyncedAt,omitempty"`
+	LastError          string       `json:"lastError,omitempty"`
 }
 
 // SpritzACPStatus describes ACP discovery state for the workload.
@@ -440,6 +477,14 @@ func (in *SpritzSpec) DeepCopyInto(out *SpritzSpec) {
 		copy(out.SharedMounts, in.SharedMounts)
 	}
 	in.Resources.DeepCopyInto(&out.Resources)
+	if in.AgentRef != nil {
+		out.AgentRef = &SpritzAgentRef{}
+		*out.AgentRef = *in.AgentRef
+	}
+	if in.ProfileOverrides != nil {
+		out.ProfileOverrides = &SpritzAgentProfile{}
+		*out.ProfileOverrides = *in.ProfileOverrides
+	}
 	if in.Labels != nil {
 		out.Labels = make(map[string]string, len(in.Labels))
 		for k, v := range in.Labels {
@@ -491,6 +536,13 @@ func (in *SpritzSpec) DeepCopyInto(out *SpritzSpec) {
 
 func (in *SpritzStatus) DeepCopyInto(out *SpritzStatus) {
 	*out = *in
+	if in.Profile != nil {
+		out.Profile = &SpritzAgentProfileStatus{}
+		*out.Profile = *in.Profile
+		if in.Profile.LastSyncedAt != nil {
+			out.Profile.LastSyncedAt = in.Profile.LastSyncedAt.DeepCopy()
+		}
+	}
 	if in.ACP != nil {
 		out.ACP = &SpritzACPStatus{}
 		in.ACP.DeepCopyInto(out.ACP)

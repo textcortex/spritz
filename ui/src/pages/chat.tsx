@@ -13,7 +13,12 @@ import {
   getProvisioningStatusLine,
   isSpritzChatReady,
 } from '@/lib/provisioning';
+import {
+  getConversationAgentImageUrl,
+  getConversationAgentName,
+} from '@/lib/spritz-profile';
 import { chatConversationPath } from '@/lib/urls';
+import { AgentAvatar } from '@/components/agent-avatar';
 import { useNotice } from '@/components/notice-banner';
 import { Sidebar } from '@/components/acp/sidebar';
 import { ChatMessage } from '@/components/acp/message';
@@ -451,9 +456,22 @@ export function ChatPage() {
                 const spritzName = selectedConversation.spec?.spritzName || '';
                 const group = agents.find((g) => g.spritz.metadata.name === spritzName);
                 const version = group?.spritz?.status?.acp?.agentInfo?.version;
-                const parts = [spritzName, version ? `v${version}` : ''].filter(Boolean);
+                const displayName = getConversationAgentName(selectedConversation, group?.spritz);
+                const imageUrl = getConversationAgentImageUrl(selectedConversation, group?.spritz);
+                const parts = [
+                  displayName,
+                  spritzName && spritzName !== displayName ? spritzName : '',
+                  version ? `v${version}` : '',
+                ].filter(Boolean);
                 return parts.length > 0 ? (
-                  <p className="m-0 truncate text-xs opacity-60">{parts.join(' · ')}</p>
+                  <div className="mt-1 flex min-w-0 items-center gap-2">
+                    <AgentAvatar
+                      name={displayName || spritzName}
+                      imageUrl={imageUrl}
+                      className="size-6 text-[9px]"
+                    />
+                    <p className="m-0 truncate text-xs opacity-60">{parts.join(' · ')}</p>
+                  </div>
                 ) : null;
               })()}
               {!selectedConversation && provisioningSpritz && (

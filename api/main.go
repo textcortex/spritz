@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -518,6 +519,7 @@ func (s *server) createSpritz(c echo.Context) error {
 	if err := s.ensureServiceAccount(c.Request().Context(), namespace, body.Spec.ServiceAccountName); err != nil {
 		return writeError(c, http.StatusInternalServerError, "failed to ensure service account")
 	}
+	resolvedProfile := s.resolveAgentProfile(c.Request().Context(), principal, namespace, &body)
 
 	labels := map[string]string{
 		ownerLabelKey: ownerLabelValue(owner.ID),
@@ -643,6 +645,11 @@ func (s *server) createSpritz(c echo.Context) error {
 				continue
 			}
 			return writeError(c, http.StatusInternalServerError, err.Error())
+		}
+		if updated, err := s.applyResolvedAgentProfileStatus(c.Request().Context(), spritz, resolvedProfile); err != nil {
+			log.Printf("spritz agent profile: failed to persist profile status name=%s namespace=%s err=%v", spritz.Name, spritz.Namespace, err)
+		} else if updated != nil {
+			spritz = updated
 		}
 		if principal.isService() {
 			if err := s.completeIdempotencyReservation(c.Request().Context(), principal.ID, body.IdempotencyKey, spritz); err != nil {

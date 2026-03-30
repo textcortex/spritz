@@ -211,6 +211,11 @@ func validateCreateSpec(spec *spritzv1.SpritzSpec) error {
 			return err
 		}
 	}
+	spec.AgentRef = normalizeSpritzAgentRef(spec.AgentRef)
+	if err := validateSpritzAgentRef(spec.AgentRef); err != nil {
+		return err
+	}
+	spec.ProfileOverrides = normalizeSpritzAgentProfile(spec.ProfileOverrides)
 	if len(spec.SharedMounts) > 0 {
 		normalized, err := normalizeSharedMounts(spec.SharedMounts)
 		if err != nil {

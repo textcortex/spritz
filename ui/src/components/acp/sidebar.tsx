@@ -10,6 +10,13 @@ import {
 import { cn, timeAgo } from '@/lib/utils';
 import { describeChatAction } from '@/lib/urls';
 import { buildProvisioningPlaceholderSpritz, getProvisioningStatusLine } from '@/lib/provisioning';
+import {
+  getConversationAgentImageUrl,
+  getConversationAgentName,
+  getSpritzProfileImageUrl,
+  getSpritzProfileName,
+} from '@/lib/spritz-profile';
+import { AgentAvatar } from '@/components/agent-avatar';
 import { BrandHeader } from '@/components/brand-header';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import type { ConversationInfo } from '@/types/acp';
@@ -231,6 +238,8 @@ function FocusedAgentProvisioningSection({
   selectedConversationId: string | null;
 }) {
   const name = spritz.metadata.name;
+  const displayName = getSpritzProfileName(spritz) || name;
+  const imageUrl = getSpritzProfileImageUrl(spritz);
   const statusLine = getProvisioningStatusLine(spritz);
   const conversationLabel = describeChatAction(spritz).label;
   const conversationSelected = !selectedConversationId;
@@ -243,7 +252,8 @@ function FocusedAgentProvisioningSection({
           className="flex flex-1 items-center gap-2 rounded-[var(--radius-lg)] bg-sidebar-accent px-3 py-1.5 text-left text-xs font-medium text-foreground"
         >
           <ChevronRightIcon aria-hidden="true" className="size-3 shrink-0 rotate-90" />
-          <span className="truncate">{name}</span>
+          <AgentAvatar name={displayName} imageUrl={imageUrl} className="size-6 text-[9px]" />
+          <span className="truncate">{displayName}</span>
         </div>
       </div>
       <div className="flex flex-col gap-1">
@@ -283,8 +293,10 @@ function AgentSection({
   focused: boolean;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
-  const name = group.spritz.metadata.name;
-  const creatingForThisAgent = creatingConversationFor === name;
+  const spritzName = group.spritz.metadata.name;
+  const displayName = getSpritzProfileName(group.spritz) || spritzName;
+  const imageUrl = getSpritzProfileImageUrl(group.spritz);
+  const creatingForThisAgent = creatingConversationFor === spritzName;
 
   useEffect(() => {
     setExpanded(defaultExpanded);
@@ -298,8 +310,7 @@ function AgentSection({
           type="button"
           aria-expanded={expanded}
           aria-current={focused ? 'true' : undefined}
-          aria-label={`${name} conversations`}
-          className="flex flex-1 items-center gap-2 rounded-[var(--radius-lg)] px-3 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-[var(--surface-emphasis)] hover:text-primary"
+          aria-label={`${displayName} conversations`}
           data-active={focused ? 'true' : 'false'}
           className={cn(
             'flex flex-1 items-center gap-2 rounded-[var(--radius-lg)] px-3 py-1.5 text-left text-xs font-medium transition-colors hover:bg-sidebar-accent',
@@ -308,6 +319,7 @@ function AgentSection({
               : 'text-muted-foreground',
           )}
           onClick={() => setExpanded(!expanded)}
+          title={spritzName}
         >
           <ChevronRightIcon
             aria-hidden="true"
@@ -316,17 +328,18 @@ function AgentSection({
               expanded && 'rotate-90',
             )}
           />
-          <span className="truncate">{name}</span>
+          <AgentAvatar name={displayName} imageUrl={imageUrl} className="size-6 text-[9px]" />
+          <span className="truncate">{displayName}</span>
         </button>
         <Tooltip>
           <TooltipTrigger
             render={
               <button
                 type="button"
-                aria-label={`New conversation for ${name}`}
+                aria-label={`New conversation for ${displayName}`}
                 disabled={creatingForThisAgent}
                 className="flex size-6 items-center justify-center rounded-[var(--radius-md)] text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => { if (!creatingForThisAgent) onNewConversation(name); }}
+                onClick={() => { if (!creatingForThisAgent) onNewConversation(spritzName); }}
               />
             }
           >
@@ -352,6 +365,8 @@ function AgentSection({
               const id = conv.metadata.name;
               const isActive = id === selectedConversationId;
               const title = conv.spec?.title || 'New conversation';
+              const conversationName = getConversationAgentName(conv, group.spritz) || displayName;
+              const conversationImageUrl = getConversationAgentImageUrl(conv, group.spritz);
               const activity = conv.status?.lastActivityAt;
               return (
                 <div key={id} className="group/conv flex items-center">
@@ -366,6 +381,11 @@ function AgentSection({
                     )}
                     onClick={() => onSelectConversation(conv)}
                   >
+                    <AgentAvatar
+                      name={conversationName}
+                      imageUrl={conversationImageUrl}
+                      className="size-6 text-[9px]"
+                    />
                     <span className="min-w-0 flex-1 truncate">{title}</span>
                     {activity && (
                       <span className="shrink-0 text-[11px] text-muted-foreground">
