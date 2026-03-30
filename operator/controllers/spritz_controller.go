@@ -51,8 +51,9 @@ var (
 
 type SpritzReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	ACP    ACPProbeConfig
+	Scheme                 *runtime.Scheme
+	ACP                    ACPProbeConfig
+	LifecycleNotifications LifecycleNotificationConfig
 }
 
 type repoEntry struct {
@@ -703,6 +704,11 @@ func (r *SpritzReconciler) reconcileStatus(ctx context.Context, spritz *spritzv1
 }
 
 func (r *SpritzReconciler) setStatus(ctx context.Context, spritz *spritzv1.Spritz, phase, url string, sshInfo *spritzv1.SpritzSSHInfo, reason, message string, acpStatus *spritzv1.SpritzACPStatus) error {
+	if strings.TrimSpace(spritz.Status.Phase) != strings.TrimSpace(phase) {
+		if err := r.LifecycleNotifications.notifyPhase(ctx, spritz.Namespace, spritz.Name, phase); err != nil {
+			return err
+		}
+	}
 	conditionStatus := metav1.ConditionFalse
 	if phase == "Ready" {
 		conditionStatus = metav1.ConditionTrue

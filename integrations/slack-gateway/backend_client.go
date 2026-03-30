@@ -126,6 +126,17 @@ func channelSessionUnavailableProviderAuth(err error) (slackInstallation, bool) 
 	return unavailableErr.providerAuth, true
 }
 
+func isSpritzRuntimeMissingError(err error) bool {
+	var statusErr *httpStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	if statusErr.statusCode != http.StatusNotFound {
+		return false
+	}
+	return strings.Contains(strings.ToLower(statusErr.body), "spritz not found")
+}
+
 func (g *slackGateway) exchangeChannelSession(ctx context.Context, teamID string) (channelSession, error) {
 	body := map[string]any{
 		"principalId":       g.cfg.PrincipalID,

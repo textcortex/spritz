@@ -203,7 +203,7 @@ func (g *slackGateway) processMessageEventWithDelivery(
 
 	event := envelope.Event
 
-	session, terminalHandled, err := g.awaitChannelSession(ctx, envelope, event)
+	session, terminalHandled, err := g.awaitChannelSession(ctx, envelope, event, nil)
 	if err != nil {
 		return err
 	}
@@ -224,31 +224,42 @@ func (g *slackGateway) processMessageEventWithDelivery(
 		return nil
 	}
 
-	externalConversationID := slackExternalConversationID(event)
-	conversationID, err := g.upsertChannelConversation(ctx, session, event, envelope.TeamID, "", externalConversationID)
-	if err != nil {
-		return err
+	result, err := g.executeConversationPrompt(ctx, envelope, event, session, promptText)
+	if err != nil && !result.promptSent && isSpritzRuntimeMissingError(err) {
+		recoveredSession, recoveredTerminalHandled, recoveryErr := g.awaitChannelSession(ctx, envelope, event, &session)
+		if recoveryErr != nil {
+			return recoveryErr
+		}
+		if recoveredTerminalHandled {
+			success = true
+			return nil
+		}
+		session = recoveredSession
+		promptText = buildSlackPromptText(
+			envelope.TeamID,
+			event,
+			session.ProviderAuth.BotUserID,
+		)
+		if promptText == "" {
+			return nil
+		}
+		result, err = g.executeConversationPrompt(ctx, envelope, event, session, promptText)
 	}
-	sessionID, cwd, err := g.bootstrapConversation(ctx, g.cfg.SpritzServiceToken, session.Namespace, conversationID)
 	if err != nil {
-		return err
-	}
-	reply, promptSent, err := g.promptConversation(ctx, g.cfg.SpritzServiceToken, session.Namespace, conversationID, sessionID, cwd, promptText)
-	if err != nil {
-		if !promptSent {
+		if !result.promptSent {
 			return err
 		}
-		reply = "I hit an internal error while processing that request."
-		g.logger.Error("acp prompt failed", "error", err, "conversation_id", conversationID)
+		result.reply = "I hit an internal error while processing that request."
+		g.logger.Error("acp prompt failed", "error", err, "conversation_id", result.conversationID)
 	}
 	replyThreadTS := slackReplyThreadTS(event)
 	replyCtx, cancelReply := context.WithTimeout(context.WithoutCancel(ctx), g.cfg.HTTPTimeout)
 	defer cancelReply()
-	replyMessageTS, err := g.postSlackMessage(replyCtx, session.ProviderAuth.BotAccessToken, event.Channel, reply, replyThreadTS)
+	replyMessageTS, err := g.postSlackMessage(replyCtx, session.ProviderAuth.BotAccessToken, event.Channel, result.reply, replyThreadTS)
 	if err != nil {
 		// Once the ACP prompt has already been delivered, suppress duplicate
 		// Slack retries from re-running the same agent side effects.
-		success = promptSent
+		success = result.promptSent
 		return err
 	}
 	if replyThreadTS == "" && !isSlackDirectMessageEvent(event) && strings.TrimSpace(replyMessageTS) != "" {
@@ -258,14 +269,14 @@ func (g *slackGateway) processMessageEventWithDelivery(
 			session,
 			event,
 			envelope.TeamID,
-			conversationID,
+			result.conversationID,
 			replyMessageTS,
 		); err != nil {
 			cancelAlias()
 			g.logger.Error(
 				"slack reply alias persistence failed",
 				"error", err,
-				"conversation_id", conversationID,
+				"conversation_id", result.conversationID,
 				"reply_message_ts", replyMessageTS,
 			)
 		} else {
@@ -276,49 +287,110 @@ func (g *slackGateway) processMessageEventWithDelivery(
 	return nil
 }
 
+type conversationPromptResult struct {
+	conversationID string
+	reply          string
+	promptSent     bool
+}
+
+func (g *slackGateway) executeConversationPrompt(
+	ctx context.Context,
+	envelope slackEnvelope,
+	event slackEventInner,
+	session channelSession,
+	promptText string,
+) (conversationPromptResult, error) {
+	externalConversationID := slackExternalConversationID(event)
+	conversationID, err := g.upsertChannelConversation(
+		ctx,
+		session,
+		event,
+		envelope.TeamID,
+		"",
+		externalConversationID,
+	)
+	if err != nil {
+		return conversationPromptResult{}, err
+	}
+	sessionID, cwd, err := g.bootstrapConversation(
+		ctx,
+		g.cfg.SpritzServiceToken,
+		session.Namespace,
+		conversationID,
+	)
+	if err != nil {
+		return conversationPromptResult{conversationID: conversationID}, err
+	}
+	reply, promptSent, err := g.promptConversation(
+		ctx,
+		g.cfg.SpritzServiceToken,
+		session.Namespace,
+		conversationID,
+		sessionID,
+		cwd,
+		promptText,
+	)
+	return conversationPromptResult{
+		conversationID: conversationID,
+		reply:          reply,
+		promptSent:     promptSent,
+	}, err
+}
+
 func (g *slackGateway) awaitChannelSession(
 	ctx context.Context,
 	envelope slackEnvelope,
 	event slackEventInner,
+	staleSession *channelSession,
 ) (channelSession, bool, error) {
 	startedAt := time.Now()
 	var statusAuth slackInstallation
-	var statusAuthReady bool
+	statusAuthReady := false
+	if staleSession != nil && strings.TrimSpace(staleSession.ProviderAuth.BotAccessToken) != "" {
+		statusAuth = staleSession.ProviderAuth
+		statusAuthReady = true
+	}
 	statusAttempted := false
 	statusVisible := false
 
 	for {
 		session, err := g.exchangeChannelSession(ctx, envelope.TeamID)
 		if err == nil {
-			return session, false, nil
-		}
-
-		providerAuth, recoverable := channelSessionUnavailableProviderAuth(err)
-		if !recoverable {
-			if statusAuthReady && (statusVisible || time.Since(startedAt) >= g.cfg.StatusMessageDelay) {
-				if postErr := g.postGatewaySlackMessage(
-					ctx,
-					statusAuth.BotAccessToken,
-					event,
-					slackRecoveryFailureText,
-				); postErr != nil {
-					g.logger.Error(
-						"slack recovery failure reply failed",
-						"error", postErr,
-						"team_id", strings.TrimSpace(envelope.TeamID),
-						"channel_id", strings.TrimSpace(event.Channel),
-						"message_ts", strings.TrimSpace(event.TS),
-					)
-					return channelSession{}, false, postErr
-				}
-				return channelSession{}, true, nil
+			if staleSession == nil || session.Namespace != staleSession.Namespace || session.InstanceID != staleSession.InstanceID {
+				return session, false, nil
 			}
-			return channelSession{}, false, err
+			if strings.TrimSpace(session.ProviderAuth.BotAccessToken) != "" {
+				statusAuth = session.ProviderAuth
+				statusAuthReady = true
+			}
+		} else {
+			providerAuth, recoverable := channelSessionUnavailableProviderAuth(err)
+			if !recoverable {
+				if statusAuthReady && (statusVisible || time.Since(startedAt) >= g.cfg.StatusMessageDelay) {
+					if postErr := g.postGatewaySlackMessage(
+						ctx,
+						statusAuth.BotAccessToken,
+						event,
+						slackRecoveryFailureText,
+					); postErr != nil {
+						g.logger.Error(
+							"slack recovery failure reply failed",
+							"error", postErr,
+							"team_id", strings.TrimSpace(envelope.TeamID),
+							"channel_id", strings.TrimSpace(event.Channel),
+							"message_ts", strings.TrimSpace(event.TS),
+						)
+						return channelSession{}, false, postErr
+					}
+					return channelSession{}, true, nil
+				}
+				return channelSession{}, false, err
+			}
+			statusAuth = providerAuth
+			statusAuthReady = true
 		}
-		statusAuth = providerAuth
-		statusAuthReady = true
 
-		if !statusAttempted && time.Since(startedAt) >= g.cfg.StatusMessageDelay {
+		if statusAuthReady && !statusAttempted && time.Since(startedAt) >= g.cfg.StatusMessageDelay {
 			statusAttempted = true
 			if postErr := g.postGatewaySlackMessage(
 				ctx,
