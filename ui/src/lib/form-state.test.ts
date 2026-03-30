@@ -10,6 +10,7 @@ import {
 import type { Preset } from './config';
 
 const PRESET: Preset = {
+  id: 'starter',
   name: 'Starter',
   image: 'spritz-starter:latest',
   description: '',
@@ -22,6 +23,7 @@ describe('deriveFormSelection', () => {
   it('returns preset mode when images match', () => {
     const result = deriveFormSelection(PRESET, 'spritz-starter:latest');
     expect(result.mode).toBe('preset');
+    expect(result.presetId).toBe('starter');
     expect(result.presetName).toBe('Starter');
     expect(result.presetImage).toBe('spritz-starter:latest');
   });
@@ -107,7 +109,32 @@ describe('localStorage round-trip', () => {
     const restored = readCreateFormState();
     expect(restored).not.toBeNull();
     expect(restored!.selection.mode).toBe('preset');
+    expect(restored!.selection.presetId).toBe('starter');
     expect(restored!.fields.repo).toBe('https://github.com/example/repo');
+  });
+
+  it('reads legacy preset selections without presetId', () => {
+    mockStorage.setItem('spritz:create-form', JSON.stringify({
+      selection: {
+        mode: 'preset',
+        presetName: 'Starter',
+        presetImage: 'spritz-starter:latest',
+      },
+      fields: {
+        image: 'spritz-starter:latest',
+        repo: '',
+        branch: '',
+        ttl: '',
+        namespace: '',
+        userConfig: '',
+      },
+    }));
+
+    const restored = readCreateFormState();
+    expect(restored).not.toBeNull();
+    expect(restored!.selection.mode).toBe('preset');
+    expect(restored!.selection.presetId).toBe('');
+    expect(restored!.selection.presetName).toBe('Starter');
   });
 
   it('clearCreateFormState removes stored state', () => {

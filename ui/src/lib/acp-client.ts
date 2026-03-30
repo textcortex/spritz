@@ -50,6 +50,7 @@ function createRPCError(payload: Record<string, unknown> | null): ACPError {
 export function createACPClient(options: ACPClientOptions): ACPClient {
   const {
     wsUrl,
+    protocols,
     conversation,
     onStatus,
     onReadyChange,
@@ -159,7 +160,7 @@ export function createACPClient(options: ACPClientOptions): ACPClient {
       onStatus?.('Connecting…');
 
       return new Promise<void>((resolve, reject) => {
-        ws = new WebSocket(wsUrl);
+        ws = protocols?.length ? new WebSocket(wsUrl, protocols) : new WebSocket(wsUrl);
         ws.onopen = async () => {
           try {
             // Initialize the ACP connection on *this* WebSocket so the

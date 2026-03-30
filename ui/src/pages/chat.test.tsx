@@ -117,6 +117,7 @@ vi.mock('@/lib/acp-client', () => ({
   },
   createACPClient: ({
     wsUrl,
+    protocols,
     onReadyChange,
     onStatus,
     onUpdate,
@@ -125,13 +126,14 @@ vi.mock('@/lib/acp-client', () => ({
     ...rest
   }: {
     wsUrl: string;
+    protocols?: string[];
     onReadyChange?: (ready: boolean) => void;
     onStatus?: (status: string) => void;
     onUpdate?: (update: Record<string, unknown>, options?: { historical?: boolean }) => void;
     onReplayStateChange?: (replaying: boolean) => void;
     onClose?: (reason?: string) => void;
   }) => {
-    captureACPOptions({ wsUrl, ...rest });
+    captureACPOptions({ wsUrl, protocols, ...rest });
     setUpdateHandler(onUpdate);
     setReplayStateHandler(onReplayStateChange);
     let ready = false;
@@ -343,6 +345,15 @@ function setupRequestMock({
     if (path === '/acp/conversations?spritz=covo') {
       return Promise.resolve({ items: conversations });
     }
+    if (path === '/acp/conversations/conv-1/connect-ticket' && options?.method === 'POST') {
+      return Promise.resolve({
+        type: 'connect-ticket',
+        ticket: 'ticket-123',
+        expiresAt: '2026-03-30T12:34:56Z',
+        protocol: 'spritz-acp.v1',
+        connectPath: '/api/acp/conversations/conv-1/connect',
+      });
+    }
     return Promise.resolve({});
   });
 }
@@ -475,11 +486,11 @@ describe('ChatPage draft persistence', () => {
     setupRequestMock();
   });
 
-  it('keeps ACP websocket connections on the current host by default', async () => {
+  it('uses an ACP connect ticket on the current host by default', async () => {
     setAuthToken('external-ui-token');
 
     await renderChat('/c/covo/conv-1', {
-      apiBaseUrl: 'https://spritz.example.com/api',
+      apiBaseUrl: '/api',
       auth: {
         mode: 'bearer',
         tokenStorageKeys: 'spritz-token',
@@ -488,12 +499,67 @@ describe('ChatPage draft persistence', () => {
 
     await waitFor(() => {
       expect(getLastACPOptions()?.wsUrl).toBe(
-        'ws://localhost:3000/api/acp/conversations/conv-1/connect?token=external-ui-token',
+        'ws://localhost:3000/api/acp/conversations/conv-1/connect',
       );
+      expect(getLastACPOptions()?.protocols).toEqual([
+        'spritz-acp.v1',
+        'spritz-ticket.v1.ticket-123',
+      ]);
     });
   });
 
-  it('uses an explicit websocket base url for cross-host ACP websocket connections', async () => {
+  it('retries ACP connect-ticket failures automatically', async () => {
+    setAuthToken('external-ui-token');
+    let ticketAttempts = 0;
+    requestMock.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === '/spritzes') {
+        return Promise.resolve({ items: [createSpritz()] });
+      }
+      if (path === '/acp/conversations?spritz=covo') {
+        return Promise.resolve({ items: CONVERSATIONS });
+      }
+      if (path === '/acp/conversations/conv-1/connect-ticket' && options?.method === 'POST') {
+        ticketAttempts += 1;
+        if (ticketAttempts === 1) {
+          return Promise.reject(createApiError('ACP warming up.', 409));
+        }
+        return Promise.resolve({
+          type: 'connect-ticket',
+          ticket: 'ticket-123',
+          expiresAt: '2026-03-30T12:34:56Z',
+          protocol: 'spritz-acp.v1',
+          connectPath: '/api/acp/conversations/conv-1/connect',
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    renderChatPage('/c/covo/conv-1', {
+      apiBaseUrl: 'https://spritz.example.com/api',
+      websocketBaseUrl: 'https://spritz.example.com/api',
+      auth: {
+        mode: 'bearer',
+        tokenStorageKeys: 'spritz-token',
+      },
+    });
+
+    await waitFor(() => {
+      expect(ticketAttempts).toBe(1);
+    });
+
+    await waitFor(() => {
+      expect(ticketAttempts).toBe(2);
+      expect(getLastACPOptions()?.wsUrl).toBe(
+        'wss://spritz.example.com/api/acp/conversations/conv-1/connect',
+      );
+      expect(getLastACPOptions()?.protocols).toEqual([
+        'spritz-acp.v1',
+        'spritz-ticket.v1.ticket-123',
+      ]);
+    }, { timeout: 4000 });
+  });
+
+  it('uses an explicit websocket base url with ACP connect tickets for cross-host connections', async () => {
     setAuthToken('external-ui-token');
 
     await renderChat('/c/covo/conv-1', {
@@ -507,12 +573,16 @@ describe('ChatPage draft persistence', () => {
 
     await waitFor(() => {
       expect(getLastACPOptions()?.wsUrl).toBe(
-        'wss://spritz.example.com/api/acp/conversations/conv-1/connect?token=external-ui-token',
+        'wss://spritz.example.com/api/acp/conversations/conv-1/connect',
       );
+      expect(getLastACPOptions()?.protocols).toEqual([
+        'spritz-acp.v1',
+        'spritz-ticket.v1.ticket-123',
+      ]);
     });
   });
 
-  it('refreshes bearer auth and reconnects ACP websocket when the socket closes before ready', async () => {
+  it('mints a fresh ACP connect ticket when the socket closes before ready', async () => {
     setACPStartPending(true);
     setAuthToken('expired-token');
     setRefreshAuthResult({ token: 'refreshed-token', refreshed: true });
@@ -551,18 +621,36 @@ describe('ChatPage draft persistence', () => {
 
     await waitFor(() => {
       expect(getLastACPOptions()?.wsUrl).toBe(
-        'wss://spritz.example.com/api/acp/conversations/conv-1/connect?token=expired-token',
+        'wss://spritz.example.com/api/acp/conversations/conv-1/connect',
       );
+      expect(getLastACPOptions()?.protocols).toEqual([
+        'spritz-acp.v1',
+        'spritz-ticket.v1.ticket-123',
+      ]);
     });
 
+    vi.useFakeTimers();
     act(() => {
       closeLastACPConnection();
     });
 
+    expect(requestMock.mock.calls.filter(([path]) => path === '/acp/conversations/conv-1/connect-ticket')).toHaveLength(1);
+
+    act(() => {
+      vi.advanceTimersByTime(1999);
+    });
+
+    expect(requestMock.mock.calls.filter(([path]) => path === '/acp/conversations/conv-1/connect-ticket')).toHaveLength(1);
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    vi.useRealTimers();
+
     await waitFor(() => {
-      expect(refreshAuthTokenForWebSocketMock).toHaveBeenCalledTimes(1);
+      expect(requestMock.mock.calls.filter(([path]) => path === '/acp/conversations/conv-1/connect-ticket')).toHaveLength(2);
       expect(getLastACPOptions()?.wsUrl).toBe(
-        'wss://spritz.example.com/api/acp/conversations/conv-1/connect?token=refreshed-token',
+        'wss://spritz.example.com/api/acp/conversations/conv-1/connect',
       );
     });
   });

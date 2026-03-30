@@ -952,6 +952,43 @@ func TestListPresetsOmitsPresetEnvValues(t *testing.T) {
 	}
 }
 
+func TestListPresetsOmitsHiddenPresetsForHumans(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	s.presets = presetCatalog{byID: []runtimePreset{
+		{
+			ID:    "claude-code",
+			Name:  "Claude Code",
+			Image: "example.com/spritz-claude-code:latest",
+		},
+		{
+			ID:     "zeno",
+			Name:   "Zeno",
+			Image:  "example.com/spritz-zeno:latest",
+			Hidden: true,
+		},
+	}}
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.GET("/api/presets", s.listPresets)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/presets", nil)
+	req.Header.Set("X-Spritz-User-Id", "user-123")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "zeno") {
+		t.Fatalf("expected hidden preset to be omitted for human UI, got %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "claude-code") {
+		t.Fatalf("expected visible preset to remain listed, got %s", rec.Body.String())
+	}
+}
+
 func TestListPresetsFiltersProvisionerAllowlistForServicePrincipal(t *testing.T) {
 	s := newCreateSpritzTestServer(t)
 	configureProvisionerTestServer(s)
@@ -983,6 +1020,75 @@ func TestListPresetsFiltersProvisionerAllowlistForServicePrincipal(t *testing.T)
 	}
 	if !strings.Contains(rec.Body.String(), "openclaw") {
 		t.Fatalf("expected service preset list to include allowed preset, got %s", rec.Body.String())
+	}
+}
+
+func TestListPresetsIncludesHiddenPresetsForServicePrincipal(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	s.presets = presetCatalog{byID: []runtimePreset{
+		{
+			ID:     "zeno",
+			Name:   "Zeno",
+			Image:  "example.com/spritz-zeno:latest",
+			Hidden: true,
+		},
+	}}
+	s.provisioners.allowedPresetIDs = map[string]struct{}{"zeno": {}}
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.GET("/api/presets", s.listPresets)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/presets", nil)
+	req.Header.Set("X-Spritz-User-Id", "zenobot")
+	req.Header.Set("X-Spritz-Principal-Type", "service")
+	req.Header.Set("X-Spritz-Principal-Scopes", "spritz.presets.read")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"hidden":true`) {
+		t.Fatalf("expected hidden preset metadata for service principal, got %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "zeno") {
+		t.Fatalf("expected hidden preset to remain available for services, got %s", rec.Body.String())
+	}
+}
+
+func TestListPresetsIncludesHiddenPresetsForAdminPrincipal(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	s.auth.adminIDs = map[string]struct{}{"admin-1": {}}
+	s.presets = presetCatalog{byID: []runtimePreset{
+		{
+			ID:     "zeno",
+			Name:   "Zeno",
+			Image:  "example.com/spritz-zeno:latest",
+			Hidden: true,
+		},
+	}}
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.GET("/api/presets", s.listPresets)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/presets", nil)
+	req.Header.Set("X-Spritz-User-Id", "admin-1")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"hidden":true`) {
+		t.Fatalf("expected hidden preset metadata for admin principal, got %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "zeno") {
+		t.Fatalf("expected hidden preset to remain available for admin principal, got %s", rec.Body.String())
 	}
 }
 

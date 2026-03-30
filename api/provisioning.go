@@ -67,6 +67,7 @@ type runtimePreset struct {
 	IdleTTL       string          `json:"idleTtl,omitempty"`
 	NamePrefix    string          `json:"namePrefix,omitempty"`
 	InstanceClass string          `json:"instanceClass,omitempty"`
+	Hidden        bool            `json:"hidden,omitempty"`
 	Env           []corev1.EnvVar `json:"env,omitempty"`
 }
 
@@ -81,6 +82,7 @@ type publicPreset struct {
 	IdleTTL       string `json:"idleTtl,omitempty"`
 	NamePrefix    string `json:"namePrefix,omitempty"`
 	InstanceClass string `json:"instanceClass,omitempty"`
+	Hidden        bool   `json:"hidden,omitempty"`
 }
 
 type presetCatalog struct {
@@ -635,15 +637,26 @@ func (c presetCatalog) public() []publicPreset {
 	if len(items) == 0 {
 		return nil
 	}
-	return publicPresetList(items)
+	return publicPresetList(items, true)
 }
 
-func publicPresetList(items []runtimePreset) []publicPreset {
+func (c presetCatalog) publicHuman() []publicPreset {
+	items := c.all()
+	if len(items) == 0 {
+		return nil
+	}
+	return publicPresetList(items, false)
+}
+
+func publicPresetList(items []runtimePreset, includeHidden bool) []publicPreset {
 	if len(items) == 0 {
 		return nil
 	}
 	publicItems := make([]publicPreset, 0, len(items))
 	for _, item := range items {
+		if item.Hidden && !includeHidden {
+			continue
+		}
 		publicItems = append(publicItems, publicPreset{
 			ID:            item.ID,
 			Name:          item.Name,
@@ -655,6 +668,7 @@ func publicPresetList(items []runtimePreset) []publicPreset {
 			IdleTTL:       item.IdleTTL,
 			NamePrefix:    item.NamePrefix,
 			InstanceClass: item.InstanceClass,
+			Hidden:        item.Hidden,
 		})
 	}
 	return publicItems
@@ -663,7 +677,7 @@ func publicPresetList(items []runtimePreset) []publicPreset {
 func (c presetCatalog) publicAllowed(allowed map[string]struct{}) []publicPreset {
 	items := c.all()
 	if len(items) == 0 || len(allowed) == 0 {
-		return publicPresetList(items)
+		return publicPresetList(items, true)
 	}
 	filtered := make([]runtimePreset, 0, len(items))
 	for _, item := range items {
@@ -671,7 +685,7 @@ func (c presetCatalog) publicAllowed(allowed map[string]struct{}) []publicPreset
 			filtered = append(filtered, item)
 		}
 	}
-	return publicPresetList(filtered)
+	return publicPresetList(filtered, true)
 }
 
 func (c presetCatalog) get(id string) (*runtimePreset, bool) {

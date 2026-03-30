@@ -313,9 +313,9 @@ function AgentSection({
           aria-label={`${displayName} conversations`}
           data-active={focused ? 'true' : 'false'}
           className={cn(
-            'flex flex-1 items-center gap-2 rounded-[var(--radius-lg)] px-3 py-1.5 text-left text-xs font-medium transition-colors hover:bg-sidebar-accent',
+            'flex flex-1 items-center gap-2 rounded-[var(--radius-lg)] px-3 py-1.5 text-left text-xs font-medium transition-colors hover:bg-[var(--surface-emphasis)] hover:text-primary',
             focused
-              ? 'bg-sidebar-accent text-foreground'
+              ? 'bg-[var(--surface-emphasis)] text-primary'
               : 'text-muted-foreground',
           )}
           onClick={() => setExpanded(!expanded)}

@@ -40,10 +40,12 @@ func newACPTestServer(t *testing.T, objects ...client.Object) *server {
 	if len(objects) > 0 {
 		builder = builder.WithObjects(objects...)
 	}
+	fakeClient := builder.Build()
 	return &server{
-		client:    builder.Build(),
-		scheme:    scheme,
-		namespace: "spritz-test",
+		client:           fakeClient,
+		scheme:           scheme,
+		namespace:        "spritz-test",
+		controlNamespace: "spritz-test",
 		auth: authConfig{
 			mode:              authModeHeader,
 			headerID:          "X-Spritz-User-Id",
@@ -59,6 +61,7 @@ func newACPTestServer(t *testing.T, objects ...client.Object) *server {
 			promptTimeout:        30 * time.Second,
 			promptSettleTimeout:  10 * time.Millisecond,
 		},
+		connectTickets: newConnectTicketStore(fakeClient, "spritz-test"),
 	}
 }
 

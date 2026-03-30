@@ -241,19 +241,22 @@ global:
       enabled: false
       secretName: ""
 
+x-claude-code-preset: &claude_code_preset
+  id: claude-code
+  name: Claude Code
+  image: spritz-claude-code:local
+  description: Claude Code via ACP
+  env:
+    - name: ANTHROPIC_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: anthropic-api-key
+          key: ANTHROPIC_API_KEY
+
 ui:
   ownerId: local-user
   presets:
-    - id: claude-code
-      name: Claude Code
-      image: spritz-claude-code:local
-      description: Claude Code via ACP
-      env:
-        - name: ANTHROPIC_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: anthropic-api-key
-              key: ANTHROPIC_API_KEY
+    - *claude_code_preset
 
 operator:
   sharedMounts:
@@ -272,6 +275,8 @@ operator:
     syncerImagePullPolicy: IfNotPresent
 
 api:
+  presets:
+    - *claude_code_preset
   sharedMounts:
     enabled: true
     mounts:
@@ -303,7 +308,8 @@ Important local choices:
 
 - `tls.enabled: false` keeps the setup on plain `http`
 - `ui.ownerId: local-user` gives instances an owner in auth-disabled local mode
-- `ui.presets` injects the Anthropic key via a Kubernetes secret
+- `api.presets` is the real preset catalog and injects the Anthropic key via a Kubernetes secret
+- `ui.presets` mirrors the same preset entry for the current UI until the UI reads `GET /api/presets` directly
 - `defaultIngress` gives each instance a browser route
 - `operator.sharedMounts` and `api.sharedMounts` enable owner-scoped config
   persistence using the local filesystem via rclone

@@ -4,6 +4,7 @@ const CREATE_FORM_STORAGE_KEY = 'spritz:create-form';
 
 export interface FormSelection {
   mode: 'preset' | 'custom';
+  presetId?: string;
   presetName?: string;
   presetImage?: string;
 }
@@ -44,6 +45,7 @@ export function deriveFormSelection(
   }
   return {
     mode: 'preset',
+    presetId: trimString(activePreset.id),
     presetName: trimString(activePreset.name),
     presetImage: trimString(activePreset.image),
   };
@@ -64,6 +66,7 @@ function sanitizeSelection(raw: unknown): FormSelection {
   if (r.mode !== 'preset') return { mode: 'custom' };
   return {
     mode: 'preset',
+    presetId: trimString(r.presetId),
     presetName: trimString(r.presetName),
     presetImage: trimString(r.presetImage),
   };

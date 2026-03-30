@@ -4,9 +4,9 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { useConfig } from '@/lib/config';
-import { getAuthToken, refreshAuthTokenForWebSocket, authBearerTokenParam } from '@/lib/api';
+import { getAuthToken, authBearerTokenParam } from '@/lib/api';
 import { buildTerminalTheme } from '@/lib/branding';
-import { buildApiWebSocketUrl } from '@/lib/network';
+import { resolveWebSocketConnect } from '@/lib/connect-ticket';
 import { chatPath } from '@/lib/urls';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -56,22 +56,31 @@ export function TerminalPage() {
       }, 3000);
     }
 
-    async function connect(options: { allowAuthRefreshRetry?: boolean } = {}) {
+    async function connect() {
       if (disposed) return;
-      const { allowAuthRefreshRetry = true } = options;
       setStatus('connecting');
+      const session = new URLSearchParams(window.location.search).get('session') || undefined;
       const bearerToken = getAuthToken();
-      const ws = new WebSocket(
-        buildApiWebSocketUrl(
-          config.apiBaseUrl,
-          `/spritzes/${encodeURIComponent(instanceName)}/terminal`,
-          {
-            bearerToken,
-            bearerTokenParam: authBearerTokenParam,
-            websocketBaseUrl: config.websocketBaseUrl,
-          },
-        ),
-      );
+      let wsUrl = '';
+      let protocols: string[] = [];
+      try {
+        ({ wsUrl, protocols } = await resolveWebSocketConnect({
+          apiBaseUrl: config.apiBaseUrl,
+          websocketBaseUrl: config.websocketBaseUrl,
+          directConnectPath: `/spritzes/${encodeURIComponent(instanceName)}/terminal${session ? `?session=${encodeURIComponent(session)}` : ''}`,
+          ticketPath: `/spritzes/${encodeURIComponent(instanceName)}/terminal/connect-ticket`,
+          useConnectTicket: Boolean(bearerToken),
+          bearerToken,
+          bearerTokenParam: authBearerTokenParam,
+          ticketBody: session ? { session } : undefined,
+        }));
+      } catch {
+        if (disposed) return;
+        setStatus('disconnected');
+        scheduleReconnect();
+        return;
+      }
+      const ws = protocols.length ? new WebSocket(wsUrl, protocols) : new WebSocket(wsUrl);
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
       let opened = false;
@@ -98,17 +107,9 @@ export function TerminalPage() {
           wsRef.current = null;
         }
         if (disposed) return;
-        if (!opened && allowAuthRefreshRetry) {
-          void (async () => {
-            const refreshed = await refreshAuthTokenForWebSocket();
-            if (disposed) return;
-            if (refreshed.refreshed && refreshed.token) {
-              void connect({ allowAuthRefreshRetry: false });
-              return;
-            }
-            setStatus('disconnected');
-            scheduleReconnect();
-          })();
+        if (!opened) {
+          setStatus('disconnected');
+          scheduleReconnect();
           return;
         }
         setStatus('disconnected');

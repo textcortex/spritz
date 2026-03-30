@@ -1,7 +1,6 @@
 import type React from 'react';
 import { describe, expect, it, vi } from 'vite-plus/test';
-import { render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { screen } from '@testing-library/react';
 import { Sidebar } from './sidebar';
 import { renderWithProviders } from '@/test/helpers';
 import type { ConversationInfo } from '@/types/acp';
@@ -63,14 +62,8 @@ const SidebarWithFocus = Sidebar as unknown as (
 
 describe('Sidebar', () => {
   it('uses the branded emphasis treatment for the active conversation', () => {
-    const spritz = {
-      metadata: { name: 'claude-code-lucky-tidepool' },
-    } as Spritz;
-    const conversation = {
-      metadata: { name: 'conv-1' },
-      spec: { title: 'Today work', spritzName: 'claude-code-lucky-tidepool' },
-      status: {},
-    } as ConversationInfo;
+    const spritz = createSpritz('claude-code-lucky-tidepool');
+    const conversation = createConversation('conv-1', 'Today work', 'claude-code-lucky-tidepool');
 
     renderWithProviders(
       <Sidebar
@@ -94,33 +87,27 @@ describe('Sidebar', () => {
   });
 
   it('moves the focused agent to the top, highlights it, and collapses other agents', () => {
-    render(
-      <MemoryRouter>
-        <SidebarWithFocus
-          agents={[
-            {
-              spritz: createSpritz('alpha'),
-              conversations: [
-                createConversation('alpha-conv', 'Alpha conversation', 'alpha'),
-              ],
-            },
-            {
-              spritz: createSpritz('beta'),
-              conversations: [
-                createConversation('beta-conv', 'Beta conversation', 'beta'),
-              ],
-            },
-          ]}
-          selectedConversationId="beta-conv"
-          onSelectConversation={vi.fn()}
-          onNewConversation={vi.fn()}
-          collapsed={false}
-          onToggleCollapse={vi.fn()}
-          mobileOpen={false}
-          onCloseMobile={vi.fn()}
-          focusedSpritzName="beta"
-        />
-      </MemoryRouter>,
+    renderWithProviders(
+      <SidebarWithFocus
+        agents={[
+          {
+            spritz: createSpritz('alpha'),
+            conversations: [createConversation('alpha-conv', 'Alpha conversation', 'alpha')],
+          },
+          {
+            spritz: createSpritz('beta'),
+            conversations: [createConversation('beta-conv', 'Beta conversation', 'beta')],
+          },
+        ]}
+        selectedConversationId="beta-conv"
+        onSelectConversation={vi.fn()}
+        onNewConversation={vi.fn()}
+        collapsed={false}
+        onToggleCollapse={vi.fn()}
+        mobileOpen={false}
+        onCloseMobile={vi.fn()}
+        focusedSpritzName="beta"
+      />,
     );
 
     const agentHeaders = screen.getAllByRole('button', {
@@ -145,21 +132,19 @@ describe('Sidebar', () => {
   });
 
   it('shows a selected optimistic provisioning conversation for a focused route before the agent is discoverable', () => {
-    render(
-      <MemoryRouter>
-        <SidebarWithFocus
-          agents={[]}
-          selectedConversationId={null}
-          onSelectConversation={vi.fn()}
-          onNewConversation={vi.fn()}
-          collapsed={false}
-          onToggleCollapse={vi.fn()}
-          mobileOpen={false}
-          onCloseMobile={vi.fn()}
-          focusedSpritzName="zeno-fresh-ridge"
-          focusedSpritz={null}
-        />
-      </MemoryRouter>,
+    renderWithProviders(
+      <SidebarWithFocus
+        agents={[]}
+        selectedConversationId={null}
+        onSelectConversation={vi.fn()}
+        onNewConversation={vi.fn()}
+        collapsed={false}
+        onToggleCollapse={vi.fn()}
+        mobileOpen={false}
+        onCloseMobile={vi.fn()}
+        focusedSpritzName="zeno-fresh-ridge"
+        focusedSpritz={null}
+      />,
     );
 
     expect(screen.getByText('zeno-fresh-ridge')).toBeTruthy();
