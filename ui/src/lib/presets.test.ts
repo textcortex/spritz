@@ -153,6 +153,48 @@ describe('usePresets', () => {
     });
   });
 
+  it('filters hidden presets out of the fallback catalog when the API request fails', async () => {
+    requestMock.mockRejectedValue(new Error('boom'));
+
+    render(
+      createElement(
+        ConfigProvider,
+        {
+          value: resolveConfig({
+            apiBaseUrl: '/api',
+            presets: JSON.stringify([
+              {
+                id: 'visible',
+                name: 'Visible',
+                image: 'visible:latest',
+                description: 'visible',
+                repoUrl: '',
+                branch: '',
+                ttl: '',
+              },
+              {
+                id: 'hidden',
+                name: 'Hidden',
+                image: 'hidden:latest',
+                description: 'hidden',
+                repoUrl: '',
+                branch: '',
+                ttl: '',
+                hidden: true,
+              },
+            ]),
+          }),
+        },
+        createElement(PresetProbe),
+      ),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Visible')).toBeDefined();
+    });
+    expect(screen.queryByText('Hidden')).toBeNull();
+  });
+
   it('treats an empty API catalog as authoritative', async () => {
     const configuredPreset: Preset = {
       id: 'claude-code',

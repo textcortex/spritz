@@ -151,6 +151,7 @@ describe('CreateForm', () => {
     });
 
     const view = render(<CreateForm />);
+    expect(screen.getByRole('button', { name: /Create instance/i }).getAttribute('disabled')).not.toBeNull();
 
     currentPresets.value = [{
       id: 'codex',
@@ -191,6 +192,7 @@ describe('CreateForm', () => {
     });
 
     const view = render(<CreateForm />);
+    expect(screen.getByLabelText('Image').getAttribute('disabled')).not.toBeNull();
 
     currentPresets.value = [{
       id: 'codex',
@@ -207,6 +209,7 @@ describe('CreateForm', () => {
     await waitFor(() => {
       expect(screen.getByTestId('preset-index').textContent).toBe('0');
     });
+    expect(screen.getByLabelText('Image').getAttribute('disabled')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /Create instance/i }));
 

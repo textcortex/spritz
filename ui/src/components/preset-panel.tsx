@@ -5,10 +5,11 @@ import { Label } from '@/components/ui/label';
 interface PresetPanelProps {
   presets: Preset[];
   selectedIndex: string;
+  disabled?: boolean;
   onSelect: (preset: Preset | null, index: string) => void;
 }
 
-export function PresetPanel({ presets, selectedIndex, onSelect }: PresetPanelProps) {
+export function PresetPanel({ presets, selectedIndex, disabled = false, onSelect }: PresetPanelProps) {
   if (!presets.length) return null;
 
   const selectedPreset = selectedIndex ? presets[Number(selectedIndex)] : null;
@@ -18,6 +19,7 @@ export function PresetPanel({ presets, selectedIndex, onSelect }: PresetPanelPro
       <Label htmlFor="preset-select">Preset</Label>
       <select
         id="preset-select"
+        disabled={disabled}
         value={selectedIndex || 'custom'}
         onChange={(e) => {
           const value = e.target.value;

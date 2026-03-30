@@ -299,12 +299,11 @@ function AgentSection({
           aria-expanded={expanded}
           aria-current={focused ? 'true' : undefined}
           aria-label={`${name} conversations`}
-          className="flex flex-1 items-center gap-2 rounded-[var(--radius-lg)] px-3 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-[var(--surface-emphasis)] hover:text-primary"
           data-active={focused ? 'true' : 'false'}
           className={cn(
-            'flex flex-1 items-center gap-2 rounded-[var(--radius-lg)] px-3 py-1.5 text-left text-xs font-medium transition-colors hover:bg-sidebar-accent',
+            'flex flex-1 items-center gap-2 rounded-[var(--radius-lg)] px-3 py-1.5 text-left text-xs font-medium transition-colors hover:bg-[var(--surface-emphasis)] hover:text-primary',
             focused
-              ? 'bg-sidebar-accent text-foreground'
+              ? 'bg-[var(--surface-emphasis)] text-primary'
               : 'text-muted-foreground',
           )}
           onClick={() => setExpanded(!expanded)}

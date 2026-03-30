@@ -40,6 +40,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [generatingName, setGeneratingName] = useState(false);
+  const [formReady, setFormReady] = useState(false);
   const [activePreset, setActivePreset] = useState<Preset | null>(null);
   const [presetIndex, setPresetIndex] = useState('');
   const restoredState = useRef<CreateFormState | null | undefined>(undefined);
@@ -66,6 +67,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
       setGeneratingName(false);
     }
   }, [image, namespace]);
+  const formDisabled = submitting || !formReady;
 
   useEffect(() => {
     if (!fieldsInitialized.current) {
@@ -94,12 +96,14 @@ export function CreateForm({ onCreated }: CreateFormProps) {
       if (saved.selection.mode !== 'preset') {
         presetInitialized.current = true;
         persistReady.current = true;
+        setFormReady(true);
         return;
       }
       if (!presetCatalogLoaded) return;
       if (!presets.length) {
         presetInitialized.current = true;
         persistReady.current = true;
+        setFormReady(true);
         return;
       }
       const idx = findPresetIndex(presets, saved.selection);
@@ -114,6 +118,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
       }
       presetInitialized.current = true;
       persistReady.current = true;
+      setFormReady(true);
       return;
     }
 
@@ -132,6 +137,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
     }
     presetInitialized.current = true;
     persistReady.current = true;
+    setFormReady(true);
   }, [presetCatalogLoaded, presets, generateName]);
 
   // Persist form state on changes
@@ -169,6 +175,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!formReady) return;
     const imageValue = image.trim();
 
     const payload = buildCreatePayload({
@@ -220,6 +227,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
       <PresetPanel
         presets={presets}
         selectedIndex={presetIndex}
+        disabled={!formReady}
         onSelect={handlePresetSelect}
       />
 
@@ -232,6 +240,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
             onChange={(e) => setName(e.target.value)}
             placeholder="Auto-generated name"
             className="h-11"
+            disabled={formDisabled}
           />
           <Tooltip>
             <TooltipTrigger
@@ -241,7 +250,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
                   variant="outline"
                   className="size-11 shrink-0 p-0"
                   onClick={() => generateName()}
-                  disabled={generatingName}
+                  disabled={generatingName || formDisabled}
                 />
               }
             >
@@ -258,6 +267,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
           variant="ghost"
           size="sm"
           aria-expanded={advancedOpen}
+          disabled={formDisabled}
           className="gap-1 text-muted-foreground"
           onClick={() => setAdvancedOpen(!advancedOpen)}
         >
@@ -281,6 +291,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
               value={image}
               onChange={(e) => setImage(e.target.value)}
               placeholder="spritz-starter:latest"
+              disabled={formDisabled}
             />
           </div>
 
@@ -294,6 +305,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
                   value={repo}
                   onChange={(e) => setRepo(e.target.value)}
                   placeholder="https://github.com/..."
+                  disabled={formDisabled}
                 />
               </div>
               <div className="flex flex-col gap-2">
@@ -304,6 +316,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
                   value={branch}
                   onChange={(e) => setBranch(e.target.value)}
                   placeholder="main"
+                  disabled={formDisabled}
                 />
               </div>
             </div>
@@ -318,6 +331,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
                 value={ttl}
                 onChange={(e) => setTtl(e.target.value)}
                 placeholder="8h"
+                disabled={formDisabled}
               />
             </div>
             <div className="flex flex-col gap-2">
@@ -328,6 +342,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
                 value={namespace}
                 onChange={(e) => setNamespace(e.target.value)}
                 placeholder="default"
+                disabled={formDisabled}
               />
             </div>
           </div>
@@ -342,6 +357,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
               spellCheck={false}
               placeholder={USER_CONFIG_PLACEHOLDER}
               className="font-mono text-sm"
+              disabled={formDisabled}
             />
             <p className="text-xs text-muted-foreground">
               Provide ttl, repo, env, or resources. JSON is also accepted.
@@ -352,7 +368,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
         </div>
       </div>
 
-      <Button type="submit" disabled={submitting} aria-busy={submitting} className="h-11 w-fit cursor-pointer px-4">
+      <Button type="submit" disabled={formDisabled} aria-busy={submitting} className="h-11 w-fit cursor-pointer px-4">
         {submitting ? (
           'Creating…'
         ) : (

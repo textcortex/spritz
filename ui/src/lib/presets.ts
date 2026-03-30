@@ -28,6 +28,10 @@ export function parsePresets(raw: Preset[] | string | undefined | null): Preset[
 export function usePresetCatalog(): PresetCatalogResult {
   const config = useConfig();
   const fallbackPresets = useMemo(() => parsePresets(config.presets), [config.presets]);
+  const humanFallbackPresets = useMemo(
+    () => fallbackPresets.filter((preset) => !preset.hidden),
+    [fallbackPresets],
+  );
   const [catalog, setCatalog] = useState<PresetCatalogResult>({ presets: [], loaded: false });
 
   useEffect(() => {
@@ -44,7 +48,7 @@ export function usePresetCatalog(): PresetCatalogResult {
       } catch {
         if (cancelled) return;
         setCatalog({
-          presets: fallbackPresets,
+          presets: humanFallbackPresets,
           loaded: true,
         });
       }
@@ -53,7 +57,7 @@ export function usePresetCatalog(): PresetCatalogResult {
     return () => {
       cancelled = true;
     };
-  }, [fallbackPresets]);
+  }, [humanFallbackPresets]);
 
   return catalog;
 }

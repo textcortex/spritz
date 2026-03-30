@@ -1,3 +1,4 @@
+import type React from 'react';
 import { describe, expect, it, vi } from 'vite-plus/test';
 import { screen } from '@testing-library/react';
 import { Sidebar } from './sidebar';
@@ -5,16 +6,60 @@ import { renderWithProviders } from '@/test/helpers';
 import type { ConversationInfo } from '@/types/acp';
 import type { Spritz } from '@/types/spritz';
 
+vi.mock('@/components/brand-header', () => ({
+  BrandHeader: ({ compact }: { compact?: boolean }) => (
+    <div>{compact ? 'Brand compact' : 'Brand'}</div>
+  ),
+}));
+
+vi.mock('@/components/ui/tooltip', () => ({
+  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({
+    children,
+    render,
+  }: {
+    children?: React.ReactNode;
+    render?: React.ReactNode;
+  }) => <>{render ?? children}</>,
+}));
+
+function createSpritz(name: string): Spritz {
+  return {
+    metadata: { name, namespace: 'default' },
+    spec: { image: `example.com/${name}:latest` },
+    status: {
+      phase: 'Ready',
+      acp: { state: 'ready' },
+    },
+  } as Spritz;
+}
+
+function createConversation(name: string, title: string, spritzName: string): ConversationInfo {
+  return {
+    metadata: { name },
+    spec: {
+      sessionId: `${name}-session`,
+      title,
+      spritzName,
+    },
+    status: {
+      bindingState: 'active',
+    },
+  } as ConversationInfo;
+}
+
+const SidebarWithFocus = Sidebar as unknown as (
+  props: React.ComponentProps<typeof Sidebar> & {
+    focusedSpritzName?: string | null;
+    focusedSpritz?: Spritz | null;
+  },
+) => React.ReactElement;
+
 describe('Sidebar', () => {
   it('uses the branded emphasis treatment for the active conversation', () => {
-    const spritz = {
-      metadata: { name: 'claude-code-lucky-tidepool' },
-    } as Spritz;
-    const conversation = {
-      metadata: { name: 'conv-1' },
-      spec: { title: 'Today work', spritzName: 'claude-code-lucky-tidepool' },
-      status: {},
-    } as ConversationInfo;
+    const spritz = createSpritz('claude-code-lucky-tidepool');
+    const conversation = createConversation('conv-1', 'Today work', 'claude-code-lucky-tidepool');
 
     renderWithProviders(
       <Sidebar
@@ -35,86 +80,30 @@ describe('Sidebar', () => {
     expect(activeConversation.className).toContain(
       'shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--primary)_14%,transparent)]',
     );
-import type React from 'react';
-import { describe, it, expect, vi } from 'vite-plus/test';
-import { render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
-import { Sidebar } from './sidebar';
+  });
 
-vi.mock('@/components/brand-header', () => ({
-  BrandHeader: ({ compact }: { compact?: boolean }) => (
-    <div>{compact ? 'Brand compact' : 'Brand'}</div>
-  ),
-}));
-
-vi.mock('@/components/ui/tooltip', () => ({
-  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  TooltipTrigger: ({
-    children,
-    render,
-  }: {
-    children?: React.ReactNode;
-    render?: React.ReactNode;
-  }) => <>{render ?? children}</>,
-}));
-
-function createSpritz(name: string) {
-  return {
-    metadata: { name, namespace: 'default' },
-    spec: { image: `example.com/${name}:latest` },
-    status: {
-      phase: 'Ready',
-      acp: { state: 'ready' },
-    },
-  };
-}
-
-function createConversation(name: string, title: string, spritzName: string) {
-  return {
-    metadata: { name },
-    spec: {
-      sessionId: `${name}-session`,
-      title,
-      spritzName,
-    },
-    status: {
-      bindingState: 'active',
-    },
-  };
-}
-
-const SidebarWithFocus = Sidebar as unknown as (
-  props: React.ComponentProps<typeof Sidebar> & {
-    focusedSpritzName?: string | null;
-  },
-) => React.ReactElement;
-
-describe('Sidebar', () => {
   it('moves the focused agent to the top, highlights it, and collapses other agents', () => {
-    render(
-      <MemoryRouter>
-        <SidebarWithFocus
-          agents={[
-            {
-              spritz: createSpritz('alpha'),
-              conversations: [createConversation('alpha-conv', 'Alpha conversation', 'alpha')],
-            },
-            {
-              spritz: createSpritz('beta'),
-              conversations: [createConversation('beta-conv', 'Beta conversation', 'beta')],
-            },
-          ]}
-          selectedConversationId="beta-conv"
-          onSelectConversation={vi.fn()}
-          onNewConversation={vi.fn()}
-          collapsed={false}
-          onToggleCollapse={vi.fn()}
-          mobileOpen={false}
-          onCloseMobile={vi.fn()}
-          focusedSpritzName="beta"
-        />
-      </MemoryRouter>,
+    renderWithProviders(
+      <SidebarWithFocus
+        agents={[
+          {
+            spritz: createSpritz('alpha'),
+            conversations: [createConversation('alpha-conv', 'Alpha conversation', 'alpha')],
+          },
+          {
+            spritz: createSpritz('beta'),
+            conversations: [createConversation('beta-conv', 'Beta conversation', 'beta')],
+          },
+        ]}
+        selectedConversationId="beta-conv"
+        onSelectConversation={vi.fn()}
+        onNewConversation={vi.fn()}
+        collapsed={false}
+        onToggleCollapse={vi.fn()}
+        mobileOpen={false}
+        onCloseMobile={vi.fn()}
+        focusedSpritzName="beta"
+      />,
     );
 
     const agentHeaders = screen.getAllByRole('button', { name: / conversations$/i });
@@ -125,21 +114,19 @@ describe('Sidebar', () => {
   });
 
   it('shows a selected optimistic provisioning conversation for a focused route before the agent is discoverable', () => {
-    render(
-      <MemoryRouter>
-        <SidebarWithFocus
-          agents={[]}
-          selectedConversationId={null}
-          onSelectConversation={vi.fn()}
-          onNewConversation={vi.fn()}
-          collapsed={false}
-          onToggleCollapse={vi.fn()}
-          mobileOpen={false}
-          onCloseMobile={vi.fn()}
-          focusedSpritzName="zeno-fresh-ridge"
-          focusedSpritz={null}
-        />
-      </MemoryRouter>,
+    renderWithProviders(
+      <SidebarWithFocus
+        agents={[]}
+        selectedConversationId={null}
+        onSelectConversation={vi.fn()}
+        onNewConversation={vi.fn()}
+        collapsed={false}
+        onToggleCollapse={vi.fn()}
+        mobileOpen={false}
+        onCloseMobile={vi.fn()}
+        focusedSpritzName="zeno-fresh-ridge"
+        focusedSpritz={null}
+      />,
     );
 
     expect(screen.getByText('zeno-fresh-ridge')).toBeTruthy();
