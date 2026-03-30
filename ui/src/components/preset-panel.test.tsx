@@ -5,8 +5,8 @@ import { PresetPanel, findPresetIndex } from './preset-panel';
 import type { Preset } from '@/lib/config';
 
 const PRESETS: Preset[] = [
-  { name: 'Starter', image: 'spritz-starter:latest', description: 'Minimal starter', repoUrl: '', branch: '', ttl: '' },
-  { name: 'Devbox', image: 'spritz-devbox:latest', description: '', repoUrl: '', branch: '', ttl: '' },
+  { id: 'starter', name: 'Starter', image: 'spritz-starter:latest', description: 'Minimal starter', repoUrl: '', branch: '', ttl: '' },
+  { id: 'devbox', name: 'Devbox', image: 'spritz-devbox:latest', description: '', repoUrl: '', branch: '', ttl: '' },
 ];
 
 describe('PresetPanel', () => {
@@ -60,6 +60,15 @@ describe('findPresetIndex', () => {
     expect(findPresetIndex(PRESETS, {
       mode: 'preset',
       presetImage: 'spritz-devbox:latest',
+    })).toBe('1');
+  });
+
+  it('returns correct index by preset id match', () => {
+    expect(findPresetIndex(PRESETS, {
+      mode: 'preset',
+      presetId: 'devbox',
+      presetImage: 'stale-image:latest',
+      presetName: 'Stale Name',
     })).toBe('1');
   });
 
