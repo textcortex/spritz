@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,8 +38,9 @@ func newRuntimeBindingsTestServer(t *testing.T, objects ...*spritzv1.Spritz) *se
 func TestGetRuntimeBindingReturnsCanonicalFacts(t *testing.T) {
 	spritz := &spritzv1.Spritz{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "zeno-delta-breeze",
-			Namespace: "spritz-production",
+			Name:              "zeno-delta-breeze",
+			Namespace:         "spritz-production",
+			CreationTimestamp: metav1.NewTime(time.Date(2026, time.March, 30, 12, 34, 56, 0, time.UTC)),
 			Annotations: map[string]string{
 				presetIDAnnotationKey:      "zeno",
 				instanceClassAnnotationKey: "personal-agent",
@@ -73,6 +75,7 @@ func TestGetRuntimeBindingReturnsCanonicalFacts(t *testing.T) {
 		`"serviceAccountName":"zeno-agent-abcd1234"`,
 		`"presetId":"zeno"`,
 		`"instanceClassId":"personal-agent"`,
+		`"createdAt":"2026-03-30T12:34:56Z"`,
 	}
 	for _, fragment := range expectedFragments {
 		if !strings.Contains(rec.Body.String(), fragment) {
@@ -84,8 +87,9 @@ func TestGetRuntimeBindingReturnsCanonicalFacts(t *testing.T) {
 func TestGetRuntimeBindingRejectsMissingServiceAccountName(t *testing.T) {
 	spritz := &spritzv1.Spritz{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "openclaw-morning-sky",
-			Namespace: "spritz-production",
+			Name:              "openclaw-morning-sky",
+			Namespace:         "spritz-production",
+			CreationTimestamp: metav1.NewTime(time.Date(2026, time.March, 30, 12, 34, 56, 0, time.UTC)),
 			Annotations: map[string]string{
 				presetIDAnnotationKey:      "openclaw",
 				instanceClassAnnotationKey: "assistant-runtime",
@@ -112,8 +116,9 @@ func TestGetRuntimeBindingRejectsMissingServiceAccountName(t *testing.T) {
 func TestGetRuntimeBindingRejectsIncompleteBinding(t *testing.T) {
 	spritz := &spritzv1.Spritz{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "zeno-delta-breeze",
-			Namespace: "spritz-production",
+			Name:              "zeno-delta-breeze",
+			Namespace:         "spritz-production",
+			CreationTimestamp: metav1.NewTime(time.Date(2026, time.March, 30, 12, 34, 56, 0, time.UTC)),
 			Annotations: map[string]string{
 				presetIDAnnotationKey: "zeno",
 			},
@@ -141,8 +146,9 @@ func TestGetRuntimeBindingRejectsIncompleteBinding(t *testing.T) {
 func TestGetRuntimeBindingRejectsNamespaceOutsideServerScope(t *testing.T) {
 	spritz := &spritzv1.Spritz{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "zeno-delta-breeze",
-			Namespace: "spritz-production",
+			Name:              "zeno-delta-breeze",
+			Namespace:         "spritz-production",
+			CreationTimestamp: metav1.NewTime(time.Date(2026, time.March, 30, 12, 34, 56, 0, time.UTC)),
 			Annotations: map[string]string{
 				presetIDAnnotationKey:      "zeno",
 				instanceClassAnnotationKey: "personal-agent",
