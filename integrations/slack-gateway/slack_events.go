@@ -10,10 +10,19 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+const (
+	slackRecoveryStatusText  = "Still waking up. I will continue here shortly."
+	slackRecoveryFailureText = "I could not recover the channel runtime. Please try again."
+)
+
+var slackMentionTokenPattern = regexp.MustCompile(`<@[^>]+>`)
 
 type slackEnvelope struct {
 	Type      string          `json:"type"`
@@ -34,6 +43,165 @@ type slackEventInner struct {
 	ChannelType string `json:"channel_type,omitempty"`
 	TS          string `json:"ts,omitempty"`
 	ThreadTS    string `json:"thread_ts,omitempty"`
+}
+
+type channelSessionRecoveryState struct {
+	mu              sync.Mutex
+	startedAt       time.Time
+	statusAuth      slackInstallation
+	statusAuthReady bool
+	statusPosting   bool
+	statusVisible   bool
+}
+
+func newChannelSessionRecoveryState() *channelSessionRecoveryState {
+	return &channelSessionRecoveryState{startedAt: time.Now()}
+}
+
+func (state *channelSessionRecoveryState) rememberProviderAuth(providerAuth slackInstallation) {
+	if state == nil || strings.TrimSpace(providerAuth.BotAccessToken) == "" {
+		return
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.statusAuth = providerAuth
+	state.statusAuthReady = true
+}
+
+// remainingStatusDelay reports how much longer the gateway should wait before
+// posting the provider-authored wake-up status message.
+func (state *channelSessionRecoveryState) remainingStatusDelay(delay time.Duration) time.Duration {
+	if state == nil {
+		return delay
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	remaining := delay - time.Since(state.startedAt)
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}
+
+func (state *channelSessionRecoveryState) hasProviderAuth() bool {
+	if state == nil {
+		return false
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.statusAuthReady
+}
+
+func (state *channelSessionRecoveryState) maybePostStatus(
+	ctx context.Context,
+	g *slackGateway,
+	event slackEventInner,
+) error {
+	if state == nil {
+		return nil
+	}
+	state.mu.Lock()
+	if !state.statusAuthReady || state.statusVisible || state.statusPosting {
+		state.mu.Unlock()
+		return nil
+	}
+	if time.Since(state.startedAt) < g.cfg.StatusMessageDelay {
+		state.mu.Unlock()
+		return nil
+	}
+	token := state.statusAuth.BotAccessToken
+	state.statusPosting = true
+	state.mu.Unlock()
+
+	if err := g.postGatewaySlackMessage(
+		ctx,
+		token,
+		event,
+		slackRecoveryStatusText,
+	); err != nil {
+		state.mu.Lock()
+		state.statusPosting = false
+		state.mu.Unlock()
+		return err
+	}
+
+	state.mu.Lock()
+	state.statusPosting = false
+	state.statusVisible = true
+	state.mu.Unlock()
+	return nil
+}
+
+func (state *channelSessionRecoveryState) maybePostFailure(
+	ctx context.Context,
+	g *slackGateway,
+	event slackEventInner,
+) (bool, error) {
+	if state == nil {
+		return false, nil
+	}
+	state.mu.Lock()
+	if !state.statusAuthReady {
+		state.mu.Unlock()
+		return false, nil
+	}
+	if !state.statusVisible && time.Since(state.startedAt) < g.cfg.StatusMessageDelay {
+		state.mu.Unlock()
+		return false, nil
+	}
+	token := state.statusAuth.BotAccessToken
+	state.mu.Unlock()
+	if err := g.postGatewaySlackMessage(
+		ctx,
+		token,
+		event,
+		slackRecoveryFailureText,
+	); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// startPromptStatusTimer posts the provider-authored wake-up status once the
+// visible-delay threshold is crossed while a prompt is still executing.
+func (g *slackGateway) startPromptStatusTimer(
+	ctx context.Context,
+	event slackEventInner,
+	recoveryState *channelSessionRecoveryState,
+) func() {
+	done := make(chan struct{})
+	go func() {
+		remaining := recoveryState.remainingStatusDelay(g.cfg.StatusMessageDelay)
+		if remaining > 0 {
+			timer := time.NewTimer(remaining)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			case <-timer.C:
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+			return
+		default:
+		}
+		if err := recoveryState.maybePostStatus(ctx, g, event); err != nil {
+			g.logger.Error(
+				"slack recovery status post failed",
+				"error", err,
+				"channel_id", strings.TrimSpace(event.Channel),
+				"message_ts", strings.TrimSpace(event.TS),
+			)
+		}
+	}()
+	return func() {
+		close(done)
+	}
 }
 
 func (g *slackGateway) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
@@ -197,10 +365,19 @@ func (g *slackGateway) processMessageEventWithDelivery(
 	}()
 
 	event := envelope.Event
+	if normalizeSlackPromptText(event.Type, event.Text, "") == "" {
+		success = true
+		return nil
+	}
 
-	session, err := g.exchangeChannelSession(ctx, envelope.TeamID)
+	recoveryState := newChannelSessionRecoveryState()
+	session, terminalHandled, err := g.awaitChannelSession(ctx, envelope, event, recoveryState)
 	if err != nil {
 		return err
+	}
+	if terminalHandled {
+		success = true
+		return nil
 	}
 	if session.ProviderAuth.APIAppID != "" && strings.TrimSpace(envelope.APIAppID) != "" && session.ProviderAuth.APIAppID != strings.TrimSpace(envelope.APIAppID) {
 		return fmt.Errorf("slack api_app_id mismatch for team %s", envelope.TeamID)
@@ -212,34 +389,84 @@ func (g *slackGateway) processMessageEventWithDelivery(
 		session.ProviderAuth.BotUserID,
 	)
 	if promptText == "" {
+		success = true
 		return nil
 	}
 
-	externalConversationID := slackExternalConversationID(event)
-	conversationID, err := g.upsertChannelConversation(ctx, session, event, envelope.TeamID, "", externalConversationID)
-	if err != nil {
-		return err
+	stopPromptStatusTimer := g.startPromptStatusTimer(ctx, event, recoveryState)
+	result, err := g.executeConversationPrompt(ctx, envelope, event, session, promptText)
+	stopPromptStatusTimer()
+	for err != nil && !result.promptSent && isSpritzRuntimeMissingError(err) {
+		recoveryState.rememberProviderAuth(session.ProviderAuth)
+		if postErr := recoveryState.maybePostStatus(ctx, g, event); postErr != nil {
+			g.logger.Error(
+				"slack recovery status post failed",
+				"error", postErr,
+				"team_id", strings.TrimSpace(envelope.TeamID),
+				"channel_id", strings.TrimSpace(event.Channel),
+				"message_ts", strings.TrimSpace(event.TS),
+			)
+		}
+		if sleepErr := sleepWithContext(ctx, g.cfg.SessionRetryInterval); sleepErr != nil {
+			terminalHandled, postErr := recoveryState.maybePostFailure(ctx, g, event)
+			if postErr != nil {
+				g.logger.Error(
+					"slack recovery failure reply failed",
+					"error", postErr,
+					"team_id", strings.TrimSpace(envelope.TeamID),
+					"channel_id", strings.TrimSpace(event.Channel),
+					"message_ts", strings.TrimSpace(event.TS),
+				)
+				return postErr
+			}
+			if terminalHandled {
+				success = true
+				return nil
+			}
+			return sleepErr
+		}
+		recoveredSession, recoveredTerminalHandled, recoveryErr := g.awaitChannelSession(
+			ctx,
+			envelope,
+			event,
+			recoveryState,
+		)
+		if recoveryErr != nil {
+			return recoveryErr
+		}
+		if recoveredTerminalHandled {
+			success = true
+			return nil
+		}
+		session = recoveredSession
+		promptText = buildSlackPromptText(
+			envelope.TeamID,
+			event,
+			session.ProviderAuth.BotUserID,
+		)
+		if promptText == "" {
+			success = true
+			return nil
+		}
+		stopPromptStatusTimer = g.startPromptStatusTimer(ctx, event, recoveryState)
+		result, err = g.executeConversationPrompt(ctx, envelope, event, session, promptText)
+		stopPromptStatusTimer()
 	}
-	sessionID, cwd, err := g.bootstrapConversation(ctx, g.cfg.SpritzServiceToken, session.Namespace, conversationID)
 	if err != nil {
-		return err
-	}
-	reply, promptSent, err := g.promptConversation(ctx, g.cfg.SpritzServiceToken, session.Namespace, conversationID, sessionID, cwd, promptText)
-	if err != nil {
-		if !promptSent {
+		if !result.promptSent {
 			return err
 		}
-		reply = "I hit an internal error while processing that request."
-		g.logger.Error("acp prompt failed", "error", err, "conversation_id", conversationID)
+		result.reply = "I hit an internal error while processing that request."
+		g.logger.Error("acp prompt failed", "error", err, "conversation_id", result.conversationID)
 	}
 	replyThreadTS := slackReplyThreadTS(event)
 	replyCtx, cancelReply := context.WithTimeout(context.WithoutCancel(ctx), g.cfg.HTTPTimeout)
 	defer cancelReply()
-	replyMessageTS, err := g.postSlackMessage(replyCtx, session.ProviderAuth.BotAccessToken, event.Channel, reply, replyThreadTS)
+	replyMessageTS, err := g.postSlackMessage(replyCtx, session.ProviderAuth.BotAccessToken, event.Channel, result.reply, replyThreadTS)
 	if err != nil {
 		// Once the ACP prompt has already been delivered, suppress duplicate
 		// Slack retries from re-running the same agent side effects.
-		success = promptSent
+		success = result.promptSent
 		return err
 	}
 	if replyThreadTS == "" && !isSlackDirectMessageEvent(event) && strings.TrimSpace(replyMessageTS) != "" {
@@ -249,14 +476,14 @@ func (g *slackGateway) processMessageEventWithDelivery(
 			session,
 			event,
 			envelope.TeamID,
-			conversationID,
+			result.conversationID,
 			replyMessageTS,
 		); err != nil {
 			cancelAlias()
 			g.logger.Error(
 				"slack reply alias persistence failed",
 				"error", err,
-				"conversation_id", conversationID,
+				"conversation_id", result.conversationID,
 				"reply_message_ts", replyMessageTS,
 			)
 		} else {
@@ -265,6 +492,130 @@ func (g *slackGateway) processMessageEventWithDelivery(
 	}
 	success = true
 	return nil
+}
+
+type conversationPromptResult struct {
+	conversationID string
+	reply          string
+	promptSent     bool
+}
+
+func (g *slackGateway) executeConversationPrompt(
+	ctx context.Context,
+	envelope slackEnvelope,
+	event slackEventInner,
+	session channelSession,
+	promptText string,
+) (conversationPromptResult, error) {
+	externalConversationID := slackExternalConversationID(event)
+	conversationID, err := g.upsertChannelConversation(
+		ctx,
+		session,
+		event,
+		envelope.TeamID,
+		"",
+		externalConversationID,
+	)
+	if err != nil {
+		return conversationPromptResult{}, err
+	}
+	sessionID, cwd, err := g.bootstrapConversation(
+		ctx,
+		g.cfg.SpritzServiceToken,
+		session.Namespace,
+		conversationID,
+	)
+	if err != nil {
+		return conversationPromptResult{conversationID: conversationID}, err
+	}
+	reply, promptSent, err := g.promptConversation(
+		ctx,
+		g.cfg.SpritzServiceToken,
+		session.Namespace,
+		conversationID,
+		sessionID,
+		cwd,
+		promptText,
+	)
+	return conversationPromptResult{
+		conversationID: conversationID,
+		reply:          reply,
+		promptSent:     promptSent,
+	}, err
+}
+
+func (g *slackGateway) awaitChannelSession(
+	ctx context.Context,
+	envelope slackEnvelope,
+	event slackEventInner,
+	recoveryState *channelSessionRecoveryState,
+) (channelSession, bool, error) {
+	if recoveryState == nil {
+		recoveryState = newChannelSessionRecoveryState()
+	}
+
+	for {
+		session, err := g.exchangeChannelSession(ctx, envelope.TeamID)
+		if err == nil {
+			recoveryState.rememberProviderAuth(session.ProviderAuth)
+			return session, false, nil
+		}
+
+		providerAuth, recoverable := channelSessionUnavailableProviderAuth(err)
+		if !recoverable {
+			if recoveryState.hasProviderAuth() {
+				g.logger.Error(
+					"slack session recovery poll failed",
+					"error", err,
+					"team_id", strings.TrimSpace(envelope.TeamID),
+					"channel_id", strings.TrimSpace(event.Channel),
+					"message_ts", strings.TrimSpace(event.TS),
+				)
+			} else {
+				if terminalHandled, postErr := recoveryState.maybePostFailure(ctx, g, event); postErr != nil {
+					g.logger.Error(
+						"slack recovery failure reply failed",
+						"error", postErr,
+						"team_id", strings.TrimSpace(envelope.TeamID),
+						"channel_id", strings.TrimSpace(event.Channel),
+						"message_ts", strings.TrimSpace(event.TS),
+					)
+					return channelSession{}, false, postErr
+				} else if terminalHandled {
+					return channelSession{}, true, nil
+				}
+				return channelSession{}, false, err
+			}
+		} else {
+			recoveryState.rememberProviderAuth(providerAuth)
+		}
+
+		if postErr := recoveryState.maybePostStatus(ctx, g, event); postErr != nil {
+			g.logger.Error(
+				"slack recovery status post failed",
+				"error", postErr,
+				"team_id", strings.TrimSpace(envelope.TeamID),
+				"channel_id", strings.TrimSpace(event.Channel),
+				"message_ts", strings.TrimSpace(event.TS),
+			)
+		}
+
+		if err := sleepWithContext(ctx, g.cfg.SessionRetryInterval); err != nil {
+			if terminalHandled, postErr := recoveryState.maybePostFailure(ctx, g, event); postErr != nil {
+				g.logger.Error(
+					"slack recovery failure reply failed",
+					"error", postErr,
+					"team_id", strings.TrimSpace(envelope.TeamID),
+					"channel_id", strings.TrimSpace(event.Channel),
+					"message_ts", strings.TrimSpace(event.TS),
+				)
+				return channelSession{}, false, postErr
+			} else if terminalHandled {
+				return channelSession{}, true, nil
+			}
+			return channelSession{}, false, err
+		}
+	}
 }
 
 func shouldIgnoreSlackMessageEvent(event slackEventInner) bool {
@@ -299,9 +650,11 @@ func normalizeSlackPromptText(eventType, text, botUserID string) string {
 					normalized[:index] + normalized[index+len(mentionToken):],
 				)
 			}
+		} else {
+			normalized = slackMentionTokenPattern.ReplaceAllString(normalized, " ")
 		}
 	}
-	return normalized
+	return strings.TrimSpace(normalized)
 }
 
 type slackPromptContext struct {
@@ -358,6 +711,35 @@ func slackExternalConversationID(event slackEventInner) string {
 		return threadTS
 	}
 	return strings.TrimSpace(event.TS)
+}
+
+func (g *slackGateway) postGatewaySlackMessage(
+	ctx context.Context,
+	token string,
+	event slackEventInner,
+	text string,
+) error {
+	replyCtx, cancelReply := context.WithTimeout(context.WithoutCancel(ctx), g.cfg.HTTPTimeout)
+	defer cancelReply()
+	_, err := g.postSlackMessage(
+		replyCtx,
+		token,
+		event.Channel,
+		text,
+		slackReplyThreadTS(event),
+	)
+	return err
+}
+
+func sleepWithContext(ctx context.Context, duration time.Duration) error {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (g *slackGateway) verifySlackSignature(header http.Header, body []byte) error {

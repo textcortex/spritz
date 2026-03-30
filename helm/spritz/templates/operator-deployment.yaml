@@ -53,6 +53,18 @@ spec:
             - name: SPRITZ_HOME_SIZE_LIMIT
               value: {{ .Values.operator.homeSizeLimit | quote }}
             {{- end }}
+            {{- if .Values.operator.lifecycleNotifications.url }}
+            - name: SPRITZ_LIFECYCLE_NOTIFY_URL
+              value: {{ .Values.operator.lifecycleNotifications.url | quote }}
+            {{- end }}
+            {{- if .Values.operator.lifecycleNotifications.authToken }}
+            - name: SPRITZ_LIFECYCLE_NOTIFY_AUTH_TOKEN
+              value: {{ .Values.operator.lifecycleNotifications.authToken | quote }}
+            {{- end }}
+            {{- if .Values.operator.lifecycleNotifications.timeout }}
+            - name: SPRITZ_LIFECYCLE_NOTIFY_TIMEOUT
+              value: {{ .Values.operator.lifecycleNotifications.timeout | quote }}
+            {{- end }}
             - name: SPRITZ_ROUTE_MODEL_TYPE
               value: {{ include "spritz.routeModel.type" . | quote }}
             - name: SPRITZ_ROUTE_HOST

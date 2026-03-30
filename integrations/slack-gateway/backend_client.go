@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -39,6 +40,11 @@ type backendChannelSessionResponse struct {
 		InstanceID   string            `json:"instanceId"`
 		ProviderAuth slackInstallation `json:"providerAuth"`
 	} `json:"session"`
+}
+
+type backendChannelSessionUnavailableResponse struct {
+	Status       string            `json:"status"`
+	ProviderAuth slackInstallation `json:"providerAuth"`
 }
 
 type backendInstallationUpsertResponse struct {
@@ -87,6 +93,50 @@ type channelSession struct {
 	ProviderAuth slackInstallation
 }
 
+type channelSessionUnavailableError struct {
+	providerAuth slackInstallation
+	cause        *httpStatusError
+}
+
+func (err *channelSessionUnavailableError) Error() string {
+	if err == nil {
+		return "channel session unavailable"
+	}
+	if err.cause == nil {
+		return "channel session unavailable"
+	}
+	return err.cause.Error()
+}
+
+func (err *channelSessionUnavailableError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.cause
+}
+
+func channelSessionUnavailableProviderAuth(err error) (slackInstallation, bool) {
+	var unavailableErr *channelSessionUnavailableError
+	if !errors.As(err, &unavailableErr) {
+		return slackInstallation{}, false
+	}
+	if strings.TrimSpace(unavailableErr.providerAuth.BotAccessToken) == "" {
+		return slackInstallation{}, false
+	}
+	return unavailableErr.providerAuth, true
+}
+
+func isSpritzRuntimeMissingError(err error) bool {
+	var statusErr *httpStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	if statusErr.statusCode != http.StatusNotFound {
+		return false
+	}
+	return strings.Contains(strings.ToLower(statusErr.body), "spritz not found")
+}
+
 func (g *slackGateway) exchangeChannelSession(ctx context.Context, teamID string) (channelSession, error) {
 	body := map[string]any{
 		"principalId":       g.cfg.PrincipalID,
@@ -96,6 +146,17 @@ func (g *slackGateway) exchangeChannelSession(ctx context.Context, teamID string
 	}
 	var payload backendChannelSessionResponse
 	if err := g.postBackendJSON(ctx, "/internal/v1/spritz/channel-sessions/exchange", body, &payload); err != nil {
+		var statusErr *httpStatusError
+		if errors.As(err, &statusErr) && statusErr.statusCode == http.StatusServiceUnavailable {
+			var unavailablePayload backendChannelSessionUnavailableResponse
+			if json.Unmarshal([]byte(statusErr.body), &unavailablePayload) == nil && strings.TrimSpace(unavailablePayload.Status) == "unavailable" {
+				return channelSession{}, &channelSessionUnavailableError{
+					providerAuth: unavailablePayload.ProviderAuth,
+					cause:        statusErr,
+				}
+			}
+			return channelSession{}, &channelSessionUnavailableError{cause: statusErr}
+		}
 		return channelSession{}, err
 	}
 	if payload.Status != "resolved" {

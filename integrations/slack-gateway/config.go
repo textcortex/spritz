@@ -26,6 +26,8 @@ type config struct {
 	HTTPTimeout          time.Duration
 	DedupeTTL            time.Duration
 	ProcessingTimeout    time.Duration
+	SessionRetryInterval time.Duration
+	StatusMessageDelay   time.Duration
 }
 
 func loadConfig() (config, error) {
@@ -47,6 +49,8 @@ func loadConfig() (config, error) {
 		HTTPTimeout:          parseDurationEnv("SPRITZ_SLACK_HTTP_TIMEOUT", 15*time.Second),
 		DedupeTTL:            parseDurationEnv("SPRITZ_SLACK_DEDUPE_TTL", 10*time.Minute),
 		ProcessingTimeout:    parseDurationEnv("SPRITZ_SLACK_PROCESSING_TIMEOUT", 60*time.Second),
+		SessionRetryInterval: parseDurationEnv("SPRITZ_SLACK_SESSION_RETRY_INTERVAL", time.Second),
+		StatusMessageDelay:   parseDurationEnv("SPRITZ_SLACK_STATUS_MESSAGE_DELAY", 3*time.Second),
 	}
 
 	if cfg.PublicURL == "" {

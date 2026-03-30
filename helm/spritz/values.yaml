@@ -105,6 +105,10 @@ operator:
   workspaceSizeLimit: 10Gi
   homeSizeLimit: 5Gi
   podNodeSelector: ""
+  lifecycleNotifications:
+    url: ""
+    authToken: ""
+    timeout: 3s
   sharedMounts:
     enabled: false
     mounts: []
