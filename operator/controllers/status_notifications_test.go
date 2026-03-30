@@ -121,3 +121,88 @@ func TestSetStatusNotifiesAfterPersistedPhaseUpdate(t *testing.T) {
 		t.Fatalf("expected notification to observe persisted Ready phase, got %q", got)
 	}
 }
+
+func TestSetStatusRetriesLifecycleNotificationUntilRecorded(t *testing.T) {
+	scheme := newControllerTestScheme(t)
+	spritz := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{Name: "retry-otter", Namespace: "spritz-test"},
+		Spec: spritzv1.SpritzSpec{
+			Image: "example.com/openclaw:latest",
+			Owner: spritzv1.SpritzOwner{ID: "user-1"},
+		},
+		Status: spritzv1.SpritzStatus{Phase: "Provisioning"},
+	}
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&spritzv1.Spritz{}).
+		WithObjects(spritz).
+		Build()
+
+	var notificationCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if notificationCalls.Add(1) == 1 {
+			http.Error(w, "notify unavailable", http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	reconciler := &SpritzReconciler{
+		Client: k8sClient,
+		Scheme: scheme,
+		LifecycleNotifications: LifecycleNotificationConfig{
+			URL:     server.URL,
+			Timeout: time.Second,
+			Client:  server.Client(),
+		},
+	}
+
+	if err := reconciler.setStatus(
+		context.Background(),
+		spritz,
+		"Ready",
+		"https://spritz.example.test",
+		nil,
+		"Ready",
+		"spritz ready",
+		nil,
+	); err != nil {
+		t.Fatalf("initial setStatus returned error: %v", err)
+	}
+
+	stored := &spritzv1.Spritz{}
+	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(spritz), stored); err != nil {
+		t.Fatalf("failed to load stored spritz after initial update: %v", err)
+	}
+	if stored.Status.Phase != "Ready" {
+		t.Fatalf("expected phase to persist as Ready after initial update, got %q", stored.Status.Phase)
+	}
+	if got := stored.Annotations[lifecycleNotifiedPhaseAnnotationKey]; got != "" {
+		t.Fatalf("expected failed notification not to record annotation, got %q", got)
+	}
+
+	if err := reconciler.setStatus(
+		context.Background(),
+		stored,
+		"Ready",
+		"https://spritz.example.test",
+		nil,
+		"Ready",
+		"spritz ready",
+		nil,
+	); err != nil {
+		t.Fatalf("retry setStatus returned error: %v", err)
+	}
+
+	reloaded := &spritzv1.Spritz{}
+	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(spritz), reloaded); err != nil {
+		t.Fatalf("failed to reload spritz after retry update: %v", err)
+	}
+	if notificationCalls.Load() != 2 {
+		t.Fatalf("expected notification retry on second reconcile, got %d calls", notificationCalls.Load())
+	}
+	if got := reloaded.Annotations[lifecycleNotifiedPhaseAnnotationKey]; got != "Ready" {
+		t.Fatalf("expected successful retry to record notified phase, got %q", got)
+	}
+}

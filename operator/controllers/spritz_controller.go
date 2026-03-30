@@ -29,19 +29,20 @@ import (
 )
 
 const (
-	defaultRepoDir             = "/workspace/repo"
-	defaultWebPort             = int32(8080)
-	defaultSSHPort             = int32(22)
-	defaultSSHUser             = "spritz"
-	defaultSSHMode             = "service"
-	spritzContainerName        = "spritz"
-	spritzFinalizer            = "spritz.sh/finalizer"
-	ownerLabelKey              = "spritz.sh/owner"
-	defaultTTLGrace            = 5 * time.Minute
-	defaultRepoInitImage       = "alpine/git:2.45.2"
-	repoAuthMountPath          = "/var/run/spritz/repo-auth"
-	repoInitHomeDir            = "/home/dev"
-	repoInitGroupID      int64 = 65532
+	defaultRepoDir                            = "/workspace/repo"
+	defaultWebPort                            = int32(8080)
+	defaultSSHPort                            = int32(22)
+	defaultSSHUser                            = "spritz"
+	defaultSSHMode                            = "service"
+	spritzContainerName                       = "spritz"
+	spritzFinalizer                           = "spritz.sh/finalizer"
+	ownerLabelKey                             = "spritz.sh/owner"
+	defaultTTLGrace                           = 5 * time.Minute
+	defaultRepoInitImage                      = "alpine/git:2.45.2"
+	repoAuthMountPath                         = "/var/run/spritz/repo-auth"
+	repoInitHomeDir                           = "/home/dev"
+	repoInitGroupID                     int64 = 65532
+	lifecycleNotifiedPhaseAnnotationKey       = "spritz.sh/lifecycle-notified-phase"
 )
 
 var (
@@ -704,7 +705,8 @@ func (r *SpritzReconciler) reconcileStatus(ctx context.Context, spritz *spritzv1
 }
 
 func (r *SpritzReconciler) setStatus(ctx context.Context, spritz *spritzv1.Spritz, phase, url string, sshInfo *spritzv1.SpritzSSHInfo, reason, message string, acpStatus *spritzv1.SpritzACPStatus) error {
-	phaseChanged := strings.TrimSpace(spritz.Status.Phase) != strings.TrimSpace(phase)
+	phase = strings.TrimSpace(phase)
+	notificationPending := phase != "" && lastLifecycleNotifiedPhase(spritz) != phase
 	conditionStatus := metav1.ConditionFalse
 	if phase == "Ready" {
 		conditionStatus = metav1.ConditionTrue
@@ -734,18 +736,54 @@ func (r *SpritzReconciler) setStatus(ctx context.Context, spritz *spritzv1.Sprit
 	if err := r.Status().Update(ctx, spritz); err != nil {
 		return err
 	}
-	if phaseChanged {
-		if err := r.LifecycleNotifications.notifyPhase(ctx, spritz.Namespace, spritz.Name, phase); err != nil {
-			log.FromContext(ctx).Error(
-				err,
-				"lifecycle notification failed",
-				"name", spritz.Name,
-				"namespace", spritz.Namespace,
-				"phase", phase,
-			)
-		}
+	if !notificationPending || !r.LifecycleNotifications.enabled() {
+		return nil
+	}
+	if err := r.LifecycleNotifications.notifyPhase(ctx, spritz.Namespace, spritz.Name, phase); err != nil {
+		log.FromContext(ctx).Error(
+			err,
+			"lifecycle notification failed",
+			"name", spritz.Name,
+			"namespace", spritz.Namespace,
+			"phase", phase,
+		)
+		return nil
+	}
+	if err := r.recordLifecycleNotifiedPhase(ctx, spritz, phase); err != nil {
+		log.FromContext(ctx).Error(
+			err,
+			"failed to persist lifecycle notification marker",
+			"name", spritz.Name,
+			"namespace", spritz.Namespace,
+			"phase", phase,
+		)
 	}
 	return nil
+}
+
+func lastLifecycleNotifiedPhase(spritz *spritzv1.Spritz) string {
+	if spritz == nil || spritz.Annotations == nil {
+		return ""
+	}
+	return strings.TrimSpace(spritz.Annotations[lifecycleNotifiedPhaseAnnotationKey])
+}
+
+// recordLifecycleNotifiedPhase stores the latest phase that was delivered to
+// the optional lifecycle webhook so later reconciles can retry only when needed.
+func (r *SpritzReconciler) recordLifecycleNotifiedPhase(
+	ctx context.Context,
+	spritz *spritzv1.Spritz,
+	phase string,
+) error {
+	if spritz == nil || strings.TrimSpace(phase) == "" {
+		return nil
+	}
+	base := spritz.DeepCopy()
+	if spritz.Annotations == nil {
+		spritz.Annotations = map[string]string{}
+	}
+	spritz.Annotations[lifecycleNotifiedPhaseAnnotationKey] = phase
+	return r.Patch(ctx, spritz, client.MergeFrom(base))
 }
 
 func setACPReadyCondition(conditions *[]metav1.Condition, generation int64, status *spritzv1.SpritzACPStatus) {
