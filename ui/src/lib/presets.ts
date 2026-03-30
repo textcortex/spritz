@@ -4,6 +4,11 @@ import { useConfig, type Preset } from './config';
 
 const PRESETS_PLACEHOLDER = '__SPRITZ_UI_PRESETS__';
 
+interface PresetCatalogResult {
+  presets: Preset[];
+  loaded: boolean;
+}
+
 export function parsePresets(raw: Preset[] | string | undefined | null): Preset[] {
   if (Array.isArray(raw)) return raw;
   if (typeof raw === 'string') {
@@ -20,10 +25,19 @@ export function parsePresets(raw: Preset[] | string | undefined | null): Preset[
   return [];
 }
 
-export function usePresets(): Preset[] {
+function resolveCatalogItems(items: Preset[] | undefined, fallbackPresets: Preset[]): Preset[] {
+  if (Array.isArray(items) && items.length > 0) return items;
+  if (fallbackPresets.length > 0) return fallbackPresets;
+  return Array.isArray(items) ? items : [];
+}
+
+export function usePresetCatalog(): PresetCatalogResult {
   const config = useConfig();
   const fallbackPresets = useMemo(() => parsePresets(config.presets), [config.presets]);
-  const [presets, setPresets] = useState<Preset[]>([]);
+  const [catalog, setCatalog] = useState<PresetCatalogResult>(() => ({
+    presets: fallbackPresets,
+    loaded: fallbackPresets.length > 0,
+  }));
 
   useEffect(() => {
     let cancelled = false;
@@ -32,10 +46,16 @@ export function usePresets(): Preset[] {
       try {
         const data = await request<{ items?: Preset[] }>('/presets');
         if (cancelled) return;
-        setPresets(Array.isArray(data?.items) ? data.items : []);
+        setCatalog({
+          presets: resolveCatalogItems(data?.items, fallbackPresets),
+          loaded: true,
+        });
       } catch {
         if (cancelled) return;
-        setPresets(fallbackPresets);
+        setCatalog({
+          presets: fallbackPresets,
+          loaded: true,
+        });
       }
     })();
 
@@ -44,5 +64,9 @@ export function usePresets(): Preset[] {
     };
   }, [fallbackPresets]);
 
-  return presets;
+  return catalog;
+}
+
+export function usePresets(): Preset[] {
+  return usePresetCatalog().presets;
 }

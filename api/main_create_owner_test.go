@@ -1059,6 +1059,39 @@ func TestListPresetsIncludesHiddenPresetsForServicePrincipal(t *testing.T) {
 	}
 }
 
+func TestListPresetsIncludesHiddenPresetsForAdminPrincipal(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	s.auth.adminIDs = map[string]struct{}{"admin-1": {}}
+	s.presets = presetCatalog{byID: []runtimePreset{
+		{
+			ID:     "zeno",
+			Name:   "Zeno",
+			Image:  "example.com/spritz-zeno:latest",
+			Hidden: true,
+		},
+	}}
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.GET("/api/presets", s.listPresets)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/presets", nil)
+	req.Header.Set("X-Spritz-User-Id", "admin-1")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"hidden":true`) {
+		t.Fatalf("expected hidden preset metadata for admin principal, got %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "zeno") {
+		t.Fatalf("expected hidden preset to remain available for admin principal, got %s", rec.Body.String())
+	}
+}
+
 func TestCreateSpritzUsesProvisionerDefaultPresetWhenPresetOmitted(t *testing.T) {
 	s := newCreateSpritzTestServer(t)
 	configureProvisionerTestServer(s)

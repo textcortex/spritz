@@ -3,7 +3,7 @@ import { PlusIcon, DicesIcon, ChevronDownIcon } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { request } from '@/lib/api';
 import { useConfig, type Preset } from '@/lib/config';
-import { usePresets } from '@/lib/presets';
+import { usePresetCatalog } from '@/lib/presets';
 import { buildCreatePayload, parseUserConfigInput } from '@/lib/create-payload';
 import {
   readCreateFormState,
@@ -27,7 +27,7 @@ const USER_CONFIG_PLACEHOLDER = `ttl: 8h`;
 
 export function CreateForm({ onCreated }: CreateFormProps) {
   const config = useConfig();
-  const presets = usePresets();
+  const { presets, loaded: presetCatalogLoaded } = usePresetCatalog();
   const { showNotice } = useNotice();
 
   const [name, setName] = useState('');
@@ -96,7 +96,12 @@ export function CreateForm({ onCreated }: CreateFormProps) {
         persistReady.current = true;
         return;
       }
-      if (!presets.length) return;
+      if (!presetCatalogLoaded) return;
+      if (!presets.length) {
+        presetInitialized.current = true;
+        persistReady.current = true;
+        return;
+      }
       const idx = findPresetIndex(presets, saved.selection);
       if (idx) {
         setPresetIndex(idx);
@@ -106,6 +111,8 @@ export function CreateForm({ onCreated }: CreateFormProps) {
       persistReady.current = true;
       return;
     }
+
+    if (!presetCatalogLoaded) return;
 
     if (presets.length > 0) {
       setPresetIndex('0');
@@ -120,7 +127,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
     }
     presetInitialized.current = true;
     persistReady.current = true;
-  }, [presets, generateName]);
+  }, [presetCatalogLoaded, presets, generateName]);
 
   // Persist form state on changes
   const persistState = useCallback(() => {

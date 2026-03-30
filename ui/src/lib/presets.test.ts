@@ -152,4 +152,34 @@ describe('usePresets', () => {
       expect(screen.getByText('Claude Code')).toBeDefined();
     });
   });
+
+  it('falls back to configured presets when the API catalog is empty', async () => {
+    const configuredPreset: Preset = {
+      id: 'claude-code',
+      name: 'Claude Code',
+      image: 'spritz-claude-code:latest',
+      description: 'Claude Code example image.',
+      repoUrl: '',
+      branch: '',
+      ttl: '',
+    };
+    requestMock.mockResolvedValue({ items: [] });
+
+    render(
+      createElement(
+        ConfigProvider,
+        {
+          value: resolveConfig({
+            apiBaseUrl: '/api',
+            presets: JSON.stringify([configuredPreset]),
+          }),
+        },
+        createElement(PresetProbe),
+      ),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Claude Code')).toBeDefined();
+    });
+  });
 });

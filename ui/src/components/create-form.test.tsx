@@ -14,6 +14,7 @@ const currentPresets = vi.hoisted(() => ({
     branch: string;
     ttl: string;
   }>,
+  loaded: false,
 }));
 
 vi.mock('@/lib/config', async () => {
@@ -29,6 +30,10 @@ vi.mock('@/lib/api', () => ({
 }));
 
 vi.mock('@/lib/presets', () => ({
+  usePresetCatalog: () => ({
+    presets: currentPresets.value,
+    loaded: currentPresets.loaded,
+  }),
   usePresets: () => currentPresets.value,
 }));
 
@@ -98,6 +103,7 @@ describe('CreateForm', () => {
     window.localStorage.clear();
     requestMock.mockReset();
     currentPresets.value = [];
+    currentPresets.loaded = false;
   });
 
   it('does not advertise shared mounts in the default advanced user config copy', () => {
@@ -150,6 +156,47 @@ describe('CreateForm', () => {
       branch: '',
       ttl: '',
     }];
+    currentPresets.loaded = true;
+    view.rerender(<CreateForm />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('preset-index').textContent).toBe('0');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Create instance/i }));
+
+    await waitFor(() => {
+      expect(createBodies).toHaveLength(1);
+    });
+    expect(createBodies[0].presetId).toBe('codex');
+    expect((createBodies[0].spec as Record<string, unknown> | undefined)?.image).toBeUndefined();
+  });
+
+  it('selects the first preset once the catalog finishes loading', async () => {
+    const createBodies: Array<Record<string, unknown>> = [];
+    requestMock.mockImplementation(async (path: string, options?: { body?: string }) => {
+      if (path === '/spritzes/suggest-name') {
+        return { name: 'codex-young-prairie' };
+      }
+      if (path === '/spritzes') {
+        createBodies.push(JSON.parse(String(options?.body || '{}')));
+        return {};
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    const view = render(<CreateForm />);
+
+    currentPresets.value = [{
+      id: 'codex',
+      name: 'Codex',
+      image: 'spritz-codex:latest',
+      description: 'Codex example image.',
+      repoUrl: '',
+      branch: '',
+      ttl: '',
+    }];
+    currentPresets.loaded = true;
     view.rerender(<CreateForm />);
 
     await waitFor(() => {
