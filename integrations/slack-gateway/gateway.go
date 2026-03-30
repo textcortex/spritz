@@ -40,6 +40,12 @@ func newSlackGateway(cfg config, logger *slog.Logger) *slackGateway {
 	if cfg.ProcessingTimeout <= 0 {
 		cfg.ProcessingTimeout = 60 * time.Second
 	}
+	if cfg.SessionRetryInterval <= 0 {
+		cfg.SessionRetryInterval = time.Second
+	}
+	if cfg.StatusMessageDelay <= 0 {
+		cfg.StatusMessageDelay = 3 * time.Second
+	}
 	return &slackGateway{
 		cfg:        cfg,
 		httpClient: &http.Client{Timeout: cfg.HTTPTimeout},
