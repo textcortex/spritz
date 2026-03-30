@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +21,8 @@ const (
 	slackRecoveryStatusText  = "Still waking up. I will continue here shortly."
 	slackRecoveryFailureText = "I could not recover the channel runtime. Please try again."
 )
+
+var slackMentionTokenPattern = regexp.MustCompile(`<@[^>]+>`)
 
 type slackEnvelope struct {
 	Type      string          `json:"type"`
@@ -78,6 +81,15 @@ func (state *channelSessionRecoveryState) remainingStatusDelay(delay time.Durati
 		return 0
 	}
 	return remaining
+}
+
+func (state *channelSessionRecoveryState) hasProviderAuth() bool {
+	if state == nil {
+		return false
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.statusAuthReady
 }
 
 func (state *channelSessionRecoveryState) maybePostStatus(
@@ -353,6 +365,10 @@ func (g *slackGateway) processMessageEventWithDelivery(
 	}()
 
 	event := envelope.Event
+	if normalizeSlackPromptText(event.Type, event.Text, "") == "" {
+		success = true
+		return nil
+	}
 
 	recoveryState := newChannelSessionRecoveryState()
 	session, terminalHandled, err := g.awaitChannelSession(ctx, envelope, event, recoveryState)
@@ -373,6 +389,7 @@ func (g *slackGateway) processMessageEventWithDelivery(
 		session.ProviderAuth.BotUserID,
 	)
 	if promptText == "" {
+		success = true
 		return nil
 	}
 
@@ -428,6 +445,7 @@ func (g *slackGateway) processMessageEventWithDelivery(
 			session.ProviderAuth.BotUserID,
 		)
 		if promptText == "" {
+			success = true
 			return nil
 		}
 		stopPromptStatusTimer = g.startPromptStatusTimer(ctx, event, recoveryState)
@@ -541,9 +559,19 @@ func (g *slackGateway) awaitChannelSession(
 		if err == nil {
 			recoveryState.rememberProviderAuth(session.ProviderAuth)
 			return session, false, nil
-		} else {
-			providerAuth, recoverable := channelSessionUnavailableProviderAuth(err)
-			if !recoverable {
+		}
+
+		providerAuth, recoverable := channelSessionUnavailableProviderAuth(err)
+		if !recoverable {
+			if recoveryState.hasProviderAuth() {
+				g.logger.Error(
+					"slack session recovery poll failed",
+					"error", err,
+					"team_id", strings.TrimSpace(envelope.TeamID),
+					"channel_id", strings.TrimSpace(event.Channel),
+					"message_ts", strings.TrimSpace(event.TS),
+				)
+			} else {
 				if terminalHandled, postErr := recoveryState.maybePostFailure(ctx, g, event); postErr != nil {
 					g.logger.Error(
 						"slack recovery failure reply failed",
@@ -558,6 +586,7 @@ func (g *slackGateway) awaitChannelSession(
 				}
 				return channelSession{}, false, err
 			}
+		} else {
 			recoveryState.rememberProviderAuth(providerAuth)
 		}
 
@@ -621,9 +650,11 @@ func normalizeSlackPromptText(eventType, text, botUserID string) string {
 					normalized[:index] + normalized[index+len(mentionToken):],
 				)
 			}
+		} else {
+			normalized = slackMentionTokenPattern.ReplaceAllString(normalized, " ")
 		}
 	}
-	return normalized
+	return strings.TrimSpace(normalized)
 }
 
 type slackPromptContext struct {
