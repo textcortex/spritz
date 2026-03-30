@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import type { CreateFormState } from '@/lib/form-state';
 
 interface CreateFormProps {
   onCreated?: () => void;
@@ -41,7 +42,10 @@ export function CreateForm({ onCreated }: CreateFormProps) {
   const [generatingName, setGeneratingName] = useState(false);
   const [activePreset, setActivePreset] = useState<Preset | null>(null);
   const [presetIndex, setPresetIndex] = useState('');
-  const initialized = useRef(false);
+  const restoredState = useRef<CreateFormState | null | undefined>(undefined);
+  const fieldsInitialized = useRef(false);
+  const presetInitialized = useRef(false);
+  const persistReady = useRef(false);
 
   const generateName = useCallback(async (imageOverride?: string) => {
     const imageValue = (imageOverride ?? image).trim();
@@ -63,44 +67,59 @@ export function CreateForm({ onCreated }: CreateFormProps) {
     }
   }, [image, namespace]);
 
-  // Restore form state from localStorage on mount
   useEffect(() => {
-    if (initialized.current) return;
-    initialized.current = true;
+    if (!fieldsInitialized.current) {
+      const saved = readCreateFormState();
+      restoredState.current = saved;
+      fieldsInitialized.current = true;
 
-    const saved = readCreateFormState();
-    if (saved) {
-      setImage(saved.fields.image);
-      setRepo(saved.fields.repo);
-      setBranch(saved.fields.branch);
-      setTtl(saved.fields.ttl);
-      setNamespace(saved.fields.namespace);
-      setUserConfig(saved.fields.userConfig);
+      if (saved) {
+        setImage(saved.fields.image);
+        setRepo(saved.fields.repo);
+        setBranch(saved.fields.branch);
+        setTtl(saved.fields.ttl);
+        setNamespace(saved.fields.namespace);
+        setUserConfig(saved.fields.userConfig);
 
-      if (saved.selection.mode === 'preset' && presets.length) {
-        const idx = findPresetIndex(presets, saved.selection);
-        if (idx) {
-          setPresetIndex(idx);
-          setActivePreset(presets[Number(idx)]);
+        if (saved.fields.image) {
+          generateName(saved.fields.image);
         }
       }
-      // Auto-generate a name from saved image
-      if (saved.fields.image) {
-        generateName(saved.fields.image);
+    }
+
+    if (presetInitialized.current) return;
+
+    const saved = restoredState.current;
+    if (saved) {
+      if (saved.selection.mode !== 'preset') {
+        presetInitialized.current = true;
+        persistReady.current = true;
+        return;
       }
-    } else if (presets.length > 0) {
-      // Default to first preset
+      if (!presets.length) return;
+      const idx = findPresetIndex(presets, saved.selection);
+      if (idx) {
+        setPresetIndex(idx);
+        setActivePreset(presets[Number(idx)]);
+      }
+      presetInitialized.current = true;
+      persistReady.current = true;
+      return;
+    }
+
+    if (presets.length > 0) {
       setPresetIndex('0');
       setActivePreset(presets[0]);
       setImage(presets[0].image || '');
       if (presets[0].repoUrl !== undefined) setRepo(presets[0].repoUrl || '');
       if (presets[0].branch !== undefined) setBranch(presets[0].branch || '');
       if (presets[0].ttl !== undefined) setTtl(presets[0].ttl || '');
-      // Auto-generate a name from preset image
       if (presets[0].image) {
         generateName(presets[0].image);
       }
     }
+    presetInitialized.current = true;
+    persistReady.current = true;
   }, [presets, generateName]);
 
   // Persist form state on changes
@@ -118,7 +137,7 @@ export function CreateForm({ onCreated }: CreateFormProps) {
   }, [activePreset, image, repo, branch, ttl, namespace, userConfig]);
 
   useEffect(() => {
-    if (!initialized.current) return;
+    if (!persistReady.current) return;
     persistState();
   }, [persistState]);
 

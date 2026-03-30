@@ -256,8 +256,8 @@ export function buildCreatePayload(options: BuildCreatePayloadOptions) {
     if (namePrefix) payload.namePrefix = namePrefix;
   }
 
-  if (presetMatchesImage && String((activePreset as unknown as Record<string, unknown>)?.id || '').trim()) {
-    payload.presetId = String((activePreset as unknown as Record<string, unknown>).id).trim();
+  if (presetMatchesImage && String(activePreset?.id || '').trim()) {
+    payload.presetId = String(activePreset?.id).trim();
   } else if (imageValue) {
     spec.image = imageValue;
   }

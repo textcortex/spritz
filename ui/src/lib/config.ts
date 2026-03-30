@@ -69,6 +69,7 @@ export interface BrandingConfig {
 }
 
 export interface Preset {
+  id?: string;
   name: string;
   image: string;
   description: string;
@@ -76,6 +77,7 @@ export interface Preset {
   branch: string;
   ttl: string;
   namePrefix?: string;
+  hidden?: boolean;
 }
 
 export interface SpritzConfig {

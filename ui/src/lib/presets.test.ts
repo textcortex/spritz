@@ -1,36 +1,59 @@
-import { describe, it, expect } from 'vite-plus/test';
-import { parsePresets } from './presets';
+import { createElement } from 'react';
+import { render, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
+import { ConfigProvider, resolveConfig, type Preset } from './config';
+import { parsePresets, usePresets } from './presets';
+
+const requestMock = vi.hoisted(() => vi.fn());
+
+vi.mock('./api', () => ({
+  request: (...args: unknown[]) => requestMock(...args),
+}));
+
+function PresetProbe() {
+  const presets = usePresets();
+  return createElement(
+    'div',
+    null,
+    presets.length
+      ? presets.map((preset) => createElement('div', { key: preset.id || preset.name }, preset.name))
+      : 'empty',
+  );
+}
 
 describe('parsePresets', () => {
+  beforeEach(() => {
+    requestMock.mockReset();
+  });
+
   it('returns raw arrays directly', () => {
     const input = [{ name: 'Test', image: 'test:latest', description: '', repoUrl: '', branch: '', ttl: '' }];
     expect(parsePresets(input)).toBe(input);
   });
 
-  it('returns DEFAULT_PRESETS for placeholder string', () => {
+  it('returns an empty list for placeholder string', () => {
     const result = parsePresets('__SPRITZ_UI_PRESETS__');
-    expect(result).toHaveLength(5);
-    expect(result[0].name).toBe('Starter (minimal)');
+    expect(result).toEqual([]);
   });
 
-  it('returns DEFAULT_PRESETS for empty string', () => {
+  it('returns an empty list for empty string', () => {
     const result = parsePresets('');
-    expect(result).toHaveLength(5);
+    expect(result).toEqual([]);
   });
 
-  it('returns DEFAULT_PRESETS for whitespace-only string', () => {
+  it('returns an empty list for whitespace-only string', () => {
     const result = parsePresets('   ');
-    expect(result).toHaveLength(5);
+    expect(result).toEqual([]);
   });
 
-  it('returns DEFAULT_PRESETS for undefined', () => {
+  it('returns an empty list for undefined', () => {
     const result = parsePresets(undefined);
-    expect(result).toHaveLength(5);
+    expect(result).toEqual([]);
   });
 
-  it('returns DEFAULT_PRESETS for null', () => {
+  it('returns an empty list for null', () => {
     const result = parsePresets(null);
-    expect(result).toHaveLength(5);
+    expect(result).toEqual([]);
   });
 
   it('parses valid JSON string into preset array', () => {
@@ -47,5 +70,86 @@ describe('parsePresets', () => {
   it('returns empty array for non-array JSON', () => {
     const result = parsePresets('{"key": "value"}');
     expect(result).toEqual([]);
+  });
+});
+
+describe('usePresets', () => {
+  beforeEach(() => {
+    requestMock.mockReset();
+  });
+
+  it('loads presets from the API', async () => {
+    requestMock.mockResolvedValue({
+      items: [
+        {
+          id: 'codex',
+          name: 'Codex',
+          image: 'spritz-codex:latest',
+          description: 'Codex example image.',
+          repoUrl: '',
+          branch: '',
+          ttl: '',
+        },
+      ],
+    });
+
+    render(
+      createElement(
+        ConfigProvider,
+        {
+          value: resolveConfig({
+            apiBaseUrl: '/api',
+            presets: JSON.stringify([
+              {
+                id: 'legacy',
+                name: 'Legacy',
+                image: 'legacy:latest',
+                description: 'legacy',
+                repoUrl: '',
+                branch: '',
+                ttl: '',
+              },
+            ]),
+          }),
+        },
+        createElement(PresetProbe),
+      ),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Codex')).toBeDefined();
+    });
+    expect(screen.queryByText('Legacy')).toBeNull();
+    expect(requestMock).toHaveBeenCalledWith('/presets');
+  });
+
+  it('falls back to configured presets when the API request fails', async () => {
+    const configuredPreset: Preset = {
+      id: 'claude-code',
+      name: 'Claude Code',
+      image: 'spritz-claude-code:latest',
+      description: 'Claude Code example image.',
+      repoUrl: '',
+      branch: '',
+      ttl: '',
+    };
+    requestMock.mockRejectedValue(new Error('boom'));
+
+    render(
+      createElement(
+        ConfigProvider,
+        {
+          value: resolveConfig({
+            apiBaseUrl: '/api',
+            presets: JSON.stringify([configuredPreset]),
+          }),
+        },
+        createElement(PresetProbe),
+      ),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Claude Code')).toBeDefined();
+    });
   });
 });

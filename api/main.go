@@ -376,9 +376,11 @@ func (s *server) listPresets(c echo.Context) error {
 	if principal.isService() && !principal.hasScope(scopePresetsRead) && !principal.isAdminPrincipal() {
 		return writeError(c, http.StatusForbidden, "forbidden")
 	}
-	items := s.presets.public()
+	items := s.presets.publicHuman()
 	if principal.isService() && !principal.isAdminPrincipal() {
 		items = s.presets.publicAllowed(s.provisioners.allowedPresetIDs)
+	} else if principal.isService() && principal.isAdminPrincipal() {
+		items = s.presets.public()
 	}
 	return writeJSON(c, http.StatusOK, map[string]any{"items": items})
 }
