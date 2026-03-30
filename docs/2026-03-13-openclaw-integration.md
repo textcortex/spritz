@@ -22,9 +22,10 @@ the reserved internal port `2529`.
   - `images/examples/openclaw/Dockerfile`
   - `images/examples/openclaw/entrypoint.sh`
   - `images/examples/openclaw/README.md`
-- UI default preset label/image:
-  - `ui/public/app.js`
-- Helm surface for custom presets:
+- API preset catalog:
+  - `helm/spritz/values.yaml` (`api.presets`)
+  - `helm/spritz/templates/api-deployment.yaml`
+- Transitional UI mirror:
   - `helm/spritz/values.yaml` (`ui.presets`)
   - `helm/spritz/templates/ui-deployment.yaml`
 
@@ -129,18 +130,29 @@ Do not disable auth globally to get tokenless behavior.
 
 ## Example preset snippet
 
-Use `ui.presets` to ship an OpenClaw preset with config injected through env:
+Define OpenClaw presets in `api.presets`. Until the UI reads `GET /api/presets`
+directly, mirror the same entry into `ui.presets` from the same values source.
+
+Example:
 
 ```yaml
+x-openclaw-preset: &openclaw_preset
+  id: openclaw
+  name: OpenClaw Devbox
+  image: spritz-openclaw:latest
+  description: OpenClaw preinstalled
+  env:
+    - name: OPENCLAW_CONFIG_JSON
+      value: >-
+        {"gateway":{"mode":"local","bind":"lan","auth":{"mode":"token"}}}
+
+api:
+  presets:
+    - *openclaw_preset
+
 ui:
   presets:
-    - name: OpenClaw Devbox
-      image: spritz-openclaw:latest
-      description: OpenClaw preinstalled
-      env:
-        - name: OPENCLAW_CONFIG_JSON
-          value: >-
-            {"gateway":{"mode":"local","bind":"lan","auth":{"mode":"token"}}}
+    - *openclaw_preset
 ```
 
 For trusted-proxy deployments, replace the `auth` block accordingly.

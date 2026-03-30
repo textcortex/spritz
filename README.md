@@ -16,7 +16,7 @@ Spritz is built to stay runtime-agnostic. [OpenClaw](https://docs.openclaw.ai/) 
 
 > Spritz is in active development and should be treated as alpha software. APIs, CRDs, Helm values, and UI details may still change while the deployment model is being hardened.
 
-[Quick Start](#quick-start) · [What It Feels Like](#what-it-feels-like) · [Architecture](#architecture) · [UI Branding](docs/2026-03-20-ui-branding-customization.md) · [Deployment Spec](docs/2026-02-24-simplest-spritz-deployment-spec.md) · [ACP Architecture](docs/2026-03-09-acp-port-and-agent-chat-architecture.md) · [External Provisioners](docs/2026-03-11-external-provisioner-and-service-principal-architecture.md) · [External Identity Resolution](docs/2026-03-12-external-identity-resolution-api-architecture.md) · [Spawn Vocabulary](docs/2026-03-13-spawn-language-for-agent-instances.md) · [OpenClaw Integration](docs/2026-03-13-openclaw-integration.md)
+[Quick Start](#quick-start) · [What It Feels Like](#what-it-feels-like) · [Architecture](#architecture) · [Preset Catalog](docs/2026-03-30-preset-catalog-source-of-truth.md) · [UI Branding](docs/2026-03-20-ui-branding-customization.md) · [Deployment Spec](docs/2026-02-24-simplest-spritz-deployment-spec.md) · [ACP Architecture](docs/2026-03-09-acp-port-and-agent-chat-architecture.md) · [External Provisioners](docs/2026-03-11-external-provisioner-and-service-principal-architecture.md) · [External Identity Resolution](docs/2026-03-12-external-identity-resolution-api-architecture.md) · [Spawn Vocabulary](docs/2026-03-13-spawn-language-for-agent-instances.md) · [OpenClaw Integration](docs/2026-03-13-openclaw-integration.md)
 
 ## What Spritz is for
 
@@ -44,7 +44,7 @@ In user-facing language, `spawn` means `create a fresh agent instance`.
 A typical flow looks like this:
 
 1. A company deploys Spritz on its own Kubernetes cluster with the Helm chart.
-2. The company defines presets for the agent runtimes it wants to offer, such as OpenClaw, Claude Code, or a custom ACP-capable image.
+2. The company defines presets for the agent runtimes it wants to offer, such as OpenClaw, Claude Code, or a custom ACP-capable image. The API catalog is the source of truth for those presets.
 3. A human asks a gateway bot or internal automation to spawn an agent for a task.
 4. The gateway bot calls Spritz to create the instance for that user.
 5. Spritz provisions the instance, binds it to the resolved owner, and returns canonical open URLs.
