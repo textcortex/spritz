@@ -704,11 +704,7 @@ func (r *SpritzReconciler) reconcileStatus(ctx context.Context, spritz *spritzv1
 }
 
 func (r *SpritzReconciler) setStatus(ctx context.Context, spritz *spritzv1.Spritz, phase, url string, sshInfo *spritzv1.SpritzSSHInfo, reason, message string, acpStatus *spritzv1.SpritzACPStatus) error {
-	if strings.TrimSpace(spritz.Status.Phase) != strings.TrimSpace(phase) {
-		if err := r.LifecycleNotifications.notifyPhase(ctx, spritz.Namespace, spritz.Name, phase); err != nil {
-			return err
-		}
-	}
+	phaseChanged := strings.TrimSpace(spritz.Status.Phase) != strings.TrimSpace(phase)
 	conditionStatus := metav1.ConditionFalse
 	if phase == "Ready" {
 		conditionStatus = metav1.ConditionTrue
@@ -735,7 +731,21 @@ func (r *SpritzReconciler) setStatus(ctx context.Context, spritz *spritzv1.Sprit
 		spritz.Status.ReadyAt = &now
 	}
 
-	return r.Status().Update(ctx, spritz)
+	if err := r.Status().Update(ctx, spritz); err != nil {
+		return err
+	}
+	if phaseChanged {
+		if err := r.LifecycleNotifications.notifyPhase(ctx, spritz.Namespace, spritz.Name, phase); err != nil {
+			log.FromContext(ctx).Error(
+				err,
+				"lifecycle notification failed",
+				"name", spritz.Name,
+				"namespace", spritz.Namespace,
+				"phase", phase,
+			)
+		}
+	}
+	return nil
 }
 
 func setACPReadyCondition(conditions *[]metav1.Condition, generation int64, status *spritzv1.SpritzACPStatus) {

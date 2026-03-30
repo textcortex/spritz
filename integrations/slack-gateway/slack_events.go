@@ -41,6 +41,72 @@ type slackEventInner struct {
 	ThreadTS    string `json:"thread_ts,omitempty"`
 }
 
+type channelSessionRecoveryState struct {
+	startedAt       time.Time
+	statusAuth      slackInstallation
+	statusAuthReady bool
+	statusAttempted bool
+	statusVisible   bool
+}
+
+func newChannelSessionRecoveryState() *channelSessionRecoveryState {
+	return &channelSessionRecoveryState{startedAt: time.Now()}
+}
+
+func (state *channelSessionRecoveryState) rememberProviderAuth(providerAuth slackInstallation) {
+	if state == nil || strings.TrimSpace(providerAuth.BotAccessToken) == "" {
+		return
+	}
+	state.statusAuth = providerAuth
+	state.statusAuthReady = true
+}
+
+func (state *channelSessionRecoveryState) maybePostStatus(
+	ctx context.Context,
+	g *slackGateway,
+	event slackEventInner,
+) error {
+	if state == nil || !state.statusAuthReady || state.statusAttempted {
+		return nil
+	}
+	if time.Since(state.startedAt) < g.cfg.StatusMessageDelay {
+		return nil
+	}
+	state.statusAttempted = true
+	if err := g.postGatewaySlackMessage(
+		ctx,
+		state.statusAuth.BotAccessToken,
+		event,
+		slackRecoveryStatusText,
+	); err != nil {
+		return err
+	}
+	state.statusVisible = true
+	return nil
+}
+
+func (state *channelSessionRecoveryState) maybePostFailure(
+	ctx context.Context,
+	g *slackGateway,
+	event slackEventInner,
+) (bool, error) {
+	if state == nil || !state.statusAuthReady {
+		return false, nil
+	}
+	if !state.statusVisible && time.Since(state.startedAt) < g.cfg.StatusMessageDelay {
+		return false, nil
+	}
+	if err := g.postGatewaySlackMessage(
+		ctx,
+		state.statusAuth.BotAccessToken,
+		event,
+		slackRecoveryFailureText,
+	); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (g *slackGateway) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
@@ -203,7 +269,8 @@ func (g *slackGateway) processMessageEventWithDelivery(
 
 	event := envelope.Event
 
-	session, terminalHandled, err := g.awaitChannelSession(ctx, envelope, event, nil)
+	recoveryState := newChannelSessionRecoveryState()
+	session, terminalHandled, err := g.awaitChannelSession(ctx, envelope, event, recoveryState)
 	if err != nil {
 		return err
 	}
@@ -225,8 +292,41 @@ func (g *slackGateway) processMessageEventWithDelivery(
 	}
 
 	result, err := g.executeConversationPrompt(ctx, envelope, event, session, promptText)
-	if err != nil && !result.promptSent && isSpritzRuntimeMissingError(err) {
-		recoveredSession, recoveredTerminalHandled, recoveryErr := g.awaitChannelSession(ctx, envelope, event, &session)
+	for err != nil && !result.promptSent && isSpritzRuntimeMissingError(err) {
+		recoveryState.rememberProviderAuth(session.ProviderAuth)
+		if postErr := recoveryState.maybePostStatus(ctx, g, event); postErr != nil {
+			g.logger.Error(
+				"slack recovery status post failed",
+				"error", postErr,
+				"team_id", strings.TrimSpace(envelope.TeamID),
+				"channel_id", strings.TrimSpace(event.Channel),
+				"message_ts", strings.TrimSpace(event.TS),
+			)
+		}
+		if sleepErr := sleepWithContext(ctx, g.cfg.SessionRetryInterval); sleepErr != nil {
+			terminalHandled, postErr := recoveryState.maybePostFailure(ctx, g, event)
+			if postErr != nil {
+				g.logger.Error(
+					"slack recovery failure reply failed",
+					"error", postErr,
+					"team_id", strings.TrimSpace(envelope.TeamID),
+					"channel_id", strings.TrimSpace(event.Channel),
+					"message_ts", strings.TrimSpace(event.TS),
+				)
+				return postErr
+			}
+			if terminalHandled {
+				success = true
+				return nil
+			}
+			return sleepErr
+		}
+		recoveredSession, recoveredTerminalHandled, recoveryErr := g.awaitChannelSession(
+			ctx,
+			envelope,
+			event,
+			recoveryState,
+		)
 		if recoveryErr != nil {
 			return recoveryErr
 		}
@@ -341,83 +441,21 @@ func (g *slackGateway) awaitChannelSession(
 	ctx context.Context,
 	envelope slackEnvelope,
 	event slackEventInner,
-	staleSession *channelSession,
+	recoveryState *channelSessionRecoveryState,
 ) (channelSession, bool, error) {
-	startedAt := time.Now()
-	var statusAuth slackInstallation
-	statusAuthReady := false
-	if staleSession != nil && strings.TrimSpace(staleSession.ProviderAuth.BotAccessToken) != "" {
-		statusAuth = staleSession.ProviderAuth
-		statusAuthReady = true
+	if recoveryState == nil {
+		recoveryState = newChannelSessionRecoveryState()
 	}
-	statusAttempted := false
-	statusVisible := false
 
 	for {
 		session, err := g.exchangeChannelSession(ctx, envelope.TeamID)
 		if err == nil {
-			if staleSession == nil || session.Namespace != staleSession.Namespace || session.InstanceID != staleSession.InstanceID {
-				return session, false, nil
-			}
-			if strings.TrimSpace(session.ProviderAuth.BotAccessToken) != "" {
-				statusAuth = session.ProviderAuth
-				statusAuthReady = true
-			}
+			recoveryState.rememberProviderAuth(session.ProviderAuth)
+			return session, false, nil
 		} else {
 			providerAuth, recoverable := channelSessionUnavailableProviderAuth(err)
 			if !recoverable {
-				if statusAuthReady && (statusVisible || time.Since(startedAt) >= g.cfg.StatusMessageDelay) {
-					if postErr := g.postGatewaySlackMessage(
-						ctx,
-						statusAuth.BotAccessToken,
-						event,
-						slackRecoveryFailureText,
-					); postErr != nil {
-						g.logger.Error(
-							"slack recovery failure reply failed",
-							"error", postErr,
-							"team_id", strings.TrimSpace(envelope.TeamID),
-							"channel_id", strings.TrimSpace(event.Channel),
-							"message_ts", strings.TrimSpace(event.TS),
-						)
-						return channelSession{}, false, postErr
-					}
-					return channelSession{}, true, nil
-				}
-				return channelSession{}, false, err
-			}
-			statusAuth = providerAuth
-			statusAuthReady = true
-		}
-
-		if statusAuthReady && !statusAttempted && time.Since(startedAt) >= g.cfg.StatusMessageDelay {
-			statusAttempted = true
-			if postErr := g.postGatewaySlackMessage(
-				ctx,
-				statusAuth.BotAccessToken,
-				event,
-				slackRecoveryStatusText,
-			); postErr != nil {
-				g.logger.Error(
-					"slack recovery status post failed",
-					"error", postErr,
-					"team_id", strings.TrimSpace(envelope.TeamID),
-					"channel_id", strings.TrimSpace(event.Channel),
-					"message_ts", strings.TrimSpace(event.TS),
-				)
-			} else {
-				statusVisible = true
-			}
-		}
-
-		if err := sleepWithContext(ctx, g.cfg.SessionRetryInterval); err != nil {
-			if statusAuthReady && (statusVisible || time.Since(startedAt) >= g.cfg.StatusMessageDelay) {
-				if postErr := g.postGatewaySlackMessage(
-					ctx,
-					statusAuth.BotAccessToken,
-					event,
-					slackRecoveryFailureText,
-				); postErr != nil {
+				if terminalHandled, postErr := recoveryState.maybePostFailure(ctx, g, event); postErr != nil {
 					g.logger.Error(
 						"slack recovery failure reply failed",
 						"error", postErr,
@@ -426,7 +464,35 @@ func (g *slackGateway) awaitChannelSession(
 						"message_ts", strings.TrimSpace(event.TS),
 					)
 					return channelSession{}, false, postErr
+				} else if terminalHandled {
+					return channelSession{}, true, nil
 				}
+				return channelSession{}, false, err
+			}
+			recoveryState.rememberProviderAuth(providerAuth)
+		}
+
+		if postErr := recoveryState.maybePostStatus(ctx, g, event); postErr != nil {
+			g.logger.Error(
+				"slack recovery status post failed",
+				"error", postErr,
+				"team_id", strings.TrimSpace(envelope.TeamID),
+				"channel_id", strings.TrimSpace(event.Channel),
+				"message_ts", strings.TrimSpace(event.TS),
+			)
+		}
+
+		if err := sleepWithContext(ctx, g.cfg.SessionRetryInterval); err != nil {
+			if terminalHandled, postErr := recoveryState.maybePostFailure(ctx, g, event); postErr != nil {
+				g.logger.Error(
+					"slack recovery failure reply failed",
+					"error", postErr,
+					"team_id", strings.TrimSpace(envelope.TeamID),
+					"channel_id", strings.TrimSpace(event.Channel),
+					"message_ts", strings.TrimSpace(event.TS),
+				)
+				return channelSession{}, false, postErr
+			} else if terminalHandled {
 				return channelSession{}, true, nil
 			}
 			return channelSession{}, false, err
