@@ -4,7 +4,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { useConfig } from '@/lib/config';
-import { getAuthToken } from '@/lib/api';
+import { getAuthToken, authBearerTokenParam } from '@/lib/api';
 import { buildTerminalTheme } from '@/lib/branding';
 import { resolveWebSocketConnect } from '@/lib/connect-ticket';
 import { chatPath } from '@/lib/urls';
@@ -60,6 +60,7 @@ export function TerminalPage() {
       if (disposed) return;
       setStatus('connecting');
       const session = new URLSearchParams(window.location.search).get('session') || undefined;
+      const bearerToken = getAuthToken();
       let wsUrl = '';
       let protocols: string[] = [];
       try {
@@ -68,7 +69,9 @@ export function TerminalPage() {
           websocketBaseUrl: config.websocketBaseUrl,
           directConnectPath: `/spritzes/${encodeURIComponent(instanceName)}/terminal${session ? `?session=${encodeURIComponent(session)}` : ''}`,
           ticketPath: `/spritzes/${encodeURIComponent(instanceName)}/terminal/connect-ticket`,
-          useConnectTicket: Boolean(getAuthToken()),
+          useConnectTicket: Boolean(bearerToken),
+          bearerToken,
+          bearerTokenParam: authBearerTokenParam,
           ticketBody: session ? { session } : undefined,
         }));
       } catch {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { createACPClient } from '@/lib/acp-client';
-import { request, getAuthToken } from '@/lib/api';
+import { request, getAuthToken, authBearerTokenParam } from '@/lib/api';
 import {
   applyChatTranscriptUpdate,
   createChatTranscriptSession,
@@ -225,6 +225,7 @@ export function useChatConnection({
 
         if (cancelled) return;
 
+        const bearerToken = getAuthToken();
         let wsUrl = '';
         let protocols: string[] = [];
         try {
@@ -233,7 +234,9 @@ export function useChatConnection({
             websocketBaseUrl,
             directConnectPath: `/acp/conversations/${encodeURIComponent(conversationId)}/connect`,
             ticketPath: `/acp/conversations/${encodeURIComponent(conversationId)}/connect-ticket`,
-            useConnectTicket: Boolean(getAuthToken()),
+            useConnectTicket: Boolean(bearerToken),
+            bearerToken,
+            bearerTokenParam: authBearerTokenParam,
           }));
         } catch (err) {
           if (!cancelled) {
@@ -322,7 +325,7 @@ export function useChatConnection({
             }
             if (cancelled) return;
             if (!socketReady) {
-              scheduleReconnect({ immediate: true, statusText: 'Reconnecting…' });
+              scheduleReconnect({ statusText: 'Reconnecting…' });
               return;
             }
             scheduleReconnect();

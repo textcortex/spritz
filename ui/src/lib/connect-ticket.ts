@@ -14,6 +14,16 @@ export interface ResolvedWebSocketConnect {
   protocols: string[];
 }
 
+function getErrorStatus(error: unknown): number | null {
+  const status = (error as { status?: unknown })?.status;
+  return typeof status === 'number' ? status : null;
+}
+
+function shouldFallbackToDirectConnect(error: unknown): boolean {
+  const status = getErrorStatus(error);
+  return status === 404 || status === 405 || status === 501;
+}
+
 /**
  * Resolves the browser WebSocket handshake for a Spritz endpoint.
  *
@@ -26,6 +36,8 @@ export async function resolveWebSocketConnect(options: {
   directConnectPath: string;
   ticketPath: string;
   useConnectTicket: boolean;
+  bearerToken?: string;
+  bearerTokenParam?: string;
   ticketBody?: unknown;
 }): Promise<ResolvedWebSocketConnect> {
   const {
@@ -34,16 +46,22 @@ export async function resolveWebSocketConnect(options: {
     directConnectPath,
     ticketPath,
     useConnectTicket,
+    bearerToken,
+    bearerTokenParam,
     ticketBody,
   } = options;
 
+  const directConnection: ResolvedWebSocketConnect = {
+    wsUrl: buildApiWebSocketUrl(apiBaseUrl, directConnectPath, {
+      bearerToken,
+      bearerTokenParam,
+      websocketBaseUrl,
+    }),
+    protocols: [],
+  };
+
   if (!useConnectTicket) {
-    return {
-      wsUrl: buildApiWebSocketUrl(apiBaseUrl, directConnectPath, {
-        websocketBaseUrl,
-      }),
-      protocols: [],
-    };
+    return directConnection;
   }
 
   const headers: Record<string, string> = {};
@@ -56,7 +74,15 @@ export async function resolveWebSocketConnect(options: {
     requestOptions.headers = headers;
   }
 
-  const ticket = await request<ConnectTicket>(ticketPath, requestOptions);
+  let ticket: ConnectTicket | null;
+  try {
+    ticket = await request<ConnectTicket>(ticketPath, requestOptions);
+  } catch (error) {
+    if (shouldFallbackToDirectConnect(error)) {
+      return directConnection;
+    }
+    throw error;
+  }
   if (!ticket || !ticket.ticket || !ticket.protocol || !ticket.connectPath) {
     throw new Error('Invalid connect ticket response.');
   }

@@ -72,6 +72,7 @@ vi.mock('@xterm/addon-fit', () => ({
 vi.mock('@/lib/api', () => ({
   request: requestMock,
   getAuthToken: getAuthTokenMock,
+  authBearerTokenParam: 'token',
 }));
 
 describe('TerminalPage branding', () => {

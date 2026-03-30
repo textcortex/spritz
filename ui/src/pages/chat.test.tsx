@@ -629,9 +629,23 @@ describe('ChatPage draft persistence', () => {
       ]);
     });
 
+    vi.useFakeTimers();
     act(() => {
       closeLastACPConnection();
     });
+
+    expect(requestMock.mock.calls.filter(([path]) => path === '/acp/conversations/conv-1/connect-ticket')).toHaveLength(1);
+
+    act(() => {
+      vi.advanceTimersByTime(1999);
+    });
+
+    expect(requestMock.mock.calls.filter(([path]) => path === '/acp/conversations/conv-1/connect-ticket')).toHaveLength(1);
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    vi.useRealTimers();
 
     await waitFor(() => {
       expect(requestMock.mock.calls.filter(([path]) => path === '/acp/conversations/conv-1/connect-ticket')).toHaveLength(2);
