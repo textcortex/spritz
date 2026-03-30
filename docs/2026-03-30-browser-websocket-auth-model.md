@@ -175,6 +175,50 @@ Spritz may expose this as:
 
 The product contract matters more than the exact endpoint shape.
 
+### Ticket issuance endpoints
+
+For the first implementation, Spritz should use route-specific ticket
+endpoints that mirror the existing WebSocket routes.
+
+Required endpoints:
+
+- `POST /api/acp/conversations/:id/connect-ticket`
+- `POST /api/spritzes/:name/terminal/connect-ticket`
+
+Request shape:
+
+- ACP ticket request: empty body
+- terminal ticket request: JSON body with an optional `session` field
+
+Terminal request example:
+
+```json
+{
+  "session": "team-shell"
+}
+```
+
+Response shape:
+
+```json
+{
+  "type": "connect-ticket",
+  "ticket": "base64url-opaque-ticket",
+  "expiresAt": "2026-03-30T12:34:56Z",
+  "protocol": "spritz-acp.v1",
+  "connectPath": "/api/acp/conversations/conv-123/connect"
+}
+```
+
+Rules:
+
+- `type` must be `connect-ticket`
+- `ticket` must be an opaque value already encoded for safe subprotocol use
+- `expiresAt` must be an RFC 3339 UTC timestamp
+- `protocol` must be the application protocol the client should request
+- `connectPath` must be the exact relative path the browser should open,
+  including any query string needed for the target surface
+
 ### Ticket scope
 
 Each ticket should be bound to:
@@ -215,6 +259,24 @@ Spritz should store or validate it server-side in a way that supports:
 This is preferable to a longer-lived reusable bearer token, even if the ticket
 is internally represented as a signed token.
 
+### Ticket store and validation
+
+The ticket store contract is pinned as follows:
+
+- tickets must be validated server-side
+- tickets must live in a shared store, not process memory, for the production
+  path
+- the store must support atomic consume semantics
+- the store must support fast expiration without a separate cleanup pass being
+  required for correctness
+- the store should persist only a hash of the raw ticket value
+
+The reference API implementation should hide this behind a dedicated
+`connectTicketStore` abstraction.
+
+For local development, an in-process implementation is acceptable.
+For the production path, it is not.
+
 ## WebSocket Handshake Contract
 
 The ticket should be sent during the WebSocket handshake through a handshake
@@ -224,10 +286,33 @@ The preferred contract is:
 
 - WebSocket subprotocol-based ticket transport
 
+This decision is pinned for the first implementation.
+
+Browser clients should not use:
+
+- query-parameter bearer tokens
+- cookies for external bearer-auth clients
+- custom request headers on the WebSocket handshake
+
+They should use `Sec-WebSocket-Protocol`.
+
 Example shape:
 
-- application protocol: `acp.v1`
-- auth transport: `spritz-ticket.<opaque-value>`
+- ACP application protocol: `spritz-acp.v1`
+- terminal application protocol: `spritz-terminal.v1`
+- auth transport: `spritz-ticket.v1.<opaque-value>`
+
+External ACP client example:
+
+```text
+Sec-WebSocket-Protocol: spritz-acp.v1, spritz-ticket.v1.<opaque-value>
+```
+
+External terminal client example:
+
+```text
+Sec-WebSocket-Protocol: spritz-terminal.v1, spritz-ticket.v1.<opaque-value>
+```
 
 The server should:
 
@@ -239,6 +324,32 @@ The server should:
 
 Spritz should not require the server to echo the ticket itself back to the
 client.
+
+### Connect route behavior
+
+Spritz should keep the existing WebSocket connect routes:
+
+- `GET /api/acp/conversations/:id/connect`
+- `GET /api/spritzes/:name/terminal`
+
+Those routes should support two successful auth paths:
+
+- a principal established by the existing hosted-browser auth path
+- a valid connect ticket presented in the subprotocol list
+
+This keeps one connect route per surface instead of splitting hosted-browser
+and external-browser traffic onto different URLs.
+
+When a valid connect ticket is present:
+
+- the route must not require an `Authorization` header
+- the route must resolve the same effective principal and target resource
+  checks as the normal authenticated path
+- the route must continue enforcing origin validation
+
+The ticket should be bound to the `Origin` header seen on the ticket issuance
+request when one is present. The WebSocket upgrade should reject the ticket if
+the upgrade `Origin` does not match the bound origin.
 
 ## Security Requirements
 
@@ -276,6 +387,16 @@ Spritz should instead move toward:
 
 - cookie-authenticated hosted browser upgrades for the native Spritz host
 - connect-ticket upgrades for external bearer-auth browser clients
+
+Compatibility sequence:
+
+1. add connect-ticket issuance and validation
+2. update Spritz UI and external browser clients to prefer connect tickets
+3. keep query-parameter bearer token auth only as a compatibility path during
+   migration
+4. move query-parameter bearer token auth behind explicit opt-in deployment
+   configuration
+5. remove that compatibility path after the migration window closes
 
 ## Routing and Proxy Implications
 
