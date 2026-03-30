@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -116,5 +119,65 @@ func TestApplyResolvedAgentProfileStatusRetriesConflicts(t *testing.T) {
 	}
 	if stored.Status.Profile == nil || stored.Status.Profile.Name != "Helpful Otter" {
 		t.Fatalf("expected stored profile to be preserved after retry, got %#v", stored.Status.Profile)
+	}
+}
+
+func TestResolveAgentProfileSkipsSyncWhenOverridesAreComplete(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	called := false
+	resolver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "resolved",
+			"output": map[string]any{
+				"profile": map[string]string{
+					"name":     "Synced Otter",
+					"imageUrl": "https://example.com/synced.png",
+				},
+			},
+		})
+	}))
+	defer resolver.Close()
+	configurePresetResolverTestServer(s, "", resolver.URL)
+
+	body := &createRequest{
+		RequestID: "req-1",
+		PresetID:  "zeno",
+		Annotations: map[string]string{
+			instanceClassAnnotationKey: "personal-agent",
+		},
+		Spec: spritzv1.SpritzSpec{
+			Owner: spritzv1.SpritzOwner{ID: "user-1"},
+			AgentRef: &spritzv1.SpritzAgentRef{
+				Type:     "external",
+				Provider: "example-agent-catalog",
+				ID:       "ag-123",
+			},
+			ProfileOverrides: &spritzv1.SpritzAgentProfile{
+				Name:     "Helpful Otter",
+				ImageURL: "https://example.com/override.png",
+			},
+		},
+	}
+
+	resolved := s.resolveAgentProfile(
+		context.Background(),
+		principal{ID: "user-1", Type: principalTypeHuman},
+		s.namespace,
+		body,
+	)
+
+	if called {
+		t.Fatalf("expected complete overrides to skip profile sync")
+	}
+	if resolved == nil {
+		t.Fatalf("expected resolved placeholder result")
+	}
+	if resolved.profile != nil {
+		t.Fatalf("expected overrides-only flow to avoid synced profile payload, got %#v", resolved.profile)
+	}
+	if resolved.lastError != "" {
+		t.Fatalf("expected overrides-only flow to avoid sync errors, got %q", resolved.lastError)
 	}
 }

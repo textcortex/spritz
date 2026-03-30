@@ -164,11 +164,7 @@ func currentSpritzStatusProfile(spritz *spritzv1.Spritz) *spritzv1.SpritzAgentPr
 	if spritz == nil || spritz.Status.Profile == nil {
 		return nil
 	}
-	profile := spritz.Status.Profile
-	if spritz.Generation > 0 && profile.ObservedGeneration > 0 && profile.ObservedGeneration < spritz.Generation {
-		return nil
-	}
-	return profile
+	return spritz.Status.Profile
 }
 
 func parseAgentProfileSyncOutput(raw []byte) (*spritzv1.SpritzAgentProfile, error) {
@@ -228,6 +224,9 @@ func (s *server) resolveAgentProfile(
 		return nil
 	}
 	if body.Spec.AgentRef == nil {
+		return &resolvedAgentProfile{}
+	}
+	if body.Spec.ProfileOverrides != nil && body.Spec.ProfileOverrides.Name != "" && body.Spec.ProfileOverrides.ImageURL != "" {
 		return &resolvedAgentProfile{}
 	}
 

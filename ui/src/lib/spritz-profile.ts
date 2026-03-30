@@ -9,20 +9,7 @@ function normalizeText(value: unknown): string {
 }
 
 function getCurrentStatusProfile(spritz?: Spritz | null) {
-  const profile = spritz?.status?.profile;
-  if (!profile) {
-    return undefined;
-  }
-  const generation = spritz?.metadata?.generation;
-  const observedGeneration = profile.observedGeneration;
-  if (
-    typeof generation === 'number' &&
-    typeof observedGeneration === 'number' &&
-    observedGeneration < generation
-  ) {
-    return undefined;
-  }
-  return profile;
+  return spritz?.status?.profile;
 }
 
 export function getSpritzProfileName(spritz?: Spritz | null): string {
