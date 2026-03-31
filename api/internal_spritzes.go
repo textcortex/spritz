@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -234,25 +235,36 @@ func (s *server) replaceInternalSpritz(c echo.Context) error {
 		return writeError(c, http.StatusBadRequest, "replacement must not reuse the source instance name")
 	}
 
-	existingReplacement, err := s.findReplacementSpritz(
+	replaceReservationFingerprint := replacementRequestFingerprint(
+		replacementPrincipal,
+		body.TargetRevision,
+		replacementFingerprint,
+	)
+	reservation, err := s.ensureReplaceReservation(
 		c.Request().Context(),
 		namespace,
 		sourceName,
 		body.IdempotencyKey,
+		replaceReservationFingerprint,
 	)
 	if err != nil {
+		if isProvisionerConflict(err) {
+			return writeError(c, http.StatusConflict, errIdempotencyUsedDifferent.Error())
+		}
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
-	if existingReplacement != nil {
-		if !replacementRequestMatchesExisting(
-			existingReplacement,
-			replacementPrincipal,
-			replacementFingerprint,
-			body.TargetRevision,
-		) {
-			return writeError(c, http.StatusConflict, "idempotencyKey already used with a different request")
+	if strings.TrimSpace(reservation.name) != "" {
+		existingReplacement, err := s.findReservedSpritz(
+			c.Request().Context(),
+			namespace,
+			reservation.name,
+		)
+		if err != nil {
+			return writeError(c, http.StatusInternalServerError, err.Error())
 		}
-		return writeReplaceResponse(c, &source, existingReplacement, true)
+		if existingReplacement != nil {
+			return writeReplaceResponse(c, &source, existingReplacement, true)
+		}
 	}
 
 	recorder, err := s.invokeCreateSpritzWithPrincipal(
@@ -269,6 +281,19 @@ func (s *server) replaceInternalSpritz(c echo.Context) error {
 
 	createdReplacement, replayed, err := extractCreatedReplacement(recorder.Body.Bytes())
 	if err != nil {
+		return writeError(c, http.StatusInternalServerError, err.Error())
+	}
+	if err := s.completeReplaceReservation(
+		c.Request().Context(),
+		namespace,
+		sourceName,
+		body.IdempotencyKey,
+		replaceReservationFingerprint,
+		createdReplacement.Name,
+	); err != nil {
+		if isProvisionerConflict(err) {
+			return writeError(c, http.StatusConflict, errIdempotencyUsedDifferent.Error())
+		}
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
 	return writeReplaceResponse(c, &source, createdReplacement, replayed)
@@ -360,57 +385,86 @@ func replacementCreateIdempotencyKey(namespace, sourceName, idempotencyKey strin
 	return fmt.Sprintf("replace:%s:%s:%s", namespace, sourceName, strings.TrimSpace(idempotencyKey))
 }
 
-func replacementRequestMatchesExisting(
-	existingReplacement *spritzv1.Spritz,
-	principal principal,
-	fingerprint, targetRevision string,
-) bool {
-	if existingReplacement == nil {
-		return false
-	}
-	annotations := existingReplacement.GetAnnotations()
-	if strings.TrimSpace(annotations[targetRevisionAnnotationKey]) != strings.TrimSpace(targetRevision) {
-		return false
-	}
-	if strings.TrimSpace(annotations[idempotencyHashAnnotationKey]) != strings.TrimSpace(fingerprint) {
-		return false
-	}
-	if strings.TrimSpace(annotations[actorIDAnnotationKey]) != strings.TrimSpace(principal.ID) {
-		return false
-	}
-	if strings.TrimSpace(annotations[actorTypeAnnotationKey]) != string(principal.Type) {
-		return false
-	}
-	return true
+func replacementReservationActorID(namespace, sourceName string) string {
+	return fmt.Sprintf("replace:%s:%s", strings.TrimSpace(namespace), strings.TrimSpace(sourceName))
 }
 
-func (s *server) findReplacementSpritz(
+func replacementRequestFingerprint(
+	principal principal,
+	targetRevision, replacementFingerprint string,
+) string {
+	payload := struct {
+		PrincipalID            string `json:"principalId"`
+		PrincipalType          string `json:"principalType"`
+		TargetRevision         string `json:"targetRevision"`
+		ReplacementFingerprint string `json:"replacementFingerprint"`
+	}{
+		PrincipalID:            strings.TrimSpace(principal.ID),
+		PrincipalType:          string(principal.Type),
+		TargetRevision:         strings.TrimSpace(targetRevision),
+		ReplacementFingerprint: strings.TrimSpace(replacementFingerprint),
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		panic(err)
+	}
+	sum := sha256.Sum256(encoded)
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func (s *server) ensureReplaceReservation(
 	ctx context.Context,
-	namespace, sourceName, idempotencyKey string,
-) (*spritzv1.Spritz, error) {
-	list := &spritzv1.SpritzList{}
-	if err := s.client.List(ctx, list, client.InNamespace(namespace)); err != nil {
-		return nil, err
+	namespace, sourceName, idempotencyKey, fingerprint string,
+) (idempotencyReservationRecord, error) {
+	actorID := replacementReservationActorID(namespace, sourceName)
+	store := s.idempotencyReservations()
+	record := idempotencyReservationRecord{
+		fingerprint: strings.TrimSpace(fingerprint),
 	}
-	var matched *spritzv1.Spritz
-	for index := range list.Items {
-		candidate := &list.Items[index]
-		annotations := candidate.GetAnnotations()
-		if strings.TrimSpace(annotations[replacementSourceNSAnnotationKey]) != namespace {
-			continue
+	if err := store.create(ctx, actorID, idempotencyKey, record); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return idempotencyReservationRecord{}, err
 		}
-		if strings.TrimSpace(annotations[replacementSourceNameAnnotationKey]) != sourceName {
-			continue
+		existing, found, getErr := store.get(ctx, actorID, idempotencyKey)
+		if getErr != nil {
+			return idempotencyReservationRecord{}, getErr
 		}
-		if strings.TrimSpace(annotations[replacementIDKeyAnnotationKey]) != idempotencyKey {
-			continue
+		if !found {
+			return idempotencyReservationRecord{}, fmt.Errorf(
+				"replace reservation %s disappeared",
+				idempotencyReservationName(actorID, idempotencyKey),
+			)
 		}
-		if matched != nil {
-			return nil, fmt.Errorf("multiple replacements found for source %s/%s", namespace, sourceName)
+		if strings.TrimSpace(existing.fingerprint) != strings.TrimSpace(fingerprint) {
+			return idempotencyReservationRecord{}, errIdempotencyUsedDifferent
 		}
-		matched = candidate.DeepCopy()
+		return existing, nil
 	}
-	return matched, nil
+	return record, nil
+}
+
+func (s *server) completeReplaceReservation(
+	ctx context.Context,
+	namespace, sourceName, idempotencyKey, fingerprint, replacementName string,
+) error {
+	actorID := replacementReservationActorID(namespace, sourceName)
+	_, err := s.idempotencyReservations().update(
+		ctx,
+		actorID,
+		idempotencyKey,
+		func(record *idempotencyReservationRecord) error {
+			if strings.TrimSpace(record.fingerprint) != strings.TrimSpace(fingerprint) {
+				return errIdempotencyUsedDifferent
+			}
+			record.name = strings.TrimSpace(replacementName)
+			record.completed = true
+			return nil
+		},
+	)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 func (s *server) invokeCreateSpritzWithPrincipal(

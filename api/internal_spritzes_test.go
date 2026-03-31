@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +18,83 @@ import (
 
 	spritzv1 "spritz.sh/operator/api/v1"
 )
+
+func replaceReservationActorIDForTest(namespace, sourceName string) string {
+	return "replace:" + strings.TrimSpace(namespace) + ":" + strings.TrimSpace(sourceName)
+}
+
+func storeReplaceReservationForTest(
+	t *testing.T,
+	s *server,
+	namespace, sourceName, idempotencyKey, fingerprint, replacementName string,
+	completed bool,
+) {
+	t.Helper()
+	err := s.client.Create(
+		context.Background(),
+		reservationConfigMap(
+			s.idempotencyReservationNamespace(),
+			replaceReservationActorIDForTest(namespace, sourceName),
+			idempotencyKey,
+			idempotencyReservationRecord{
+				fingerprint: fingerprint,
+				name:        replacementName,
+				completed:   completed,
+			},
+		),
+	)
+	if err != nil {
+		t.Fatalf("failed to store replace reservation: %v", err)
+	}
+}
+
+func mustNormalizeReplaceForTest(
+	t *testing.T,
+	s *server,
+	namespace, sourceName string,
+	body string,
+) (principal, createRequest, string) {
+	t.Helper()
+	var requestBody internalReplaceSpritzRequest
+	if err := json.Unmarshal([]byte(body), &requestBody); err != nil {
+		t.Fatalf("failed to decode replace body: %v", err)
+	}
+	replacementPrincipal, replacementRequest, fingerprint, err := s.normalizeReplaceRequest(
+		context.Background(),
+		requestBody,
+		namespace,
+		sourceName,
+	)
+	if err != nil {
+		t.Fatalf("failed to normalize replace body: %v", err)
+	}
+	return replacementPrincipal, replacementRequest, fingerprint
+}
+
+func mustReplaceReservationFingerprintForTest(
+	t *testing.T,
+	s *server,
+	namespace, sourceName string,
+	body string,
+) string {
+	t.Helper()
+	replacementPrincipal, _, fingerprint := mustNormalizeReplaceForTest(
+		t,
+		s,
+		namespace,
+		sourceName,
+		body,
+	)
+	var requestBody internalReplaceSpritzRequest
+	if err := json.Unmarshal([]byte(body), &requestBody); err != nil {
+		t.Fatalf("failed to decode replace body: %v", err)
+	}
+	return replacementRequestFingerprint(
+		replacementPrincipal,
+		requestBody.TargetRevision,
+		fingerprint,
+	)
+}
 
 func newInternalSpritzesTestServer(t *testing.T, objects ...*spritzv1.Spritz) *server {
 	t.Helper()
@@ -393,24 +471,36 @@ func TestInternalReplaceSpritzRejectsConflictingTargetRevision(t *testing.T) {
 		},
 		Status: spritzv1.SpritzStatus{Phase: "Ready"},
 	}
-	replacement := &spritzv1.Spritz{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "zeno-replacement",
-			Namespace: "spritz-production",
-			Annotations: map[string]string{
-				targetRevisionAnnotationKey:        "sha256:old-revision",
-				replacementSourceNSAnnotationKey:   "spritz-production",
-				replacementSourceNameAnnotationKey: "zeno-acme",
-				replacementIDKeyAnnotationKey:      "rollout-1",
-			},
-		},
-		Spec: spritzv1.SpritzSpec{
-			Image: "ghcr.io/example/zeno:latest",
-			Owner: spritzv1.SpritzOwner{ID: "user-123"},
-		},
-		Status: spritzv1.SpritzStatus{Phase: "Ready"},
-	}
-	s := newInternalSpritzesTestServer(t, source, replacement)
+	s := newInternalSpritzesTestServer(t, source)
+	oldBody := `{
+		"targetRevision": "sha256:old-revision",
+		"idempotencyKey": "rollout-1",
+		"replacement": {
+			"principal": {"id": "channel-gateway"},
+			"request": {
+				"name": "zeno-replacement",
+				"presetId": "zeno",
+				"ownerId": "user-123",
+				"spec": {}
+			}
+		}
+	}`
+	storeReplaceReservationForTest(
+		t,
+		s,
+		"spritz-production",
+		"zeno-acme",
+		"rollout-1",
+		mustReplaceReservationFingerprintForTest(
+			t,
+			s,
+			"spritz-production",
+			"zeno-acme",
+			oldBody,
+		),
+		"zeno-replacement",
+		true,
+	)
 	e := echo.New()
 	s.registerRoutes(e)
 
@@ -527,26 +617,36 @@ func TestInternalReplaceSpritzRejectsChangedReplacementRequestOnReplay(t *testin
 		},
 		Status: spritzv1.SpritzStatus{Phase: "Ready"},
 	}
-	replacement := &spritzv1.Spritz{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "zeno-replacement",
-			Namespace: "spritz-production",
-			Annotations: map[string]string{
-				targetRevisionAnnotationKey:        "sha256:revision-2",
-				replacementSourceNSAnnotationKey:   "spritz-production",
-				replacementSourceNameAnnotationKey: "zeno-acme",
-				replacementIDKeyAnnotationKey:      "rollout-1",
-				idempotencyKeyAnnotationKey:        "replace:rollout-1",
-				idempotencyHashAnnotationKey:       "different-fingerprint",
-			},
-		},
-		Spec: spritzv1.SpritzSpec{
-			Image: "ghcr.io/example/zeno:latest",
-			Owner: spritzv1.SpritzOwner{ID: "user-123"},
-		},
-		Status: spritzv1.SpritzStatus{Phase: "Ready"},
-	}
-	s := newInternalSpritzesTestServer(t, source, replacement)
+	s := newInternalSpritzesTestServer(t, source)
+	originalBody := `{
+		"targetRevision": "sha256:revision-2",
+		"idempotencyKey": "rollout-1",
+		"replacement": {
+			"principal": {"id": "channel-gateway"},
+			"request": {
+				"name": "zeno-replacement",
+				"presetId": "zeno",
+				"ownerId": "user-123",
+				"spec": {}
+			}
+		}
+	}`
+	storeReplaceReservationForTest(
+		t,
+		s,
+		"spritz-production",
+		"zeno-acme",
+		"rollout-1",
+		mustReplaceReservationFingerprintForTest(
+			t,
+			s,
+			"spritz-production",
+			"zeno-acme",
+			originalBody,
+		),
+		"zeno-replacement",
+		true,
+	)
 	e := echo.New()
 	s.registerRoutes(e)
 
@@ -564,6 +664,152 @@ func TestInternalReplaceSpritzRejectsChangedReplacementRequestOnReplay(t *testin
 		}
 	}`
 	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/spritzes/spritz-production/zeno-acme:replace", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer spritz-internal-token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "different request") {
+		t.Fatalf("expected conflict message, got %s", rec.Body.String())
+	}
+}
+
+func TestInternalReplaceSpritzIgnoresSpoofedOrdinarySpritz(t *testing.T) {
+	body := `{
+		"targetRevision": "sha256:revision-2",
+		"idempotencyKey": "rollout-1",
+		"replacement": {
+			"principal": {"id": "channel-gateway"},
+			"request": {
+				"name": "zeno-real-replacement",
+				"presetId": "zeno",
+				"ownerId": "user-123",
+				"spec": {}
+			}
+		}
+	}`
+	probeServer := newInternalSpritzesTestServer(t)
+	replacementPrincipal, replacementRequest, fingerprint := mustNormalizeReplaceForTest(
+		t,
+		probeServer,
+		"spritz-production",
+		"zeno-acme",
+		body,
+	)
+
+	source := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "zeno-acme",
+			Namespace: "spritz-production",
+		},
+		Spec: spritzv1.SpritzSpec{
+			Image: "ghcr.io/example/zeno:latest",
+			Owner: spritzv1.SpritzOwner{ID: "user-123"},
+		},
+		Status: spritzv1.SpritzStatus{Phase: "Ready"},
+	}
+	spoofed := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "zeno-spoofed",
+			Namespace: "spritz-production",
+			Annotations: map[string]string{
+				targetRevisionAnnotationKey:        "sha256:revision-2",
+				replacementSourceNSAnnotationKey:   "spritz-production",
+				replacementSourceNameAnnotationKey: "zeno-acme",
+				replacementIDKeyAnnotationKey:      "rollout-1",
+				idempotencyKeyAnnotationKey: replacementCreateIdempotencyKey(
+					"spritz-production",
+					"zeno-acme",
+					"rollout-1",
+				),
+				idempotencyHashAnnotationKey: fingerprint,
+				actorIDAnnotationKey:         replacementPrincipal.ID,
+				actorTypeAnnotationKey:       string(replacementPrincipal.Type),
+			},
+		},
+		Spec: spritzv1.SpritzSpec{
+			Image: "ghcr.io/example/zeno:latest",
+			Owner: spritzv1.SpritzOwner{ID: "user-123"},
+		},
+		Status: spritzv1.SpritzStatus{Phase: "Ready"},
+	}
+	s := newInternalSpritzesTestServer(t, source, spoofed)
+	e := echo.New()
+	s.registerRoutes(e)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/internal/v1/spritzes/spritz-production/zeno-acme:replace",
+		strings.NewReader(body),
+	)
+	req.Header.Set("Authorization", "Bearer spritz-internal-token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"instanceId":"zeno-real-replacement"`) {
+		t.Fatalf("expected a new replacement, got %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"instanceId":"zeno-spoofed"`) {
+		t.Fatalf("expected spoofed spritz to be ignored, got %s", rec.Body.String())
+	}
+	if replacementRequest.Name != "zeno-real-replacement" {
+		t.Fatalf("expected normalized replacement name, got %q", replacementRequest.Name)
+	}
+}
+
+func TestInternalReplaceSpritzRejectsConflictingOuterReservation(t *testing.T) {
+	source := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "zeno-acme",
+			Namespace: "spritz-production",
+		},
+		Spec: spritzv1.SpritzSpec{
+			Image: "ghcr.io/example/zeno:latest",
+			Owner: spritzv1.SpritzOwner{ID: "user-123"},
+		},
+		Status: spritzv1.SpritzStatus{Phase: "Ready"},
+	}
+	s := newInternalSpritzesTestServer(t, source)
+	storeReplaceReservationForTest(
+		t,
+		s,
+		"spritz-production",
+		"zeno-acme",
+		"rollout-1",
+		"different-request",
+		"",
+		false,
+	)
+	e := echo.New()
+	s.registerRoutes(e)
+
+	body := `{
+		"targetRevision": "sha256:revision-2",
+		"idempotencyKey": "rollout-1",
+		"replacement": {
+			"principal": {"id": "channel-gateway"},
+			"request": {
+				"name": "zeno-replacement",
+				"presetId": "zeno",
+				"ownerId": "user-123",
+				"spec": {}
+			}
+		}
+	}`
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/internal/v1/spritzes/spritz-production/zeno-acme:replace",
+		strings.NewReader(body),
+	)
 	req.Header.Set("Authorization", "Bearer spritz-internal-token")
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
