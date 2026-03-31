@@ -18,6 +18,14 @@ This architecture is provider-agnostic. Slack is the first implementation, but
 the same model should apply to Discord, Teams, and future shared channel
 providers.
 
+This document focuses on shared channel concierges because that is where
+deployment-owned installation state and provider routing meet. It is not
+intended to invent concierge-only liveness semantics. The guarantees below
+about live binding validation, stale binding invalidation, recovery
+serialization, and `resolved` meaning live now should belong to the normal
+interactive instance model as well. Shared concierges add external tenant
+routing and provider installation metadata on top of that base lifecycle.
+
 Related docs:
 
 - `docs/2026-03-23-shared-app-tenant-routing-architecture.md`
@@ -84,6 +92,27 @@ The control plane must model those as different things.
 - Moving deployment-specific installation storage into Spritz.
 - Defining provider UX copy in this document beyond lifecycle requirements.
 - Replacing the existing shared gateway pattern with provider-specific runtimes.
+
+## Generic Vs. Concierge-Specific Behavior
+
+The following guarantees should be generic across interactive Spritz instances,
+not special-case concierge behavior:
+
+- a stored runtime binding is only a hint until live validation succeeds
+- `resolved` means the runtime is routable now
+- dead-runtime replay from stale idempotency state is invalid
+- only one recovery may be in flight for one logical target at a time
+- runtime deletion or terminal state invalidates the current binding
+
+Shared channel concierges add these extra concerns on top:
+
+- external tenant routing identity
+- deployment-owned installation state
+- provider installation metadata and outbound gateway send path
+
+This document does not require identical idle-expiry policy for every instance
+type. It does require the same reachability contract whenever an instance is
+treated as routable for interactive traffic.
 
 ## Core Model
 
@@ -296,11 +325,18 @@ shared provider apps.
 
 Shared channel concierges should default to the durable runtime policy.
 
+This is a policy decision for shared provider entry points, not a separate
+reachability contract that regular instances do not get.
+
 That means:
 
 - shared concierges should use long or no idle expiry by default
 - routine expiry of a healthy shared concierge is not the normal operating mode
 - deployments may opt into disposable runtime behavior only explicitly
+
+Regular interactive instances may still choose different expiry policy, but
+they should share the same live validation, stale-binding invalidation,
+recovery serialization, and readiness gate before they are treated as routable.
 
 ### 2. Recovery concurrency
 
@@ -393,6 +429,9 @@ Before this architecture is considered implemented, verify:
    healthy prompts.
 7. The same contract works for provider-specific routing identities beyond
    Slack.
+8. The same live-binding validation and readiness rules are reused by ordinary
+   interactive instances, with concierge-specific logic limited to tenant
+   routing and provider installation state.
 
 ## Follow-ups
 

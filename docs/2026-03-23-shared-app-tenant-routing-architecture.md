@@ -160,6 +160,10 @@ If a deployment still stores a last-known runtime identifier during that
 transition period, it must treat it as a validated lease rather than durable
 truth.
 
+Those reachability guarantees should live in the base instance lifecycle and
+apply to ordinary interactive instances too. Concierge routing adds external
+tenant metadata, not a different reliability model.
+
 ## Canonical Terms
 
 ### Channel gateway principal
@@ -207,6 +211,10 @@ A normal Spritz instance whose class and routing metadata declare that it is
 the tenant entry point behind a shared channel gateway.
 
 There is no separate backing-instance resource in this model.
+
+Any stronger uptime policy for shared channel entry points is a deployment
+choice, not a new instance type. Regular instances should share the same
+live-binding and readiness guarantees once they are treated as routable.
 
 ### Routing identity
 
