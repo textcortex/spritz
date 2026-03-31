@@ -456,6 +456,57 @@ That distinction should be handled by a delivery layer above the live resolver:
 It must not turn ordinary slow first-prompt behavior into a fake
 runtime-recovery signal.
 
+### 6. Delivery ownership and lease model
+
+Interactive delivery should be owned by a deployment-managed durable delivery
+record, not by an in-memory request handler.
+
+Phase 1 default:
+
+- one durable delivery record per inbound interactive message
+- unique key: routing identity plus source message identity
+- a renewable worker lease on that record so only one worker actively drives it
+  at a time
+
+Minimum delivery fields:
+
+- routing identity
+- source message identity
+- delivery `state`
+- `attemptCount`
+- `nextAttemptAt`
+- `leaseOwner`
+- `leaseExpiresAt`
+- `lastError`
+- timestamps
+
+If a worker dies, another worker may resume the same delivery after the lease
+expires.
+
+### 7. Phase 1 timing defaults
+
+Phase 1 should use the same timing defaults across provider gateways unless a
+provider has a stricter platform limit.
+
+Default values:
+
+- acknowledge inbound provider webhooks immediately, with a target of under
+  1 second
+- visible recovery status threshold: 5 seconds
+- same-runtime prompt-ready retry backoff: exponential starting at 250
+  milliseconds, capped at 2 seconds, for up to 8 seconds total before
+  escalation
+- stale-binding recovery poll interval: 1 second
+- stale-binding recovery poll budget: 20 seconds
+- total pending-delivery timeout before terminal failure: 45 seconds
+
+These defaults are deliberately simple:
+
+- short retries first when the runtime is already live but not prompt-ready
+- binding refresh only after a real stale-binding signal or after the short
+  prompt-ready budget is exhausted
+- one bounded total timeout for the whole delivery
+
 ## Provider Rollout
 
 Slack should be the first implementation of this lifecycle model.

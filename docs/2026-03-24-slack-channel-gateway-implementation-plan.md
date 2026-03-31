@@ -375,6 +375,17 @@ That means:
   visible-delay threshold
 - send the final reply only after the runtime is actually prompt-ready
 
+Phase 1 defaults for Slack:
+
+- acknowledge the Slack event in under 1 second
+- visible-delay threshold: 5 seconds after real recovery begins
+- same-runtime `acp unavailable` retry: exponential backoff starting at 250
+  milliseconds, capped at 2 seconds, for up to 8 seconds total
+- stale-binding poll interval after `spritz not found` or missing runtime: 1
+  second
+- stale-binding poll budget: 20 seconds
+- total pending-delivery timeout: 45 seconds
+
 ### Pending delivery flow
 
 Phase 1 should use this flow for the first inbound Slack message and for
@@ -394,6 +405,16 @@ retries of the same message:
 7. if the delivery reaches terminal failure, send one failure reply and mark it
    failed
 
+Phase 1 Slack storage should use:
+
+- one durable delivery row keyed by `team_id + channel id + source ts`
+- one optional status row keyed by `team_id + channel id + source ts +
+  purpose`
+
+If the Slack event is already threaded, the delivery row should still be keyed
+by the source message identity, while `thread_ts` remains part of the reply
+target metadata rather than the delivery identity itself.
+
 The recovery loop should behave like this:
 
 1. stay on the fast path for healthy ready runtimes
@@ -404,6 +425,18 @@ The recovery loop should behave like this:
    visible-delay threshold
 5. if recovery succeeds, send the normal reply
 6. if recovery times out, send the terminal failure reply
+
+Phase 1 Slack worker shape should be:
+
+1. the webhook handler inserts or resumes the delivery row and returns `200`
+   immediately
+2. the webhook handler nudges an asynchronous worker
+3. the worker claims a 30-second lease on the delivery row
+4. the worker runs resolution, recovery, and delivery attempts
+5. if the worker crashes or loses the lease, another worker resumes from the
+   same row
+6. duplicates from Slack converge on the same row instead of creating another
+   execution path
 
 The gateway should not recreate the runtime just because ACP is still coming
 up on an otherwise healthy runtime.

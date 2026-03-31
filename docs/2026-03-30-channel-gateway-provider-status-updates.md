@@ -174,6 +174,9 @@ Recommended delivery fields:
 - `senderRef`
 - `state`
 - `attemptCount`
+- `nextAttemptAt`
+- `leaseOwner`
+- `leaseExpiresAt`
 - `lastError`
 - timestamps
 
@@ -230,6 +233,25 @@ The important relationship is:
   record
 - the final assistant reply completes the delivery record
 
+Phase 1 storage should use two gateway-owned durable records:
+
+- `provider_message_deliveries`
+- `provider_status_messages`
+
+Phase 1 uniqueness rules:
+
+- one delivery row per `provider + principalId + externalScopeType +
+  externalTenantId + sourceMessageRef`
+- one status row per delivery row and status `purpose`
+
+These may be tables, collections, or equivalent durable records, but they must
+support:
+
+- unique insert-or-resume semantics
+- atomic lease claim and renewal
+- querying due deliveries by `nextAttemptAt`
+- idempotent finalization
+
 ## Gateway Behavior
 
 ### Inbound processing
@@ -245,6 +267,24 @@ The important relationship is:
 6. if the gateway enters a real recovery or availability-retry loop and that
    loop crosses the visible-delay threshold, the gateway ensures one status
    message exists for that source message
+
+### Worker shape
+
+Phase 1 should use one simple asynchronous delivery loop:
+
+1. ingress creates or resumes the delivery row
+2. ingress acknowledges the provider webhook immediately
+3. ingress nudges a background worker or scheduler
+4. a worker claims the delivery row lease
+5. that worker keeps driving delivery attempts until completion, terminal
+   failure, or lease loss
+6. another worker may resume the same row if the active lease expires
+
+Phase 1 lease defaults:
+
+- lease duration: 30 seconds
+- renew the lease before every delivery attempt and after every meaningful
+  state transition
 
 ### Recovery loop
 
@@ -275,6 +315,24 @@ of two things is true:
 
 - prompt delivery succeeded
 - terminal failure was reached
+
+Phase 1 timing defaults:
+
+- visible-delay threshold: 5 seconds after the delivery entered real recovery
+- same-runtime prompt-ready retry: exponential backoff starting at 250
+  milliseconds, capped at 2 seconds, for up to 8 seconds total
+- stale-binding recovery poll: every 1 second for up to 20 seconds
+- total delivery timeout: 45 seconds from the first accepted inbound message
+
+Phase 1 escalation rules:
+
+- on `spritz not found` or equivalent missing-runtime signal, jump directly to
+  stale-binding refresh
+- on pre-delivery `acp unavailable` or equivalent prompt-not-ready signal,
+  stay on the same runtime until the short prompt-ready retry budget is
+  exhausted
+- only then escalate from prompt-ready retry to stale-binding refresh unless a
+  stronger missing-runtime signal arrived first
 
 Once the visible-delay threshold has produced one status message, the gateway
 should keep using that same status record for deduplication and bookkeeping.
@@ -360,6 +418,13 @@ Recommended idempotency key input:
 - external tenant identity
 - source message identity
 - status purpose
+
+Recommended delivery resume key input:
+
+- provider
+- principal id
+- external tenant identity
+- source message identity
 
 ## Implementation Sequence
 
