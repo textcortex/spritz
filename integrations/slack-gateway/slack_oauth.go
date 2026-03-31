@@ -127,7 +127,9 @@ func (g *slackGateway) exchangeSlackOAuthCode(ctx context.Context, code string) 
 	form.Set("client_secret", g.cfg.SlackClientSecret)
 	form.Set("code", code)
 	form.Set("redirect_uri", g.oauthCallbackURL())
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.cfg.SlackAPIBaseURL+"/oauth.v2.access", strings.NewReader(form.Encode()))
+	reqCtx, cancel := g.requestContext(ctx)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, g.cfg.SlackAPIBaseURL+"/oauth.v2.access", strings.NewReader(form.Encode()))
 	if err != nil {
 		return slackInstallation{}, err
 	}
