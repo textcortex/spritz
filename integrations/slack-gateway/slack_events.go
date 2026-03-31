@@ -758,7 +758,12 @@ func (g *slackGateway) awaitChannelSession(
 		if recoveryState.recoveryStarted() && g.cfg.RecoveryTimeout > 0 && recoveryBudget > 0 {
 			exchangeCtx, cancelExchange = context.WithTimeout(ctx, recoveryBudget)
 		}
-		session, err := g.exchangeChannelSession(exchangeCtx, envelope.TeamID, forceRefresh)
+		exchangeForceRefresh := forceRefresh || recoveryState.recoveryStarted()
+		session, err := g.exchangeChannelSession(
+			exchangeCtx,
+			envelope.TeamID,
+			exchangeForceRefresh,
+		)
 		cancelExchange()
 		if err == nil {
 			recoveryState.rememberProviderAuth(session.ProviderAuth)
