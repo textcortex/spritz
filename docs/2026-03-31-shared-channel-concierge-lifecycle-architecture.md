@@ -286,6 +286,81 @@ That means deployments must choose one of two supported policies explicitly:
 Either policy is acceptable. What is not acceptable is mixing disposable
 runtime behavior with durable routing assumptions.
 
+## Implementation Decisions
+
+The following decisions are pinned down by this document and should be treated
+as the default implementation contract across Slack, Discord, Teams, and future
+shared provider apps.
+
+### 1. Default policy
+
+Shared channel concierges should default to the durable runtime policy.
+
+That means:
+
+- shared concierges should use long or no idle expiry by default
+- routine expiry of a healthy shared concierge is not the normal operating mode
+- deployments may opt into disposable runtime behavior only explicitly
+
+### 2. Recovery concurrency
+
+Recovery must be serialized per logical installation.
+
+That means:
+
+- only one recovery operation may be active for a given routing identity at a
+  time
+- concurrent session exchange calls for the same installation must observe the
+  same in-flight recovery and return `unavailable` until it completes
+- recovery must replace the live binding atomically when the new runtime is
+  ready
+
+### 3. Stale idempotency handling
+
+Stale completed idempotency state should remain historical state, not be
+rewritten in place to look like the new recovery result.
+
+That means:
+
+- a completed reservation that points at a missing runtime must be marked stale
+- replay must not return that dead runtime name
+- fresh recovery must use a new recovery attempt and a new idempotency key
+- the old stale reservation may remain for auditability, but it is no longer a
+  valid replay source
+
+### 4. Runtime invalidation callback contract
+
+Lifecycle invalidation callbacks should carry enough information to invalidate a
+binding safely without clearing a newer replacement binding by mistake.
+
+Minimum required fields:
+
+- routing identity: `principalId`, `provider`, `externalScopeType`,
+  `externalTenantId`
+- observed runtime identity: the runtime name or equivalent binding identity
+- reason: `expired`, `deleted`, `terminating`, or `failed`
+- `observedAt`
+
+Required rule:
+
+- invalidate the cached binding only if the observed runtime identity still
+  matches the current live binding for that installation
+
+### 5. Readiness gate for `resolved`
+
+`resolved` means the runtime is actually routable now.
+
+Minimum requirements:
+
+- the runtime object exists
+- the runtime is in `Ready` phase, or the implementation's exact equivalent
+  serving phase
+- the runtime is not `Pending`, `Creating`, `Terminating`, `Expired`, or
+  `Failed`
+- any required serving condition for interactive traffic is true before the
+  bearer is returned
+- the returned bearer is bound to that exact validated runtime
+
 ## Provider Rollout
 
 Slack should be the first implementation of this lifecycle model.
@@ -321,9 +396,5 @@ Before this architecture is considered implemented, verify:
 
 ## Follow-ups
 
-- Decide whether shared concierges should default to durable or disposable
-  runtime policy.
-- Define the exact API shape for lifecycle invalidation callbacks where the
-  deployment controller is external to Spritz.
 - Decide whether stale idempotency invalidation should become a generic Spritz
   create rule, or remain scoped to shared concierge recovery.
