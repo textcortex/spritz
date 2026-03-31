@@ -38,7 +38,7 @@ func newSlackGateway(cfg config, logger *slog.Logger) *slackGateway {
 		cfg.DedupeTTL = 10 * time.Minute
 	}
 	if cfg.ProcessingTimeout <= 0 {
-		cfg.ProcessingTimeout = 60 * time.Second
+		cfg.ProcessingTimeout = 120 * time.Second
 	}
 	if cfg.SessionRetryInterval <= 0 {
 		cfg.SessionRetryInterval = time.Second
@@ -47,7 +47,7 @@ func newSlackGateway(cfg config, logger *slog.Logger) *slackGateway {
 		cfg.StatusMessageDelay = 5 * time.Second
 	}
 	if cfg.RecoveryTimeout <= 0 {
-		cfg.RecoveryTimeout = 60 * time.Second
+		cfg.RecoveryTimeout = 120 * time.Second
 	}
 	if cfg.PromptRetryInitial <= 0 {
 		cfg.PromptRetryInitial = 250 * time.Millisecond
