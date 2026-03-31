@@ -38,13 +38,28 @@ func newSlackGateway(cfg config, logger *slog.Logger) *slackGateway {
 		cfg.DedupeTTL = 10 * time.Minute
 	}
 	if cfg.ProcessingTimeout <= 0 {
-		cfg.ProcessingTimeout = 60 * time.Second
+		cfg.ProcessingTimeout = 45 * time.Second
 	}
 	if cfg.SessionRetryInterval <= 0 {
 		cfg.SessionRetryInterval = time.Second
 	}
 	if cfg.StatusMessageDelay <= 0 {
-		cfg.StatusMessageDelay = 3 * time.Second
+		cfg.StatusMessageDelay = 5 * time.Second
+	}
+	if cfg.RecoveryTimeout <= 0 {
+		cfg.RecoveryTimeout = 20 * time.Second
+	}
+	if cfg.PromptRetryInitial <= 0 {
+		cfg.PromptRetryInitial = 250 * time.Millisecond
+	}
+	if cfg.PromptRetryMax <= 0 {
+		cfg.PromptRetryMax = 2 * time.Second
+	}
+	if cfg.PromptRetryMax < cfg.PromptRetryInitial {
+		cfg.PromptRetryMax = cfg.PromptRetryInitial
+	}
+	if cfg.PromptRetryTimeout <= 0 {
+		cfg.PromptRetryTimeout = 8 * time.Second
 	}
 	return &slackGateway{
 		cfg:        cfg,
