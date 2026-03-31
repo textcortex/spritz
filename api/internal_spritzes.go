@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -216,12 +217,17 @@ func (s *server) replaceInternalSpritz(c echo.Context) error {
 		return writeError(c, http.StatusBadRequest, "idempotencyKey is required")
 	}
 
-	replacementPrincipal, replacementRequest, err := normalizeReplaceRequest(
+	replacementPrincipal, replacementRequest, replacementFingerprint, err := s.normalizeReplaceRequest(
+		c.Request().Context(),
 		body,
 		namespace,
 		sourceName,
 	)
 	if err != nil {
+		var requestErr *createRequestError
+		if errors.As(err, &requestErr) {
+			return writeCreateRequestError(c, err)
+		}
 		return writeError(c, http.StatusBadRequest, err.Error())
 	}
 	if strings.TrimSpace(replacementRequest.Name) == sourceName {
@@ -238,7 +244,12 @@ func (s *server) replaceInternalSpritz(c echo.Context) error {
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
 	if existingReplacement != nil {
-		if strings.TrimSpace(existingReplacement.GetAnnotations()[targetRevisionAnnotationKey]) != body.TargetRevision {
+		if !replacementRequestMatchesExisting(
+			existingReplacement,
+			replacementPrincipal,
+			replacementFingerprint,
+			body.TargetRevision,
+		) {
 			return writeError(c, http.StatusConflict, "idempotencyKey already used with a different request")
 		}
 		return writeReplaceResponse(c, &source, existingReplacement, true)
@@ -283,27 +294,28 @@ func parseInternalReplacePath(s *server, c echo.Context) (string, string, error)
 	return namespace, name, nil
 }
 
-func normalizeReplaceRequest(
+func (s *server) normalizeReplaceRequest(
+	ctx context.Context,
 	body internalReplaceSpritzRequest,
 	namespace, sourceName string,
-) (principal, createRequest, error) {
+) (principal, createRequest, string, error) {
 	replacementPrincipal, err := body.Replacement.Principal.normalize()
 	if err != nil {
-		return principal{}, createRequest{}, err
+		return principal{}, createRequest{}, "", err
 	}
 	encodedRequest := bytes.TrimSpace(body.Replacement.Request)
 	if len(encodedRequest) == 0 {
-		return principal{}, createRequest{}, fmt.Errorf("replacement.request is required")
+		return principal{}, createRequest{}, "", fmt.Errorf("replacement.request is required")
 	}
 	var replacementRequest createRequest
 	if err := json.Unmarshal(encodedRequest, &replacementRequest); err != nil {
-		return principal{}, createRequest{}, fmt.Errorf("replacement.request is invalid")
+		return principal{}, createRequest{}, "", fmt.Errorf("replacement.request is invalid")
 	}
 	if strings.TrimSpace(replacementRequest.IdempotencyKey) != "" {
-		return principal{}, createRequest{}, fmt.Errorf("replacement.request.idempotencyKey must be omitted")
+		return principal{}, createRequest{}, "", fmt.Errorf("replacement.request.idempotencyKey must be omitted")
 	}
 	replacementRequest.Namespace = namespace
-	replacementRequest.IdempotencyKey = "replace:" + body.IdempotencyKey
+	replacementRequest.IdempotencyKey = replacementCreateIdempotencyKey(namespace, sourceName, body.IdempotencyKey)
 
 	annotations, err := mergeMetadataStrict(
 		replacementRequest.Annotations,
@@ -316,10 +328,60 @@ func normalizeReplaceRequest(
 		"annotation",
 	)
 	if err != nil {
-		return principal{}, createRequest{}, err
+		return principal{}, createRequest{}, "", err
 	}
 	replacementRequest.Annotations = annotations
-	return replacementPrincipal, replacementRequest, nil
+
+	normalized, err := s.normalizeCreateRequest(ctx, replacementPrincipal, replacementRequest)
+	if err != nil {
+		return principal{}, createRequest{}, "", err
+	}
+	externalIssuer := s.externalOwnerIssuerForPrincipal(replacementPrincipal)
+	canonicalName := strings.TrimSpace(normalized.fingerprintRequest.Name)
+	canonicalNamePrefix := ""
+	if canonicalName == "" {
+		canonicalNamePrefix = strings.TrimSpace(normalized.fingerprintRequest.NamePrefix)
+	}
+	fingerprint, err := createRequestFingerprintWithIssuer(
+		normalized.fingerprintRequest,
+		externalIssuer,
+		normalized.namespace,
+		canonicalName,
+		canonicalNamePrefix,
+		normalized.normalizedUserConfig,
+	)
+	if err != nil {
+		return principal{}, createRequest{}, "", err
+	}
+	return replacementPrincipal, replacementRequest, fingerprint, nil
+}
+
+func replacementCreateIdempotencyKey(namespace, sourceName, idempotencyKey string) string {
+	return fmt.Sprintf("replace:%s:%s:%s", namespace, sourceName, strings.TrimSpace(idempotencyKey))
+}
+
+func replacementRequestMatchesExisting(
+	existingReplacement *spritzv1.Spritz,
+	principal principal,
+	fingerprint, targetRevision string,
+) bool {
+	if existingReplacement == nil {
+		return false
+	}
+	annotations := existingReplacement.GetAnnotations()
+	if strings.TrimSpace(annotations[targetRevisionAnnotationKey]) != strings.TrimSpace(targetRevision) {
+		return false
+	}
+	if strings.TrimSpace(annotations[idempotencyHashAnnotationKey]) != strings.TrimSpace(fingerprint) {
+		return false
+	}
+	if strings.TrimSpace(annotations[actorIDAnnotationKey]) != strings.TrimSpace(principal.ID) {
+		return false
+	}
+	if strings.TrimSpace(annotations[actorTypeAnnotationKey]) != string(principal.Type) {
+		return false
+	}
+	return true
 }
 
 func (s *server) findReplacementSpritz(
