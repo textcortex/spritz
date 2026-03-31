@@ -404,6 +404,18 @@ Minimum requirements:
   bearer is returned
 - the returned bearer is bound to that exact validated runtime
 
+Interactive readiness may still have more than one layer.
+
+For example:
+
+- a runtime may be live enough to satisfy `resolved`
+- the first ACP prompt path may still need a short retry window before it can
+  accept work
+
+That distinction must stay inside the normal availability or recovery logic.
+It must not turn ordinary slow first-prompt behavior into a fake
+runtime-recovery signal.
+
 ## Provider Rollout
 
 Slack should be the first implementation of this lifecycle model.

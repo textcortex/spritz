@@ -336,6 +336,46 @@ include it directly in the inbound payload.
 - gateway should deduplicate repeated send requests for the same concierge
   action
 
+### Availability retries and status messages
+
+Slack should treat the visible `Still waking up...` message as a recovery
+artifact, not as a generic slow-request indicator.
+
+That means:
+
+- the normal prompt path must not start a wake-up timer
+- the gateway should enter the recovery path only after a real availability
+  failure
+- the visible-delay timer should start when recovery starts, not when the
+  inbound Slack event arrives
+
+Phase 1 retryable recovery signals should be:
+
+- session exchange returned `unavailable`
+- a refreshed route or session lookup found a missing runtime
+- the first Spritz write failed with `spritz not found`
+- the runtime exists but the first ACP prompt failed with `acp unavailable`
+  before prompt delivery completed
+
+Phase 1 non-recovery signals should be:
+
+- ordinary prompt latency on a healthy runtime
+- a slow ACP connect on a runtime that is already available
+
+The recovery loop should behave like this:
+
+1. stay on the fast path for healthy ready runtimes
+2. on `spritz not found`, retry session exchange with `forceRefresh = true`
+3. on pre-delivery `acp unavailable`, retry the same runtime briefly before
+   escalating to binding refresh
+4. post `Still waking up...` only if that recovery loop crosses the
+   visible-delay threshold
+5. if recovery succeeds, send the normal reply
+6. if recovery times out, send the terminal failure reply
+
+The gateway should not recreate the runtime just because ACP is still coming
+up on an otherwise healthy runtime.
+
 ## Threading Defaults
 
 Phase 1 should keep channel behavior predictable:
@@ -402,6 +442,11 @@ Before calling Phase 1 done, verify:
 10. A deleted concierge does not get returned as `resolved`.
 11. A deleted concierge is recreated before the next successful Slack turn.
 12. A stale completed create reservation does not replay a dead concierge name.
+13. A normal slow reply on a healthy runtime does not post `Still waking up...`.
+14. A recovered runtime may post `Still waking up...` only while real recovery
+    is in progress.
+15. A pre-delivery `acp unavailable` is retried as an availability case and
+    does not fail the first recovered turn prematurely.
 
 ## Follow-ups
 
