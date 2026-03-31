@@ -148,12 +148,18 @@ The stored runtime identifier may become stale because:
 - the runtime was replaced
 - the runtime never finished provisioning
 
-### Session exchange is the live resolver
+### One live resolver, many interfaces
 
-The channel session exchange contract is the only operation allowed to turn a
-logical installation into a bearer for provider message handling.
+There should be one authoritative live resolver that turns a logical target
+into the current live runtime binding.
 
-That contract must return one of two results:
+Channel session exchange is one interface built on top of that resolver because
+provider message handling needs a bearer and provider auth. Other interactive
+paths should call the same live resolver rather than reimplementing equivalent
+readiness, recovery, and stale-binding logic.
+
+Any interface layered on top of the live resolver must preserve the same
+outcomes:
 
 - `resolved`: a bearer for a runtime that exists and is usable now
 - `unavailable`: no live concierge is ready yet
@@ -169,8 +175,8 @@ many times without changing the installation identity.
 
 ### 2. Resolved means live now
 
-If session exchange returns `resolved`, all of the following must already be
-true:
+If the live resolver, or any interface layered on top of it, returns
+`resolved`, all of the following must already be true:
 
 - the runtime object exists
 - the runtime is in a usable phase
@@ -226,7 +232,7 @@ The resolver takes a routing identity:
 
 ### Required algorithm
 
-On every session exchange:
+On every live-resolution request:
 
 1. Load the durable installation.
 2. If disconnected or missing provider auth, return `unresolved`.
@@ -288,8 +294,9 @@ When a shared concierge runtime enters a terminal lifecycle:
 Spritz should notify the deployment-owned installation controller so the cached
 runtime binding is marked stale immediately.
 
-This does not replace live validation in session exchange. It reduces drift, but
-session exchange must still verify runtime existence before returning success.
+This does not replace live validation in the resolver. It reduces drift, but
+every interface layered on top of the live resolver must still verify runtime
+existence before returning success.
 
 ## Shared Concierge Policy
 
@@ -346,8 +353,8 @@ That means:
 
 - only one recovery operation may be active for a given routing identity at a
   time
-- concurrent session exchange calls for the same installation must observe the
-  same in-flight recovery and return `unavailable` until it completes
+- concurrent calls through any interface for the same installation must observe
+  the same in-flight recovery and return `unavailable` until it completes
 - recovery must replace the live binding atomically when the new runtime is
   ready
 
@@ -403,7 +410,7 @@ Slack should be the first implementation of this lifecycle model.
 
 Phase 1 for Slack should add:
 
-- live validation in session exchange before returning `resolved`
+- live validation in the shared resolver before returning `resolved`
 - stale-binding invalidation when the runtime is missing
 - stale completed idempotency detection for missing concierge names
 - lifecycle notification wiring from Spritz back to the deployment-owned

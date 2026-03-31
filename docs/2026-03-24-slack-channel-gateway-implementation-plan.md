@@ -136,6 +136,9 @@ exchange contract that guarantees one of these outcomes:
 - `unavailable`: recovery is still creating or restoring a live concierge
 - `unresolved`: no active Slack installation exists for that routing identity
 
+That session exchange surface should be a channel-facing adapter over the
+shared live resolver, not its own separate resolution implementation.
+
 That means session exchange must:
 
 - validate the last-known concierge runtime before returning success

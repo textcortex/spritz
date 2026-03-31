@@ -127,8 +127,8 @@ deleted, or expire.
 That means:
 
 - the stored runtime name is not durable truth
-- route and session resolution must validate live runtime existence before
-  returning success
+- route and session resolution must delegate to the same live resolver and
+  validate live runtime existence before returning success
 - delete or expiry events should invalidate cached bindings immediately
 
 ### Ownership and routing are different
