@@ -1119,6 +1119,27 @@ func (s *server) completeIdempotencyReservation(ctx context.Context, actorID, ke
 	return err
 }
 
+func (s *server) invalidateCompletedIdempotencyReservation(ctx context.Context, actorID, key, fingerprint string) error {
+	if strings.TrimSpace(actorID) == "" || strings.TrimSpace(key) == "" {
+		return nil
+	}
+	_, err := s.idempotencyReservations().update(ctx, actorID, key, func(record *idempotencyReservationRecord) error {
+		if strings.TrimSpace(record.fingerprint) != strings.TrimSpace(fingerprint) {
+			return errIdempotencyUsedDifferent
+		}
+		if !record.completed {
+			return nil
+		}
+		record.completed = false
+		record.name = ""
+		return nil
+	})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
 func (s *server) setIdempotencyReservationName(ctx context.Context, actorID, key, failedName, proposedName string, state provisionerIdempotencyState) (string, bool, string, error) {
 	failedName = strings.TrimSpace(failedName)
 	proposedName = strings.TrimSpace(proposedName)
