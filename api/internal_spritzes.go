@@ -194,17 +194,6 @@ func (s *server) replaceInternalSpritz(c echo.Context) error {
 		return writeError(c, http.StatusBadRequest, err.Error())
 	}
 
-	var source spritzv1.Spritz
-	if err := s.client.Get(c.Request().Context(), client.ObjectKey{
-		Namespace: namespace,
-		Name:      sourceName,
-	}, &source); err != nil {
-		if apierrors.IsNotFound(err) {
-			return writeError(c, http.StatusNotFound, "not found")
-		}
-		return writeError(c, http.StatusInternalServerError, err.Error())
-	}
-
 	var body internalReplaceSpritzRequest
 	if err := c.Bind(&body); err != nil {
 		return writeError(c, http.StatusBadRequest, "invalid json")
@@ -253,18 +242,38 @@ func (s *server) replaceInternalSpritz(c echo.Context) error {
 		}
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
+	sourceSummary := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      sourceName,
+		},
+	}
 	if strings.TrimSpace(reservation.name) != "" {
-		existingReplacement, err := s.findReservedSpritz(
+		existingReplacement, err := s.findReservedReplacementReplayTarget(
 			c.Request().Context(),
 			namespace,
 			reservation.name,
+			sourceName,
+			body.IdempotencyKey,
+			body.TargetRevision,
+			replacementPrincipal,
+			replacementFingerprint,
 		)
 		if err != nil {
 			return writeError(c, http.StatusInternalServerError, err.Error())
 		}
 		if existingReplacement != nil {
-			return writeReplaceResponse(c, &source, existingReplacement, true)
+			return writeReplaceResponse(c, sourceSummary, existingReplacement, true)
 		}
+	}
+	if err := s.client.Get(c.Request().Context(), client.ObjectKey{
+		Namespace: namespace,
+		Name:      sourceName,
+	}, sourceSummary); err != nil {
+		if apierrors.IsNotFound(err) {
+			return writeError(c, http.StatusNotFound, "not found")
+		}
+		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
 
 	recorder, err := s.invokeCreateSpritzWithPrincipal(
@@ -296,7 +305,7 @@ func (s *server) replaceInternalSpritz(c echo.Context) error {
 		}
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
-	return writeReplaceResponse(c, &source, createdReplacement, replayed)
+	return writeReplaceResponse(c, sourceSummary, createdReplacement, replayed)
 }
 
 func parseInternalReplacePath(s *server, c echo.Context) (string, string, error) {
@@ -410,6 +419,59 @@ func replacementRequestFingerprint(
 	}
 	sum := sha256.Sum256(encoded)
 	return fmt.Sprintf("%x", sum[:])
+}
+
+func matchesReservedReplacementReplayTarget(
+	replacement *spritzv1.Spritz,
+	principal principal,
+	namespace, sourceName, idempotencyKey, targetRevision, replacementFingerprint string,
+) bool {
+	if replacement == nil {
+		return false
+	}
+	annotations := replacement.GetAnnotations()
+	if strings.TrimSpace(annotations[replacementSourceNSAnnotationKey]) != strings.TrimSpace(namespace) {
+		return false
+	}
+	if strings.TrimSpace(annotations[replacementSourceNameAnnotationKey]) != strings.TrimSpace(sourceName) {
+		return false
+	}
+	if strings.TrimSpace(annotations[replacementIDKeyAnnotationKey]) != strings.TrimSpace(idempotencyKey) {
+		return false
+	}
+	if strings.TrimSpace(annotations[targetRevisionAnnotationKey]) != strings.TrimSpace(targetRevision) {
+		return false
+	}
+	return matchesIdempotentReplayTarget(
+		replacement,
+		principal,
+		replacementCreateIdempotencyKey(namespace, sourceName, idempotencyKey),
+		replacementFingerprint,
+	)
+}
+
+func (s *server) findReservedReplacementReplayTarget(
+	ctx context.Context,
+	namespace, replacementName, sourceName, idempotencyKey, targetRevision string,
+	principal principal,
+	replacementFingerprint string,
+) (*spritzv1.Spritz, error) {
+	existingReplacement, err := s.findReservedSpritz(ctx, namespace, replacementName)
+	if err != nil {
+		return nil, err
+	}
+	if !matchesReservedReplacementReplayTarget(
+		existingReplacement,
+		principal,
+		namespace,
+		sourceName,
+		idempotencyKey,
+		targetRevision,
+		replacementFingerprint,
+	) {
+		return nil, nil
+	}
+	return existingReplacement, nil
 }
 
 func (s *server) ensureReplaceReservation(

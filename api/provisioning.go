@@ -542,6 +542,8 @@ func createRequestFingerprintWithIssuer(body createRequest, externalIssuer, name
 		sanitizeSpritzNameToken(namePrefix),
 		namespace,
 		provisionerSource(&body),
+		body.Labels,
+		body.Annotations,
 		body.Spec,
 		userConfig,
 	)
@@ -755,6 +757,8 @@ func (s *server) resolvedCreateFingerprint(body createRequest, namespace, explic
 		sanitizeSpritzNameToken(namePrefix),
 		namespace,
 		provisionerSource(&body),
+		body.Labels,
+		body.Annotations,
 		body.Spec,
 		userConfig,
 	)
@@ -898,7 +902,7 @@ func hashLabelValue(prefix, value string) string {
 	return fmt.Sprintf("%s-%x", prefix, sum[:12])
 }
 
-func createFingerprint(ownerID string, ref *ownerRef, resolvedOwnerID, externalIssuer, presetID string, presetInputs json.RawMessage, name, namePrefix, namespace, source string, spec spritzv1.SpritzSpec, userConfig json.RawMessage) (string, error) {
+func createFingerprint(ownerID string, ref *ownerRef, resolvedOwnerID, externalIssuer, presetID string, presetInputs json.RawMessage, name, namePrefix, namespace, source string, labels, annotations map[string]string, spec spritzv1.SpritzSpec, userConfig json.RawMessage) (string, error) {
 	specCopy := spec
 	specCopy.Annotations = nil
 	specCopy.Labels = nil
@@ -915,6 +919,8 @@ func createFingerprint(ownerID string, ref *ownerRef, resolvedOwnerID, externalI
 		NamePrefix   string              `json:"namePrefix,omitempty"`
 		Namespace    string              `json:"namespace,omitempty"`
 		Source       string              `json:"source,omitempty"`
+		Labels       map[string]string   `json:"labels,omitempty"`
+		Annotations  map[string]string   `json:"annotations,omitempty"`
 		Spec         spritzv1.SpritzSpec `json:"spec"`
 		UserConfig   json.RawMessage     `json:"userConfig,omitempty"`
 	}{
@@ -926,6 +932,8 @@ func createFingerprint(ownerID string, ref *ownerRef, resolvedOwnerID, externalI
 		NamePrefix:   strings.TrimSpace(namePrefix),
 		Namespace:    namespace,
 		Source:       source,
+		Labels:       cloneStringMap(labels),
+		Annotations:  cloneStringMap(annotations),
 		Spec:         specCopy,
 		UserConfig:   userConfig,
 	}
