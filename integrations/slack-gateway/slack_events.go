@@ -133,6 +133,32 @@ func (state *channelSessionRecoveryState) remainingRecoveryDelay(timeout time.Du
 	return remaining
 }
 
+// recoveryBudget returns the remaining time the gateway can spend on runtime
+// recovery. If the caller already set an overall deadline, that deadline is
+// authoritative so the first cold-start message can use the full async worker
+// budget instead of a separate shorter cap.
+func (state *channelSessionRecoveryState) recoveryBudget(
+	ctx context.Context,
+	fallback time.Duration,
+) (time.Duration, bool) {
+	if state == nil || !state.recoveryStarted() {
+		return 0, false
+	}
+	if ctx != nil {
+		if deadline, ok := ctx.Deadline(); ok {
+			remaining := time.Until(deadline)
+			if remaining < 0 {
+				return 0, true
+			}
+			return remaining, true
+		}
+	}
+	if fallback <= 0 {
+		return 0, false
+	}
+	return state.remainingRecoveryDelay(fallback), true
+}
+
 func (state *channelSessionRecoveryState) nextPromptRetryDelay(
 	initial time.Duration,
 	max time.Duration,
@@ -736,8 +762,11 @@ func (g *slackGateway) awaitChannelSession(
 	recoveryStatusTimerStarted := false
 
 	for {
-		recoveryBudget := recoveryState.remainingRecoveryDelay(g.cfg.RecoveryTimeout)
-		if recoveryState.recoveryStarted() && g.cfg.RecoveryTimeout > 0 && recoveryBudget == 0 {
+		recoveryBudget, recoveryBudgetBounded := recoveryState.recoveryBudget(
+			ctx,
+			g.cfg.RecoveryTimeout,
+		)
+		if recoveryBudgetBounded && recoveryBudget == 0 {
 			if terminalHandled, postErr := recoveryState.maybePostFailure(ctx, g, event, true); postErr != nil {
 				g.logger.Error(
 					"slack recovery failure reply failed",
@@ -755,7 +784,7 @@ func (g *slackGateway) awaitChannelSession(
 
 		exchangeCtx := ctx
 		cancelExchange := func() {}
-		if recoveryState.recoveryStarted() && g.cfg.RecoveryTimeout > 0 && recoveryBudget > 0 {
+		if recoveryBudgetBounded && recoveryBudget > 0 {
 			exchangeCtx, cancelExchange = context.WithTimeout(ctx, recoveryBudget)
 		}
 		exchangeForceRefresh := forceRefresh || recoveryState.recoveryStarted()
@@ -815,7 +844,7 @@ func (g *slackGateway) awaitChannelSession(
 		}
 
 		sleepDuration := g.cfg.SessionRetryInterval
-		if recoveryBudget > 0 && recoveryBudget < sleepDuration {
+		if recoveryBudgetBounded && recoveryBudget > 0 && recoveryBudget < sleepDuration {
 			sleepDuration = recoveryBudget
 		}
 		if err := sleepWithContext(ctx, sleepDuration); err != nil {
