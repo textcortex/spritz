@@ -340,7 +340,7 @@ func (s *server) resolveCreateOwner(ctx context.Context, body *createRequest, pr
 	return owner, nil, err
 }
 
-func validateProvisionerRequestSurface(body *createRequest) error {
+func validateProvisionerRequestSurface(body *createRequest, allowReplacementAnnotations bool) error {
 	if body == nil {
 		return nil
 	}
@@ -351,6 +351,9 @@ func validateProvisionerRequestSurface(body *createRequest) error {
 		return fmt.Errorf("labels are not allowed for service principals")
 	}
 	if len(body.Annotations) > 0 {
+		if !allowReplacementAnnotations {
+			return fmt.Errorf("annotations are not allowed for service principals")
+		}
 		for key := range body.Annotations {
 			switch strings.TrimSpace(key) {
 			case targetRevisionAnnotationKey,

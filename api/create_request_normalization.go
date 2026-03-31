@@ -70,6 +70,20 @@ type normalizedCreateRequest struct {
 	requestedNamePrefix  string
 }
 
+func cloneCreateRequest(body createRequest) createRequest {
+	cloned := body
+	if body.OwnerRef != nil {
+		ownerRef := *body.OwnerRef
+		cloned.OwnerRef = &ownerRef
+	}
+	cloned.PresetInputs = append(json.RawMessage(nil), body.PresetInputs...)
+	cloned.UserConfig = append(json.RawMessage(nil), body.UserConfig...)
+	cloned.Labels = cloneStringMap(body.Labels)
+	cloned.Annotations = cloneStringMap(body.Annotations)
+	body.Spec.DeepCopyInto(&cloned.Spec)
+	return cloned
+}
+
 func validateReservedCreateAnnotations(annotations map[string]string) error {
 	if len(annotations) == 0 {
 		return nil
@@ -87,7 +101,7 @@ func validateReservedCreateAnnotations(annotations map[string]string) error {
 	return nil
 }
 
-func (s *server) normalizeCreateRequest(_ context.Context, principal principal, body createRequest) (*normalizedCreateRequest, error) {
+func (s *server) normalizeCreateRequest(_ context.Context, principal principal, body createRequest, allowReplacementAnnotations bool) (*normalizedCreateRequest, error) {
 	body.Name = strings.TrimSpace(body.Name)
 	body.NamePrefix = strings.TrimSpace(body.NamePrefix)
 	applyTopLevelCreateFields(&body)
@@ -105,7 +119,7 @@ func (s *server) normalizeCreateRequest(_ context.Context, principal principal, 
 		}
 	}
 	if principal.isService() {
-		if err := validateProvisionerRequestSurface(&body); err != nil {
+		if err := validateProvisionerRequestSurface(&body, allowReplacementAnnotations); err != nil {
 			return nil, newCreateRequestError(http.StatusBadRequest, err)
 		}
 	}
@@ -130,7 +144,7 @@ func (s *server) normalizeCreateRequest(_ context.Context, principal principal, 
 	} else {
 		body.Spec.Owner = owner
 	}
-	fingerprintRequest := body
+	fingerprintRequest := cloneCreateRequest(body)
 
 	requestedImage := strings.TrimSpace(body.Spec.Image) != ""
 	requestedRepo := body.Spec.Repo != nil || len(body.Spec.Repos) > 0

@@ -280,6 +280,7 @@ func (s *server) replaceInternalSpritz(c echo.Context) error {
 		c,
 		replacementPrincipal,
 		replacementRequest,
+		true,
 	)
 	if err != nil {
 		return err
@@ -366,7 +367,12 @@ func (s *server) normalizeReplaceRequest(
 	}
 	replacementRequest.Annotations = annotations
 
-	normalized, err := s.normalizeCreateRequest(ctx, replacementPrincipal, replacementRequest)
+	normalized, err := s.normalizeCreateRequest(
+		ctx,
+		replacementPrincipal,
+		replacementRequest,
+		true,
+	)
 	if err != nil {
 		return principal{}, createRequest{}, "", err
 	}
@@ -533,6 +539,7 @@ func (s *server) invokeCreateSpritzWithPrincipal(
 	parent echo.Context,
 	principal principal,
 	body createRequest,
+	allowReplacementAnnotations bool,
 ) (*httptest.ResponseRecorder, error) {
 	encodedBody, err := json.Marshal(body)
 	if err != nil {
@@ -544,6 +551,10 @@ func (s *server) invokeCreateSpritzWithPrincipal(
 	recorder := httptest.NewRecorder()
 	createContext := parent.Echo().NewContext(req, recorder)
 	createContext.Set(principalContextKey, principal)
+	createContext.Set(
+		allowReplacementAnnotationsContextKey,
+		allowReplacementAnnotations,
+	)
 	createServer := s
 	if namespace := strings.TrimSpace(body.Namespace); namespace != "" {
 		scopedServer := *s

@@ -340,6 +340,8 @@ type createRequest struct {
 	Annotations    map[string]string   `json:"annotations,omitempty"`
 }
 
+const allowReplacementAnnotationsContextKey = "spritz.internal.allowReplacementAnnotations"
+
 type suggestNameRequest struct {
 	Namespace  string `json:"namespace,omitempty"`
 	Image      string `json:"image,omitempty"`
@@ -435,7 +437,13 @@ func (s *server) createSpritz(c echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return writeError(c, http.StatusBadRequest, "invalid json")
 	}
-	normalized, err := s.normalizeCreateRequest(c.Request().Context(), principal, body)
+	allowReplacementAnnotations, _ := c.Get(allowReplacementAnnotationsContextKey).(bool)
+	normalized, err := s.normalizeCreateRequest(
+		c.Request().Context(),
+		principal,
+		body,
+		allowReplacementAnnotations,
+	)
 	if err != nil {
 		return writeCreateRequestError(c, err)
 	}
