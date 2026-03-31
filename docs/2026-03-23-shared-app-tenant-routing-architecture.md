@@ -39,6 +39,10 @@ The key design choice is:
 - specifically, an instance with a concierge-oriented instance class and
   routing metadata
 
+Related docs:
+
+- `docs/2026-03-31-shared-channel-concierge-lifecycle-architecture.md`
+
 That keeps the system elegant because Spritz does not need a second resource
 type, a wrapper record, or a separate runtime model.
 
@@ -112,6 +116,21 @@ Spritz should have exactly one active concierge instance at a time.
 
 That should be enforced as a real uniqueness invariant, not just doc guidance.
 
+### Logical installation and live runtime are different
+
+The routing identity should point to one durable logical concierge
+installation.
+
+The live runtime bound to that installation is disposable and may be replaced,
+deleted, or expire.
+
+That means:
+
+- the stored runtime name is not durable truth
+- route and session resolution must delegate to the same live resolver and
+  validate live runtime existence before returning success
+- delete or expiry events should invalidate cached bindings immediately
+
 ### Ownership and routing are different
 
 The owner tells Spritz who should own or administer the instance.
@@ -136,6 +155,14 @@ That means:
 
 If Spritz does not yet support instance revisions, that should be added to the
 instance lifecycle instead of creating a separate concierge wrapper type.
+
+If a deployment still stores a last-known runtime identifier during that
+transition period, it must treat it as a validated lease rather than durable
+truth.
+
+Those reachability guarantees should live in the base instance lifecycle and
+apply to ordinary interactive instances too. Concierge routing adds external
+tenant metadata, not a different reliability model.
 
 ## Canonical Terms
 
@@ -184,6 +211,10 @@ A normal Spritz instance whose class and routing metadata declare that it is
 the tenant entry point behind a shared channel gateway.
 
 There is no separate backing-instance resource in this model.
+
+Any stronger uptime policy for shared channel entry points is a deployment
+choice, not a new instance type. Regular instances should share the same
+live-binding and readiness guarantees once they are treated as routable.
 
 ### Routing identity
 
@@ -466,6 +497,10 @@ In the current repo, the first implementation can keep the same instance
 identity and update that instance in place. A later revision-aware rollout
 model can improve this without changing concierge routing semantics.
 
+If the current runtime is already gone before replacement starts, routing must
+stop returning that runtime immediately. Recovery must create or attach to a
+new live runtime before route or session resolution reports success again.
+
 ## API Direction
 
 Spritz does not need a separate concierge resource API.
@@ -678,6 +713,12 @@ When an installation reconnects:
 - the same concierge instance identity should be reused when possible
 - only if policy requires a clean replacement should a new concierge be
   created
+
+If the installation is still active but the runtime has disappeared:
+
+- the installation should remain logically connected
+- the live runtime binding should be marked stale
+- recovery should create a new live runtime before message handling resumes
 
 ### Outbound action path
 

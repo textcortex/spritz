@@ -24,6 +24,7 @@ manager wiring.
 Related docs:
 
 - `docs/2026-03-23-shared-app-tenant-routing-architecture.md`
+- `docs/2026-03-31-shared-channel-concierge-lifecycle-architecture.md`
 
 ## Scope
 
@@ -119,6 +120,33 @@ registry can learn when a concierge becomes:
 - unhealthy
 - deleted
 
+Lifecycle notifications should invalidate stale runtime bindings, but they are
+not enough on their own. The live resolution path must still validate that the
+returned concierge exists before the gateway uses it.
+
+### 4. Live concierge resolution
+
+The Slack gateway must not treat a stored concierge runtime name as durable
+truth.
+
+Before a Slack message is handed to Spritz, the gateway needs a session
+exchange contract that guarantees one of these outcomes:
+
+- `resolved`: the returned concierge exists and is usable now
+- `unavailable`: recovery is still creating or restoring a live concierge
+- `unresolved`: no active Slack installation exists for that routing identity
+
+That session exchange surface should be a channel-facing adapter over the
+shared live resolver, not its own separate resolution implementation.
+
+That means session exchange must:
+
+- validate the last-known concierge runtime before returning success
+- recreate the concierge when the runtime is missing
+- treat completed create replay pointing to a missing concierge as stale state,
+  not success
+- fail closed with `unavailable` when recovery has not finished yet
+
 ## Slack Install Flow
 
 ### Install or reinstall
@@ -144,6 +172,9 @@ Install must be idempotent:
   instances
 - if the same workspace is already active, the same concierge should be reused
   unless deployment policy rejects reuse
+- if stale create replay still points at a missing concierge, install or
+  recovery must create a fresh live concierge instead of replaying the dead
+  name
 
 ### Disconnect or uninstall
 
@@ -212,8 +243,11 @@ product requirement says otherwise:
    - external sender id
 4. Gateway rejects the request if `api_app_id` or `team_id` do not match the
    expected shared Slack app installation.
-5. Gateway resolves the target concierge through `channel.route.resolve`.
-6. Gateway forwards a normalized inbound event to that concierge instance.
+5. Gateway resolves a live concierge session through the deployment-owned
+   session exchange path.
+6. If the concierge is unavailable, gateway may enter bounded recovery UX.
+7. Gateway forwards a normalized inbound event only after it has a live
+   concierge binding.
 
 The normalized event should carry at least:
 
@@ -365,6 +399,9 @@ Before calling Phase 1 done, verify:
 8. The same Slack message delivered through both `message` and `app_mention`
    produces one concierge execution.
 9. A mismatched `team_id` or `api_app_id` is rejected before route resolution.
+10. A deleted concierge does not get returned as `resolved`.
+11. A deleted concierge is recreated before the next successful Slack turn.
+12. A stale completed create reservation does not replay a dead concierge name.
 
 ## Follow-ups
 
