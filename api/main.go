@@ -480,6 +480,7 @@ func (s *server) createSpritz(c echo.Context) error {
 			&body,
 			normalized.fingerprintRequest,
 			normalized.normalizedUserConfig,
+			normalized.nameProvided,
 			normalized.requestedImage,
 			normalized.requestedRepo,
 			normalized.requestedNamespace,

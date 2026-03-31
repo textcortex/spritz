@@ -2140,3 +2140,86 @@ func TestCreateSpritzReplaysGeneratedNameAfterCompletionFailure(t *testing.T) {
 		t.Fatalf("expected replayed response, got %#v", data["replayed"])
 	}
 }
+
+func TestCreateSpritzRecreatesWhenCompletedReplayTargetWasDeleted(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	names := []string{"openclaw-stale", "openclaw-fresh"}
+	nameIndex := 0
+	s.nameGeneratorFactory = func(context.Context, string, string) (func() string, error) {
+		return func() string {
+			if nameIndex >= len(names) {
+				return names[len(names)-1]
+			}
+			value := names[nameIndex]
+			nameIndex++
+			return value
+		}, nil
+	}
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	reqBody := []byte(`{"presetId":"openclaw","ownerId":"user-123","idempotencyKey":"discord-stale-replay"}`)
+	req1 := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(reqBody))
+	req1.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req1.Header.Set("X-Spritz-User-Id", "zenobot")
+	req1.Header.Set("X-Spritz-Principal-Type", "service")
+	req1.Header.Set("X-Spritz-Principal-Scopes", "spritz.instances.create,spritz.instances.assign_owner")
+	rec1 := httptest.NewRecorder()
+	e.ServeHTTP(rec1, req1)
+
+	if rec1.Code != http.StatusCreated {
+		t.Fatalf("expected first create status 201, got %d: %s", rec1.Code, rec1.Body.String())
+	}
+
+	var firstPayload map[string]any
+	if err := json.Unmarshal(rec1.Body.Bytes(), &firstPayload); err != nil {
+		t.Fatalf("failed to decode first response: %v", err)
+	}
+	firstName := firstPayload["data"].(map[string]any)["spritz"].(map[string]any)["metadata"].(map[string]any)["name"].(string)
+	firstSpritz := &spritzv1.Spritz{}
+	if err := s.client.Get(context.Background(), clientKey(s.namespace, firstName), firstSpritz); err != nil {
+		t.Fatalf("failed to load first spritz: %v", err)
+	}
+	if err := s.client.Delete(context.Background(), firstSpritz); err != nil {
+		t.Fatalf("failed to delete first spritz: %v", err)
+	}
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(reqBody))
+	req2.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req2.Header.Set("X-Spritz-User-Id", "zenobot")
+	req2.Header.Set("X-Spritz-Principal-Type", "service")
+	req2.Header.Set("X-Spritz-Principal-Scopes", "spritz.instances.create,spritz.instances.assign_owner")
+	rec2 := httptest.NewRecorder()
+	e.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusCreated {
+		t.Fatalf("expected stale replay retry to create a fresh spritz, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+
+	var secondPayload map[string]any
+	if err := json.Unmarshal(rec2.Body.Bytes(), &secondPayload); err != nil {
+		t.Fatalf("failed to decode second response: %v", err)
+	}
+	secondData := secondPayload["data"].(map[string]any)
+	if replayed, _ := secondData["replayed"].(bool); replayed {
+		t.Fatalf("expected stale replay retry to return a new create, got %#v", secondData["replayed"])
+	}
+	secondName := secondData["spritz"].(map[string]any)["metadata"].(map[string]any)["name"].(string)
+	if secondName == firstName {
+		t.Fatalf("expected stale replay retry to create a new name, got %q", secondName)
+	}
+
+	reservation := &corev1.ConfigMap{}
+	if err := s.client.Get(context.Background(), clientKey(s.namespace, idempotencyReservationName("zenobot", "discord-stale-replay")), reservation); err != nil {
+		t.Fatalf("failed to load reservation: %v", err)
+	}
+	if got := strings.TrimSpace(reservation.Data[idempotencyReservationNameKey]); got != secondName {
+		t.Fatalf("expected reservation name to move to the new spritz, got %q", got)
+	}
+	if got := strings.TrimSpace(reservation.Data[idempotencyReservationDoneKey]); got != "true" {
+		t.Fatalf("expected reservation to stay completed after recreate, got %q", got)
+	}
+}

@@ -69,6 +69,7 @@ type provisionerCreateTransaction struct {
 	ctx                     context.Context
 	principal               principal
 	namespace               string
+	nameProvided            bool
 	requestedImage          bool
 	requestedRepo           bool
 	requestedNamespace      bool
@@ -90,6 +91,7 @@ func newProvisionerCreateTransaction(
 	body *createRequest,
 	fingerprintRequest createRequest,
 	normalizedUserConfig json.RawMessage,
+	nameProvided bool,
 	requestedImage, requestedRepo, requestedNamespace bool,
 ) *provisionerCreateTransaction {
 	return &provisionerCreateTransaction{
@@ -97,6 +99,7 @@ func newProvisionerCreateTransaction(
 		ctx:                  ctx,
 		principal:            principal,
 		namespace:            namespace,
+		nameProvided:         nameProvided,
 		body:                 body,
 		fingerprintRequest:   fingerprintRequest,
 		normalizedUserConfig: normalizedUserConfig,
@@ -233,6 +236,11 @@ func (tx *provisionerCreateTransaction) replayExisting() (*spritzv1.Spritz, erro
 		return nil, newProvisionerCreateError(http.StatusInternalServerError, err)
 	}
 	if existing == nil {
+		if tx.completed {
+			if err := tx.invalidateStaleCompletedReplay(); err != nil {
+				return nil, err
+			}
+		}
 		return nil, nil
 	}
 	if !matchesIdempotentReplayTarget(existing, tx.principal, tx.body.IdempotencyKey, tx.provisionerFingerprint) {
@@ -242,6 +250,25 @@ func (tx *provisionerCreateTransaction) replayExisting() (*spritzv1.Spritz, erro
 		return nil, nil
 	}
 	return existing, nil
+}
+
+func (tx *provisionerCreateTransaction) invalidateStaleCompletedReplay() error {
+	if err := tx.server.invalidateCompletedIdempotencyReservation(
+		tx.ctx,
+		tx.principal.ID,
+		tx.body.IdempotencyKey,
+		tx.provisionerFingerprint,
+	); err != nil {
+		if isProvisionerConflict(err) {
+			return newProvisionerCreateError(http.StatusConflict, err)
+		}
+		return newProvisionerCreateError(http.StatusInternalServerError, err)
+	}
+	tx.completed = false
+	if !tx.nameProvided {
+		tx.body.Name = ""
+	}
+	return nil
 }
 
 func (tx *provisionerCreateTransaction) finalizeCreate() error {
