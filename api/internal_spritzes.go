@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -26,12 +28,13 @@ type internalCreatePrincipal struct {
 }
 
 type internalSpritzSummary struct {
-	Metadata    internalSpritzMetadata `json:"metadata"`
-	Spec        internalSpritzSpec     `json:"spec"`
-	Status      spritzv1.SpritzStatus  `json:"status"`
-	AccessURL   string                 `json:"accessUrl,omitempty"`
-	ChatURL     string                 `json:"chatUrl,omitempty"`
-	InstanceURL string                 `json:"instanceUrl,omitempty"`
+	Metadata       internalSpritzMetadata `json:"metadata"`
+	Spec           internalSpritzSpec     `json:"spec"`
+	Status         spritzv1.SpritzStatus  `json:"status"`
+	TargetRevision string                 `json:"targetRevision,omitempty"`
+	AccessURL      string                 `json:"accessUrl,omitempty"`
+	ChatURL        string                 `json:"chatUrl,omitempty"`
+	InstanceURL    string                 `json:"instanceUrl,omitempty"`
 }
 
 type internalSpritzMetadata struct {
@@ -42,6 +45,31 @@ type internalSpritzMetadata struct {
 
 type internalSpritzSpec struct {
 	Owner spritzv1.SpritzOwner `json:"owner"`
+}
+
+type internalReplaceSpritzRequest struct {
+	TargetRevision string                      `json:"targetRevision"`
+	IdempotencyKey string                      `json:"idempotencyKey"`
+	Replacement    internalCreateSpritzRequest `json:"replacement"`
+}
+
+type internalReplaceSpritzResponse struct {
+	Source      internalReplaceSource      `json:"source"`
+	Replacement internalReplaceReplacement `json:"replacement"`
+	Replayed    bool                       `json:"replayed"`
+}
+
+type internalReplaceSource struct {
+	Namespace  string `json:"namespace"`
+	InstanceID string `json:"instanceId"`
+}
+
+type internalReplaceReplacement struct {
+	Namespace      string `json:"namespace"`
+	InstanceID     string `json:"instanceId"`
+	TargetRevision string `json:"targetRevision"`
+	Phase          string `json:"phase,omitempty"`
+	Ready          bool   `json:"ready"`
 }
 
 func (p internalCreatePrincipal) normalize() (principal, error) {
@@ -79,10 +107,11 @@ func summarizeInternalSpritz(spritz *spritzv1.Spritz) internalSpritzSummary {
 		Spec: internalSpritzSpec{
 			Owner: owner,
 		},
-		Status:      spritz.Status,
-		AccessURL:   spritzv1.AccessURLForSpritz(spritz),
-		ChatURL:     spritzv1.ChatURLForSpritz(spritz),
-		InstanceURL: spritzv1.InstanceURLForSpritz(spritz),
+		Status:         spritz.Status,
+		TargetRevision: strings.TrimSpace(spritz.GetAnnotations()[targetRevisionAnnotationKey]),
+		AccessURL:      spritzv1.AccessURLForSpritz(spritz),
+		ChatURL:        spritzv1.ChatURLForSpritz(spritz),
+		InstanceURL:    spritzv1.InstanceURLForSpritz(spritz),
 	}
 }
 
@@ -108,6 +137,32 @@ func (s *server) createInternalSpritz(c echo.Context) error {
 	return s.createSpritz(c)
 }
 
+func (s *server) deleteInternalSpritz(c echo.Context) error {
+	namespace, err := s.resolveSpritzNamespace(strings.TrimSpace(c.Param("namespace")))
+	if err != nil {
+		return writeError(c, http.StatusForbidden, err.Error())
+	}
+	name := strings.TrimSpace(c.Param("name"))
+	if name == "" {
+		return writeError(c, http.StatusBadRequest, "name required")
+	}
+
+	var spritz spritzv1.Spritz
+	if err := s.client.Get(c.Request().Context(), client.ObjectKey{
+		Namespace: namespace,
+		Name:      name,
+	}, &spritz); err != nil {
+		if apierrors.IsNotFound(err) {
+			return writeError(c, http.StatusNotFound, "not found")
+		}
+		return writeError(c, http.StatusInternalServerError, err.Error())
+	}
+	if err := s.client.Delete(c.Request().Context(), &spritz); err != nil {
+		return writeError(c, http.StatusInternalServerError, err.Error())
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
 func (s *server) getInternalSpritz(c echo.Context) error {
 	namespace, err := s.resolveSpritzNamespace(strings.TrimSpace(c.Param("namespace")))
 	if err != nil {
@@ -129,4 +184,237 @@ func (s *server) getInternalSpritz(c echo.Context) error {
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
 	return writeJSON(c, http.StatusOK, summarizeInternalSpritz(&spritz))
+}
+
+func (s *server) replaceInternalSpritz(c echo.Context) error {
+	namespace, sourceName, err := parseInternalReplacePath(s, c)
+	if err != nil {
+		return writeError(c, http.StatusBadRequest, err.Error())
+	}
+
+	var source spritzv1.Spritz
+	if err := s.client.Get(c.Request().Context(), client.ObjectKey{
+		Namespace: namespace,
+		Name:      sourceName,
+	}, &source); err != nil {
+		if apierrors.IsNotFound(err) {
+			return writeError(c, http.StatusNotFound, "not found")
+		}
+		return writeError(c, http.StatusInternalServerError, err.Error())
+	}
+
+	var body internalReplaceSpritzRequest
+	if err := c.Bind(&body); err != nil {
+		return writeError(c, http.StatusBadRequest, "invalid json")
+	}
+	body.TargetRevision = strings.TrimSpace(body.TargetRevision)
+	body.IdempotencyKey = strings.TrimSpace(body.IdempotencyKey)
+	if body.TargetRevision == "" {
+		return writeError(c, http.StatusBadRequest, "targetRevision is required")
+	}
+	if body.IdempotencyKey == "" {
+		return writeError(c, http.StatusBadRequest, "idempotencyKey is required")
+	}
+
+	replacementPrincipal, replacementRequest, err := normalizeReplaceRequest(
+		body,
+		namespace,
+		sourceName,
+	)
+	if err != nil {
+		return writeError(c, http.StatusBadRequest, err.Error())
+	}
+	if strings.TrimSpace(replacementRequest.Name) == sourceName {
+		return writeError(c, http.StatusBadRequest, "replacement must not reuse the source instance name")
+	}
+
+	existingReplacement, err := s.findReplacementSpritz(
+		c.Request().Context(),
+		namespace,
+		sourceName,
+		body.IdempotencyKey,
+	)
+	if err != nil {
+		return writeError(c, http.StatusInternalServerError, err.Error())
+	}
+	if existingReplacement != nil {
+		if strings.TrimSpace(existingReplacement.GetAnnotations()[targetRevisionAnnotationKey]) != body.TargetRevision {
+			return writeError(c, http.StatusConflict, "idempotencyKey already used with a different request")
+		}
+		return writeReplaceResponse(c, &source, existingReplacement, true)
+	}
+
+	recorder, err := s.invokeCreateSpritzWithPrincipal(
+		c,
+		replacementPrincipal,
+		replacementRequest,
+	)
+	if err != nil {
+		return err
+	}
+	if recorder.Code != http.StatusOK && recorder.Code != http.StatusCreated {
+		return c.Blob(recorder.Code, echo.MIMEApplicationJSONCharsetUTF8, recorder.Body.Bytes())
+	}
+
+	createdReplacement, replayed, err := extractCreatedReplacement(recorder.Body.Bytes())
+	if err != nil {
+		return writeError(c, http.StatusInternalServerError, err.Error())
+	}
+	return writeReplaceResponse(c, &source, createdReplacement, replayed)
+}
+
+func parseInternalReplacePath(s *server, c echo.Context) (string, string, error) {
+	namespace, err := s.resolveSpritzNamespace(strings.TrimSpace(c.Param("namespace")))
+	if err != nil {
+		return "", "", err
+	}
+	rawName := strings.TrimPrefix(strings.TrimSpace(c.Param("*")), "/")
+	if rawName == "" {
+		return "", "", fmt.Errorf("name required")
+	}
+	if !strings.HasSuffix(rawName, ":replace") {
+		return "", "", fmt.Errorf("unsupported spritz operation")
+	}
+	name := strings.TrimSuffix(rawName, ":replace")
+	name = strings.TrimSpace(name)
+	if name == "" || strings.Contains(name, "/") {
+		return "", "", fmt.Errorf("name required")
+	}
+	return namespace, name, nil
+}
+
+func normalizeReplaceRequest(
+	body internalReplaceSpritzRequest,
+	namespace, sourceName string,
+) (principal, createRequest, error) {
+	replacementPrincipal, err := body.Replacement.Principal.normalize()
+	if err != nil {
+		return principal{}, createRequest{}, err
+	}
+	encodedRequest := bytes.TrimSpace(body.Replacement.Request)
+	if len(encodedRequest) == 0 {
+		return principal{}, createRequest{}, fmt.Errorf("replacement.request is required")
+	}
+	var replacementRequest createRequest
+	if err := json.Unmarshal(encodedRequest, &replacementRequest); err != nil {
+		return principal{}, createRequest{}, fmt.Errorf("replacement.request is invalid")
+	}
+	if strings.TrimSpace(replacementRequest.IdempotencyKey) != "" {
+		return principal{}, createRequest{}, fmt.Errorf("replacement.request.idempotencyKey must be omitted")
+	}
+	replacementRequest.Namespace = namespace
+	replacementRequest.IdempotencyKey = "replace:" + body.IdempotencyKey
+
+	annotations, err := mergeMetadataStrict(
+		replacementRequest.Annotations,
+		map[string]string{
+			replacementSourceNSAnnotationKey:   namespace,
+			replacementSourceNameAnnotationKey: sourceName,
+			replacementIDKeyAnnotationKey:      body.IdempotencyKey,
+			targetRevisionAnnotationKey:        body.TargetRevision,
+		},
+		"annotation",
+	)
+	if err != nil {
+		return principal{}, createRequest{}, err
+	}
+	replacementRequest.Annotations = annotations
+	return replacementPrincipal, replacementRequest, nil
+}
+
+func (s *server) findReplacementSpritz(
+	ctx context.Context,
+	namespace, sourceName, idempotencyKey string,
+) (*spritzv1.Spritz, error) {
+	list := &spritzv1.SpritzList{}
+	if err := s.client.List(ctx, list, client.InNamespace(namespace)); err != nil {
+		return nil, err
+	}
+	var matched *spritzv1.Spritz
+	for index := range list.Items {
+		candidate := &list.Items[index]
+		annotations := candidate.GetAnnotations()
+		if strings.TrimSpace(annotations[replacementSourceNSAnnotationKey]) != namespace {
+			continue
+		}
+		if strings.TrimSpace(annotations[replacementSourceNameAnnotationKey]) != sourceName {
+			continue
+		}
+		if strings.TrimSpace(annotations[replacementIDKeyAnnotationKey]) != idempotencyKey {
+			continue
+		}
+		if matched != nil {
+			return nil, fmt.Errorf("multiple replacements found for source %s/%s", namespace, sourceName)
+		}
+		matched = candidate.DeepCopy()
+	}
+	return matched, nil
+}
+
+func (s *server) invokeCreateSpritzWithPrincipal(
+	parent echo.Context,
+	principal principal,
+	body createRequest,
+) (*httptest.ResponseRecorder, error) {
+	encodedBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	req := httptest.NewRequest(http.MethodPost, s.apiPathPrefix()+"/spritzes", bytes.NewReader(encodedBody))
+	req = req.WithContext(parent.Request().Context())
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	recorder := httptest.NewRecorder()
+	createContext := parent.Echo().NewContext(req, recorder)
+	createContext.Set(principalContextKey, principal)
+	createServer := s
+	if namespace := strings.TrimSpace(body.Namespace); namespace != "" {
+		scopedServer := *s
+		scopedServer.namespace = namespace
+		createServer = &scopedServer
+	}
+	if err := createServer.createSpritz(createContext); err != nil {
+		return nil, err
+	}
+	return recorder, nil
+}
+
+func extractCreatedReplacement(raw []byte) (*spritzv1.Spritz, bool, error) {
+	var envelope struct {
+		Status string               `json:"status"`
+		Data   createSpritzResponse `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return nil, false, fmt.Errorf("replacement create response is invalid")
+	}
+	if envelope.Status != "success" || envelope.Data.Spritz == nil {
+		return nil, false, fmt.Errorf("replacement create response is invalid")
+	}
+	return envelope.Data.Spritz, envelope.Data.Replayed, nil
+}
+
+func writeReplaceResponse(
+	c echo.Context,
+	source, replacement *spritzv1.Spritz,
+	replayed bool,
+) error {
+	replacementPhase := strings.TrimSpace(replacement.Status.Phase)
+	ready := replacementPhase == "Ready"
+	statusCode := http.StatusAccepted
+	if ready {
+		statusCode = http.StatusOK
+	}
+	return writeJSON(c, statusCode, internalReplaceSpritzResponse{
+		Source: internalReplaceSource{
+			Namespace:  source.Namespace,
+			InstanceID: source.Name,
+		},
+		Replacement: internalReplaceReplacement{
+			Namespace:      replacement.Namespace,
+			InstanceID:     replacement.Name,
+			TargetRevision: strings.TrimSpace(replacement.GetAnnotations()[targetRevisionAnnotationKey]),
+			Phase:          replacementPhase,
+			Ready:          ready,
+		},
+		Replayed: replayed,
+	})
 }

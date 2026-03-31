@@ -30,24 +30,28 @@ const (
 	scopeChannelRouteResolve        = "spritz.channel.route.resolve"
 	scopeChannelConversationsUpsert = "spritz.channel.conversations.upsert"
 
-	actorIDAnnotationKey          = "spritz.sh/actor.id"
-	actorTypeAnnotationKey        = "spritz.sh/actor.type"
-	sourceAnnotationKey           = "spritz.sh/source"
-	requestIDAnnotationKey        = "spritz.sh/request-id"
-	idempotencyKeyAnnotationKey   = "spritz.sh/idempotency-key"
-	idempotencyHashAnnotationKey  = "spritz.sh/idempotency-hash"
-	presetIDAnnotationKey         = "spritz.sh/preset-id"
-	actorLabelKey                 = "spritz.sh/actor"
-	idempotencyLabelKey           = "spritz.sh/idempotency"
-	presetLabelKey                = "spritz.sh/preset"
-	idempotencyReservationPrefix  = "spritz-idempotency-"
-	idempotencyReservationHashKey = "fingerprint"
-	idempotencyReservationNameKey = "spritzName"
-	idempotencyReservationDoneKey = "completed"
-	idempotencyReservationBodyKey = "payload"
-	defaultProvisionerSource      = "external"
-	defaultProvisionerIdleTTL     = 24 * time.Hour
-	defaultProvisionerMaxTTL      = 7 * 24 * time.Hour
+	actorIDAnnotationKey               = "spritz.sh/actor.id"
+	actorTypeAnnotationKey             = "spritz.sh/actor.type"
+	sourceAnnotationKey                = "spritz.sh/source"
+	requestIDAnnotationKey             = "spritz.sh/request-id"
+	idempotencyKeyAnnotationKey        = "spritz.sh/idempotency-key"
+	idempotencyHashAnnotationKey       = "spritz.sh/idempotency-hash"
+	presetIDAnnotationKey              = "spritz.sh/preset-id"
+	targetRevisionAnnotationKey        = "spritz.sh/target-revision"
+	replacementSourceNSAnnotationKey   = "spritz.sh/replacement-source-namespace"
+	replacementSourceNameAnnotationKey = "spritz.sh/replacement-source-name"
+	replacementIDKeyAnnotationKey      = "spritz.sh/replacement-idempotency-key"
+	actorLabelKey                      = "spritz.sh/actor"
+	idempotencyLabelKey                = "spritz.sh/idempotency"
+	presetLabelKey                     = "spritz.sh/preset"
+	idempotencyReservationPrefix       = "spritz-idempotency-"
+	idempotencyReservationHashKey      = "fingerprint"
+	idempotencyReservationNameKey      = "spritzName"
+	idempotencyReservationDoneKey      = "completed"
+	idempotencyReservationBodyKey      = "payload"
+	defaultProvisionerSource           = "external"
+	defaultProvisionerIdleTTL          = 24 * time.Hour
+	defaultProvisionerMaxTTL           = 7 * 24 * time.Hour
 )
 
 var (
@@ -347,7 +351,16 @@ func validateProvisionerRequestSurface(body *createRequest) error {
 		return fmt.Errorf("labels are not allowed for service principals")
 	}
 	if len(body.Annotations) > 0 {
-		return fmt.Errorf("annotations are not allowed for service principals")
+		for key := range body.Annotations {
+			switch strings.TrimSpace(key) {
+			case targetRevisionAnnotationKey,
+				replacementSourceNSAnnotationKey,
+				replacementSourceNameAnnotationKey,
+				replacementIDKeyAnnotationKey:
+			default:
+				return fmt.Errorf("annotations are not allowed for service principals")
+			}
+		}
 	}
 	if len(body.Spec.Labels) > 0 {
 		return fmt.Errorf("spec.labels are not allowed")

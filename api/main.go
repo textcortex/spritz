@@ -254,6 +254,8 @@ func (s *server) registerRoutes(e *echo.Echo) {
 		internal.GET("/runtime-bindings/:namespace/:instanceId", s.getRuntimeBinding)
 		internal.POST("/spritzes", s.createInternalSpritz)
 		internal.GET("/spritzes/:namespace/:name", s.getInternalSpritz)
+		internal.DELETE("/spritzes/:namespace/:name", s.deleteInternalSpritz)
+		internal.POST("/spritzes/:namespace/*", s.replaceInternalSpritz)
 		if s.auth.enabled() {
 			internalSecured := group.Group("/internal/v1", s.internalAuthHeaderMiddleware(), s.authMiddleware())
 			internalSecured.POST("/debug/chat/send", s.sendInternalDebugChat)
