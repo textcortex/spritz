@@ -3705,6 +3705,121 @@ func TestProcessMessageEventPostsWakeUpDuringACPRetryBackoff(t *testing.T) {
 	}
 }
 
+func TestProcessMessageEventPostsFailureWhenRetriedACPRecoveryCallTimesOut(t *testing.T) {
+	var slackPayloads struct {
+		sync.Mutex
+		items []map[string]any
+	}
+	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat.postMessage" {
+			t.Fatalf("unexpected slack path %s", r.URL.Path)
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode slack post body: %v", err)
+		}
+		slackPayloads.Lock()
+		slackPayloads.items = append(slackPayloads.items, payload)
+		slackPayloads.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ts": fmt.Sprintf("1711387375.00010%d", len(slackPayloads.items))})
+	}))
+	defer slackAPI.Close()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v1/spritz/channel-sessions/exchange" {
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"session": map[string]any{
+				"accessToken": "owner-token",
+				"ownerAuthId": "owner-123",
+				"namespace":   "spritz-staging",
+				"instanceId":  "zeno-acme",
+				"providerAuth": map[string]any{
+					"providerInstallRef": "cred_slack_workspace_1",
+					"apiAppId":           "A_app_1",
+					"teamId":             "T_workspace_1",
+					"botUserId":          "U_bot",
+					"botAccessToken":     "xoxb-installed",
+				},
+			},
+		})
+	}))
+	defer backend.Close()
+
+	var upsertCalls atomic.Int32
+	spritz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/channel-conversations/upsert" {
+			t.Fatalf("unexpected spritz path %s", r.URL.Path)
+		}
+		if upsertCalls.Add(1) == 1 {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"status": "fail",
+				"data": map[string]any{
+					"message": "acp unavailable",
+				},
+			})
+			return
+		}
+		time.Sleep(80 * time.Millisecond)
+	}))
+	defer spritz.Close()
+
+	cfg := config{
+		SlackAPIBaseURL:      slackAPI.URL,
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        spritz.URL,
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          200 * time.Millisecond,
+		DedupeTTL:            time.Minute,
+		StatusMessageDelay:   5 * time.Millisecond,
+		SessionRetryInterval: 5 * time.Millisecond,
+		ProcessingTimeout:    50 * time.Millisecond,
+	}
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	envelope := slackEnvelope{
+		APIAppID: "A_app_1",
+		TeamID:   "T_workspace_1",
+		Event: slackEventInner{
+			Type:        "app_mention",
+			User:        "U_user",
+			Text:        "<@U_bot> hello",
+			Channel:     "C_channel_1",
+			ChannelType: "channel",
+			TS:          "1711387375.000100",
+		},
+	}
+	delivery, process, err := gateway.beginMessageEventDelivery(envelope)
+	if err != nil {
+		t.Fatalf("beginMessageEventDelivery returned error: %v", err)
+	}
+	if !process {
+		t.Fatal("expected app mention to be processed")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := gateway.processMessageEventWithDelivery(ctx, envelope, delivery); err != nil {
+		t.Fatalf("expected timed-out retry after visible recovery to produce terminal Slack failure, got %v", err)
+	}
+
+	slackPayloads.Lock()
+	defer slackPayloads.Unlock()
+	if len(slackPayloads.items) != 2 {
+		t.Fatalf("expected wake-up status and terminal failure, got %#v", slackPayloads.items)
+	}
+	if got := slackPayloads.items[0]["text"]; got != slackRecoveryStatusText {
+		t.Fatalf("expected wake-up status text, got %#v", got)
+	}
+	if got := slackPayloads.items[1]["text"]; got != slackRecoveryFailureText {
+		t.Fatalf("expected terminal recovery failure text, got %#v", got)
+	}
+}
+
 func TestProcessMessageEventKeepsRecoveringAfterTransientExchangeError(t *testing.T) {
 	var slackPayloads struct {
 		sync.Mutex

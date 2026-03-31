@@ -528,6 +528,23 @@ func (g *slackGateway) processMessageEventWithDelivery(
 	}
 	if err != nil {
 		if !result.promptSent {
+			if recoveryState.recoveryStarted() {
+				terminalHandled, postErr := recoveryState.maybePostFailure(ctx, g, event, true)
+				if postErr != nil {
+					g.logger.Error(
+						"slack recovery failure reply failed",
+						"error", postErr,
+						"team_id", strings.TrimSpace(envelope.TeamID),
+						"channel_id", strings.TrimSpace(event.Channel),
+						"message_ts", strings.TrimSpace(event.TS),
+					)
+					return postErr
+				}
+				if terminalHandled {
+					success = true
+					return nil
+				}
+			}
 			return err
 		}
 		result.reply = "I hit an internal error while processing that request."
