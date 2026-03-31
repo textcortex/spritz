@@ -138,6 +138,10 @@ function writeMockCodex(tempRoot) {
       "  process.exit(0);",
       "}",
       "if (args[0] !== 'exec') { process.exit(1); }",
+      "const captureFile = String(process.env.CODEX_ARGS_CAPTURE || '');",
+      "if (captureFile) {",
+      "  fs.appendFileSync(captureFile, JSON.stringify(args) + '\\n');",
+      "}",
       "const isResume = args[1] === 'resume';",
       "const prompt = String(args[args.length - 1] || '');",
       "const outputFile = findFlagValue('--output-last-message');",
@@ -358,4 +362,89 @@ test("session/prompt captures Codex replies and replays them on load", async (t)
     result: { stopReason: "end_turn" },
   });
   assert.equal(secondPrompt.updates[1].params.update.content.text, "Resumed: second turn");
+});
+
+test("session/prompt passes the configured Codex profile to fresh and resumed exec calls", async (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "spritz-codex-runtime-"));
+  const codexPath = writeMockCodex(tempRoot);
+  const argsCapturePath = path.join(tempRoot, "codex-args.jsonl");
+  const runtime = new CodexACPRuntime(
+    {
+      codexBin: codexPath,
+      codexArgs: [],
+      workdir: tempRoot,
+      model: "",
+      profile: "gateway-profile",
+      configOptions: [],
+      metadata: {
+        protocolVersion: 1,
+        agentCapabilities: { loadSession: true, promptCapabilities: {} },
+        agentInfo: { name: "codex", title: "Codex", version: "1.0.0" },
+        authMethods: [],
+      },
+    },
+    {
+      ...process.env,
+      OPENAI_API_KEY: "test-key",
+      CODEX_ARGS_CAPTURE: argsCapturePath,
+    },
+    console,
+  );
+  t.after(() => {
+    runtime.stop();
+  });
+
+  const socket = new FakeSocket();
+  runtime.attach(socket);
+  await sendRuntimeRPC(socket, { id: "init-1", jsonrpc: "2.0", method: "initialize", params: {} });
+  const created = await sendRuntimeRPC(socket, {
+    id: "new-1",
+    jsonrpc: "2.0",
+    method: "session/new",
+    params: { cwd: tempRoot, mcpServers: [] },
+  });
+  const sessionId = String(created.result.sessionId);
+
+  await sendRuntimeRPC(socket, {
+    id: "prompt-1",
+    jsonrpc: "2.0",
+    method: "session/prompt",
+    params: {
+      sessionId,
+      prompt: [{ type: "text", text: "hello world" }],
+    },
+  });
+  await sendRuntimeRPC(socket, {
+    id: "prompt-2",
+    jsonrpc: "2.0",
+    method: "session/prompt",
+    params: {
+      sessionId,
+      prompt: [{ type: "text", text: "second turn" }],
+    },
+  });
+
+  const capturedArgs = fs
+    .readFileSync(argsCapturePath, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+
+  assert.equal(capturedArgs.length, 2);
+  assert.deepEqual(capturedArgs[0].slice(0, 5), [
+    "exec",
+    "-p",
+    "gateway-profile",
+    "--json",
+    "--skip-git-repo-check",
+  ]);
+  assert.deepEqual(capturedArgs[1].slice(0, 6), [
+    "exec",
+    "-p",
+    "gateway-profile",
+    "resume",
+    "--json",
+    "--skip-git-repo-check",
+  ]);
 });

@@ -26,6 +26,7 @@ const DEFAULTS = {
   workdir: "/workspace",
   requiredEnv: ["OPENAI_API_KEY"],
   model: "",
+  profile: "",
   shutdownTimeoutMs: 5_000,
 };
 
@@ -149,6 +150,7 @@ function extractPromptText(prompt) {
 function buildConfig(env) {
   const codexPackageRoot = env.SPRITZ_CODEX_PACKAGE_ROOT || DEFAULTS.codexPackageRoot;
   const model = String(env.SPRITZ_CODEX_MODEL || DEFAULTS.model || "").trim();
+  const profile = String(env.SPRITZ_CODEX_PROFILE || DEFAULTS.profile || "").trim();
   const configOptions = [];
   if (model) {
     configOptions.push({
@@ -171,6 +173,7 @@ function buildConfig(env) {
     agentTitle: env.SPRITZ_CODEX_AGENT_TITLE || DEFAULTS.agentTitle,
     agentVersion: env.SPRITZ_CODEX_AGENT_VERSION || readVersion(codexPackageRoot),
     model,
+    profile,
     configOptions,
     metadata: {
       protocolVersion: 1,
@@ -308,9 +311,11 @@ class CodexACPRuntime {
 
   buildCodexCommand(session, promptText, outputFile) {
     const modelArgs = this.config.model ? ["--model", this.config.model] : [];
+    const profileArgs = this.config.profile ? ["-p", this.config.profile] : [];
     if (session.threadId) {
       return [
         "exec",
+        ...profileArgs,
         "resume",
         "--json",
         "--skip-git-repo-check",
@@ -324,6 +329,7 @@ class CodexACPRuntime {
     }
     return [
       "exec",
+      ...profileArgs,
       "--json",
       "--skip-git-repo-check",
       "-C",
