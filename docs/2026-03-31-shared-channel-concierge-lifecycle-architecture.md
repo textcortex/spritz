@@ -24,6 +24,25 @@ Related docs:
 - `docs/2026-03-24-slack-channel-gateway-implementation-plan.md`
 - `docs/2026-03-30-channel-gateway-provider-status-updates.md`
 
+## Provider Coverage
+
+This lifecycle model is not Slack-specific.
+
+It applies to any shared provider app where:
+
+- one shared app installation surface receives events for many external tenants
+- each external tenant should have its own durable logical concierge
+- replies or actions go back out through the same shared provider gateway
+
+Initial examples:
+
+- Slack workspaces
+- Discord guilds
+- Teams tenants or teams
+
+The same contract should remain valid for future shared provider apps without
+introducing Slack-specific assumptions into the lifecycle rules.
+
 ## Problem
 
 Shared channel concierge routing currently depends on state that can drift:
@@ -267,7 +286,7 @@ That means deployments must choose one of two supported policies explicitly:
 Either policy is acceptable. What is not acceptable is mixing disposable
 runtime behavior with durable routing assumptions.
 
-## Slack-First Implementation
+## Provider Rollout
 
 Slack should be the first implementation of this lifecycle model.
 
@@ -283,7 +302,7 @@ The same contract should then be reused for:
 
 - Discord guild concierges
 - Teams tenant or team concierges
-- future provider-specific shared channel gateways
+- future provider-specific shared app gateways
 
 ## Validation
 
