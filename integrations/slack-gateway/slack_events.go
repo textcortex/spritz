@@ -259,6 +259,16 @@ func classifyPromptRecoveryMode(
 	return promptRecoveryNone
 }
 
+func shouldPostTerminalRecoveryFailure(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	return ctx != nil && ctx.Err() != nil
+}
+
 func (g *slackGateway) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
@@ -528,7 +538,7 @@ func (g *slackGateway) processMessageEventWithDelivery(
 	}
 	if err != nil {
 		if !result.promptSent {
-			if recoveryState.recoveryStarted() {
+			if recoveryState.recoveryStarted() && shouldPostTerminalRecoveryFailure(ctx, err) {
 				terminalHandled, postErr := recoveryState.maybePostFailure(ctx, g, event, true)
 				if postErr != nil {
 					g.logger.Error(
