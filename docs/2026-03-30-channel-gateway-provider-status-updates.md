@@ -39,8 +39,8 @@ examples:
 - the runtime was expired and is being recreated
 - the runtime is still provisioning
 - the gateway is retrying route or session resolution
-- the first meaningful reply is delayed long enough that the conversation would
-  otherwise stay silent
+- the gateway has a live runtime name but ACP is not ready to accept the first
+  prompt yet
 
 In those cases the gateway should be able to post one visible status message
 before the real reply is ready.
@@ -86,8 +86,11 @@ The gateway should not send a visible status message immediately.
 
 Recommended default:
 
-- wait 3 to 5 seconds after inbound processing starts
-- if the real reply or runtime recovery completes before that threshold, send
+- do not start the visible-delay timer when the inbound Slack message arrives
+- start the visible-delay timer only after the gateway has entered a real
+  recovery or availability-retry path
+- wait 3 to 5 seconds after recovery or availability retry starts
+- if recovery completes before that threshold, send
   nothing extra
 - if the threshold is crossed, ensure one visible status message exists
 
@@ -96,7 +99,13 @@ Recommended initial trigger categories:
 - runtime recovery in progress
 - runtime provisioning in progress
 - retrying a failed route or session lookup
-- first-reply latency crossed the visible-delay threshold
+- retrying a failed first prompt because the runtime exists but ACP is not yet
+  ready
+
+Non-trigger category:
+
+- a normal slow request on a healthy runtime must not produce the status
+  message by itself
 
 ### What the user should see
 
@@ -194,8 +203,11 @@ message ids inside runtime objects.
 2. the gateway acknowledges the provider webhook within the provider timeout
 3. the gateway starts route resolution, runtime reconciliation, and normal
    delivery
-4. if the request crosses the visible-delay threshold, the gateway ensures one
-   status message exists for that source message
+4. if the request stays on the normal healthy path, the gateway sends no status
+   message
+5. if the gateway enters a real recovery or availability-retry loop and that
+   loop crosses the visible-delay threshold, the gateway ensures one status
+   message exists for that source message
 
 ### Recovery loop
 
@@ -205,7 +217,21 @@ as:
 - session exchange retries
 - runtime recreation polling
 - installation reconciliation
+- first-prompt retry after a pre-delivery `acp unavailable`
 - provider retry coordination
+
+The gateway should treat these as recovery or availability signals:
+
+- session exchange returned `unavailable`
+- runtime reconciliation found a missing or terminal runtime
+- the next Spritz call failed with `spritz not found`
+- the runtime exists but the first ACP prompt failed with `acp unavailable`
+  before prompt delivery completed
+
+The gateway should not treat these as recovery by themselves:
+
+- ordinary first-reply latency
+- a slow but otherwise healthy prompt on an already available runtime
 
 Once the visible-delay threshold has produced one status message, the gateway
 should keep using that same status record for deduplication and bookkeeping.
