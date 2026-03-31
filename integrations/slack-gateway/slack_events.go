@@ -159,6 +159,7 @@ func (state *channelSessionRecoveryState) maybePostFailure(
 	ctx context.Context,
 	g *slackGateway,
 	event slackEventInner,
+	force bool,
 ) (bool, error) {
 	if state == nil {
 		return false, nil
@@ -168,7 +169,7 @@ func (state *channelSessionRecoveryState) maybePostFailure(
 		state.mu.Unlock()
 		return false, nil
 	}
-	if !state.statusVisible && time.Since(state.startedAt) < g.cfg.StatusMessageDelay {
+	if !force && !state.statusVisible && time.Since(state.startedAt) < g.cfg.StatusMessageDelay {
 		state.mu.Unlock()
 		return false, nil
 	}
@@ -185,10 +186,9 @@ func (state *channelSessionRecoveryState) maybePostFailure(
 	return true, nil
 }
 
-// startPromptStatusTimer posts the provider-authored wake-up status once the
-// visible-delay threshold is crossed while a recovery-path prompt is still
-// executing.
-func (g *slackGateway) startPromptStatusTimer(
+// startRecoveryStatusTimer posts the provider-authored wake-up status once the
+// visible-delay threshold is crossed while recovery is still in progress.
+func (g *slackGateway) startRecoveryStatusTimer(
 	ctx context.Context,
 	event slackEventInner,
 	recoveryState *channelSessionRecoveryState,
@@ -454,13 +454,20 @@ func (g *slackGateway) processMessageEventWithDelivery(
 		return nil
 	}
 
-	stopPromptStatusTimer := g.startPromptStatusTimer(ctx, event, recoveryState)
 	result, err := g.executeConversationPrompt(ctx, envelope, event, session, promptText)
-	stopPromptStatusTimer()
 	sameRuntimeRetryAttempted := false
+	stopRecoveryStatusTimer := func() {}
+	defer func() {
+		stopRecoveryStatusTimer()
+	}()
+	recoveryStatusTimerStarted := false
 	for recoveryMode := classifyPromptRecoveryMode(err, result.promptSent, sameRuntimeRetryAttempted); recoveryMode != promptRecoveryNone; recoveryMode = classifyPromptRecoveryMode(err, result.promptSent, sameRuntimeRetryAttempted) {
 		recoveryState.startRecovery()
 		recoveryState.rememberProviderAuth(session.ProviderAuth)
+		if !recoveryStatusTimerStarted {
+			stopRecoveryStatusTimer = g.startRecoveryStatusTimer(ctx, event, recoveryState)
+			recoveryStatusTimerStarted = true
+		}
 		if postErr := recoveryState.maybePostStatus(ctx, g, event); postErr != nil {
 			g.logger.Error(
 				"slack recovery status post failed",
@@ -471,7 +478,7 @@ func (g *slackGateway) processMessageEventWithDelivery(
 			)
 		}
 		if sleepErr := sleepWithContext(ctx, g.cfg.SessionRetryInterval); sleepErr != nil {
-			terminalHandled, postErr := recoveryState.maybePostFailure(ctx, g, event)
+			terminalHandled, postErr := recoveryState.maybePostFailure(ctx, g, event, true)
 			if postErr != nil {
 				g.logger.Error(
 					"slack recovery failure reply failed",
@@ -517,9 +524,7 @@ func (g *slackGateway) processMessageEventWithDelivery(
 				return nil
 			}
 		}
-		stopPromptStatusTimer = g.startPromptStatusTimer(ctx, event, recoveryState)
 		result, err = g.executeConversationPrompt(ctx, envelope, event, session, promptText)
-		stopPromptStatusTimer()
 	}
 	if err != nil {
 		if !result.promptSent {
@@ -623,6 +628,11 @@ func (g *slackGateway) awaitChannelSession(
 	if recoveryState == nil {
 		recoveryState = newChannelSessionRecoveryState()
 	}
+	stopRecoveryStatusTimer := func() {}
+	defer func() {
+		stopRecoveryStatusTimer()
+	}()
+	recoveryStatusTimerStarted := false
 
 	for {
 		session, err := g.exchangeChannelSession(ctx, envelope.TeamID, forceRefresh)
@@ -642,7 +652,7 @@ func (g *slackGateway) awaitChannelSession(
 					"message_ts", strings.TrimSpace(event.TS),
 				)
 			} else {
-				if terminalHandled, postErr := recoveryState.maybePostFailure(ctx, g, event); postErr != nil {
+				if terminalHandled, postErr := recoveryState.maybePostFailure(ctx, g, event, false); postErr != nil {
 					g.logger.Error(
 						"slack recovery failure reply failed",
 						"error", postErr,
@@ -660,6 +670,10 @@ func (g *slackGateway) awaitChannelSession(
 			recoveryState.rememberProviderAuth(providerAuth)
 		}
 		recoveryState.startRecovery()
+		if !recoveryStatusTimerStarted {
+			stopRecoveryStatusTimer = g.startRecoveryStatusTimer(ctx, event, recoveryState)
+			recoveryStatusTimerStarted = true
+		}
 
 		if postErr := recoveryState.maybePostStatus(ctx, g, event); postErr != nil {
 			g.logger.Error(
@@ -672,7 +686,7 @@ func (g *slackGateway) awaitChannelSession(
 		}
 
 		if err := sleepWithContext(ctx, g.cfg.SessionRetryInterval); err != nil {
-			if terminalHandled, postErr := recoveryState.maybePostFailure(ctx, g, event); postErr != nil {
+			if terminalHandled, postErr := recoveryState.maybePostFailure(ctx, g, event, true); postErr != nil {
 				g.logger.Error(
 					"slack recovery failure reply failed",
 					"error", postErr,
