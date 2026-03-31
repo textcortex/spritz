@@ -362,6 +362,59 @@ Phase 1 non-recovery signals should be:
 - ordinary prompt latency on a healthy runtime
 - a slow ACP connect on a runtime that is already available
 
+Slack should also treat inbound message handling as a durable pending delivery,
+not as one synchronous webhook request that must finish the whole recovery path
+before Slack's request budget is exhausted.
+
+That means:
+
+- acknowledge the inbound Slack event quickly
+- create or resume one pending delivery record for that source Slack message
+- let the recovery loop continue asynchronously behind that delivery record
+- post `Still waking up...` only if that pending delivery crosses the
+  visible-delay threshold
+- send the final reply only after the runtime is actually prompt-ready
+
+Phase 1 defaults for Slack:
+
+- acknowledge the Slack event in under 1 second
+- visible-delay threshold: 5 seconds after real recovery begins
+- same-runtime `acp unavailable` retry: exponential backoff starting at 250
+  milliseconds, capped at 2 seconds, for up to 8 seconds total
+- stale-binding poll interval after `spritz not found` or missing runtime: 1
+  second
+- stale-binding poll budget: 20 seconds
+- total pending-delivery timeout: 45 seconds
+
+### Pending delivery flow
+
+Phase 1 should use this flow for the first inbound Slack message and for
+retries of the same message:
+
+1. accept the Slack event and persist or resume one pending delivery keyed by
+   the inbound Slack message identity
+2. ask the shared live resolver for the current runtime binding
+3. if the runtime is missing, terminal, or still being recreated, keep the
+   delivery pending while recovery continues
+4. if the runtime is live but the first ACP prompt is not ready yet, keep the
+   same delivery pending and retry briefly
+5. if the pending delivery crosses the visible-delay threshold, ensure one
+   `Still waking up...` message exists for that source Slack message
+6. when the prompt is accepted, continue the normal reply path and mark the
+   delivery completed
+7. if the delivery reaches terminal failure, send one failure reply and mark it
+   failed
+
+Phase 1 Slack storage should use:
+
+- one durable delivery row keyed by `team_id + channel id + source ts`
+- one optional status row keyed by `team_id + channel id + source ts +
+  purpose`
+
+If the Slack event is already threaded, the delivery row should still be keyed
+by the source message identity, while `thread_ts` remains part of the reply
+target metadata rather than the delivery identity itself.
+
 The recovery loop should behave like this:
 
 1. stay on the fast path for healthy ready runtimes
@@ -373,8 +426,24 @@ The recovery loop should behave like this:
 5. if recovery succeeds, send the normal reply
 6. if recovery times out, send the terminal failure reply
 
+Phase 1 Slack worker shape should be:
+
+1. the webhook handler inserts or resumes the delivery row and returns `200`
+   immediately
+2. the webhook handler nudges an asynchronous worker
+3. the worker claims a 30-second lease on the delivery row
+4. the worker runs resolution, recovery, and delivery attempts
+5. if the worker crashes or loses the lease, another worker resumes from the
+   same row
+6. duplicates from Slack converge on the same row instead of creating another
+   execution path
+
 The gateway should not recreate the runtime just because ACP is still coming
 up on an otherwise healthy runtime.
+
+The gateway should also not mark delivery success just because session exchange
+returned `resolved`. Success means the prompt has actually been handed off to
+the runtime and the normal reply path can continue.
 
 ## Threading Defaults
 
@@ -447,6 +516,9 @@ Before calling Phase 1 done, verify:
     is in progress.
 15. A pre-delivery `acp unavailable` is retried as an availability case and
     does not fail the first recovered turn prematurely.
+16. Duplicate Slack webhook deliveries converge on the same pending delivery.
+17. The first recovered Slack turn is not marked successful until the prompt is
+    actually accepted by ACP.
 
 ## Follow-ups
 

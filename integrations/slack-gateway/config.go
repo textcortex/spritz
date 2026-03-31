@@ -28,6 +28,10 @@ type config struct {
 	ProcessingTimeout    time.Duration
 	SessionRetryInterval time.Duration
 	StatusMessageDelay   time.Duration
+	RecoveryTimeout      time.Duration
+	PromptRetryInitial   time.Duration
+	PromptRetryMax       time.Duration
+	PromptRetryTimeout   time.Duration
 }
 
 func loadConfig() (config, error) {
@@ -48,9 +52,13 @@ func loadConfig() (config, error) {
 		PrincipalID:          strings.TrimSpace(os.Getenv("SPRITZ_SLACK_PRINCIPAL_ID")),
 		HTTPTimeout:          parseDurationEnv("SPRITZ_SLACK_HTTP_TIMEOUT", 15*time.Second),
 		DedupeTTL:            parseDurationEnv("SPRITZ_SLACK_DEDUPE_TTL", 10*time.Minute),
-		ProcessingTimeout:    parseDurationEnv("SPRITZ_SLACK_PROCESSING_TIMEOUT", 60*time.Second),
+		ProcessingTimeout:    parseDurationEnv("SPRITZ_SLACK_PROCESSING_TIMEOUT", 45*time.Second),
 		SessionRetryInterval: parseDurationEnv("SPRITZ_SLACK_SESSION_RETRY_INTERVAL", time.Second),
-		StatusMessageDelay:   parseDurationEnv("SPRITZ_SLACK_STATUS_MESSAGE_DELAY", 3*time.Second),
+		StatusMessageDelay:   parseDurationEnv("SPRITZ_SLACK_STATUS_MESSAGE_DELAY", 5*time.Second),
+		RecoveryTimeout:      parseDurationEnv("SPRITZ_SLACK_RECOVERY_TIMEOUT", 20*time.Second),
+		PromptRetryInitial:   parseDurationEnv("SPRITZ_SLACK_PROMPT_RETRY_INITIAL", 250*time.Millisecond),
+		PromptRetryMax:       parseDurationEnv("SPRITZ_SLACK_PROMPT_RETRY_MAX", 2*time.Second),
+		PromptRetryTimeout:   parseDurationEnv("SPRITZ_SLACK_PROMPT_RETRY_TIMEOUT", 8*time.Second),
 	}
 
 	if cfg.PublicURL == "" {

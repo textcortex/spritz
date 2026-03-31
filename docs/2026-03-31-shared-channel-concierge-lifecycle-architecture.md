@@ -166,6 +166,31 @@ outcomes:
 
 It must not return `resolved` for a runtime that has not been verified.
 
+### Pending delivery sits above live resolution
+
+The live resolver answers one narrow question:
+
+- which runtime binding is live now
+
+Provider gateways and other interactive entry points often need to answer a
+second question:
+
+- can the next user message be delivered successfully yet
+
+Those are related, but they are not the same.
+
+A runtime may already be live enough for `resolved` while the first prompt path
+still needs a short warm-up or retry window before it can accept work.
+
+That means:
+
+- live resolution should stay a narrow runtime-binding contract
+- delivery state should be tracked separately above it
+- interactive callers may keep a request or provider message pending until the
+  runtime is prompt-ready
+
+This is a general interactive-instance rule, not a concierge-only special case.
+
 ## Invariants
 
 ### 1. Installation is durable; runtime is disposable
@@ -216,7 +241,7 @@ The resolver takes a routing identity:
 - installation exists
 - a live runtime exists
 - the runtime is usable now
-- bearer and provider auth are returned
+- the caller has what it needs to start delivery toward that runtime
 
 `unavailable`
 
@@ -229,6 +254,15 @@ The resolver takes a routing identity:
 - installation does not exist
 - or it is disconnected
 - or required provider auth is missing
+
+These resolver states do not replace delivery state.
+
+For example:
+
+- a provider gateway may have `resolved` runtime state and still keep the user
+  message pending briefly until the runtime is prompt-ready
+- a provider gateway may have `unavailable` runtime state and keep the same
+  pending message while recovery continues
 
 ### Required algorithm
 
@@ -412,9 +446,66 @@ For example:
 - the first ACP prompt path may still need a short retry window before it can
   accept work
 
-That distinction must stay inside the normal availability or recovery logic.
+That distinction should be handled by a delivery layer above the live resolver:
+
+- keep the inbound message or interactive request pending
+- retry until prompt-ready or terminal failure
+- only show provider-facing recovery status when that pending delivery crosses
+  the visible-delay threshold
+
 It must not turn ordinary slow first-prompt behavior into a fake
 runtime-recovery signal.
+
+### 6. Delivery ownership and lease model
+
+Interactive delivery should be owned by a deployment-managed durable delivery
+record, not by an in-memory request handler.
+
+Phase 1 default:
+
+- one durable delivery record per inbound interactive message
+- unique key: routing identity plus source message identity
+- a renewable worker lease on that record so only one worker actively drives it
+  at a time
+
+Minimum delivery fields:
+
+- routing identity
+- source message identity
+- delivery `state`
+- `attemptCount`
+- `nextAttemptAt`
+- `leaseOwner`
+- `leaseExpiresAt`
+- `lastError`
+- timestamps
+
+If a worker dies, another worker may resume the same delivery after the lease
+expires.
+
+### 7. Phase 1 timing defaults
+
+Phase 1 should use the same timing defaults across provider gateways unless a
+provider has a stricter platform limit.
+
+Default values:
+
+- acknowledge inbound provider webhooks immediately, with a target of under
+  1 second
+- visible recovery status threshold: 5 seconds
+- same-runtime prompt-ready retry backoff: exponential starting at 250
+  milliseconds, capped at 2 seconds, for up to 8 seconds total before
+  escalation
+- stale-binding recovery poll interval: 1 second
+- stale-binding recovery poll budget: 20 seconds
+- total pending-delivery timeout before terminal failure: 45 seconds
+
+These defaults are deliberately simple:
+
+- short retries first when the runtime is already live but not prompt-ready
+- binding refresh only after a real stale-binding signal or after the short
+  prompt-ready budget is exhausted
+- one bounded total timeout for the whole delivery
 
 ## Provider Rollout
 
