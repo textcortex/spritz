@@ -434,17 +434,17 @@ test("session/prompt passes the configured Codex profile to fresh and resumed ex
   assert.equal(capturedArgs.length, 2);
   assert.deepEqual(capturedArgs[0].slice(0, 5), [
     "exec",
-    "--json",
-    "--skip-git-repo-check",
     "-p",
     "gateway-profile",
+    "--json",
+    "--skip-git-repo-check",
   ]);
   assert.deepEqual(capturedArgs[1].slice(0, 6), [
     "exec",
+    "-p",
+    "gateway-profile",
     "resume",
     "--json",
     "--skip-git-repo-check",
-    "-p",
-    "gateway-profile",
   ]);
 });

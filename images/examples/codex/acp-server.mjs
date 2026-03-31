@@ -315,10 +315,10 @@ class CodexACPRuntime {
     if (session.threadId) {
       return [
         "exec",
+        ...profileArgs,
         "resume",
         "--json",
         "--skip-git-repo-check",
-        ...profileArgs,
         ...modelArgs,
         ...this.config.codexArgs,
         "--output-last-message",
@@ -329,9 +329,9 @@ class CodexACPRuntime {
     }
     return [
       "exec",
+      ...profileArgs,
       "--json",
       "--skip-git-repo-check",
-      ...profileArgs,
       "-C",
       session.cwd,
       ...modelArgs,
