@@ -166,6 +166,31 @@ outcomes:
 
 It must not return `resolved` for a runtime that has not been verified.
 
+### Pending delivery sits above live resolution
+
+The live resolver answers one narrow question:
+
+- which runtime binding is live now
+
+Provider gateways and other interactive entry points often need to answer a
+second question:
+
+- can the next user message be delivered successfully yet
+
+Those are related, but they are not the same.
+
+A runtime may already be live enough for `resolved` while the first prompt path
+still needs a short warm-up or retry window before it can accept work.
+
+That means:
+
+- live resolution should stay a narrow runtime-binding contract
+- delivery state should be tracked separately above it
+- interactive callers may keep a request or provider message pending until the
+  runtime is prompt-ready
+
+This is a general interactive-instance rule, not a concierge-only special case.
+
 ## Invariants
 
 ### 1. Installation is durable; runtime is disposable
@@ -216,7 +241,7 @@ The resolver takes a routing identity:
 - installation exists
 - a live runtime exists
 - the runtime is usable now
-- bearer and provider auth are returned
+- the caller has what it needs to start delivery toward that runtime
 
 `unavailable`
 
@@ -229,6 +254,15 @@ The resolver takes a routing identity:
 - installation does not exist
 - or it is disconnected
 - or required provider auth is missing
+
+These resolver states do not replace delivery state.
+
+For example:
+
+- a provider gateway may have `resolved` runtime state and still keep the user
+  message pending briefly until the runtime is prompt-ready
+- a provider gateway may have `unavailable` runtime state and keep the same
+  pending message while recovery continues
 
 ### Required algorithm
 
@@ -412,7 +446,13 @@ For example:
 - the first ACP prompt path may still need a short retry window before it can
   accept work
 
-That distinction must stay inside the normal availability or recovery logic.
+That distinction should be handled by a delivery layer above the live resolver:
+
+- keep the inbound message or interactive request pending
+- retry until prompt-ready or terminal failure
+- only show provider-facing recovery status when that pending delivery crosses
+  the visible-delay threshold
+
 It must not turn ordinary slow first-prompt behavior into a fake
 runtime-recovery signal.
 

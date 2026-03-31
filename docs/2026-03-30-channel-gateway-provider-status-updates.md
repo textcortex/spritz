@@ -157,10 +157,38 @@ Provider-specific examples:
 The provider adapter decides the exact API call shape, but the user should
 experience the same behavior across providers.
 
-## Status Message Model
+## Pending Delivery And Status Model
 
-The gateway should track one durable status record per inbound message that
-crosses the visible-delay threshold.
+The gateway should track one durable delivery record per inbound provider
+message.
+
+Recommended delivery fields:
+
+- `provider`
+- `principalId`
+- `externalScopeType`
+- `externalTenantId`
+- `conversationRef`
+- `threadRef`
+- `sourceMessageRef`
+- `senderRef`
+- `state`
+- `attemptCount`
+- `lastError`
+- timestamps
+
+Recommended delivery states:
+
+- `pending`
+- `delivering`
+- `completed`
+- `failed`
+
+That delivery record is the durable owner of the inbound message while runtime
+resolution, recovery, and first-prompt readiness are still in progress.
+
+The gateway should track one durable status record per inbound message only if
+that delivery crosses the visible-delay threshold.
 
 Recommended fields:
 
@@ -195,17 +223,26 @@ The storage implementation belongs to the shared gateway deployment or another
 external integration store. Spritz core should not need to persist provider
 message ids inside runtime objects.
 
+The important relationship is:
+
+- the delivery record owns the lifecycle of the inbound provider message
+- the status record is an optional visible artifact derived from that delivery
+  record
+- the final assistant reply completes the delivery record
+
 ## Gateway Behavior
 
 ### Inbound processing
 
 1. provider event reaches the gateway
 2. the gateway acknowledges the provider webhook within the provider timeout
-3. the gateway starts route resolution, runtime reconciliation, and normal
+3. the gateway creates or resumes one durable pending delivery record for that
+   inbound provider message
+4. the gateway starts route resolution, runtime reconciliation, and normal
    delivery
-4. if the request stays on the normal healthy path, the gateway sends no status
+5. if the request stays on the normal healthy path, the gateway sends no status
    message
-5. if the gateway enters a real recovery or availability-retry loop and that
+6. if the gateway enters a real recovery or availability-retry loop and that
    loop crosses the visible-delay threshold, the gateway ensures one status
    message exists for that source message
 
@@ -233,6 +270,12 @@ The gateway should not treat these as recovery by themselves:
 - ordinary first-reply latency
 - a slow but otherwise healthy prompt on an already available runtime
 
+The recovery loop should treat the delivery record as still pending until one
+of two things is true:
+
+- prompt delivery succeeded
+- terminal failure was reached
+
 Once the visible-delay threshold has produced one status message, the gateway
 should keep using that same status record for deduplication and bookkeeping.
 It should not post repeated progress messages for the same source message in
@@ -242,12 +285,23 @@ v1.
 
 When the request reaches a terminal state:
 
-- on success, mark the status record completed and continue with the normal
-  reply path
+- on success, send the normal reply, mark the delivery record completed, and
+  mark any status record completed
 - on failure, mark the status record failed and send one clear terminal error
-  reply if needed
+  reply if needed, then mark the delivery record failed
 - on duplicate inbound delivery, converge on the same status record instead of
   creating a second one
+
+Prompt-ready matters here.
+
+The delivery should not be treated as successful just because:
+
+- the runtime exists
+- session exchange returned `resolved`
+- a bearer was issued
+
+The delivery becomes successful only after the prompt has actually been
+accepted and the normal reply path can continue.
 
 ## Provider Adapter Contract
 
@@ -289,10 +343,13 @@ but they must remain distinguishable in logging, metrics, and idempotency.
 
 - one inbound provider message may create at most one active status message for
   a given purpose
+- one inbound provider message may create at most one active delivery record
 - provider webhook retries must resolve to the same status record
+- provider webhook retries must resolve to the same delivery record
 - gateway restarts must be able to recover and continue from the same status
-  record
+  record and the same delivery record
 - finalizing an already-completed or failed status record must be safe
+- finalizing an already-completed or failed delivery record must be safe
 - the gateway must not emit a second final reply because a status message was
   retried
 
@@ -308,8 +365,11 @@ Recommended idempotency key input:
 
 ### Phase 1: Foundation (Critical Priority)
 
+- define the gateway-owned delivery record abstraction and storage contract
 - define the gateway-owned status record abstraction and storage contract
 - add visible-delay threshold handling to the inbound processing path
+- make inbound provider handling durable by creating or resuming the pending
+  delivery record before longer recovery work
 - implement the generic provider adapter method for ensure
 - implement Slack first because the shared Slack gateway already exists
 - add metrics for creation, completion, failure, and time-to-first-status
@@ -333,11 +393,15 @@ Recommended idempotency key input:
 Before calling the feature production-ready, validate:
 
 1. a fast request produces no visible status message
-2. a delayed request produces exactly one status message in the correct
+2. a delayed request persists one pending delivery and produces exactly one
+   status message in the correct
    conversation target
 3. duplicate provider deliveries do not create duplicate status messages
-4. runtime recovery does not post additional status messages for the same
+4. duplicate provider deliveries do not create duplicate delivery records
+5. runtime recovery does not post additional status messages for the same
    source message
+6. a request is not marked successful until the runtime is actually
+   prompt-ready and the normal reply path can continue
 5. successful completion leaves the status message in place and sends the final
    reply once
 6. terminal failure leaves the status message in place and sends a clear error

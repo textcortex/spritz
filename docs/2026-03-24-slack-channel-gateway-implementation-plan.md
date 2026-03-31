@@ -362,6 +362,38 @@ Phase 1 non-recovery signals should be:
 - ordinary prompt latency on a healthy runtime
 - a slow ACP connect on a runtime that is already available
 
+Slack should also treat inbound message handling as a durable pending delivery,
+not as one synchronous webhook request that must finish the whole recovery path
+before Slack's request budget is exhausted.
+
+That means:
+
+- acknowledge the inbound Slack event quickly
+- create or resume one pending delivery record for that source Slack message
+- let the recovery loop continue asynchronously behind that delivery record
+- post `Still waking up...` only if that pending delivery crosses the
+  visible-delay threshold
+- send the final reply only after the runtime is actually prompt-ready
+
+### Pending delivery flow
+
+Phase 1 should use this flow for the first inbound Slack message and for
+retries of the same message:
+
+1. accept the Slack event and persist or resume one pending delivery keyed by
+   the inbound Slack message identity
+2. ask the shared live resolver for the current runtime binding
+3. if the runtime is missing, terminal, or still being recreated, keep the
+   delivery pending while recovery continues
+4. if the runtime is live but the first ACP prompt is not ready yet, keep the
+   same delivery pending and retry briefly
+5. if the pending delivery crosses the visible-delay threshold, ensure one
+   `Still waking up...` message exists for that source Slack message
+6. when the prompt is accepted, continue the normal reply path and mark the
+   delivery completed
+7. if the delivery reaches terminal failure, send one failure reply and mark it
+   failed
+
 The recovery loop should behave like this:
 
 1. stay on the fast path for healthy ready runtimes
@@ -375,6 +407,10 @@ The recovery loop should behave like this:
 
 The gateway should not recreate the runtime just because ACP is still coming
 up on an otherwise healthy runtime.
+
+The gateway should also not mark delivery success just because session exchange
+returned `resolved`. Success means the prompt has actually been handed off to
+the runtime and the normal reply path can continue.
 
 ## Threading Defaults
 
@@ -447,6 +483,9 @@ Before calling Phase 1 done, verify:
     is in progress.
 15. A pre-delivery `acp unavailable` is retried as an availability case and
     does not fail the first recovered turn prematurely.
+16. Duplicate Slack webhook deliveries converge on the same pending delivery.
+17. The first recovered Slack turn is not marked successful until the prompt is
+    actually accepted by ACP.
 
 ## Follow-ups
 
