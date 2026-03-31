@@ -137,6 +137,17 @@ func isSpritzRuntimeMissingError(err error) bool {
 	return strings.Contains(strings.ToLower(statusErr.body), "spritz not found")
 }
 
+func isACPUnavailableError(err error) bool {
+	var statusErr *httpStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	if statusErr.statusCode != http.StatusConflict {
+		return false
+	}
+	return strings.Contains(strings.ToLower(statusErr.body), "acp unavailable")
+}
+
 func (g *slackGateway) exchangeChannelSession(ctx context.Context, teamID string, forceRefresh bool) (channelSession, error) {
 	body := map[string]any{
 		"principalId":       g.cfg.PrincipalID,
