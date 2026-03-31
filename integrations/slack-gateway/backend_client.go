@@ -137,12 +137,15 @@ func isSpritzRuntimeMissingError(err error) bool {
 	return strings.Contains(strings.ToLower(statusErr.body), "spritz not found")
 }
 
-func (g *slackGateway) exchangeChannelSession(ctx context.Context, teamID string) (channelSession, error) {
+func (g *slackGateway) exchangeChannelSession(ctx context.Context, teamID string, forceRefresh bool) (channelSession, error) {
 	body := map[string]any{
 		"principalId":       g.cfg.PrincipalID,
 		"provider":          slackProvider,
 		"externalScopeType": slackWorkspaceScope,
 		"externalTenantId":  strings.TrimSpace(teamID),
+	}
+	if forceRefresh {
+		body["forceRefresh"] = true
 	}
 	var payload backendChannelSessionResponse
 	if err := g.postBackendJSON(ctx, "/internal/v1/spritz/channel-sessions/exchange", body, &payload); err != nil {

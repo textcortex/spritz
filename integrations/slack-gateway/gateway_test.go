@@ -2410,11 +2410,23 @@ func TestProcessMessageEventRecoversAfterRuntimeReusesSameInstanceID(t *testing.
 	defer slackAPI.Close()
 
 	var sessionExchangeCalls atomic.Int32
+	var sessionExchangeForceRefresh []bool
+	var sessionExchangeMu sync.Mutex
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/internal/v1/spritz/channel-sessions/exchange" {
 			t.Fatalf("unexpected backend path %s", r.URL.Path)
 		}
 		sessionExchangeCalls.Add(1)
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode session exchange body: %v", err)
+		}
+		sessionExchangeMu.Lock()
+		sessionExchangeForceRefresh = append(
+			sessionExchangeForceRefresh,
+			payload["forceRefresh"] == true,
+		)
+		sessionExchangeMu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status": "resolved",
 			"session": map[string]any{
@@ -2562,6 +2574,15 @@ func TestProcessMessageEventRecoversAfterRuntimeReusesSameInstanceID(t *testing.
 	}
 	if sessionExchangeCalls.Load() != 2 {
 		t.Fatalf("expected initial exchange plus one recovery exchange, got %d", sessionExchangeCalls.Load())
+	}
+	if len(sessionExchangeForceRefresh) != 2 {
+		t.Fatalf("expected two session exchange payloads, got %#v", sessionExchangeForceRefresh)
+	}
+	if sessionExchangeForceRefresh[0] {
+		t.Fatalf("expected initial session exchange to stay on fast path, got %#v", sessionExchangeForceRefresh)
+	}
+	if !sessionExchangeForceRefresh[1] {
+		t.Fatalf("expected recovery exchange to force refresh, got %#v", sessionExchangeForceRefresh)
 	}
 	if upsertCalls.Load() != 3 {
 		t.Fatalf("expected recovery retry plus alias persistence, got %d", upsertCalls.Load())

@@ -371,7 +371,13 @@ func (g *slackGateway) processMessageEventWithDelivery(
 	}
 
 	recoveryState := newChannelSessionRecoveryState()
-	session, terminalHandled, err := g.awaitChannelSession(ctx, envelope, event, recoveryState)
+	session, terminalHandled, err := g.awaitChannelSession(
+		ctx,
+		envelope,
+		event,
+		recoveryState,
+		false,
+	)
 	if err != nil {
 		return err
 	}
@@ -430,6 +436,7 @@ func (g *slackGateway) processMessageEventWithDelivery(
 			envelope,
 			event,
 			recoveryState,
+			true,
 		)
 		if recoveryErr != nil {
 			return recoveryErr
@@ -549,13 +556,14 @@ func (g *slackGateway) awaitChannelSession(
 	envelope slackEnvelope,
 	event slackEventInner,
 	recoveryState *channelSessionRecoveryState,
+	forceRefresh bool,
 ) (channelSession, bool, error) {
 	if recoveryState == nil {
 		recoveryState = newChannelSessionRecoveryState()
 	}
 
 	for {
-		session, err := g.exchangeChannelSession(ctx, envelope.TeamID)
+		session, err := g.exchangeChannelSession(ctx, envelope.TeamID, forceRefresh)
 		if err == nil {
 			recoveryState.rememberProviderAuth(session.ProviderAuth)
 			return session, false, nil
