@@ -239,7 +239,9 @@ func (g *slackGateway) postSlackMessage(ctx context.Context, token, channel, tex
 	if err != nil {
 		return "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(payload))
+	reqCtx, cancel := g.requestContext(ctx)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, target, bytes.NewReader(payload))
 	if err != nil {
 		return "", err
 	}
@@ -303,7 +305,9 @@ func (g *slackGateway) postJSONWithMethod(ctx context.Context, method, endpoint,
 	} else {
 		payload = []byte("{}")
 	}
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(payload))
+	reqCtx, cancel := g.requestContext(ctx)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, method, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}

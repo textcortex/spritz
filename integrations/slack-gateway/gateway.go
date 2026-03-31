@@ -63,7 +63,7 @@ func newSlackGateway(cfg config, logger *slog.Logger) *slackGateway {
 	}
 	return &slackGateway{
 		cfg:        cfg,
-		httpClient: &http.Client{Timeout: cfg.HTTPTimeout},
+		httpClient: &http.Client{},
 		state:      newOAuthStateManager(cfg.OAuthStateSecret, 15*time.Minute),
 		dedupe:     newDedupeStore(cfg.DedupeTTL),
 		logger:     logger,
@@ -134,4 +134,19 @@ func firstNonEmpty(values ...string) string {
 
 func (g *slackGateway) presetID() string {
 	return firstNonEmpty(g.cfg.PresetID, defaultSlackPresetID)
+}
+
+// requestContext preserves an existing caller deadline and only falls back to
+// the gateway HTTP timeout when the caller did not already bound the request.
+func (g *slackGateway) requestContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if g.cfg.HTTPTimeout <= 0 {
+		return ctx, func() {}
+	}
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, g.cfg.HTTPTimeout)
 }
