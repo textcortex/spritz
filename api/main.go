@@ -251,6 +251,7 @@ func (s *server) registerRoutes(e *echo.Echo) {
 	group.GET("/healthz", s.handleHealthz)
 	internal := group.Group("/internal/v1", s.internalAuthMiddleware())
 	if s.internalAuth.enabled {
+		internal.GET("/presets/:presetID", s.getInternalPreset)
 		internal.GET("/runtime-bindings/:namespace/:instanceId", s.getRuntimeBinding)
 		internal.POST("/spritzes", s.createInternalSpritz)
 		internal.GET("/spritzes/:namespace/:name", s.getInternalSpritz)
