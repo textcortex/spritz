@@ -598,6 +598,87 @@ func TestInternalReplaceSpritzReplaysAfterReplacementCreateBeforeReservationComp
 	}
 }
 
+func TestInternalReplaceSpritzRejectsCreateReplayWithoutMatchingLineage(t *testing.T) {
+	body := `{
+		"targetRevision": "sha256:revision-2",
+		"idempotencyKey": "rollout-1",
+		"replacement": {
+			"principal": {"id": "channel-gateway"},
+			"request": {
+				"name": "zeno-replacement",
+				"presetId": "zeno",
+				"ownerId": "user-123",
+				"spec": {}
+			}
+		}
+	}`
+	probeServer := newInternalSpritzesTestServer(t)
+	replacementPrincipal, _, replacementFingerprint := mustNormalizeReplaceForTest(
+		t,
+		probeServer,
+		"spritz-production",
+		"zeno-acme",
+		body,
+	)
+	source := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "zeno-acme",
+			Namespace: "spritz-production",
+		},
+		Spec: spritzv1.SpritzSpec{
+			Image: "ghcr.io/example/zeno:latest",
+			Owner: spritzv1.SpritzOwner{ID: "user-123"},
+		},
+		Status: spritzv1.SpritzStatus{Phase: "Ready"},
+	}
+	unrelatedReplay := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "zeno-replacement",
+			Namespace: "spritz-production",
+			Annotations: map[string]string{
+				targetRevisionAnnotationKey:        "sha256:revision-2",
+				replacementSourceNSAnnotationKey:   "spritz-production",
+				replacementSourceNameAnnotationKey: "some-other-source",
+				replacementIDKeyAnnotationKey:      "rollout-1",
+				idempotencyKeyAnnotationKey: replacementCreateIdempotencyKey(
+					"spritz-production",
+					"zeno-acme",
+					"rollout-1",
+				),
+				idempotencyHashAnnotationKey: replacementFingerprint,
+				actorIDAnnotationKey:         replacementPrincipal.ID,
+				actorTypeAnnotationKey:       string(replacementPrincipal.Type),
+			},
+		},
+		Spec: spritzv1.SpritzSpec{
+			Image: "ghcr.io/example/zeno:latest",
+			Owner: spritzv1.SpritzOwner{ID: "user-123"},
+		},
+		Status: spritzv1.SpritzStatus{Phase: "Ready"},
+	}
+	s := newInternalSpritzesTestServer(t, source, unrelatedReplay)
+	e := echo.New()
+	s.registerRoutes(e)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/internal/v1/spritzes/spritz-production/zeno-acme:replace",
+		strings.NewReader(body),
+	)
+	req.Header.Set("Authorization", "Bearer spritz-internal-token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "replacement create replay target is invalid") {
+		t.Fatalf("expected invalid replay target error, got %s", rec.Body.String())
+	}
+}
+
 func TestInternalReplaceSpritzReplaysAfterSourceDeletion(t *testing.T) {
 	source := &spritzv1.Spritz{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1090,5 +1171,61 @@ func TestInternalReplaceSpritzRejectsReusedReservedNameForUnrelatedSpritz(t *tes
 	}
 	if strings.Contains(rec.Body.String(), `"replayed":true`) {
 		t.Fatalf("expected reused name not to replay, got %s", rec.Body.String())
+	}
+}
+
+func TestInternalReplaceSpritzRejectsOwnerMismatchAndCleansUpReplacement(t *testing.T) {
+	source := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "zeno-acme",
+			Namespace: "spritz-production",
+		},
+		Spec: spritzv1.SpritzSpec{
+			Image: "ghcr.io/example/zeno:latest",
+			Owner: spritzv1.SpritzOwner{ID: "user-123"},
+		},
+		Status: spritzv1.SpritzStatus{Phase: "Ready"},
+	}
+	s := newInternalSpritzesTestServer(t, source)
+	e := echo.New()
+	s.registerRoutes(e)
+
+	body := `{
+		"targetRevision": "sha256:revision-2",
+		"idempotencyKey": "rollout-1",
+		"replacement": {
+			"principal": {"id": "channel-gateway"},
+			"request": {
+				"name": "zeno-replacement",
+				"presetId": "zeno",
+				"ownerId": "user-999",
+				"spec": {}
+			}
+		}
+	}`
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/internal/v1/spritzes/spritz-production/zeno-acme:replace",
+		strings.NewReader(body),
+	)
+	req.Header.Set("Authorization", "Bearer spritz-internal-token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "replacement owner does not match source") {
+		t.Fatalf("expected owner mismatch error, got %s", rec.Body.String())
+	}
+
+	var replacement spritzv1.Spritz
+	if err := s.client.Get(context.Background(), client.ObjectKey{
+		Namespace: "spritz-production",
+		Name:      "zeno-replacement",
+	}, &replacement); err == nil {
+		t.Fatalf("expected invalid replacement to be cleaned up")
 	}
 }

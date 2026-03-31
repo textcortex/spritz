@@ -263,6 +263,25 @@ func (s *server) replaceInternalSpritz(c echo.Context) error {
 			return writeError(c, http.StatusInternalServerError, err.Error())
 		}
 		if existingReplacement != nil {
+			if err := s.client.Get(c.Request().Context(), client.ObjectKey{
+				Namespace: namespace,
+				Name:      sourceName,
+			}, sourceSummary); err != nil {
+				if !apierrors.IsNotFound(err) {
+					return writeError(c, http.StatusInternalServerError, err.Error())
+				}
+			} else if err := validateCreatedReplacement(
+				sourceSummary,
+				existingReplacement,
+				replacementPrincipal,
+				namespace,
+				sourceName,
+				body.IdempotencyKey,
+				body.TargetRevision,
+				replacementFingerprint,
+			); err != nil {
+				return writeError(c, http.StatusConflict, err.Error())
+			}
 			return writeReplaceResponse(c, sourceSummary, existingReplacement, true)
 		}
 	}
@@ -292,6 +311,26 @@ func (s *server) replaceInternalSpritz(c echo.Context) error {
 	createdReplacement, replayed, err := extractCreatedReplacement(recorder.Body.Bytes())
 	if err != nil {
 		return writeError(c, http.StatusInternalServerError, err.Error())
+	}
+	if err := validateCreatedReplacement(
+		sourceSummary,
+		createdReplacement,
+		replacementPrincipal,
+		namespace,
+		sourceName,
+		body.IdempotencyKey,
+		body.TargetRevision,
+		replacementFingerprint,
+	); err != nil {
+		if !replayed {
+			if cleanupErr := s.deleteReplacementCreateResult(
+				c.Request().Context(),
+				createdReplacement,
+			); cleanupErr != nil {
+				return writeError(c, http.StatusInternalServerError, cleanupErr.Error())
+			}
+		}
+		return writeError(c, http.StatusConflict, err.Error())
 	}
 	if err := s.completeReplaceReservation(
 		c.Request().Context(),
@@ -579,6 +618,63 @@ func extractCreatedReplacement(raw []byte) (*spritzv1.Spritz, bool, error) {
 		return nil, false, fmt.Errorf("replacement create response is invalid")
 	}
 	return envelope.Data.Spritz, envelope.Data.Replayed, nil
+}
+
+func replacementPreservesSourceOwner(source, replacement *spritzv1.Spritz) bool {
+	if source == nil || replacement == nil {
+		return false
+	}
+	if strings.TrimSpace(source.Spec.Owner.ID) != strings.TrimSpace(replacement.Spec.Owner.ID) {
+		return false
+	}
+	sourceAnnotations := source.GetAnnotations()
+	replacementAnnotations := replacement.GetAnnotations()
+	for _, key := range []string{
+		externalOwnerIssuerAnnotationKey,
+		externalOwnerProviderAnnotationKey,
+		externalOwnerTenantAnnotationKey,
+		externalOwnerSubjectHashAnnotationKey,
+	} {
+		if strings.TrimSpace(sourceAnnotations[key]) != strings.TrimSpace(replacementAnnotations[key]) {
+			return false
+		}
+	}
+	return true
+}
+
+func validateCreatedReplacement(
+	source, replacement *spritzv1.Spritz,
+	principal principal,
+	namespace, sourceName, idempotencyKey, targetRevision, replacementFingerprint string,
+) error {
+	if !matchesReservedReplacementReplayTarget(
+		replacement,
+		principal,
+		namespace,
+		sourceName,
+		idempotencyKey,
+		targetRevision,
+		replacementFingerprint,
+	) {
+		return fmt.Errorf("replacement create replay target is invalid")
+	}
+	if !replacementPreservesSourceOwner(source, replacement) {
+		return fmt.Errorf("replacement owner does not match source")
+	}
+	return nil
+}
+
+func (s *server) deleteReplacementCreateResult(
+	ctx context.Context,
+	replacement *spritzv1.Spritz,
+) error {
+	if replacement == nil {
+		return nil
+	}
+	if err := s.client.Delete(ctx, replacement); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to clean up invalid replacement: %w", err)
+	}
+	return nil
 }
 
 func writeReplaceResponse(
