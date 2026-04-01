@@ -21,6 +21,9 @@ func TestExtractSupportsResourceBlocks(t *testing.T) {
 	if got := Extract(map[string]any{"resource": map[string]any{"uri": "file://workspace/report.txt"}}); got != "file://workspace/report.txt" {
 		t.Fatalf("expected resource uri, got %q", got)
 	}
+	if got := Extract(map[string]any{"resource": map[string]any{"text": "", "uri": "file://workspace/fallback.txt"}}); got != "file://workspace/fallback.txt" {
+		t.Fatalf("expected resource uri fallback, got %q", got)
+	}
 }
 
 func TestJoinChunksPreservesChunkBoundaryWhitespaceAndNewlines(t *testing.T) {

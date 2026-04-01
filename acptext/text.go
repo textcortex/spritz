@@ -24,7 +24,7 @@ func Extract(value any) string {
 		}
 		return strings.Join(parts, "\n")
 	case map[string]any:
-		if text, ok := typed["text"].(string); ok {
+		if text, ok := typed["text"].(string); ok && text != "" {
 			return text
 		}
 		if content, ok := typed["content"]; ok {
