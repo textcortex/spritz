@@ -99,7 +99,7 @@ func (s *server) normalizeCreateRequest(_ context.Context, principal principal, 
 	if strings.TrimSpace(body.Spec.ServiceAccountName) != "" && !principalCanUseProvisionerFlow(principal) {
 		return nil, newCreateRequestError(http.StatusForbidden, errors.New("spec.serviceAccountName is reserved for provisioner use"))
 	}
-	if normalizeSpritzRuntimePolicy(body.Spec.RuntimePolicy) != nil && !principalCanUseProvisionerFlow(principal) {
+	if normalizeSpritzRuntimePolicy(body.Spec.RuntimePolicy) != nil && !principal.isService() {
 		return nil, newCreateRequestError(http.StatusForbidden, errors.New("spec.runtimePolicy is reserved for provisioner use"))
 	}
 	if !principal.isService() {
