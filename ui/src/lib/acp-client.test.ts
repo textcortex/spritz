@@ -40,6 +40,10 @@ describe('extractACPText', () => {
     expect(extractACPText({ resource: { uri: 'file://foo.txt' } })).toBe('file://foo.txt');
   });
 
+  it('falls back to resource uri when text is empty', () => {
+    expect(extractACPText({ resource: { text: '', uri: 'file://fallback.txt' } })).toBe('file://fallback.txt');
+  });
+
   it('handles nested arrays', () => {
     const input = [{ text: 'a' }, { text: 'b' }];
     expect(extractACPText(input)).toBe('a\nb');

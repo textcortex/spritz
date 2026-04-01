@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"spritz.sh/acptext"
 )
 
 func TestOAuthCallbackStoresInstallationAndUpsertsRegistry(t *testing.T) {
@@ -266,7 +267,7 @@ func TestOAuthCallbackReturnsBadGatewayWhenBackendUpsertFails(t *testing.T) {
 }
 
 func TestExtractACPTextSupportsResourceBlocks(t *testing.T) {
-	resourceText := extractACPText(map[string]any{
+	resourceText := acptext.Extract(map[string]any{
 		"resource": map[string]any{
 			"text": "resource text",
 		},
@@ -275,7 +276,7 @@ func TestExtractACPTextSupportsResourceBlocks(t *testing.T) {
 		t.Fatalf("expected resource text, got %q", resourceText)
 	}
 
-	resourceURI := extractACPText(map[string]any{
+	resourceURI := acptext.Extract(map[string]any{
 		"resource": map[string]any{
 			"uri": "file://workspace/report.txt",
 		},
@@ -1645,6 +1646,118 @@ func TestPromptConversationRejectsInteractivePermissionRequests(t *testing.T) {
 		}
 	default:
 		t.Fatalf("expected websocket request headers to be captured")
+	}
+}
+
+func TestPromptConversationPreservesChunkBoundaryWhitespaceAndNewlines(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	spritz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/acp/conversations/conv-1/connect" {
+			t.Fatalf("unexpected spritz path %s", r.URL.Path)
+		}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("upgrade failed: %v", err)
+		}
+		defer conn.Close()
+		for {
+			_, payload, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var message map[string]any
+			if err := json.Unmarshal(payload, &message); err != nil {
+				t.Fatalf("decode ws payload: %v", err)
+			}
+			switch message["method"] {
+			case "initialize":
+				_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{"protocolVersion": 1}})
+			case "session/load":
+				_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
+			case "session/prompt":
+				for _, chunk := range []string{
+					"I'll ",
+					"spawn a dedicated agent for you using the",
+					"\nSpritz controls.\n\nThe",
+					" Slack account could not be resolved.\n",
+				} {
+					_ = conn.WriteJSON(map[string]any{
+						"jsonrpc": "2.0",
+						"method":  "session/update",
+						"params": map[string]any{
+							"update": map[string]any{
+								"sessionUpdate": "agent_message_chunk",
+								"content": []map[string]any{{
+									"type": "text",
+									"text": chunk,
+								}},
+							},
+						},
+					})
+				}
+				_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
+				return
+			default:
+				t.Fatalf("unexpected ACP method %#v", message["method"])
+			}
+		}
+	}))
+	defer spritz.Close()
+
+	cfg := config{
+		SpritzBaseURL: spritz.URL,
+		HTTPTimeout:   5 * time.Second,
+	}
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	reply, promptSent, err := gateway.promptConversation(
+		t.Context(),
+		"owner-token",
+		"spritz-staging",
+		"conv-1",
+		"session-1",
+		"/home/dev",
+		"hello",
+	)
+	if err != nil {
+		t.Fatalf("promptConversation returned error: %v", err)
+	}
+	if !promptSent {
+		t.Fatalf("expected prompt delivery to be marked as sent")
+	}
+	want := "I'll spawn a dedicated agent for you using the\nSpritz controls.\n\nThe Slack account could not be resolved.\n"
+	if reply != want {
+		t.Fatalf("expected reply %q, got %q", want, reply)
+	}
+}
+
+func TestPostSlackMessagePreservesTextWhitespace(t *testing.T) {
+	var payload map[string]any
+	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat.postMessage" {
+			t.Fatalf("unexpected slack path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode slack post body: %v", err)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ts": "1711387376.000100"})
+	}))
+	defer slackAPI.Close()
+
+	gateway := newSlackGateway(
+		config{
+			SlackAPIBaseURL: slackAPI.URL,
+			HTTPTimeout:     5 * time.Second,
+		},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	text := "\nFirst line\n\n- bullet\n"
+	if _, err := gateway.postSlackMessage(t.Context(), "xoxb-installed", "C_1", text, ""); err != nil {
+		t.Fatalf("postSlackMessage returned error: %v", err)
+	}
+	if payload["text"] != text {
+		t.Fatalf("expected text %q, got %#v", text, payload["text"])
 	}
 }
 

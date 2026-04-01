@@ -229,7 +229,7 @@ func (g *slackGateway) bootstrapConversation(ctx context.Context, serviceToken, 
 func (g *slackGateway) postSlackMessage(ctx context.Context, token, channel, text, threadTS string) (string, error) {
 	body := map[string]any{
 		"channel": strings.TrimSpace(channel),
-		"text":    strings.TrimSpace(text),
+		"text":    text,
 	}
 	if threadTS = strings.TrimSpace(threadTS); threadTS != "" {
 		body["thread_ts"] = threadTS

@@ -445,6 +445,29 @@ The gateway should also not mark delivery success just because session exchange
 returned `resolved`. Success means the prompt has actually been handed off to
 the runtime and the normal reply path can continue.
 
+## ACP Reply Text Integrity
+
+The Slack gateway must treat ACP assistant text as lossless content, not as
+display text that may be normalized.
+
+That means:
+
+- `agent_message_chunk` text must be assembled without trimming individual
+  chunks
+- spaces and newlines at chunk boundaries are part of the payload and must be
+  preserved
+- the gateway may trim only for emptiness checks at the final boundary, not as
+  part of text extraction or chunk joining
+- channel adapters should reuse one shared ACP text extraction and chunk-join
+  helper instead of reimplementing their own whitespace rules
+
+If this contract is violated, the provider-visible reply can silently corrupt
+content even when the runtime output is correct. Typical failures are:
+
+- merged words across chunk boundaries
+- lost paragraph breaks
+- flattened lists or code blocks
+
 ## Threading Defaults
 
 Phase 1 should keep channel behavior predictable:
@@ -519,6 +542,8 @@ Before calling Phase 1 done, verify:
 16. Duplicate Slack webhook deliveries converge on the same pending delivery.
 17. The first recovered Slack turn is not marked successful until the prompt is
     actually accepted by ACP.
+18. Multiline assistant replies preserve spaces and newlines across ACP chunk
+    boundaries.
 
 ## Follow-ups
 

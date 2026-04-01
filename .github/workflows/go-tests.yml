@@ -3,6 +3,7 @@ name: go-tests
 on:
   pull_request:
     paths:
+      - "integrations/acptext/**"
       - "api/**"
       - "operator/**"
       - "integrations/github-app/**"
@@ -12,6 +13,7 @@ on:
     branches:
       - main
     paths:
+      - "integrations/acptext/**"
       - "api/**"
       - "operator/**"
       - "integrations/github-app/**"
@@ -25,6 +27,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - name: acptext
+            working-directory: integrations/acptext
           - name: api
             working-directory: api
           - name: operator
@@ -44,7 +48,24 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: ${{ matrix.working-directory }}/go.mod
-          cache-dependency-path: ${{ matrix.working-directory }}/go.sum
+          cache-dependency-path: ${{ matrix.working-directory }}/go.*
 
       - name: Test
         run: go test ./...
+
+  docker-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            dockerfile: api/Dockerfile
+          - name: integrations-slack-gateway
+            dockerfile: integrations/slack-gateway/Dockerfile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -f "${{ matrix.dockerfile }}" . -t "spritz-${{ matrix.name }}-ci"
