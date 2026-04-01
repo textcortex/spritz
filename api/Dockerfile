@@ -1,12 +1,16 @@
 FROM golang:1.25-alpine AS build
 
 WORKDIR /src
+COPY acptext/go.mod ./acptext/go.mod
 COPY api/go.mod api/go.sum ./api/
 COPY operator/go.mod operator/go.sum ./operator/
 WORKDIR /src/api
 RUN go mod download
-COPY api/ /src/api/
+WORKDIR /src
+COPY acptext/ /src/acptext/
 COPY operator/ /src/operator/
+COPY api/ /src/api/
+WORKDIR /src/api
 RUN CGO_ENABLED=0 go build -o /out/spritz-api .
 RUN CGO_ENABLED=0 go build -o /out/spritz-shared-syncer ./cmd/shared-syncer
 

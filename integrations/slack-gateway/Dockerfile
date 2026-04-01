@@ -1,11 +1,15 @@
 FROM golang:1.25-alpine AS build
 
 WORKDIR /src
+COPY acptext/go.mod ./acptext/go.mod
 COPY integrations/slack-gateway/go.mod ./integrations/slack-gateway/go.mod
 COPY integrations/slack-gateway/go.sum ./integrations/slack-gateway/go.sum
 WORKDIR /src/integrations/slack-gateway
 RUN go mod download
+WORKDIR /src
+COPY acptext/ /src/acptext/
 COPY integrations/slack-gateway/ /src/integrations/slack-gateway/
+WORKDIR /src/integrations/slack-gateway
 RUN CGO_ENABLED=0 go build -o /out/spritz-slack-gateway .
 
 FROM alpine:3.20
