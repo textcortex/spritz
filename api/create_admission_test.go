@@ -293,6 +293,116 @@ func TestCreateSpritzRejectsMissingRequiredResolvedFieldFromInstanceClass(t *tes
 	}
 }
 
+func TestCreateSpritzStoresResolvedRuntimePolicy(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	var presetReceived map[string]any
+	resolver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		if err := json.NewDecoder(r.Body).Decode(&presetReceived); err != nil {
+			t.Fatalf("failed to decode resolver request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "resolved",
+			"mutations": map[string]any{
+				"spec": map[string]any{
+					"serviceAccountName": "dev-agent-ag-123",
+					"runtimePolicy": map[string]string{
+						"networkProfile":  "dev-cluster-only",
+						"mountProfile":    "dev-default",
+						"exposureProfile": "internal-acp",
+						"revision":        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					},
+				},
+			},
+		})
+	}))
+	defer resolver.Close()
+
+	s.presets = presetCatalog{
+		byID: []runtimePreset{{
+			ID:            "devbox",
+			Name:          "Devbox",
+			Image:         "example.com/devbox:latest",
+			NamePrefix:    "devbox",
+			InstanceClass: "dev-runtime",
+		}},
+	}
+	s.instanceClasses = instanceClassCatalog{
+		byID: map[string]instanceClass{
+			"dev-runtime": {
+				ID:      "dev-runtime",
+				Version: "v1",
+				Creation: instanceClassCreationPolicy{
+					RequireOwner: true,
+					RequiredResolvedFields: []string{
+						requiredResolvedFieldRuntimePolicy,
+						requiredResolvedFieldServiceAccountName,
+					},
+				},
+			},
+		},
+	}
+	s.extensions = extensionRegistry{
+		resolvers: []configuredResolver{{
+			id:            "runtime-binding",
+			extensionType: extensionTypeResolver,
+			operation:     extensionOperationPresetCreateResolve,
+			match: extensionMatchRule{
+				presetIDs: map[string]struct{}{"devbox": {}},
+			},
+			transport: configuredHTTPTransport{
+				url:     resolver.URL,
+				timeout: time.Second,
+			},
+		}},
+	}
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	body := []byte(`{
+		"name":"devbox-lake",
+		"presetId":"devbox",
+		"spec":{}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	contextPayload, ok := presetReceived["context"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected resolver context payload, got %#v", presetReceived["context"])
+	}
+	if contextPayload["instanceClassId"] != "dev-runtime" {
+		t.Fatalf("expected resolver instanceClassId dev-runtime, got %#v", contextPayload["instanceClassId"])
+	}
+
+	stored := &spritzv1.Spritz{}
+	if err := s.client.Get(context.Background(), client.ObjectKey{Name: "devbox-lake", Namespace: s.namespace}, stored); err != nil {
+		t.Fatalf("expected created spritz resource: %v", err)
+	}
+	if stored.Spec.ServiceAccountName != "dev-agent-ag-123" {
+		t.Fatalf("expected resolved service account name, got %q", stored.Spec.ServiceAccountName)
+	}
+	if stored.Spec.RuntimePolicy == nil {
+		t.Fatal("expected resolved runtimePolicy to be stored")
+	}
+	if stored.Spec.RuntimePolicy.NetworkProfile != "dev-cluster-only" {
+		t.Fatalf("expected runtime policy networkProfile, got %#v", stored.Spec.RuntimePolicy)
+	}
+	if stored.Spec.RuntimePolicy.Revision != "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("expected runtime policy revision, got %#v", stored.Spec.RuntimePolicy)
+	}
+}
+
 func TestCreateSpritzProvisionerPresetResolverReplaysWithResolvedBinding(t *testing.T) {
 	s := newCreateSpritzTestServer(t)
 	configureProvisionerTestServer(s)
@@ -625,6 +735,159 @@ func TestCreateSpritzProvisionerRejectsManualServiceAccountForResolverRequiredFi
 	}
 	if !strings.Contains(rec.Body.String(), "resolver-produced field") {
 		t.Fatalf("expected resolver-produced field error, got %s", rec.Body.String())
+	}
+}
+
+func TestCreateSpritzProvisionerRejectsManualRuntimePolicyForResolverRequiredField(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	s.presets = presetCatalog{
+		byID: []runtimePreset{{
+			ID:            "devbox",
+			Name:          "Devbox",
+			Image:         "example.com/devbox:latest",
+			NamePrefix:    "devbox",
+			InstanceClass: "dev-runtime",
+		}},
+	}
+	s.provisioners.allowedPresetIDs = map[string]struct{}{"devbox": {}}
+	s.instanceClasses = instanceClassCatalog{
+		byID: map[string]instanceClass{
+			"dev-runtime": {
+				ID:      "dev-runtime",
+				Version: "v1",
+				Creation: instanceClassCreationPolicy{
+					RequireOwner: true,
+					RequiredResolvedFields: []string{
+						requiredResolvedFieldRuntimePolicy,
+					},
+				},
+			},
+		},
+	}
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	body := []byte(`{
+		"presetId":"devbox",
+		"ownerId":"user-123",
+		"idempotencyKey":"manual-runtime-policy",
+		"spec":{
+			"runtimePolicy":{
+				"networkProfile":"dev-cluster-only",
+				"mountProfile":"dev-default",
+				"exposureProfile":"internal-acp",
+				"revision":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			}
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "zenobot")
+	req.Header.Set("X-Spritz-Principal-Type", "service")
+	req.Header.Set("X-Spritz-Principal-Scopes", "spritz.instances.create,spritz.instances.assign_owner")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "resolver-produced field") {
+		t.Fatalf("expected resolver-produced field error, got %s", rec.Body.String())
+	}
+}
+
+func TestCreateSpritzProvisionerRejectsManualRuntimePolicyWhenResolverOnlySetsServiceAccount(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	resolver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "resolved",
+			"mutations": map[string]any{
+				"spec": map[string]string{
+					"serviceAccountName": "dev-agent-ag-123",
+				},
+			},
+		})
+	}))
+	defer resolver.Close()
+
+	s.presets = presetCatalog{
+		byID: []runtimePreset{{
+			ID:            "devbox",
+			Name:          "Devbox",
+			Image:         "example.com/devbox:latest",
+			NamePrefix:    "devbox",
+			InstanceClass: "dev-runtime",
+		}},
+	}
+	s.provisioners.allowedPresetIDs = map[string]struct{}{"devbox": {}}
+	s.instanceClasses = instanceClassCatalog{
+		byID: map[string]instanceClass{
+			"dev-runtime": {
+				ID:      "dev-runtime",
+				Version: "v1",
+				Creation: instanceClassCreationPolicy{
+					RequireOwner: true,
+					RequiredResolvedFields: []string{
+						requiredResolvedFieldRuntimePolicy,
+						requiredResolvedFieldServiceAccountName,
+					},
+				},
+			},
+		},
+	}
+	s.extensions = extensionRegistry{
+		resolvers: []configuredResolver{{
+			id:            "runtime-binding",
+			extensionType: extensionTypeResolver,
+			operation:     extensionOperationPresetCreateResolve,
+			match: extensionMatchRule{
+				presetIDs: map[string]struct{}{"devbox": {}},
+			},
+			transport: configuredHTTPTransport{
+				url:     resolver.URL,
+				timeout: time.Second,
+			},
+		}},
+	}
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	body := []byte(`{
+		"presetId":"devbox",
+		"ownerId":"user-123",
+		"idempotencyKey":"manual-runtime-policy-with-resolver",
+		"spec":{
+			"runtimePolicy":{
+				"networkProfile":"dev-cluster-only",
+				"mountProfile":"dev-default",
+				"exposureProfile":"internal-acp",
+				"revision":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			}
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "zenobot")
+	req.Header.Set("X-Spritz-Principal-Type", "service")
+	req.Header.Set("X-Spritz-Principal-Scopes", "spritz.instances.create,spritz.instances.assign_owner")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), requiredResolvedFieldRuntimePolicy) {
+		t.Fatalf("expected runtimePolicy resolver-produced field error, got %s", rec.Body.String())
 	}
 }
 

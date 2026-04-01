@@ -99,6 +99,9 @@ func (s *server) normalizeCreateRequest(_ context.Context, principal principal, 
 	if strings.TrimSpace(body.Spec.ServiceAccountName) != "" && !principalCanUseProvisionerFlow(principal) {
 		return nil, newCreateRequestError(http.StatusForbidden, errors.New("spec.serviceAccountName is reserved for provisioner use"))
 	}
+	if normalizeSpritzRuntimePolicy(body.Spec.RuntimePolicy) != nil && !principal.isService() {
+		return nil, newCreateRequestError(http.StatusForbidden, errors.New("spec.runtimePolicy is reserved for provisioner use"))
+	}
 	if !principal.isService() {
 		if err := validateReservedCreateAnnotations(body.Annotations); err != nil {
 			return nil, newCreateRequestError(http.StatusForbidden, err)
@@ -213,6 +216,10 @@ func validateCreateSpec(spec *spritzv1.SpritzSpec) error {
 	}
 	spec.AgentRef = normalizeSpritzAgentRef(spec.AgentRef)
 	if err := validateSpritzAgentRef(spec.AgentRef); err != nil {
+		return err
+	}
+	spec.RuntimePolicy = normalizeSpritzRuntimePolicy(spec.RuntimePolicy)
+	if err := validateSpritzRuntimePolicy(spec.RuntimePolicy); err != nil {
 		return err
 	}
 	spec.ProfileOverrides = normalizeSpritzAgentProfile(spec.ProfileOverrides)

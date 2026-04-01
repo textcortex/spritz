@@ -122,8 +122,9 @@ type extensionResolverMutations struct {
 }
 
 type extensionResolverSpecMutation struct {
-	ServiceAccountName string                   `json:"serviceAccountName,omitempty"`
-	AgentRef           *spritzv1.SpritzAgentRef `json:"agentRef,omitempty"`
+	ServiceAccountName string                        `json:"serviceAccountName,omitempty"`
+	AgentRef           *spritzv1.SpritzAgentRef      `json:"agentRef,omitempty"`
+	RuntimePolicy      *spritzv1.SpritzRuntimePolicy `json:"runtimePolicy,omitempty"`
 }
 
 type configuredResolver struct {

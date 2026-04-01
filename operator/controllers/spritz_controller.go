@@ -37,6 +37,10 @@ const (
 	spritzContainerName                       = "spritz"
 	spritzFinalizer                           = "spritz.sh/finalizer"
 	ownerLabelKey                             = "spritz.sh/owner"
+	runtimeNetworkProfileLabelKey             = "spritz.sh/runtime-network-profile"
+	runtimeMountProfileLabelKey               = "spritz.sh/runtime-mount-profile"
+	runtimeExposureProfileLabelKey            = "spritz.sh/runtime-exposure-profile"
+	runtimePolicyRevisionAnnotationKey        = "spritz.sh/runtime-policy-revision"
 	defaultTTLGrace                           = 5 * time.Minute
 	defaultRepoInitImage                      = "alpine/git:2.45.2"
 	repoAuthMountPath                         = "/var/run/spritz/repo-auth"
@@ -222,19 +226,42 @@ func (r *SpritzReconciler) reconcileLifecycle(ctx context.Context, spritz *sprit
 }
 
 func reconcileSpritzMetadata(spritz *spritzv1.Spritz) bool {
-	ownerID := strings.TrimSpace(spritz.Spec.Owner.ID)
-	if ownerID == "" {
-		return false
-	}
-	desiredOwnerLabel := ownerLabelValue(ownerID)
 	if spritz.Labels == nil {
 		spritz.Labels = map[string]string{}
 	}
-	if spritz.Labels[ownerLabelKey] == desiredOwnerLabel {
-		return false
+	if spritz.Annotations == nil {
+		spritz.Annotations = map[string]string{}
 	}
-	spritz.Labels[ownerLabelKey] = desiredOwnerLabel
-	return true
+	updated := false
+
+	if ownerID := strings.TrimSpace(spritz.Spec.Owner.ID); ownerID != "" {
+		desiredOwnerLabel := ownerLabelValue(ownerID)
+		if spritz.Labels[ownerLabelKey] != desiredOwnerLabel {
+			spritz.Labels[ownerLabelKey] = desiredOwnerLabel
+			updated = true
+		}
+	}
+
+	if spritz.Spec.RuntimePolicy != nil {
+		if profile := strings.TrimSpace(spritz.Spec.RuntimePolicy.NetworkProfile); profile != "" && spritz.Labels[runtimeNetworkProfileLabelKey] != profile {
+			spritz.Labels[runtimeNetworkProfileLabelKey] = profile
+			updated = true
+		}
+		if profile := strings.TrimSpace(spritz.Spec.RuntimePolicy.MountProfile); profile != "" && spritz.Labels[runtimeMountProfileLabelKey] != profile {
+			spritz.Labels[runtimeMountProfileLabelKey] = profile
+			updated = true
+		}
+		if profile := strings.TrimSpace(spritz.Spec.RuntimePolicy.ExposureProfile); profile != "" && spritz.Labels[runtimeExposureProfileLabelKey] != profile {
+			spritz.Labels[runtimeExposureProfileLabelKey] = profile
+			updated = true
+		}
+		if revision := strings.TrimSpace(spritz.Spec.RuntimePolicy.Revision); revision != "" && spritz.Annotations[runtimePolicyRevisionAnnotationKey] != revision {
+			spritz.Annotations[runtimePolicyRevisionAnnotationKey] = revision
+			updated = true
+		}
+	}
+
+	return updated
 }
 
 func (r *SpritzReconciler) reconcileResources(ctx context.Context, spritz *spritzv1.Spritz) error {
@@ -262,6 +289,7 @@ func (r *SpritzReconciler) acpHealthProbePath() string {
 
 func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spritzv1.Spritz) error {
 	labels := baseLabels(spritz)
+	annotations := baseAnnotations(spritz)
 	workspaceSizeLimit := emptyDirSizeLimit("SPRITZ_WORKSPACE_SIZE_LIMIT", defaultWorkspaceSizeLimit)
 	homeSizeLimit := emptyDirSizeLimit("SPRITZ_HOME_SIZE_LIMIT", defaultHomeSizeLimit)
 
@@ -272,11 +300,14 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 			return err
 		}
 
+		selectorLabels := stableWorkloadSelectorLabels(deploy.Spec.Selector, spritz)
 		deploy.Labels = mergeMaps(labels, spritz.Spec.Labels)
 		deploy.Annotations = mergeMaps(deploy.Annotations, spritz.Spec.Annotations)
-		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
-		deploy.Spec.Template.Labels = labels
+		deploy.Annotations = mergeMaps(deploy.Annotations, annotations)
+		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
+		deploy.Spec.Template.Labels = mergeMaps(selectorLabels, labels)
 		deploy.Spec.Template.Annotations = mergeMaps(deploy.Spec.Template.Annotations, spritz.Spec.Annotations)
+		deploy.Spec.Template.Annotations = mergeMaps(deploy.Spec.Template.Annotations, annotations)
 
 		repos := repoEntries(spritz)
 		for _, repo := range repos {
@@ -448,9 +479,11 @@ func (r *SpritzReconciler) reconcileService(ctx context.Context, spritz *spritzv
 		}
 
 		labels := baseLabels(spritz)
+		annotations := baseAnnotations(spritz)
 		svc.Labels = mergeMaps(labels, spritz.Spec.Labels)
-		svc.Spec.Selector = labels
+		svc.Spec.Selector = deploymentSelectorLabels(spritz)
 		svc.Annotations = mergeMaps(svc.Annotations, spritz.Spec.Annotations)
+		svc.Annotations = mergeMaps(svc.Annotations, annotations)
 
 		svc.Spec.Ports = servicePorts(spritz)
 		return nil
@@ -476,9 +509,11 @@ func (r *SpritzReconciler) reconcileIngress(ctx context.Context, spritz *spritzv
 		}
 
 		labels := baseLabels(spritz)
+		annotations := baseAnnotations(spritz)
 		ing.Labels = mergeMaps(labels, spritz.Spec.Labels)
 		ing.Annotations = mergeMaps(ing.Annotations, spritz.Spec.Annotations)
 		ing.Annotations = mergeMaps(ing.Annotations, spritz.Spec.Ingress.Annotations)
+		ing.Annotations = mergeMaps(ing.Annotations, annotations)
 
 		if spritz.Spec.Ingress.ClassName != "" {
 			ing.Spec.IngressClassName = &spritz.Spec.Ingress.ClassName
@@ -539,9 +574,11 @@ func (r *SpritzReconciler) reconcileGatewayRoute(ctx context.Context, spritz *sp
 		}
 
 		labels := baseLabels(spritz)
+		annotations := baseAnnotations(spritz)
 		route.Labels = mergeMaps(labels, spritz.Spec.Labels)
 		route.Annotations = mergeMaps(route.Annotations, spritz.Spec.Annotations)
 		route.Annotations = mergeMaps(route.Annotations, spritz.Spec.Ingress.Annotations)
+		route.Annotations = mergeMaps(route.Annotations, annotations)
 
 		path := spritz.Spec.Ingress.Path
 		if path == "" {
@@ -867,7 +904,48 @@ func baseLabels(spritz *spritzv1.Spritz) map[string]string {
 	if spritz.Spec.Owner.ID != "" {
 		labels[ownerLabelKey] = ownerLabelValue(spritz.Spec.Owner.ID)
 	}
+	if spritz.Spec.RuntimePolicy != nil {
+		if profile := strings.TrimSpace(spritz.Spec.RuntimePolicy.NetworkProfile); profile != "" {
+			labels[runtimeNetworkProfileLabelKey] = profile
+		}
+		if profile := strings.TrimSpace(spritz.Spec.RuntimePolicy.MountProfile); profile != "" {
+			labels[runtimeMountProfileLabelKey] = profile
+		}
+		if profile := strings.TrimSpace(spritz.Spec.RuntimePolicy.ExposureProfile); profile != "" {
+			labels[runtimeExposureProfileLabelKey] = profile
+		}
+	}
 	return labels
+}
+
+func deploymentSelectorLabels(spritz *spritzv1.Spritz) map[string]string {
+	return map[string]string{
+		"spritz.sh/name": spritz.Name,
+	}
+}
+
+func stableWorkloadSelectorLabels(
+	selector *metav1.LabelSelector,
+	spritz *spritzv1.Spritz,
+) map[string]string {
+	if selector != nil && len(selector.MatchLabels) > 0 {
+		preserved := map[string]string{}
+		for key, value := range selector.MatchLabels {
+			preserved[key] = value
+		}
+		return preserved
+	}
+	return deploymentSelectorLabels(spritz)
+}
+
+func baseAnnotations(spritz *spritzv1.Spritz) map[string]string {
+	annotations := map[string]string{}
+	if spritz.Spec.RuntimePolicy != nil {
+		if revision := strings.TrimSpace(spritz.Spec.RuntimePolicy.Revision); revision != "" {
+			annotations[runtimePolicyRevisionAnnotationKey] = revision
+		}
+	}
+	return annotations
 }
 
 func ownerLabelValue(id string) string {

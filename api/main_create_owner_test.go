@@ -773,6 +773,73 @@ func TestCreateSpritzRejectsHumanProvidedServiceAccountName(t *testing.T) {
 	}
 }
 
+func TestCreateSpritzRejectsHumanProvidedRuntimePolicy(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	body := []byte(`{
+		"name":"tidal-ember",
+		"spec":{
+			"image":"example.com/spritz:latest",
+			"runtimePolicy":{
+				"networkProfile":"dev-cluster-only",
+				"mountProfile":"dev-default",
+				"exposureProfile":"internal-acp",
+				"revision":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			}
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "spec.runtimePolicy is reserved") {
+		t.Fatalf("expected reserved runtime policy error, got %s", rec.Body.String())
+	}
+}
+
+func TestCreateSpritzRejectsAdminProvidedRuntimePolicy(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	s.auth.adminIDs = map[string]struct{}{"admin-1": {}}
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	body := []byte(`{
+		"name":"tidal-ember",
+		"spec":{
+			"image":"example.com/spritz:latest",
+			"runtimePolicy":{
+				"networkProfile":"dev-cluster-only",
+				"mountProfile":"dev-default",
+				"exposureProfile":"internal-acp",
+				"revision":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			}
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "admin-1")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "spec.runtimePolicy is reserved") {
+		t.Fatalf("expected reserved runtime policy error, got %s", rec.Body.String())
+	}
+}
+
 func TestCreateSpritzRejectsHumanReservedControlPlaneAnnotations(t *testing.T) {
 	s := newCreateSpritzTestServer(t)
 	e := echo.New()
