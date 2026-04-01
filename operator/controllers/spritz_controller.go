@@ -289,7 +289,6 @@ func (r *SpritzReconciler) acpHealthProbePath() string {
 
 func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spritzv1.Spritz) error {
 	labels := baseLabels(spritz)
-	selectorLabels := deploymentSelectorLabels(spritz)
 	annotations := baseAnnotations(spritz)
 	workspaceSizeLimit := emptyDirSizeLimit("SPRITZ_WORKSPACE_SIZE_LIMIT", defaultWorkspaceSizeLimit)
 	homeSizeLimit := emptyDirSizeLimit("SPRITZ_HOME_SIZE_LIMIT", defaultHomeSizeLimit)
@@ -301,11 +300,12 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 			return err
 		}
 
+		selectorLabels := stableWorkloadSelectorLabels(deploy.Spec.Selector, spritz)
 		deploy.Labels = mergeMaps(labels, spritz.Spec.Labels)
 		deploy.Annotations = mergeMaps(deploy.Annotations, spritz.Spec.Annotations)
 		deploy.Annotations = mergeMaps(deploy.Annotations, annotations)
 		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
-		deploy.Spec.Template.Labels = labels
+		deploy.Spec.Template.Labels = mergeMaps(selectorLabels, labels)
 		deploy.Spec.Template.Annotations = mergeMaps(deploy.Spec.Template.Annotations, spritz.Spec.Annotations)
 		deploy.Spec.Template.Annotations = mergeMaps(deploy.Spec.Template.Annotations, annotations)
 
@@ -481,7 +481,7 @@ func (r *SpritzReconciler) reconcileService(ctx context.Context, spritz *spritzv
 		labels := baseLabels(spritz)
 		annotations := baseAnnotations(spritz)
 		svc.Labels = mergeMaps(labels, spritz.Spec.Labels)
-		svc.Spec.Selector = labels
+		svc.Spec.Selector = deploymentSelectorLabels(spritz)
 		svc.Annotations = mergeMaps(svc.Annotations, spritz.Spec.Annotations)
 		svc.Annotations = mergeMaps(svc.Annotations, annotations)
 
@@ -922,6 +922,20 @@ func deploymentSelectorLabels(spritz *spritzv1.Spritz) map[string]string {
 	return map[string]string{
 		"spritz.sh/name": spritz.Name,
 	}
+}
+
+func stableWorkloadSelectorLabels(
+	selector *metav1.LabelSelector,
+	spritz *spritzv1.Spritz,
+) map[string]string {
+	if selector != nil && len(selector.MatchLabels) > 0 {
+		preserved := map[string]string{}
+		for key, value := range selector.MatchLabels {
+			preserved[key] = value
+		}
+		return preserved
+	}
+	return deploymentSelectorLabels(spritz)
 }
 
 func baseAnnotations(spritz *spritzv1.Spritz) map[string]string {

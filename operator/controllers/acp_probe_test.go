@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -25,6 +26,9 @@ func newControllerTestScheme(t *testing.T) *runtime.Scheme {
 	}
 	if err := appsv1.AddToScheme(scheme); err != nil {
 		t.Fatalf("failed to register apps scheme: %v", err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to register core scheme: %v", err)
 	}
 	return scheme
 }
