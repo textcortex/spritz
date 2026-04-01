@@ -289,6 +289,7 @@ func (r *SpritzReconciler) acpHealthProbePath() string {
 
 func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spritzv1.Spritz) error {
 	labels := baseLabels(spritz)
+	selectorLabels := deploymentSelectorLabels(spritz)
 	annotations := baseAnnotations(spritz)
 	workspaceSizeLimit := emptyDirSizeLimit("SPRITZ_WORKSPACE_SIZE_LIMIT", defaultWorkspaceSizeLimit)
 	homeSizeLimit := emptyDirSizeLimit("SPRITZ_HOME_SIZE_LIMIT", defaultHomeSizeLimit)
@@ -303,7 +304,7 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 		deploy.Labels = mergeMaps(labels, spritz.Spec.Labels)
 		deploy.Annotations = mergeMaps(deploy.Annotations, spritz.Spec.Annotations)
 		deploy.Annotations = mergeMaps(deploy.Annotations, annotations)
-		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
+		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
 		deploy.Spec.Template.Labels = labels
 		deploy.Spec.Template.Annotations = mergeMaps(deploy.Spec.Template.Annotations, spritz.Spec.Annotations)
 		deploy.Spec.Template.Annotations = mergeMaps(deploy.Spec.Template.Annotations, annotations)
@@ -915,6 +916,12 @@ func baseLabels(spritz *spritzv1.Spritz) map[string]string {
 		}
 	}
 	return labels
+}
+
+func deploymentSelectorLabels(spritz *spritzv1.Spritz) map[string]string {
+	return map[string]string{
+		"spritz.sh/name": spritz.Name,
+	}
 }
 
 func baseAnnotations(spritz *spritzv1.Spritz) map[string]string {

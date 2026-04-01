@@ -2,9 +2,18 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"regexp"
 	"strings"
 
 	spritzv1 "spritz.sh/operator/api/v1"
+)
+
+var (
+	runtimePolicyProfileNamePattern = regexp.MustCompile(
+		`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`,
+	)
+	runtimePolicyRevisionPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 )
 
 func normalizeSpritzRuntimePolicy(
@@ -46,6 +55,42 @@ func validateSpritzRuntimePolicy(
 	}
 	if normalized.Revision == "" {
 		return errors.New("spec.runtimePolicy.revision is required")
+	}
+	if err := validateRuntimePolicyProfileName(
+		normalized.NetworkProfile,
+		"spec.runtimePolicy.networkProfile",
+	); err != nil {
+		return err
+	}
+	if err := validateRuntimePolicyProfileName(
+		normalized.MountProfile,
+		"spec.runtimePolicy.mountProfile",
+	); err != nil {
+		return err
+	}
+	if err := validateRuntimePolicyProfileName(
+		normalized.ExposureProfile,
+		"spec.runtimePolicy.exposureProfile",
+	); err != nil {
+		return err
+	}
+	if !runtimePolicyRevisionPattern.MatchString(normalized.Revision) {
+		return errors.New(
+			"spec.runtimePolicy.revision must match ^sha256:[a-f0-9]{64}$",
+		)
+	}
+	return nil
+}
+
+func validateRuntimePolicyProfileName(value, field string) error {
+	if len(value) > 63 {
+		return fmt.Errorf("%s must not exceed 63 characters", field)
+	}
+	if !runtimePolicyProfileNamePattern.MatchString(value) {
+		return fmt.Errorf(
+			"%s must match ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+			field,
+		)
 	}
 	return nil
 }

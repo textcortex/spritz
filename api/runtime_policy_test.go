@@ -42,3 +42,31 @@ func TestMergeSpritzRuntimePolicyStrictRejectsOverwrite(t *testing.T) {
 		t.Fatalf("expected runtimePolicy overwrite error, got %v", err)
 	}
 }
+
+func TestValidateSpritzRuntimePolicyRejectsInvalidFormats(t *testing.T) {
+	err := validateSpritzRuntimePolicy(&spritzv1.SpritzRuntimePolicy{
+		NetworkProfile:  "Invalid",
+		MountProfile:    "dev-default",
+		ExposureProfile: "internal-acp",
+		Revision:        "not-a-sha",
+	})
+	if err == nil {
+		t.Fatal("expected runtime policy format validation to fail")
+	}
+	if !strings.Contains(err.Error(), "networkProfile") {
+		t.Fatalf("expected networkProfile validation error, got %v", err)
+	}
+
+	err = validateSpritzRuntimePolicy(&spritzv1.SpritzRuntimePolicy{
+		NetworkProfile:  "dev-cluster-only",
+		MountProfile:    "dev-default",
+		ExposureProfile: "internal-acp",
+		Revision:        "not-a-sha",
+	})
+	if err == nil {
+		t.Fatal("expected revision validation to fail")
+	}
+	if !strings.Contains(err.Error(), "spec.runtimePolicy.revision") {
+		t.Fatalf("expected revision validation error, got %v", err)
+	}
+}
