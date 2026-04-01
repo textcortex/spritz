@@ -251,9 +251,12 @@ func (s *server) registerRoutes(e *echo.Echo) {
 	group.GET("/healthz", s.handleHealthz)
 	internal := group.Group("/internal/v1", s.internalAuthMiddleware())
 	if s.internalAuth.enabled {
+		internal.GET("/presets/:presetID", s.getInternalPreset)
 		internal.GET("/runtime-bindings/:namespace/:instanceId", s.getRuntimeBinding)
 		internal.POST("/spritzes", s.createInternalSpritz)
 		internal.GET("/spritzes/:namespace/:name", s.getInternalSpritz)
+		internal.DELETE("/spritzes/:namespace/:name", s.deleteInternalSpritz)
+		internal.POST("/spritzes/:namespace/*", s.replaceInternalSpritz)
 		if s.auth.enabled() {
 			internalSecured := group.Group("/internal/v1", s.internalAuthHeaderMiddleware(), s.authMiddleware())
 			internalSecured.POST("/debug/chat/send", s.sendInternalDebugChat)
@@ -336,6 +339,8 @@ type createRequest struct {
 	Labels         map[string]string   `json:"labels,omitempty"`
 	Annotations    map[string]string   `json:"annotations,omitempty"`
 }
+
+const allowReplacementAnnotationsContextKey = "spritz.internal.allowReplacementAnnotations"
 
 type suggestNameRequest struct {
 	Namespace  string `json:"namespace,omitempty"`
@@ -432,7 +437,13 @@ func (s *server) createSpritz(c echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return writeError(c, http.StatusBadRequest, "invalid json")
 	}
-	normalized, err := s.normalizeCreateRequest(c.Request().Context(), principal, body)
+	allowReplacementAnnotations, _ := c.Get(allowReplacementAnnotationsContextKey).(bool)
+	normalized, err := s.normalizeCreateRequest(
+		c.Request().Context(),
+		principal,
+		body,
+		allowReplacementAnnotations,
+	)
 	if err != nil {
 		return writeCreateRequestError(c, err)
 	}

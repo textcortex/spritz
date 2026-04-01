@@ -30,24 +30,28 @@ const (
 	scopeChannelRouteResolve        = "spritz.channel.route.resolve"
 	scopeChannelConversationsUpsert = "spritz.channel.conversations.upsert"
 
-	actorIDAnnotationKey          = "spritz.sh/actor.id"
-	actorTypeAnnotationKey        = "spritz.sh/actor.type"
-	sourceAnnotationKey           = "spritz.sh/source"
-	requestIDAnnotationKey        = "spritz.sh/request-id"
-	idempotencyKeyAnnotationKey   = "spritz.sh/idempotency-key"
-	idempotencyHashAnnotationKey  = "spritz.sh/idempotency-hash"
-	presetIDAnnotationKey         = "spritz.sh/preset-id"
-	actorLabelKey                 = "spritz.sh/actor"
-	idempotencyLabelKey           = "spritz.sh/idempotency"
-	presetLabelKey                = "spritz.sh/preset"
-	idempotencyReservationPrefix  = "spritz-idempotency-"
-	idempotencyReservationHashKey = "fingerprint"
-	idempotencyReservationNameKey = "spritzName"
-	idempotencyReservationDoneKey = "completed"
-	idempotencyReservationBodyKey = "payload"
-	defaultProvisionerSource      = "external"
-	defaultProvisionerIdleTTL     = 24 * time.Hour
-	defaultProvisionerMaxTTL      = 7 * 24 * time.Hour
+	actorIDAnnotationKey               = "spritz.sh/actor.id"
+	actorTypeAnnotationKey             = "spritz.sh/actor.type"
+	sourceAnnotationKey                = "spritz.sh/source"
+	requestIDAnnotationKey             = "spritz.sh/request-id"
+	idempotencyKeyAnnotationKey        = "spritz.sh/idempotency-key"
+	idempotencyHashAnnotationKey       = "spritz.sh/idempotency-hash"
+	presetIDAnnotationKey              = "spritz.sh/preset-id"
+	targetRevisionAnnotationKey        = "spritz.sh/target-revision"
+	replacementSourceNSAnnotationKey   = "spritz.sh/replacement-source-namespace"
+	replacementSourceNameAnnotationKey = "spritz.sh/replacement-source-name"
+	replacementIDKeyAnnotationKey      = "spritz.sh/replacement-idempotency-key"
+	actorLabelKey                      = "spritz.sh/actor"
+	idempotencyLabelKey                = "spritz.sh/idempotency"
+	presetLabelKey                     = "spritz.sh/preset"
+	idempotencyReservationPrefix       = "spritz-idempotency-"
+	idempotencyReservationHashKey      = "fingerprint"
+	idempotencyReservationNameKey      = "spritzName"
+	idempotencyReservationDoneKey      = "completed"
+	idempotencyReservationBodyKey      = "payload"
+	defaultProvisionerSource           = "external"
+	defaultProvisionerIdleTTL          = 24 * time.Hour
+	defaultProvisionerMaxTTL           = 7 * 24 * time.Hour
 )
 
 var (
@@ -336,7 +340,7 @@ func (s *server) resolveCreateOwner(ctx context.Context, body *createRequest, pr
 	return owner, nil, err
 }
 
-func validateProvisionerRequestSurface(body *createRequest) error {
+func validateProvisionerRequestSurface(body *createRequest, allowReplacementAnnotations bool) error {
 	if body == nil {
 		return nil
 	}
@@ -347,7 +351,19 @@ func validateProvisionerRequestSurface(body *createRequest) error {
 		return fmt.Errorf("labels are not allowed for service principals")
 	}
 	if len(body.Annotations) > 0 {
-		return fmt.Errorf("annotations are not allowed for service principals")
+		if !allowReplacementAnnotations {
+			return fmt.Errorf("annotations are not allowed for service principals")
+		}
+		for key := range body.Annotations {
+			switch strings.TrimSpace(key) {
+			case targetRevisionAnnotationKey,
+				replacementSourceNSAnnotationKey,
+				replacementSourceNameAnnotationKey,
+				replacementIDKeyAnnotationKey:
+			default:
+				return fmt.Errorf("annotations are not allowed for service principals")
+			}
+		}
 	}
 	if len(body.Spec.Labels) > 0 {
 		return fmt.Errorf("spec.labels are not allowed")
@@ -529,6 +545,8 @@ func createRequestFingerprintWithIssuer(body createRequest, externalIssuer, name
 		sanitizeSpritzNameToken(namePrefix),
 		namespace,
 		provisionerSource(&body),
+		body.Labels,
+		body.Annotations,
 		body.Spec,
 		userConfig,
 	)
@@ -742,6 +760,8 @@ func (s *server) resolvedCreateFingerprint(body createRequest, namespace, explic
 		sanitizeSpritzNameToken(namePrefix),
 		namespace,
 		provisionerSource(&body),
+		body.Labels,
+		body.Annotations,
 		body.Spec,
 		userConfig,
 	)
@@ -885,7 +905,7 @@ func hashLabelValue(prefix, value string) string {
 	return fmt.Sprintf("%s-%x", prefix, sum[:12])
 }
 
-func createFingerprint(ownerID string, ref *ownerRef, resolvedOwnerID, externalIssuer, presetID string, presetInputs json.RawMessage, name, namePrefix, namespace, source string, spec spritzv1.SpritzSpec, userConfig json.RawMessage) (string, error) {
+func createFingerprint(ownerID string, ref *ownerRef, resolvedOwnerID, externalIssuer, presetID string, presetInputs json.RawMessage, name, namePrefix, namespace, source string, labels, annotations map[string]string, spec spritzv1.SpritzSpec, userConfig json.RawMessage) (string, error) {
 	specCopy := spec
 	specCopy.Annotations = nil
 	specCopy.Labels = nil
@@ -902,6 +922,8 @@ func createFingerprint(ownerID string, ref *ownerRef, resolvedOwnerID, externalI
 		NamePrefix   string              `json:"namePrefix,omitempty"`
 		Namespace    string              `json:"namespace,omitempty"`
 		Source       string              `json:"source,omitempty"`
+		Labels       map[string]string   `json:"labels,omitempty"`
+		Annotations  map[string]string   `json:"annotations,omitempty"`
 		Spec         spritzv1.SpritzSpec `json:"spec"`
 		UserConfig   json.RawMessage     `json:"userConfig,omitempty"`
 	}{
@@ -913,6 +935,8 @@ func createFingerprint(ownerID string, ref *ownerRef, resolvedOwnerID, externalI
 		NamePrefix:   strings.TrimSpace(namePrefix),
 		Namespace:    namespace,
 		Source:       source,
+		Labels:       cloneStringMap(labels),
+		Annotations:  cloneStringMap(annotations),
 		Spec:         specCopy,
 		UserConfig:   userConfig,
 	}
