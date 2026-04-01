@@ -501,6 +501,12 @@ spec:
                     pattern: ^sha256:[a-f0-9]{64}$
                     type: string
                 type: object
+                x-kubernetes-validations:
+                - message: runtimePolicy requires networkProfile, mountProfile, exposureProfile,
+                    and revision together
+                  rule: '!has(self.networkProfile) && !has(self.mountProfile) && !has(self.exposureProfile)
+                    && !has(self.revision) || has(self.networkProfile) && has(self.mountProfile)
+                    && has(self.exposureProfile) && has(self.revision)'
               serviceAccountName:
                 maxLength: 63
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$

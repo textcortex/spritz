@@ -49,6 +49,7 @@ type SpritzSpec struct {
 }
 
 // SpritzRuntimePolicy stores deployment-resolved infrastructure policy profile references.
+// +kubebuilder:validation:XValidation:rule="!has(self.networkProfile) && !has(self.mountProfile) && !has(self.exposureProfile) && !has(self.revision) || has(self.networkProfile) && has(self.mountProfile) && has(self.exposureProfile) && has(self.revision)",message="runtimePolicy requires networkProfile, mountProfile, exposureProfile, and revision together"
 type SpritzRuntimePolicy struct {
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"

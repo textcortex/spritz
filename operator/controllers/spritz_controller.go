@@ -40,7 +40,7 @@ const (
 	runtimeNetworkProfileLabelKey             = "spritz.sh/runtime-network-profile"
 	runtimeMountProfileLabelKey               = "spritz.sh/runtime-mount-profile"
 	runtimeExposureProfileLabelKey            = "spritz.sh/runtime-exposure-profile"
-	runtimePolicyRevisionLabelKey             = "spritz.sh/runtime-policy-revision"
+	runtimePolicyRevisionAnnotationKey        = "spritz.sh/runtime-policy-revision"
 	defaultTTLGrace                           = 5 * time.Minute
 	defaultRepoInitImage                      = "alpine/git:2.45.2"
 	repoAuthMountPath                         = "/var/run/spritz/repo-auth"
@@ -229,6 +229,9 @@ func reconcileSpritzMetadata(spritz *spritzv1.Spritz) bool {
 	if spritz.Labels == nil {
 		spritz.Labels = map[string]string{}
 	}
+	if spritz.Annotations == nil {
+		spritz.Annotations = map[string]string{}
+	}
 	updated := false
 
 	if ownerID := strings.TrimSpace(spritz.Spec.Owner.ID); ownerID != "" {
@@ -252,8 +255,8 @@ func reconcileSpritzMetadata(spritz *spritzv1.Spritz) bool {
 			spritz.Labels[runtimeExposureProfileLabelKey] = profile
 			updated = true
 		}
-		if revision := strings.TrimSpace(spritz.Spec.RuntimePolicy.Revision); revision != "" && spritz.Labels[runtimePolicyRevisionLabelKey] != revision {
-			spritz.Labels[runtimePolicyRevisionLabelKey] = revision
+		if revision := strings.TrimSpace(spritz.Spec.RuntimePolicy.Revision); revision != "" && spritz.Annotations[runtimePolicyRevisionAnnotationKey] != revision {
+			spritz.Annotations[runtimePolicyRevisionAnnotationKey] = revision
 			updated = true
 		}
 	}
@@ -286,6 +289,7 @@ func (r *SpritzReconciler) acpHealthProbePath() string {
 
 func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spritzv1.Spritz) error {
 	labels := baseLabels(spritz)
+	annotations := baseAnnotations(spritz)
 	workspaceSizeLimit := emptyDirSizeLimit("SPRITZ_WORKSPACE_SIZE_LIMIT", defaultWorkspaceSizeLimit)
 	homeSizeLimit := emptyDirSizeLimit("SPRITZ_HOME_SIZE_LIMIT", defaultHomeSizeLimit)
 
@@ -298,9 +302,11 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 
 		deploy.Labels = mergeMaps(labels, spritz.Spec.Labels)
 		deploy.Annotations = mergeMaps(deploy.Annotations, spritz.Spec.Annotations)
+		deploy.Annotations = mergeMaps(deploy.Annotations, annotations)
 		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
 		deploy.Spec.Template.Labels = labels
 		deploy.Spec.Template.Annotations = mergeMaps(deploy.Spec.Template.Annotations, spritz.Spec.Annotations)
+		deploy.Spec.Template.Annotations = mergeMaps(deploy.Spec.Template.Annotations, annotations)
 
 		repos := repoEntries(spritz)
 		for _, repo := range repos {
@@ -472,9 +478,11 @@ func (r *SpritzReconciler) reconcileService(ctx context.Context, spritz *spritzv
 		}
 
 		labels := baseLabels(spritz)
+		annotations := baseAnnotations(spritz)
 		svc.Labels = mergeMaps(labels, spritz.Spec.Labels)
 		svc.Spec.Selector = labels
 		svc.Annotations = mergeMaps(svc.Annotations, spritz.Spec.Annotations)
+		svc.Annotations = mergeMaps(svc.Annotations, annotations)
 
 		svc.Spec.Ports = servicePorts(spritz)
 		return nil
@@ -500,9 +508,11 @@ func (r *SpritzReconciler) reconcileIngress(ctx context.Context, spritz *spritzv
 		}
 
 		labels := baseLabels(spritz)
+		annotations := baseAnnotations(spritz)
 		ing.Labels = mergeMaps(labels, spritz.Spec.Labels)
 		ing.Annotations = mergeMaps(ing.Annotations, spritz.Spec.Annotations)
 		ing.Annotations = mergeMaps(ing.Annotations, spritz.Spec.Ingress.Annotations)
+		ing.Annotations = mergeMaps(ing.Annotations, annotations)
 
 		if spritz.Spec.Ingress.ClassName != "" {
 			ing.Spec.IngressClassName = &spritz.Spec.Ingress.ClassName
@@ -563,9 +573,11 @@ func (r *SpritzReconciler) reconcileGatewayRoute(ctx context.Context, spritz *sp
 		}
 
 		labels := baseLabels(spritz)
+		annotations := baseAnnotations(spritz)
 		route.Labels = mergeMaps(labels, spritz.Spec.Labels)
 		route.Annotations = mergeMaps(route.Annotations, spritz.Spec.Annotations)
 		route.Annotations = mergeMaps(route.Annotations, spritz.Spec.Ingress.Annotations)
+		route.Annotations = mergeMaps(route.Annotations, annotations)
 
 		path := spritz.Spec.Ingress.Path
 		if path == "" {
@@ -901,11 +913,18 @@ func baseLabels(spritz *spritzv1.Spritz) map[string]string {
 		if profile := strings.TrimSpace(spritz.Spec.RuntimePolicy.ExposureProfile); profile != "" {
 			labels[runtimeExposureProfileLabelKey] = profile
 		}
-		if revision := strings.TrimSpace(spritz.Spec.RuntimePolicy.Revision); revision != "" {
-			labels[runtimePolicyRevisionLabelKey] = revision
-		}
 	}
 	return labels
+}
+
+func baseAnnotations(spritz *spritzv1.Spritz) map[string]string {
+	annotations := map[string]string{}
+	if spritz.Spec.RuntimePolicy != nil {
+		if revision := strings.TrimSpace(spritz.Spec.RuntimePolicy.Revision); revision != "" {
+			annotations[runtimePolicyRevisionAnnotationKey] = revision
+		}
+	}
+	return annotations
 }
 
 func ownerLabelValue(id string) string {

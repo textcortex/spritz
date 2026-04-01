@@ -83,7 +83,10 @@ func TestReconcileLifecycleAddsRuntimePolicyLabels(t *testing.T) {
 	if stored.Labels[runtimeExposureProfileLabelKey] != "internal-acp" {
 		t.Fatalf("expected exposure profile label, got %#v", stored.Labels)
 	}
-	if stored.Labels[runtimePolicyRevisionLabelKey] != "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
-		t.Fatalf("expected runtime policy revision label, got %#v", stored.Labels)
+	if stored.Annotations[runtimePolicyRevisionAnnotationKey] != "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("expected runtime policy revision annotation, got %#v", stored.Annotations)
+	}
+	if _, ok := stored.Labels[runtimePolicyRevisionAnnotationKey]; ok {
+		t.Fatalf("runtime policy revision must not be stored as a label: %#v", stored.Labels)
 	}
 }

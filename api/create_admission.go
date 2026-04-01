@@ -243,15 +243,18 @@ func applyPresetCreateResolverMutations(body *createRequest, response extensionR
 			body.Spec.ServiceAccountName = resolvedServiceAccount
 			result.serviceAccountResolved = true
 		}
+		resolvedRuntimePolicy := normalizeSpritzRuntimePolicy(
+			response.Mutations.Spec.RuntimePolicy,
+		)
 		mergedRuntimePolicy, err := mergeSpritzRuntimePolicyStrict(
 			body.Spec.RuntimePolicy,
-			response.Mutations.Spec.RuntimePolicy,
+			resolvedRuntimePolicy,
 		)
 		if err != nil {
 			return presetCreateMutationResult{}, err
 		}
 		body.Spec.RuntimePolicy = mergedRuntimePolicy
-		if normalizeSpritzRuntimePolicy(body.Spec.RuntimePolicy) != nil {
+		if resolvedRuntimePolicy != nil {
 			result.runtimePolicyResolved = true
 		}
 		mergedAgentRef, err := mergeSpritzAgentRefStrict(body.Spec.AgentRef, response.Mutations.Spec.AgentRef)
