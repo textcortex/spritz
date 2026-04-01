@@ -403,6 +403,98 @@ func TestCreateSpritzStoresResolvedRuntimePolicy(t *testing.T) {
 	}
 }
 
+func TestCreateSpritzStoresResolvedSpecMetadata(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	resolver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "resolved",
+			"mutations": map[string]any{
+				"spec": map[string]any{
+					"serviceAccountName": "dev-agent-ag-123",
+					"annotations": map[string]string{
+						"sidecar.istio.io/inject": "true",
+					},
+					"labels": map[string]string{
+						"example.com/network-profile": "github",
+					},
+				},
+			},
+		})
+	}))
+	defer resolver.Close()
+
+	s.presets = presetCatalog{
+		byID: []runtimePreset{{
+			ID:            "devbox",
+			Name:          "Devbox",
+			Image:         "example.com/devbox:latest",
+			NamePrefix:    "devbox",
+			InstanceClass: "dev-runtime",
+		}},
+	}
+	s.instanceClasses = instanceClassCatalog{
+		byID: map[string]instanceClass{
+			"dev-runtime": {
+				ID:      "dev-runtime",
+				Version: "v1",
+				Creation: instanceClassCreationPolicy{
+					RequireOwner: true,
+					RequiredResolvedFields: []string{
+						requiredResolvedFieldServiceAccountName,
+					},
+				},
+			},
+		},
+	}
+	s.extensions = extensionRegistry{
+		resolvers: []configuredResolver{{
+			id:            "runtime-binding",
+			extensionType: extensionTypeResolver,
+			operation:     extensionOperationPresetCreateResolve,
+			match: extensionMatchRule{
+				presetIDs: map[string]struct{}{"devbox": {}},
+			},
+			transport: configuredHTTPTransport{
+				url:     resolver.URL,
+				timeout: time.Second,
+			},
+		}},
+	}
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	body := []byte(`{
+		"name":"devbox-ocean",
+		"presetId":"devbox",
+		"spec":{}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	stored := &spritzv1.Spritz{}
+	if err := s.client.Get(context.Background(), client.ObjectKey{Name: "devbox-ocean", Namespace: s.namespace}, stored); err != nil {
+		t.Fatalf("expected created spritz resource: %v", err)
+	}
+	if stored.Spec.Annotations["sidecar.istio.io/inject"] != "true" {
+		t.Fatalf("expected resolved spec annotation, got %#v", stored.Spec.Annotations)
+	}
+	if stored.Spec.Labels["example.com/network-profile"] != "github" {
+		t.Fatalf("expected resolved spec label, got %#v", stored.Spec.Labels)
+	}
+}
+
 func TestCreateSpritzProvisionerPresetResolverReplaysWithResolvedBinding(t *testing.T) {
 	s := newCreateSpritzTestServer(t)
 	configureProvisionerTestServer(s)
@@ -797,6 +889,50 @@ func TestCreateSpritzProvisionerRejectsManualRuntimePolicyForResolverRequiredFie
 	}
 	if !strings.Contains(rec.Body.String(), "resolver-produced field") {
 		t.Fatalf("expected resolver-produced field error, got %s", rec.Body.String())
+	}
+}
+
+func TestCreateSpritzProvisionerRejectsManualSpecAnnotations(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	configureProvisionerTestServer(s)
+	s.presets = presetCatalog{
+		byID: []runtimePreset{{
+			ID:         "zeno",
+			Name:       "Zeno",
+			Image:      "example.com/zeno:latest",
+			NamePrefix: "zeno",
+		}},
+	}
+	s.provisioners.allowedPresetIDs = map[string]struct{}{"zeno": {}}
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	body := []byte(`{
+		"presetId":"zeno",
+		"ownerId":"user-123",
+		"idempotencyKey":"manual-spec-annotations",
+		"spec":{
+			"annotations":{
+				"sidecar.istio.io/inject":"true"
+			}
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "zenobot")
+	req.Header.Set("X-Spritz-Principal-Type", "service")
+	req.Header.Set("X-Spritz-Principal-Scopes", "spritz.instances.create,spritz.instances.assign_owner")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "spec.annotations are not allowed") {
+		t.Fatalf("expected spec.annotations request-surface error, got %s", rec.Body.String())
 	}
 }
 

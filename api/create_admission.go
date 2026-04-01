@@ -262,6 +262,16 @@ func applyPresetCreateResolverMutations(body *createRequest, response extensionR
 			return presetCreateMutationResult{}, err
 		}
 		body.Spec.AgentRef = mergedAgentRef
+		specAnnotations, err := mergeMetadataStrict(body.Spec.Annotations, response.Mutations.Spec.Annotations, "spec annotation")
+		if err != nil {
+			return presetCreateMutationResult{}, err
+		}
+		body.Spec.Annotations = specAnnotations
+		specLabels, err := mergeMetadataStrict(body.Spec.Labels, response.Mutations.Spec.Labels, "spec label")
+		if err != nil {
+			return presetCreateMutationResult{}, err
+		}
+		body.Spec.Labels = specLabels
 	}
 	annotations, err := mergeMetadataStrict(body.Annotations, response.Mutations.Annotations, "annotation")
 	if err != nil {
