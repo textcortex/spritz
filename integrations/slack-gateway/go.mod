@@ -7,4 +7,4 @@ require (
 	spritz.sh/acptext v0.0.0-00010101000000-000000000000
 )
 
-replace spritz.sh/acptext => ../../acptext
+replace spritz.sh/acptext => ../acptext

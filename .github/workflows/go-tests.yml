@@ -3,7 +3,7 @@ name: go-tests
 on:
   pull_request:
     paths:
-      - "acptext/**"
+      - "integrations/acptext/**"
       - "api/**"
       - "operator/**"
       - "integrations/github-app/**"
@@ -13,7 +13,7 @@ on:
     branches:
       - main
     paths:
-      - "acptext/**"
+      - "integrations/acptext/**"
       - "api/**"
       - "operator/**"
       - "integrations/github-app/**"
@@ -28,7 +28,7 @@ jobs:
       matrix:
         include:
           - name: acptext
-            working-directory: acptext
+            working-directory: integrations/acptext
           - name: api
             working-directory: api
           - name: operator

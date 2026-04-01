@@ -78,6 +78,6 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
-replace spritz.sh/acptext => ../acptext
+replace spritz.sh/acptext => ../integrations/acptext
 
 replace spritz.sh/operator => ../operator

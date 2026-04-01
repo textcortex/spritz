@@ -1,13 +1,13 @@
 FROM golang:1.25-alpine AS build
 
 WORKDIR /src
-COPY acptext/go.mod ./acptext/go.mod
+COPY integrations/acptext/go.mod ./integrations/acptext/go.mod
 COPY api/go.mod api/go.sum ./api/
 COPY operator/go.mod operator/go.sum ./operator/
 WORKDIR /src/api
 RUN go mod download
 WORKDIR /src
-COPY acptext/ /src/acptext/
+COPY integrations/acptext/ /src/integrations/acptext/
 COPY operator/ /src/operator/
 COPY api/ /src/api/
 WORKDIR /src/api

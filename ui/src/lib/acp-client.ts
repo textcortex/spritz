@@ -8,12 +8,12 @@ export function extractACPText(value: unknown): string {
   }
   if (typeof value !== 'object') return String(value);
   const obj = value as Record<string, unknown>;
-  if (typeof obj.text === 'string') return obj.text;
+  if (typeof obj.text === 'string' && obj.text !== '') return obj.text;
   if (obj.type === 'content' && obj.content) return extractACPText(obj.content);
   if (obj.content) return extractACPText(obj.content);
   if (obj.resource && typeof obj.resource === 'object') {
     const res = obj.resource as Record<string, unknown>;
-    if (typeof res.text === 'string') return res.text;
+    if (typeof res.text === 'string' && res.text !== '') return res.text;
     if (typeof res.uri === 'string') return res.uri;
   }
   return '';

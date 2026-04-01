@@ -113,6 +113,13 @@ test('extractACPText flattens nested content blocks', () => {
   );
 });
 
+test('extractACPText falls back to resource uri when text is empty', () => {
+  assert.equal(
+    extractACPText({ resource: { text: '', uri: 'file://smoke-fallback.txt' } }),
+    'file://smoke-fallback.txt',
+  );
+});
+
 test('joinACPTextChunks preserves chunked tokens without inserted separators', () => {
   assert.equal(joinACPTextChunks([{ text: 'spr' }, { text: 'itz-smoke-openclaw' }]), 'spritz-smoke-openclaw');
 });

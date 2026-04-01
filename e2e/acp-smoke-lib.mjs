@@ -186,10 +186,10 @@ export function extractACPText(value) {
     return value.map((item) => extractACPText(item)).filter(Boolean).join('\n');
   }
   if (typeof value !== 'object') return String(value);
-  if (typeof value.text === 'string') return value.text;
+  if (typeof value.text === 'string' && value.text !== '') return value.text;
   if (value.content !== undefined) return extractACPText(value.content);
   if (value.resource) {
-    if (typeof value.resource.text === 'string') return value.resource.text;
+    if (typeof value.resource.text === 'string' && value.resource.text !== '') return value.resource.text;
     if (typeof value.resource.uri === 'string') return value.resource.uri;
   }
   return '';
