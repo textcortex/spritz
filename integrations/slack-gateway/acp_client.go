@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gorilla/websocket"
+	"spritz.sh/acptext"
 )
 
 type acpRPCMessage struct {
@@ -57,7 +58,7 @@ func (g *slackGateway) promptConversation(ctx context.Context, serviceToken, nam
 	}, nil); err != nil {
 		return "", false, err
 	}
-	var reply strings.Builder
+	chunks := make([]any, 0, 8)
 	if _, promptSent, err := client.call(ctx, "session/prompt", map[string]any{
 		"sessionId": sessionID,
 		"prompt": []map[string]any{{
@@ -74,15 +75,15 @@ func (g *slackGateway) promptConversation(ctx context.Context, serviceToken, nam
 		if err := json.Unmarshal(message.Params, &payload); err != nil {
 			return
 		}
-		if strings.TrimSpace(stringValue(payload.Update["sessionUpdate"])) != "agent_message_chunk" {
+		if strings.TrimSpace(fmt.Sprint(payload.Update["sessionUpdate"])) != "agent_message_chunk" {
 			return
 		}
-		reply.WriteString(extractACPText(payload.Update["content"]))
+		chunks = append(chunks, payload.Update["content"])
 	}); err != nil {
-		return strings.TrimSpace(reply.String()), promptSent, err
+		return acptext.JoinChunks(chunks), promptSent, err
 	}
-	text := strings.TrimSpace(reply.String())
-	if text == "" {
+	text := acptext.JoinChunks(chunks)
+	if strings.TrimSpace(text) == "" {
 		return "", true, fmt.Errorf("agent returned an empty reply")
 	}
 	return text, true, nil
@@ -162,45 +163,5 @@ func (c *acpPromptClient) call(ctx context.Context, method string, params any, o
 			return nil, delivered, fmt.Errorf("%s", strings.TrimSpace(message.Error.Message))
 		}
 		return message.Result, delivered, nil
-	}
-}
-
-func extractACPText(value any) string {
-	switch typed := value.(type) {
-	case nil:
-		return ""
-	case string:
-		return typed
-	case []any:
-		parts := make([]string, 0, len(typed))
-		for _, item := range typed {
-			if text := extractACPText(item); text != "" {
-				parts = append(parts, text)
-			}
-		}
-		return strings.Join(parts, "\n")
-	case map[string]any:
-		if text := stringValue(typed["text"]); text != "" {
-			return text
-		}
-		if content, ok := typed["content"]; ok {
-			return extractACPText(content)
-		}
-		if resource, ok := typed["resource"]; ok {
-			return extractACPText(resource)
-		}
-		if uri := stringValue(typed["uri"]); uri != "" {
-			return uri
-		}
-	}
-	return ""
-}
-
-func stringValue(value any) string {
-	switch typed := value.(type) {
-	case string:
-		return strings.TrimSpace(typed)
-	default:
-		return ""
 	}
 }
