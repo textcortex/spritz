@@ -37,6 +37,10 @@ const (
 	spritzContainerName                       = "spritz"
 	spritzFinalizer                           = "spritz.sh/finalizer"
 	ownerLabelKey                             = "spritz.sh/owner"
+	runtimeNetworkProfileLabelKey             = "spritz.sh/runtime-network-profile"
+	runtimeMountProfileLabelKey               = "spritz.sh/runtime-mount-profile"
+	runtimeExposureProfileLabelKey            = "spritz.sh/runtime-exposure-profile"
+	runtimePolicyRevisionLabelKey             = "spritz.sh/runtime-policy-revision"
 	defaultTTLGrace                           = 5 * time.Minute
 	defaultRepoInitImage                      = "alpine/git:2.45.2"
 	repoAuthMountPath                         = "/var/run/spritz/repo-auth"
@@ -222,19 +226,39 @@ func (r *SpritzReconciler) reconcileLifecycle(ctx context.Context, spritz *sprit
 }
 
 func reconcileSpritzMetadata(spritz *spritzv1.Spritz) bool {
-	ownerID := strings.TrimSpace(spritz.Spec.Owner.ID)
-	if ownerID == "" {
-		return false
-	}
-	desiredOwnerLabel := ownerLabelValue(ownerID)
 	if spritz.Labels == nil {
 		spritz.Labels = map[string]string{}
 	}
-	if spritz.Labels[ownerLabelKey] == desiredOwnerLabel {
-		return false
+	updated := false
+
+	if ownerID := strings.TrimSpace(spritz.Spec.Owner.ID); ownerID != "" {
+		desiredOwnerLabel := ownerLabelValue(ownerID)
+		if spritz.Labels[ownerLabelKey] != desiredOwnerLabel {
+			spritz.Labels[ownerLabelKey] = desiredOwnerLabel
+			updated = true
+		}
 	}
-	spritz.Labels[ownerLabelKey] = desiredOwnerLabel
-	return true
+
+	if spritz.Spec.RuntimePolicy != nil {
+		if profile := strings.TrimSpace(spritz.Spec.RuntimePolicy.NetworkProfile); profile != "" && spritz.Labels[runtimeNetworkProfileLabelKey] != profile {
+			spritz.Labels[runtimeNetworkProfileLabelKey] = profile
+			updated = true
+		}
+		if profile := strings.TrimSpace(spritz.Spec.RuntimePolicy.MountProfile); profile != "" && spritz.Labels[runtimeMountProfileLabelKey] != profile {
+			spritz.Labels[runtimeMountProfileLabelKey] = profile
+			updated = true
+		}
+		if profile := strings.TrimSpace(spritz.Spec.RuntimePolicy.ExposureProfile); profile != "" && spritz.Labels[runtimeExposureProfileLabelKey] != profile {
+			spritz.Labels[runtimeExposureProfileLabelKey] = profile
+			updated = true
+		}
+		if revision := strings.TrimSpace(spritz.Spec.RuntimePolicy.Revision); revision != "" && spritz.Labels[runtimePolicyRevisionLabelKey] != revision {
+			spritz.Labels[runtimePolicyRevisionLabelKey] = revision
+			updated = true
+		}
+	}
+
+	return updated
 }
 
 func (r *SpritzReconciler) reconcileResources(ctx context.Context, spritz *spritzv1.Spritz) error {
@@ -866,6 +890,20 @@ func baseLabels(spritz *spritzv1.Spritz) map[string]string {
 	}
 	if spritz.Spec.Owner.ID != "" {
 		labels[ownerLabelKey] = ownerLabelValue(spritz.Spec.Owner.ID)
+	}
+	if spritz.Spec.RuntimePolicy != nil {
+		if profile := strings.TrimSpace(spritz.Spec.RuntimePolicy.NetworkProfile); profile != "" {
+			labels[runtimeNetworkProfileLabelKey] = profile
+		}
+		if profile := strings.TrimSpace(spritz.Spec.RuntimePolicy.MountProfile); profile != "" {
+			labels[runtimeMountProfileLabelKey] = profile
+		}
+		if profile := strings.TrimSpace(spritz.Spec.RuntimePolicy.ExposureProfile); profile != "" {
+			labels[runtimeExposureProfileLabelKey] = profile
+		}
+		if revision := strings.TrimSpace(spritz.Spec.RuntimePolicy.Revision); revision != "" {
+			labels[runtimePolicyRevisionLabelKey] = revision
+		}
 	}
 	return labels
 }

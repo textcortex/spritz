@@ -24,10 +24,11 @@ type SpritzSpec struct {
 	Image string `json:"image"`
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-	ServiceAccountName string          `json:"serviceAccountName,omitempty"`
-	Repo               *SpritzRepo     `json:"repo,omitempty"`
-	Repos              []SpritzRepo    `json:"repos,omitempty"`
-	Env                []corev1.EnvVar `json:"env,omitempty"`
+	ServiceAccountName string               `json:"serviceAccountName,omitempty"`
+	RuntimePolicy      *SpritzRuntimePolicy `json:"runtimePolicy,omitempty"`
+	Repo               *SpritzRepo          `json:"repo,omitempty"`
+	Repos              []SpritzRepo         `json:"repos,omitempty"`
+	Env                []corev1.EnvVar      `json:"env,omitempty"`
 	// SharedMounts configures per-spritz shared directories.
 	SharedMounts []sharedmounts.MountSpec `json:"sharedMounts,omitempty"`
 	// +kubebuilder:validation:Pattern="^([0-9]+h)?([0-9]+m)?([0-9]+s)?$"
@@ -45,6 +46,21 @@ type SpritzSpec struct {
 	SSH              *SpritzSSH          `json:"ssh,omitempty"`
 	Ports            []SpritzPort        `json:"ports,omitempty"`
 	Ingress          *SpritzIngress      `json:"ingress,omitempty"`
+}
+
+// SpritzRuntimePolicy stores deployment-resolved infrastructure policy profile references.
+type SpritzRuntimePolicy struct {
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+	NetworkProfile string `json:"networkProfile,omitempty"`
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+	MountProfile string `json:"mountProfile,omitempty"`
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+	ExposureProfile string `json:"exposureProfile,omitempty"`
+	// +kubebuilder:validation:Pattern="^sha256:[a-f0-9]{64}$"
+	Revision string `json:"revision,omitempty"`
 }
 
 // SpritzRepo describes the repository to clone inside the workload.
@@ -440,6 +456,10 @@ func (in *SpritzConversationList) DeepCopy() *SpritzConversationList {
 
 func (in *SpritzSpec) DeepCopyInto(out *SpritzSpec) {
 	*out = *in
+	if in.RuntimePolicy != nil {
+		out.RuntimePolicy = &SpritzRuntimePolicy{}
+		*out.RuntimePolicy = *in.RuntimePolicy
+	}
 	if in.Repo != nil {
 		out.Repo = &SpritzRepo{}
 		*out.Repo = *in.Repo

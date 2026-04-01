@@ -163,6 +163,7 @@ func (s *server) resolveCreateAdmission(ctx context.Context, principal principal
 		requestContext.InstanceClassID = selectedClass.ID
 	}
 	serviceAccountResolved := false
+	runtimePolicyResolved := false
 	resolver, response, err := s.extensions.resolve(
 		ctx,
 		extensionOperationPresetCreateResolve,
@@ -190,6 +191,7 @@ func (s *server) resolveCreateAdmission(ctx context.Context, principal principal
 			return newAdmissionError(http.StatusBadRequest, err.Error(), nil, err)
 		}
 		serviceAccountResolved = mutationResult.serviceAccountResolved
+		runtimePolicyResolved = mutationResult.runtimePolicyResolved
 		switch response.Status {
 		case "", extensionStatusResolved:
 		case extensionStatusUnresolved:
@@ -211,6 +213,10 @@ func (s *server) resolveCreateAdmission(ctx context.Context, principal principal
 			err := fmt.Errorf("instance class %q requires resolver-produced field %q", selectedClass.ID, requiredResolvedFieldServiceAccountName)
 			return newAdmissionError(http.StatusBadRequest, err.Error(), nil, err)
 		}
+		if selectedClass.requiresResolvedField(requiredResolvedFieldRuntimePolicy) && normalizeSpritzRuntimePolicy(body.Spec.RuntimePolicy) != nil && !runtimePolicyResolved {
+			err := fmt.Errorf("instance class %q requires resolver-produced field %q", selectedClass.ID, requiredResolvedFieldRuntimePolicy)
+			return newAdmissionError(http.StatusBadRequest, err.Error(), nil, err)
+		}
 		if err := selectedClass.validateResolvedCreate(body); err != nil {
 			return newAdmissionError(http.StatusBadRequest, err.Error(), nil, err)
 		}
@@ -220,6 +226,7 @@ func (s *server) resolveCreateAdmission(ctx context.Context, principal principal
 
 type presetCreateMutationResult struct {
 	serviceAccountResolved bool
+	runtimePolicyResolved  bool
 }
 
 func applyPresetCreateResolverMutations(body *createRequest, response extensionResolverResponseEnvelope) (presetCreateMutationResult, error) {
@@ -235,6 +242,17 @@ func applyPresetCreateResolverMutations(body *createRequest, response extensionR
 			}
 			body.Spec.ServiceAccountName = resolvedServiceAccount
 			result.serviceAccountResolved = true
+		}
+		mergedRuntimePolicy, err := mergeSpritzRuntimePolicyStrict(
+			body.Spec.RuntimePolicy,
+			response.Mutations.Spec.RuntimePolicy,
+		)
+		if err != nil {
+			return presetCreateMutationResult{}, err
+		}
+		body.Spec.RuntimePolicy = mergedRuntimePolicy
+		if normalizeSpritzRuntimePolicy(body.Spec.RuntimePolicy) != nil {
+			result.runtimePolicyResolved = true
 		}
 		mergedAgentRef, err := mergeSpritzAgentRefStrict(body.Spec.AgentRef, response.Mutations.Spec.AgentRef)
 		if err != nil {
