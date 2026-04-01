@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"spritz.sh/acptext"
 )
 
 type acpPromptResult struct {
@@ -156,50 +158,5 @@ func assistantTextFromACPUpdates(updates []map[string]any) string {
 		}
 		chunks = append(chunks, update["content"])
 	}
-	return joinACPTextChunks(chunks)
-}
-
-func joinACPTextChunks(values []any) string {
-	var builder strings.Builder
-	for _, value := range values {
-		builder.WriteString(extractACPText(value))
-	}
-	return builder.String()
-}
-
-func extractACPText(value any) string {
-	switch typed := value.(type) {
-	case nil:
-		return ""
-	case string:
-		return typed
-	case []any:
-		parts := make([]string, 0, len(typed))
-		for _, item := range typed {
-			text := extractACPText(item)
-			if text == "" {
-				continue
-			}
-			parts = append(parts, text)
-		}
-		return strings.Join(parts, "\n")
-	case map[string]any:
-		if text, ok := typed["text"].(string); ok {
-			return text
-		}
-		if content, ok := typed["content"]; ok {
-			return extractACPText(content)
-		}
-		if resource, ok := typed["resource"].(map[string]any); ok {
-			if text, ok := resource["text"].(string); ok {
-				return text
-			}
-			if uri, ok := resource["uri"].(string); ok {
-				return uri
-			}
-		}
-		return ""
-	default:
-		return fmt.Sprint(typed)
-	}
+	return acptext.JoinChunks(chunks)
 }
