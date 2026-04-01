@@ -1,3 +1,4 @@
+# Build with the repository root as context so the shared local Go modules are available.
 FROM golang:1.25-alpine AS build
 
 WORKDIR /src

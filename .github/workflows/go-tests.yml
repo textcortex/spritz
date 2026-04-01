@@ -52,3 +52,20 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+  docker-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            dockerfile: api/Dockerfile
+          - name: integrations-slack-gateway
+            dockerfile: integrations/slack-gateway/Dockerfile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -f "${{ matrix.dockerfile }}" . -t "spritz-${{ matrix.name }}-ci"
