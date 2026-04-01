@@ -13,6 +13,7 @@ const (
 	instanceClassAnnotationKey              = "spritz.sh/instance-class"
 	instanceClassVersionAnnotationKey       = "spritz.sh/instance-class-version"
 	requiredResolvedFieldServiceAccountName = "serviceAccountName"
+	requiredResolvedFieldRuntimePolicy      = "runtimePolicy"
 )
 
 type instanceClass struct {
@@ -96,6 +97,8 @@ func normalizeRequiredResolvedField(raw string) string {
 	switch strings.TrimSpace(raw) {
 	case requiredResolvedFieldServiceAccountName:
 		return requiredResolvedFieldServiceAccountName
+	case requiredResolvedFieldRuntimePolicy:
+		return requiredResolvedFieldRuntimePolicy
 	default:
 		return ""
 	}
@@ -138,6 +141,10 @@ func (c instanceClass) validateResolvedCreate(body *createRequest) error {
 		switch field {
 		case requiredResolvedFieldServiceAccountName:
 			if strings.TrimSpace(body.Spec.ServiceAccountName) == "" {
+				return fmt.Errorf("instance class %q requires resolved field %q", c.ID, field)
+			}
+		case requiredResolvedFieldRuntimePolicy:
+			if normalizeSpritzRuntimePolicy(body.Spec.RuntimePolicy) == nil {
 				return fmt.Errorf("instance class %q requires resolved field %q", c.ID, field)
 			}
 		default:
