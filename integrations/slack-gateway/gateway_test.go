@@ -84,15 +84,35 @@ func TestOAuthCallbackStoresInstallationAndUpsertsRegistry(t *testing.T) {
 	rec := httptest.NewRecorder()
 	gateway.handleOAuthCallback(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d: %s", rec.Code, rec.Body.String())
 	}
-	var callbackPayload map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &callbackPayload); err != nil {
-		t.Fatalf("decode callback body: %v", err)
+	location := rec.Header().Get("Location")
+	if location == "" {
+		t.Fatal("expected callback redirect location")
 	}
-	if callbackPayload["providerInstallRef"] != "cred_slack_workspace_1" {
-		t.Fatalf("expected backend-assigned install ref, got %#v", callbackPayload["providerInstallRef"])
+	redirectURL, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("parse callback redirect: %v", err)
+	}
+	if redirectURL.Path != "/slack/install/result" {
+		t.Fatalf("expected install result path, got %s", redirectURL.Path)
+	}
+	if got := redirectURL.Query().Get("status"); got != "success" {
+		t.Fatalf("expected success status, got %q", got)
+	}
+	if got := redirectURL.Query().Get("code"); got != "installed" {
+		t.Fatalf("expected installed code, got %q", got)
+	}
+	if got := redirectURL.Query().Get("provider"); got != "slack" {
+		t.Fatalf("expected slack provider, got %q", got)
+	}
+	if got := redirectURL.Query().Get("teamId"); got != "T_workspace_1" {
+		t.Fatalf("expected team id in result redirect, got %q", got)
+	}
+	requestID := redirectURL.Query().Get("requestId")
+	if strings.TrimSpace(requestID) == "" {
+		t.Fatal("expected request id in result redirect")
 	}
 	if upsertPayload["principalId"] != "shared-slack-gateway" {
 		t.Fatalf("expected principalId to match, got %#v", upsertPayload["principalId"])
@@ -125,6 +145,27 @@ func TestOAuthCallbackStoresInstallationAndUpsertsRegistry(t *testing.T) {
 	}
 	if upsertPayload["presetId"] != "zeno" {
 		t.Fatalf("expected presetId zeno, got %#v", upsertPayload["presetId"])
+	}
+	if upsertPayload["requestId"] != requestID {
+		t.Fatalf("expected requestId to propagate to backend, got %#v", upsertPayload["requestId"])
+	}
+
+	resultReq := httptest.NewRequest(http.MethodGet, redirectURL.RequestURI(), nil)
+	resultRec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(resultRec, resultReq)
+
+	if resultRec.Code != http.StatusOK {
+		t.Fatalf("expected result page 200, got %d: %s", resultRec.Code, resultRec.Body.String())
+	}
+	if contentType := resultRec.Header().Get("Content-Type"); !strings.Contains(contentType, "text/html") {
+		t.Fatalf("expected html content type, got %q", contentType)
+	}
+	body := resultRec.Body.String()
+	if !strings.Contains(body, "Slack workspace connected") {
+		t.Fatalf("expected success title in result page, got %q", body)
+	}
+	if !strings.Contains(body, requestID) {
+		t.Fatalf("expected request id in result page, got %q", body)
 	}
 }
 
@@ -202,7 +243,7 @@ func TestRoutesServeSlackEndpointsUnderConfiguredPublicURLPathPrefix(t *testing.
 	}
 }
 
-func TestOAuthCallbackReturnsBadGatewayWhenBackendUpsertFails(t *testing.T) {
+func TestOAuthCallbackRedirectsToControlledRetryableErrorWhenBackendUpsertFails(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "backend unavailable", http.StatusServiceUnavailable)
 	}))
@@ -251,8 +292,29 @@ func TestOAuthCallbackReturnsBadGatewayWhenBackendUpsertFails(t *testing.T) {
 	rec := httptest.NewRecorder()
 	gateway.handleOAuthCallback(rec, req)
 
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d: %s", rec.Code, rec.Body.String())
+	}
+	redirectURL, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse callback redirect: %v", err)
+	}
+	if got := redirectURL.Query().Get("status"); got != "error" {
+		t.Fatalf("expected error status, got %q", got)
+	}
+	if got := redirectURL.Query().Get("code"); got != "installation_registry_unavailable" {
+		t.Fatalf("expected installation registry unavailable code, got %q", got)
+	}
+
+	resultReq := httptest.NewRequest(http.MethodGet, redirectURL.RequestURI(), nil)
+	resultRec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(resultRec, resultReq)
+
+	if resultRec.Code != http.StatusOK {
+		t.Fatalf("expected result page 200, got %d: %s", resultRec.Code, resultRec.Body.String())
+	}
+	if strings.Contains(resultRec.Body.String(), "backend unavailable") {
+		t.Fatalf("expected retryable result page to hide backend body, got %q", resultRec.Body.String())
 	}
 	logOutput := logBuffer.String()
 	if !strings.Contains(logOutput, "slack oauth callback installation upsert failed") {
@@ -286,9 +348,11 @@ func TestExtractACPTextSupportsResourceBlocks(t *testing.T) {
 	}
 }
 
-func TestOAuthCallbackReturnsBadGatewayOnDeterministicBackendFailure(t *testing.T) {
+func TestOAuthCallbackRedirectsToControlledOwnerResolutionError(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "owner was not found", http.StatusNotFound)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"status":"unresolved","field":"ownerRef","error":"external_identity_unresolved"}`))
 	}))
 	defer backend.Close()
 
@@ -331,8 +395,73 @@ func TestOAuthCallbackReturnsBadGatewayOnDeterministicBackendFailure(t *testing.
 	rec := httptest.NewRecorder()
 	gateway.handleOAuthCallback(rec, req)
 
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d: %s", rec.Code, rec.Body.String())
+	}
+	redirectURL, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse callback redirect: %v", err)
+	}
+	if got := redirectURL.Query().Get("code"); got != "external_identity_unresolved" {
+		t.Fatalf("expected external identity unresolved code, got %q", got)
+	}
+
+	resultReq := httptest.NewRequest(http.MethodGet, redirectURL.RequestURI(), nil)
+	resultRec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(resultRec, resultReq)
+
+	if resultRec.Code != http.StatusOK {
+		t.Fatalf("expected result page 200, got %d: %s", resultRec.Code, resultRec.Body.String())
+	}
+	body := resultRec.Body.String()
+	if !strings.Contains(body, "could not be linked") {
+		t.Fatalf("expected owner resolution guidance in result page, got %q", body)
+	}
+	if strings.Contains(body, "ownerRef") {
+		t.Fatalf("expected result page to avoid leaking backend field names, got %q", body)
+	}
+}
+
+func TestOAuthCallbackRedirectsDeniedProviderAuthToControlledResult(t *testing.T) {
+	cfg := config{
+		PublicURL:            "https://gateway.example.test",
+		SlackClientID:        "client-id",
+		SlackClientSecret:    "client-secret",
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      "https://slack.example.test/api",
+		SlackBotScopes:       []string{"chat:write"},
+		BackendBaseURL:       "https://backend.example.test",
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        "https://spritz.example.test",
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
+	}
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	state, err := gateway.state.generate()
+	if err != nil {
+		t.Fatalf("state generate failed: %v", err)
+	}
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/slack/oauth/callback?error=access_denied&state="+url.QueryEscape(state),
+		nil,
+	)
+	rec := httptest.NewRecorder()
+	gateway.handleOAuthCallback(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d: %s", rec.Code, rec.Body.String())
+	}
+	redirectURL, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse callback redirect: %v", err)
+	}
+	if got := redirectURL.Query().Get("code"); got != "provider_authorization_denied" {
+		t.Fatalf("expected provider authorization denied code, got %q", got)
 	}
 }
 
