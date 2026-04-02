@@ -300,27 +300,24 @@ func classifyInstallUpsertError(err error) installResultCode {
 	if !errors.As(err, &statusErr) {
 		return installResultCodeInternalError
 	}
-	if statusErr.statusCode >= http.StatusInternalServerError {
-		return installResultCodeInstallationRegistryUnavailable
-	}
 	var payload backendInstallErrorPayload
 	if json.Unmarshal([]byte(strings.TrimSpace(statusErr.body)), &payload) == nil {
 		if code := normalizeInstallResultCode(payload.Error); code != installResultCodeInternalError {
 			return code
 		}
-		if statusErr.statusCode == http.StatusNotFound && payload.Status == "unresolved" && payload.Field == "ownerRef" {
+		if payload.Status == "unresolved" && payload.Field == "ownerRef" {
 			return installResultCodeExternalIdentityUnresolved
 		}
-		if statusErr.statusCode == http.StatusForbidden && payload.Status == "forbidden" && payload.Field == "ownerRef" {
+		if payload.Status == "forbidden" && payload.Field == "ownerRef" {
 			return installResultCodeExternalIdentityForbidden
 		}
-		if statusErr.statusCode == http.StatusConflict && payload.Status == "ambiguous" && payload.Field == "ownerRef" {
+		if payload.Status == "ambiguous" && payload.Field == "ownerRef" {
 			return installResultCodeExternalIdentityAmbiguous
 		}
-		if statusErr.statusCode == http.StatusConflict && payload.Status == "ambiguous" {
+		if payload.Status == "ambiguous" {
 			return installResultCodeInstallationConflict
 		}
-		if statusErr.statusCode == http.StatusServiceUnavailable && payload.Status == "unavailable" {
+		if payload.Status == "unavailable" {
 			return installResultCodeInstallationRegistryUnavailable
 		}
 	}
@@ -330,6 +327,9 @@ func classifyInstallUpsertError(err error) installResultCode {
 	case http.StatusConflict:
 		return installResultCodeInstallationConflict
 	default:
+		if statusErr.statusCode >= http.StatusInternalServerError {
+			return installResultCodeInstallationRegistryUnavailable
+		}
 		return installResultCodeInternalError
 	}
 }
