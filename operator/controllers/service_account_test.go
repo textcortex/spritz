@@ -146,6 +146,48 @@ func TestReconcileDeploymentPropagatesSpecLabelsToPodTemplate(t *testing.T) {
 	}
 }
 
+func TestReconcileDeploymentKeepsSelectorLabelsAuthoritativeOnPodTemplate(t *testing.T) {
+	scheme := newControllerTestScheme(t)
+	spritz := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{Name: "tidy-otter", Namespace: "spritz-test"},
+		Spec: spritzv1.SpritzSpec{
+			Image: "example.com/openclaw:latest",
+			Owner: spritzv1.SpritzOwner{ID: "user-1"},
+			Labels: map[string]string{
+				"spritz.sh/name":  "spoofed-name",
+				"spritz.sh/owner": "spoofed-owner",
+			},
+		},
+	}
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(spritz).
+		Build()
+	reconciler := &SpritzReconciler{
+		Client: k8sClient,
+		Scheme: scheme,
+	}
+
+	if err := reconciler.reconcileDeployment(context.Background(), spritz); err != nil {
+		t.Fatalf("reconcileDeployment returned error: %v", err)
+	}
+
+	deployment := &appsv1.Deployment{}
+	if err := k8sClient.Get(
+		context.Background(),
+		client.ObjectKey{Name: spritz.Name, Namespace: spritz.Namespace},
+		deployment,
+	); err != nil {
+		t.Fatalf("failed to load deployment: %v", err)
+	}
+	if deployment.Spec.Template.Labels["spritz.sh/name"] != spritz.Name {
+		t.Fatalf("expected pod template to keep canonical spritz name label, got %#v", deployment.Spec.Template.Labels)
+	}
+	if deployment.Spec.Template.Labels[ownerLabelKey] != ownerLabelValue("user-1") {
+		t.Fatalf("expected pod template to keep canonical owner label, got %#v", deployment.Spec.Template.Labels)
+	}
+}
+
 func TestReconcileDeploymentPreservesExistingSelectorOnUpgrade(t *testing.T) {
 	scheme := newControllerTestScheme(t)
 	oldSelector := map[string]string{
