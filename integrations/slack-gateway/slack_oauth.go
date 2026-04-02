@@ -71,26 +71,86 @@ func slackOAuthAuthorizeURL(apiBaseURL string) (*url.URL, error) {
 }
 
 func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
+	requestID := newInstallRequestID()
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
 	code := strings.TrimSpace(r.URL.Query().Get("code"))
 	if err := g.state.validate(state); err != nil {
-		g.logger.ErrorContext(r.Context(), "slack oauth callback state validation failed", "err", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		g.logger.ErrorContext(
+			r.Context(),
+			"slack oauth callback state validation failed",
+			"err",
+			err,
+			"request_id",
+			requestID,
+		)
+		resultCode := installResultCodeInstallStateInvalid
+		if strings.Contains(strings.ToLower(err.Error()), "expired") {
+			resultCode = installResultCodeInstallStateExpired
+		}
+		g.redirectToInstallResult(w, r, installResult{
+			Status:    installResultStatusError,
+			Code:      resultCode,
+			Provider:  slackProvider,
+			RequestID: requestID,
+		})
+		return
+	}
+	if providerError := strings.TrimSpace(r.URL.Query().Get("error")); providerError != "" {
+		g.logger.InfoContext(
+			r.Context(),
+			"slack oauth callback authorization denied",
+			"provider_error",
+			providerError,
+			"request_id",
+			requestID,
+		)
+		resultCode := installResultCodeProviderAuthorizationFailed
+		if providerError == "access_denied" {
+			resultCode = installResultCodeProviderAuthorizationDenied
+		}
+		g.redirectToInstallResult(w, r, installResult{
+			Status:    installResultStatusError,
+			Code:      resultCode,
+			Provider:  slackProvider,
+			RequestID: requestID,
+		})
 		return
 	}
 	if code == "" {
-		g.logger.ErrorContext(r.Context(), "slack oauth callback missing code")
-		http.Error(w, "code is required", http.StatusBadRequest)
+		g.logger.ErrorContext(
+			r.Context(),
+			"slack oauth callback missing code",
+			"request_id",
+			requestID,
+		)
+		g.redirectToInstallResult(w, r, installResult{
+			Status:    installResultStatusError,
+			Code:      installResultCodeProviderAuthorizationFailed,
+			Provider:  slackProvider,
+			RequestID: requestID,
+		})
 		return
 	}
 
 	installation, err := g.exchangeSlackOAuthCode(r.Context(), code)
 	if err != nil {
-		g.logger.ErrorContext(r.Context(), "slack oauth callback code exchange failed", "err", err)
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		g.logger.ErrorContext(
+			r.Context(),
+			"slack oauth callback code exchange failed",
+			"err",
+			err,
+			"request_id",
+			requestID,
+		)
+		g.redirectToInstallResult(w, r, installResult{
+			Status:    installResultStatusError,
+			Code:      installResultCodeProviderAuthorizationFailed,
+			Provider:  slackProvider,
+			RequestID: requestID,
+		})
 		return
 	}
-	if err := g.upsertInstallation(r.Context(), &installation); err != nil {
+	if err := g.upsertInstallation(r.Context(), &installation, requestID); err != nil {
 		g.logger.ErrorContext(
 			r.Context(),
 			"slack oauth callback installation upsert failed",
@@ -100,8 +160,16 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 			installation.TeamID,
 			"installing_user_id",
 			installation.InstallingUserID,
+			"request_id",
+			requestID,
 		)
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		g.redirectToInstallResult(w, r, installResult{
+			Status:    installResultStatusError,
+			Code:      classifyInstallUpsertError(err),
+			Provider:  slackProvider,
+			RequestID: requestID,
+			TeamID:    installation.TeamID,
+		})
 		return
 	}
 	g.logger.InfoContext(
@@ -109,11 +177,15 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		"slack oauth callback installed workspace",
 		"team_id",
 		installation.TeamID,
+		"request_id",
+		requestID,
 	)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":             "installed",
-		"teamId":             installation.TeamID,
-		"providerInstallRef": installation.ProviderInstallRef,
+	g.redirectToInstallResult(w, r, installResult{
+		Status:    installResultStatusSuccess,
+		Code:      installResultCodeInstalled,
+		Provider:  slackProvider,
+		RequestID: requestID,
+		TeamID:    installation.TeamID,
 	})
 }
 
@@ -164,7 +236,7 @@ func (g *slackGateway) exchangeSlackOAuthCode(ctx context.Context, code string) 
 	return record, nil
 }
 
-func (g *slackGateway) upsertInstallation(ctx context.Context, installation *slackInstallation) error {
+func (g *slackGateway) upsertInstallation(ctx context.Context, installation *slackInstallation, requestID string) error {
 	if installation == nil {
 		return fmt.Errorf("installation is required")
 	}
@@ -189,6 +261,7 @@ func (g *slackGateway) upsertInstallation(ctx context.Context, installation *sla
 			"botAccessToken":   installation.BotAccessToken,
 			"scopeSet":         installation.ScopeSet,
 		},
+		"requestId": strings.TrimSpace(requestID),
 	}
 	var payload backendInstallationUpsertResponse
 	if err := g.postBackendJSON(ctx, "/internal/v1/spritz/channel-installations/upsert", body, &payload); err != nil {
