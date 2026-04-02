@@ -306,8 +306,8 @@ func (r *SpritzReconciler) reconcileDeployment(ctx context.Context, spritz *spri
 		deploy.Annotations = mergeMaps(deploy.Annotations, annotations)
 		deploy.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
 		deploy.Spec.Template.Labels = mergeMaps(
-			mergeMaps(selectorLabels, labels),
-			spritz.Spec.Labels,
+			mergeMaps(spritz.Spec.Labels, labels),
+			selectorLabels,
 		)
 		deploy.Spec.Template.Annotations = mergeMaps(deploy.Spec.Template.Annotations, spritz.Spec.Annotations)
 		deploy.Spec.Template.Annotations = mergeMaps(deploy.Spec.Template.Annotations, annotations)
