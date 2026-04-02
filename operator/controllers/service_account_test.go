@@ -101,6 +101,51 @@ func TestReconcileDeploymentKeepsRuntimePolicyLabelsOutOfSelector(t *testing.T) 
 	}
 }
 
+func TestReconcileDeploymentPropagatesSpecLabelsToPodTemplate(t *testing.T) {
+	scheme := newControllerTestScheme(t)
+	spritz := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{Name: "tidy-otter", Namespace: "spritz-test"},
+		Spec: spritzv1.SpritzSpec{
+			Image: "example.com/openclaw:latest",
+			Owner: spritzv1.SpritzOwner{ID: "user-1"},
+			Labels: map[string]string{
+				"sidecar.istio.io/inject": "true",
+				"example.com/runtime":     "dev",
+			},
+		},
+	}
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(spritz).
+		Build()
+	reconciler := &SpritzReconciler{
+		Client: k8sClient,
+		Scheme: scheme,
+	}
+
+	if err := reconciler.reconcileDeployment(context.Background(), spritz); err != nil {
+		t.Fatalf("reconcileDeployment returned error: %v", err)
+	}
+
+	deployment := &appsv1.Deployment{}
+	if err := k8sClient.Get(
+		context.Background(),
+		client.ObjectKey{Name: spritz.Name, Namespace: spritz.Namespace},
+		deployment,
+	); err != nil {
+		t.Fatalf("failed to load deployment: %v", err)
+	}
+	if deployment.Spec.Template.Labels["sidecar.istio.io/inject"] != "true" {
+		t.Fatalf("expected sidecar injection label on pod template, got %#v", deployment.Spec.Template.Labels)
+	}
+	if deployment.Spec.Template.Labels["example.com/runtime"] != "dev" {
+		t.Fatalf("expected custom spec label on pod template, got %#v", deployment.Spec.Template.Labels)
+	}
+	if _, ok := deployment.Spec.Selector.MatchLabels["sidecar.istio.io/inject"]; ok {
+		t.Fatalf("deployment selector must not depend on spec labels: %#v", deployment.Spec.Selector.MatchLabels)
+	}
+}
+
 func TestReconcileDeploymentPreservesExistingSelectorOnUpgrade(t *testing.T) {
 	scheme := newControllerTestScheme(t)
 	oldSelector := map[string]string{
