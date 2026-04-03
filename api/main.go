@@ -253,6 +253,12 @@ func (s *server) registerRoutes(e *echo.Echo) {
 	if s.internalAuth.enabled {
 		internal.GET("/presets/:presetID", s.getInternalPreset)
 		internal.GET("/runtime-bindings/:namespace/:instanceId", s.getRuntimeBinding)
+		internal.PUT("/bindings/:bindingKey", s.upsertInternalBinding)
+		internal.GET("/bindings/:bindingKey", s.getInternalBinding)
+		internal.POST("/bindings/:bindingKey/reconcile", s.reconcileInternalBinding)
+		internal.PUT("/bindings/:namespace/:bindingKey", s.upsertInternalBinding)
+		internal.GET("/bindings/:namespace/:bindingKey", s.getInternalBinding)
+		internal.POST("/bindings/:namespace/:bindingKey/reconcile", s.reconcileInternalBinding)
 		internal.POST("/spritzes", s.createInternalSpritz)
 		internal.GET("/spritzes/:namespace/:name", s.getInternalSpritz)
 		internal.DELETE("/spritzes/:namespace/:name", s.deleteInternalSpritz)
