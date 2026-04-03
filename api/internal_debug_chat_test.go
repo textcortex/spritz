@@ -383,6 +383,51 @@ func TestInternalDebugChatSendCreatesConversationAndReturnsAssistantText(t *test
 	}
 }
 
+func TestInternalDebugChatSendBridgesCanonicalPrincipalHeadersForInternalAuth(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	fakeACP := newFakeACPDebugChatServer(t, fakeACPDebugChatServerOptions{
+		SessionID:    "session-fresh",
+		PromptChunks: []string{"bridged"},
+		StopReason:   "end_turn",
+	})
+
+	s := newACPTestServer(t, spritz)
+	s.internalAuth = internalAuthConfig{enabled: true, token: "internal-token"}
+	s.auth.headerID = "X-Forwarded-User"
+	s.auth.headerEmail = "X-Forwarded-Email"
+	s.auth.headerTeams = "X-Forwarded-Groups"
+	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
+
+	e := echo.New()
+	internal := e.Group("", s.internalAuthHeaderMiddleware(), s.authMiddleware())
+	internal.POST("/api/internal/v1/debug/chat/send", s.sendInternalDebugChat)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/internal/v1/debug/chat/send", strings.NewReader(`{
+		"target":{"spritzName":"tidy-otter"},
+		"message":"hello"
+	}`))
+	req.Header.Set(internalTokenHeader, "internal-token")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Status string                        `json:"status"`
+		Data   internalDebugChatSendResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.Data.AssistantText != "bridged" {
+		t.Fatalf("expected assistant text %q, got %q", "bridged", payload.Data.AssistantText)
+	}
+}
+
 func TestInternalDebugChatSendTargetsExistingConversation(t *testing.T) {
 	spritz := readyACPSpritz("tidy-otter", "user-1")
 	conversation := conversationFor("tidy-otter-conv", "tidy-otter", "user-1", "Existing", metav1.Now())
