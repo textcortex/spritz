@@ -126,6 +126,15 @@ func TestInternalUpsertBindingCreatesAndFetchesBinding(t *testing.T) {
 	if stored.Spec.Template.Spec.AgentRef == nil || stored.Spec.Template.Spec.AgentRef.ID != "ag-123" {
 		t.Fatalf("expected resolved agent ref to be stored, got %#v", stored.Spec.Template.Spec.AgentRef)
 	}
+	if got := stored.Spec.Template.Annotations[presetIDAnnotationKey]; got != "zeno" {
+		t.Fatalf("expected preset annotation to be preserved, got %#v", got)
+	}
+	if got := stored.Spec.Template.Annotations[instanceClassAnnotationKey]; got != "personal-agent" {
+		t.Fatalf("expected instance class annotation to be preserved, got %#v", got)
+	}
+	if got := stored.Spec.Template.Annotations[instanceClassVersionAnnotationKey]; got != "v1" {
+		t.Fatalf("expected instance class version annotation to be preserved, got %#v", got)
+	}
 	if resolverHits != 1 {
 		t.Fatalf("expected resolver to be called once, got %d", resolverHits)
 	}

@@ -167,11 +167,11 @@ func (s *server) upsertInternalBinding(c echo.Context) error {
 	if strings.TrimSpace(requestBody.PresetID) != "" {
 		labels[presetLabelKey] = strings.TrimSpace(requestBody.PresetID)
 	}
-
-	annotations := cloneStringMap(s.defaultMetadata)
-	if annotations == nil {
-		annotations = map[string]string{}
+	for key, value := range requestBody.Labels {
+		labels[key] = value
 	}
+
+	annotations := mergeStringMap(s.defaultMetadata, requestBody.Annotations)
 	if strings.TrimSpace(requestBody.PresetID) != "" {
 		annotations[presetIDAnnotationKey] = strings.TrimSpace(requestBody.PresetID)
 	}
