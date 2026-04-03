@@ -5,7 +5,7 @@ metadata:
   namespace: {{ .Values.spritz.namespace }}
 rules:
   - apiGroups: ["spritz.sh"]
-    resources: ["spritzes", "spritzconversations"]
+    resources: ["spritzes", "spritzconversations", "spritzbindings"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["spritz.sh"]
     resources: ["spritzes/status", "spritzconversations/status"]
