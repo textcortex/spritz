@@ -299,8 +299,13 @@ test('create explains unresolved external owners with connect-account guidance',
       res.end(JSON.stringify({
         status: 'fail',
         data: {
-          message: 'external identity is unresolved',
-          error: 'external_identity_unresolved',
+          message: 'This request could not be linked to an owner account yet.',
+          error: {
+            code: 'identity.unresolved',
+            operation: 'spritz.create',
+            message: 'This request could not be linked to an owner account yet.',
+            retryable: false,
+          },
           identity: {
             provider: 'discord',
             subject: '123456789012345678',

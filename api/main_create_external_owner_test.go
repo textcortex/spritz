@@ -167,8 +167,21 @@ func TestCreateSpritzReturnsTypedFailureWhenExternalOwnerIsUnresolved(t *testing
 		t.Fatalf("expected jsend fail status, got %#v", payload["status"])
 	}
 	data := payload["data"].(map[string]any)
-	if data["error"] != "external_identity_unresolved" {
-		t.Fatalf("expected unresolved error code, got %#v", data["error"])
+	publicError, ok := data["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected structured public error, got %#v", data["error"])
+	}
+	if publicError["code"] != "identity.unresolved" {
+		t.Fatalf("expected identity.unresolved code, got %#v", publicError["code"])
+	}
+	if publicError["operation"] != "spritz.create" {
+		t.Fatalf("expected spritz.create operation, got %#v", publicError["operation"])
+	}
+	if publicError["retryable"] != false {
+		t.Fatalf("expected retryable false, got %#v", publicError["retryable"])
+	}
+	if publicError["requestId"] != nil {
+		t.Fatalf("expected requestId to be omitted when absent, got %#v", publicError["requestId"])
 	}
 	identity := data["identity"].(map[string]any)
 	if identity["provider"] != "msteams" {

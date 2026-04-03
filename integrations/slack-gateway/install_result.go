@@ -18,26 +18,30 @@ const (
 	installResultStatusError   installResultStatus = "error"
 )
 
+const installResultOperationChannelInstall = "channel.install"
+
 type installResultCode string
 
 const (
-	installResultCodeInstalled                       installResultCode = "installed"
-	installResultCodeInstallStateInvalid             installResultCode = "install_state_invalid"
-	installResultCodeInstallStateExpired             installResultCode = "install_state_expired"
-	installResultCodeProviderAuthorizationDenied     installResultCode = "provider_authorization_denied"
-	installResultCodeProviderAuthorizationFailed     installResultCode = "provider_authorization_failed"
-	installResultCodeExternalIdentityUnresolved      installResultCode = "external_identity_unresolved"
-	installResultCodeExternalIdentityForbidden       installResultCode = "external_identity_forbidden"
-	installResultCodeExternalIdentityAmbiguous       installResultCode = "external_identity_ambiguous"
-	installResultCodeInstallationConflict            installResultCode = "installation_conflict"
-	installResultCodeInstallationRegistryUnavailable installResultCode = "installation_registry_unavailable"
-	installResultCodeRuntimeBindingUnavailable       installResultCode = "runtime_binding_unavailable"
-	installResultCodeInternalError                   installResultCode = "internal_error"
+	installResultCodeInstalled           installResultCode = "installed"
+	installResultCodeStateInvalid        installResultCode = "state.invalid"
+	installResultCodeStateExpired        installResultCode = "state.expired"
+	installResultCodeAuthDenied          installResultCode = "auth.denied"
+	installResultCodeAuthFailed          installResultCode = "auth.failed"
+	installResultCodeIdentityUnresolved  installResultCode = "identity.unresolved"
+	installResultCodeIdentityForbidden   installResultCode = "identity.forbidden"
+	installResultCodeIdentityAmbiguous   installResultCode = "identity.ambiguous"
+	installResultCodeRegistryConflict    installResultCode = "registry.conflict"
+	installResultCodeResolverUnavailable installResultCode = "resolver.unavailable"
+	installResultCodeRuntimeUnavailable  installResultCode = "runtime.unavailable"
+	installResultCodeInternalError       installResultCode = "internal.error"
 )
 
 type installResult struct {
 	Status    installResultStatus
 	Code      installResultCode
+	Operation string
+	Retryable bool
 	Provider  string
 	RequestID string
 	TeamID    string
@@ -170,6 +174,12 @@ func (g *slackGateway) redirectToInstallResult(w http.ResponseWriter, r *http.Re
 	query.Set("status", string(result.Status))
 	query.Set("code", string(result.Code))
 	query.Set("provider", firstNonEmpty(result.Provider, slackProvider))
+	if operation := strings.TrimSpace(result.Operation); operation != "" {
+		query.Set("operation", operation)
+	}
+	if result.Retryable {
+		query.Set("retryable", "true")
+	}
 	if requestID := strings.TrimSpace(result.RequestID); requestID != "" {
 		query.Set("requestId", requestID)
 	}
@@ -187,7 +197,7 @@ func installResultDescriptorFor(code installResultCode, installURL string) insta
 			Title:   "Slack workspace connected",
 			Message: "The shared Slack app is installed and ready. You can close this tab.",
 		}
-	case installResultCodeInstallStateExpired:
+	case installResultCodeStateExpired:
 		return installResultDescriptor{
 			Title:       "Install link expired",
 			Message:     "This install link expired before it completed. Start the install again.",
@@ -195,7 +205,7 @@ func installResultDescriptorFor(code installResultCode, installURL string) insta
 			ActionLabel: "Start install again",
 			ActionHref:  installURL,
 		}
-	case installResultCodeInstallStateInvalid:
+	case installResultCodeStateInvalid:
 		return installResultDescriptor{
 			Title:       "Install link is invalid",
 			Message:     "This install callback could not be verified. Start the install again.",
@@ -203,7 +213,7 @@ func installResultDescriptorFor(code installResultCode, installURL string) insta
 			ActionLabel: "Start install again",
 			ActionHref:  installURL,
 		}
-	case installResultCodeProviderAuthorizationDenied:
+	case installResultCodeAuthDenied:
 		return installResultDescriptor{
 			Title:       "Slack authorization was cancelled",
 			Message:     "The Slack install did not finish because authorization was denied or cancelled.",
@@ -211,7 +221,7 @@ func installResultDescriptorFor(code installResultCode, installURL string) insta
 			ActionLabel: "Start install again",
 			ActionHref:  installURL,
 		}
-	case installResultCodeProviderAuthorizationFailed:
+	case installResultCodeAuthFailed:
 		return installResultDescriptor{
 			Title:       "Slack authorization failed",
 			Message:     "The Slack install did not complete successfully. Please try again.",
@@ -219,7 +229,7 @@ func installResultDescriptorFor(code installResultCode, installURL string) insta
 			ActionLabel: "Start install again",
 			ActionHref:  installURL,
 		}
-	case installResultCodeExternalIdentityUnresolved:
+	case installResultCodeIdentityUnresolved:
 		return installResultDescriptor{
 			Title:       "Install could not be linked",
 			Message:     "This Slack install could not be linked to an owner account yet. Link the expected account, then start the install again.",
@@ -227,28 +237,28 @@ func installResultDescriptorFor(code installResultCode, installURL string) insta
 			ActionLabel: "Start install again",
 			ActionHref:  installURL,
 		}
-	case installResultCodeExternalIdentityForbidden:
+	case installResultCodeIdentityForbidden:
 		return installResultDescriptor{
 			Title:       "Install is not allowed",
 			Message:     "This Slack identity is not allowed to complete the install for this deployment.",
 			ActionLabel: "Start install again",
 			ActionHref:  installURL,
 		}
-	case installResultCodeExternalIdentityAmbiguous:
+	case installResultCodeIdentityAmbiguous:
 		return installResultDescriptor{
 			Title:       "Install owner is ambiguous",
 			Message:     "This Slack install matched more than one possible owner. Resolve the account mapping, then start the install again.",
 			ActionLabel: "Start install again",
 			ActionHref:  installURL,
 		}
-	case installResultCodeInstallationConflict:
+	case installResultCodeRegistryConflict:
 		return installResultDescriptor{
 			Title:       "Install conflicts with existing state",
 			Message:     "This workspace already has conflicting install state. Resolve the existing binding, then start the install again.",
 			ActionLabel: "Start install again",
 			ActionHref:  installURL,
 		}
-	case installResultCodeInstallationRegistryUnavailable:
+	case installResultCodeResolverUnavailable:
 		return installResultDescriptor{
 			Title:       "Install could not be completed",
 			Message:     "The install service is temporarily unavailable. Please try again shortly.",
@@ -256,7 +266,7 @@ func installResultDescriptorFor(code installResultCode, installURL string) insta
 			ActionLabel: "Start install again",
 			ActionHref:  installURL,
 		}
-	case installResultCodeRuntimeBindingUnavailable:
+	case installResultCodeRuntimeUnavailable:
 		return installResultDescriptor{
 			Title:       "Install is still being prepared",
 			Message:     "The workspace binding is not ready yet. Please try again shortly.",
@@ -278,18 +288,38 @@ func installResultDescriptorFor(code installResultCode, installURL string) insta
 func normalizeInstallResultCode(raw string) installResultCode {
 	switch installResultCode(strings.TrimSpace(raw)) {
 	case installResultCodeInstalled,
-		installResultCodeInstallStateInvalid,
-		installResultCodeInstallStateExpired,
-		installResultCodeProviderAuthorizationDenied,
-		installResultCodeProviderAuthorizationFailed,
-		installResultCodeExternalIdentityUnresolved,
-		installResultCodeExternalIdentityForbidden,
-		installResultCodeExternalIdentityAmbiguous,
-		installResultCodeInstallationConflict,
-		installResultCodeInstallationRegistryUnavailable,
-		installResultCodeRuntimeBindingUnavailable,
+		installResultCodeStateInvalid,
+		installResultCodeStateExpired,
+		installResultCodeAuthDenied,
+		installResultCodeAuthFailed,
+		installResultCodeIdentityUnresolved,
+		installResultCodeIdentityForbidden,
+		installResultCodeIdentityAmbiguous,
+		installResultCodeRegistryConflict,
+		installResultCodeResolverUnavailable,
+		installResultCodeRuntimeUnavailable,
 		installResultCodeInternalError:
 		return installResultCode(strings.TrimSpace(raw))
+	case "install_state_invalid":
+		return installResultCodeStateInvalid
+	case "install_state_expired":
+		return installResultCodeStateExpired
+	case "provider_authorization_denied":
+		return installResultCodeAuthDenied
+	case "provider_authorization_failed":
+		return installResultCodeAuthFailed
+	case "external_identity_unresolved":
+		return installResultCodeIdentityUnresolved
+	case "external_identity_forbidden":
+		return installResultCodeIdentityForbidden
+	case "external_identity_ambiguous":
+		return installResultCodeIdentityAmbiguous
+	case "installation_conflict":
+		return installResultCodeRegistryConflict
+	case "installation_registry_unavailable":
+		return installResultCodeResolverUnavailable
+	case "runtime_binding_unavailable":
+		return installResultCodeRuntimeUnavailable
 	default:
 		return installResultCodeInternalError
 	}
@@ -306,29 +336,29 @@ func classifyInstallUpsertError(err error) installResultCode {
 			return code
 		}
 		if payload.Status == "unresolved" && payload.Field == "ownerRef" {
-			return installResultCodeExternalIdentityUnresolved
+			return installResultCodeIdentityUnresolved
 		}
 		if payload.Status == "forbidden" && payload.Field == "ownerRef" {
-			return installResultCodeExternalIdentityForbidden
+			return installResultCodeIdentityForbidden
 		}
 		if payload.Status == "ambiguous" && payload.Field == "ownerRef" {
-			return installResultCodeExternalIdentityAmbiguous
+			return installResultCodeIdentityAmbiguous
 		}
 		if payload.Status == "ambiguous" {
-			return installResultCodeInstallationConflict
+			return installResultCodeRegistryConflict
 		}
 		if payload.Status == "unavailable" {
-			return installResultCodeInstallationRegistryUnavailable
+			return installResultCodeResolverUnavailable
 		}
 	}
 	switch statusErr.statusCode {
 	case http.StatusServiceUnavailable:
-		return installResultCodeInstallationRegistryUnavailable
+		return installResultCodeResolverUnavailable
 	case http.StatusConflict:
-		return installResultCodeInstallationConflict
+		return installResultCodeRegistryConflict
 	default:
 		if statusErr.statusCode >= http.StatusInternalServerError {
-			return installResultCodeInstallationRegistryUnavailable
+			return installResultCodeResolverUnavailable
 		}
 		return installResultCodeInternalError
 	}
@@ -338,6 +368,8 @@ func (g *slackGateway) handleInstallResult(w http.ResponseWriter, r *http.Reques
 	result := installResult{
 		Status:    installResultStatus(firstNonEmpty(r.URL.Query().Get("status"), string(installResultStatusError))),
 		Code:      normalizeInstallResultCode(firstNonEmpty(r.URL.Query().Get("code"), string(installResultCodeInternalError))),
+		Operation: strings.TrimSpace(r.URL.Query().Get("operation")),
+		Retryable: strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("retryable")), "true"),
 		Provider:  firstNonEmpty(r.URL.Query().Get("provider"), slackProvider),
 		RequestID: strings.TrimSpace(r.URL.Query().Get("requestId")),
 		TeamID:    strings.TrimSpace(r.URL.Query().Get("teamId")),

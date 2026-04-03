@@ -736,6 +736,39 @@ function isJSend(payload: any): payload is { status: string; data?: any; message
   return payload && typeof payload === 'object' && typeof payload.status === 'string';
 }
 
+function structuredPublicError(value: unknown): { code?: string; message?: string } | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const code =
+    typeof record.code === 'string' && record.code.trim() ? record.code.trim() : undefined;
+  const message =
+    typeof record.message === 'string' && record.message.trim()
+      ? record.message.trim()
+      : undefined;
+  if (!code && !message) return null;
+  return { code, message };
+}
+
+function jsendErrorCode(jsend: { status: string; data?: any; message?: string } | null): string | undefined {
+  if (!jsend || !jsend.data || typeof jsend.data !== 'object') return undefined;
+  const direct = structuredPublicError(jsend.data.error);
+  if (direct?.code) return direct.code;
+  if (typeof jsend.data.error === 'string' && jsend.data.error.trim()) return jsend.data.error.trim();
+  const nested = structuredPublicError(jsend.data);
+  return nested?.code;
+}
+
+function jsendErrorMessage(jsend: { status: string; data?: any; message?: string } | null, fallback: string): string {
+  const direct = jsend ? structuredPublicError(jsend.data?.error) : null;
+  const nested = jsend ? structuredPublicError(jsend.data) : null;
+  return (
+    direct?.message ||
+    nested?.message ||
+    (jsend && (jsend.message || jsend.data?.message || jsend.data?.error)) ||
+    fallback
+  );
+}
+
 async function authHeaders(): Promise<Record<string, string>> {
   const { profile } = await resolveProfile({ allowFlag: true });
   const token = argValue('--token') || process.env.SPRITZ_BEARER_TOKEN || profile?.bearerToken;
@@ -796,15 +829,9 @@ async function request(path: string, init?: RequestInit) {
   }
   const jsend = isJSend(data) ? data : null;
   if (!res.ok || (res.ok && jsend && jsend.status !== 'success')) {
-    const errorCode =
-      (jsend && typeof jsend.data?.error === 'string' ? jsend.data.error : undefined) ||
-      undefined;
+    const errorCode = jsendErrorCode(jsend);
     const errorData = jsend?.data;
-    const message =
-      (jsend && (jsend.message || jsend.data?.message || jsend.data?.error)) ||
-      text ||
-      res.statusText ||
-      'Request failed';
+    const message = jsendErrorMessage(jsend, text || res.statusText || 'Request failed');
     throw new SpritzRequestError(message, { statusCode: res.status, code: errorCode, data: errorData });
   }
   if (res.status === 204) return null;
@@ -839,11 +866,7 @@ async function internalRequest(path: string, init?: RequestInit) {
   }
   const jsend = isJSend(data) ? data : null;
   if (!res.ok || (res.ok && jsend && jsend.status !== 'success')) {
-    const message =
-      (jsend && (jsend.message || jsend.data?.message || jsend.data?.error)) ||
-      text ||
-      res.statusText ||
-      'Request failed';
+    const message = jsendErrorMessage(jsend, text || res.statusText || 'Request failed');
     throw new SpritzRequestError(message, { statusCode: res.status, data: jsend?.data });
   }
   if (res.status === 204) return null;
@@ -1421,7 +1444,7 @@ async function main() {
         body: JSON.stringify(body),
       });
     } catch (error) {
-      if (error instanceof SpritzRequestError && error.code === 'external_identity_unresolved') {
+      if (error instanceof SpritzRequestError && error.code === 'identity.unresolved') {
         throw new Error(unresolvedExternalOwnerMessage(error, guidance));
       }
       throw error;

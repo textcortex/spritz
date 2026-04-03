@@ -195,17 +195,47 @@ func (s *server) resolveCreateAdmission(ctx context.Context, principal principal
 		switch response.Status {
 		case "", extensionStatusResolved:
 		case extensionStatusUnresolved:
-			return newAdmissionError(http.StatusConflict, "preset inputs are unresolved", map[string]any{"error": "preset_create_unresolved"}, errors.New("preset inputs are unresolved"))
+			return newAdmissionError(
+				http.StatusConflict,
+				"preset inputs are unresolved",
+				presetCreatePublicError(response.Status, body.RequestID, body.PresetID).responseData(),
+				errors.New("preset inputs are unresolved"),
+			)
 		case extensionStatusForbidden:
-			return newAdmissionError(http.StatusForbidden, "preset create resolution is forbidden", map[string]any{"error": "preset_create_forbidden"}, errors.New("preset create resolution is forbidden"))
+			return newAdmissionError(
+				http.StatusForbidden,
+				"preset create resolution is forbidden",
+				presetCreatePublicError(response.Status, body.RequestID, body.PresetID).responseData(),
+				errors.New("preset create resolution is forbidden"),
+			)
 		case extensionStatusAmbiguous:
-			return newAdmissionError(http.StatusConflict, "preset inputs are ambiguous", map[string]any{"error": "preset_create_ambiguous"}, errors.New("preset inputs are ambiguous"))
+			return newAdmissionError(
+				http.StatusConflict,
+				"preset inputs are ambiguous",
+				presetCreatePublicError(response.Status, body.RequestID, body.PresetID).responseData(),
+				errors.New("preset inputs are ambiguous"),
+			)
 		case extensionStatusInvalid:
-			return newAdmissionError(http.StatusBadRequest, "preset inputs are invalid", map[string]any{"error": "preset_create_invalid"}, errors.New("preset inputs are invalid"))
+			return newAdmissionError(
+				http.StatusBadRequest,
+				"preset inputs are invalid",
+				presetCreatePublicError(response.Status, body.RequestID, body.PresetID).responseData(),
+				errors.New("preset inputs are invalid"),
+			)
 		case extensionStatusUnavailable:
-			return newAdmissionError(http.StatusServiceUnavailable, "preset create resolution is unavailable", map[string]any{"error": "preset_create_unavailable"}, errors.New("preset create resolution is unavailable"))
+			return newAdmissionError(
+				http.StatusServiceUnavailable,
+				"preset create resolution is unavailable",
+				presetCreatePublicError(response.Status, body.RequestID, body.PresetID).responseData(),
+				errors.New("preset create resolution is unavailable"),
+			)
 		default:
-			return newAdmissionError(http.StatusServiceUnavailable, "preset create resolution returned an unsupported status", nil, fmt.Errorf("unsupported preset create status %q", response.Status))
+			return newAdmissionError(
+				http.StatusServiceUnavailable,
+				"preset create resolution returned an unsupported status",
+				presetCreatePublicError(response.Status, body.RequestID, body.PresetID).responseData(),
+				fmt.Errorf("unsupported preset create status %q", response.Status),
+			)
 		}
 	}
 	if selectedClass != nil {
@@ -222,6 +252,69 @@ func (s *server) resolveCreateAdmission(ctx context.Context, principal principal
 		}
 	}
 	return nil
+}
+
+func presetCreatePublicError(status extensionResolverStatus, requestID, presetID string) publicError {
+	subject := map[string]string{}
+	if trimmedPresetID := strings.TrimSpace(presetID); trimmedPresetID != "" {
+		subject["presetId"] = trimmedPresetID
+	}
+	switch status {
+	case extensionStatusUnresolved:
+		return createPublicError(
+			publicErrorCodeIdentityUnresolved,
+			"This request could not be linked to the required preset inputs yet.",
+			false,
+			requestID,
+			subject,
+			nil,
+		)
+	case extensionStatusForbidden:
+		return createPublicError(
+			publicErrorCodePolicyForbidden,
+			"This request is not allowed to use the preset create resolver.",
+			false,
+			requestID,
+			subject,
+			nil,
+		)
+	case extensionStatusAmbiguous:
+		return createPublicError(
+			publicErrorCodeIdentityAmbiguous,
+			"This request matched more than one possible preset input state.",
+			false,
+			requestID,
+			subject,
+			nil,
+		)
+	case extensionStatusInvalid:
+		return createPublicError(
+			publicErrorCodeResolverInvalid,
+			"This request included invalid preset inputs.",
+			false,
+			requestID,
+			subject,
+			nil,
+		)
+	case extensionStatusUnavailable:
+		return createPublicError(
+			publicErrorCodeResolverUnavailable,
+			"The preset create resolver is temporarily unavailable.",
+			true,
+			requestID,
+			subject,
+			nil,
+		)
+	default:
+		return createPublicError(
+			publicErrorCodeInternalError,
+			"The preset create resolver returned an unsupported result.",
+			true,
+			requestID,
+			subject,
+			nil,
+		)
+	}
 }
 
 type presetCreateMutationResult struct {

@@ -22,7 +22,8 @@ func writeJSendSuccess(c echo.Context, status int, payload any) error {
 
 func writeJSendFail(c echo.Context, status int, message string) error {
 	return c.JSON(status, jsendResponse{
-		Status: "fail",
+		Status:  "fail",
+		Message: message,
 		Data: map[string]string{
 			"message": message,
 		},
@@ -30,17 +31,19 @@ func writeJSendFail(c echo.Context, status int, message string) error {
 }
 
 func writeJSendFailData(c echo.Context, status int, payload any) error {
+	message := jsendErrorMessage(payload, status)
 	if status >= 500 {
 		return c.JSON(status, jsendResponse{
 			Status:  "error",
-			Message: jsendErrorMessage(payload, status),
+			Message: message,
 			Code:    status,
 			Data:    payload,
 		})
 	}
 	return c.JSON(status, jsendResponse{
-		Status: "fail",
-		Data:   payload,
+		Status:  "fail",
+		Message: message,
+		Data:    payload,
 	})
 }
 
@@ -56,6 +59,9 @@ func writeError(c echo.Context, status int, message string) error {
 }
 
 func jsendErrorMessage(payload any, status int) string {
+	if message := publicErrorMessage(payload); message != "" {
+		return message
+	}
 	if data, ok := payload.(map[string]any); ok {
 		if message, ok := data["message"].(string); ok && message != "" {
 			return message

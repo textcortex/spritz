@@ -83,13 +83,14 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 			"request_id",
 			requestID,
 		)
-		resultCode := installResultCodeInstallStateInvalid
+		resultCode := installResultCodeStateInvalid
 		if strings.Contains(strings.ToLower(err.Error()), "expired") {
-			resultCode = installResultCodeInstallStateExpired
+			resultCode = installResultCodeStateExpired
 		}
 		g.redirectToInstallResult(w, r, installResult{
 			Status:    installResultStatusError,
 			Code:      resultCode,
+			Operation: installResultOperationChannelInstall,
 			Provider:  slackProvider,
 			RequestID: requestID,
 		})
@@ -104,13 +105,14 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 			"request_id",
 			requestID,
 		)
-		resultCode := installResultCodeProviderAuthorizationFailed
+		resultCode := installResultCodeAuthFailed
 		if providerError == "access_denied" {
-			resultCode = installResultCodeProviderAuthorizationDenied
+			resultCode = installResultCodeAuthDenied
 		}
 		g.redirectToInstallResult(w, r, installResult{
 			Status:    installResultStatusError,
 			Code:      resultCode,
+			Operation: installResultOperationChannelInstall,
 			Provider:  slackProvider,
 			RequestID: requestID,
 		})
@@ -125,7 +127,8 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		)
 		g.redirectToInstallResult(w, r, installResult{
 			Status:    installResultStatusError,
-			Code:      installResultCodeProviderAuthorizationFailed,
+			Code:      installResultCodeAuthFailed,
+			Operation: installResultOperationChannelInstall,
 			Provider:  slackProvider,
 			RequestID: requestID,
 		})
@@ -144,7 +147,8 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		)
 		g.redirectToInstallResult(w, r, installResult{
 			Status:    installResultStatusError,
-			Code:      installResultCodeProviderAuthorizationFailed,
+			Code:      installResultCodeAuthFailed,
+			Operation: installResultOperationChannelInstall,
 			Provider:  slackProvider,
 			RequestID: requestID,
 		})
@@ -166,6 +170,7 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		g.redirectToInstallResult(w, r, installResult{
 			Status:    installResultStatusError,
 			Code:      classifyInstallUpsertError(err),
+			Operation: installResultOperationChannelInstall,
 			Provider:  slackProvider,
 			RequestID: requestID,
 			TeamID:    installation.TeamID,
@@ -183,6 +188,7 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 	g.redirectToInstallResult(w, r, installResult{
 		Status:    installResultStatusSuccess,
 		Code:      installResultCodeInstalled,
+		Operation: installResultOperationChannelInstall,
 		Provider:  slackProvider,
 		RequestID: requestID,
 		TeamID:    installation.TeamID,

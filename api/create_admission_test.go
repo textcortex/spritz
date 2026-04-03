@@ -245,6 +245,72 @@ func TestCreateSpritzRejectsPresetInputsWithoutMatchingResolver(t *testing.T) {
 	}
 }
 
+func TestCreateSpritzReturnsStructuredPublicErrorForUnresolvedPresetInputs(t *testing.T) {
+	s := newCreateSpritzTestServer(t)
+	resolver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "unresolved",
+		})
+	}))
+	defer resolver.Close()
+	configurePresetResolverTestServer(s, resolver.URL, "")
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/spritzes", s.createSpritz)
+
+	body := []byte(`{
+		"name":"zeno-lake",
+		"presetId":"zeno",
+		"presetInputs":{"agentId":"ag-123"},
+		"requestId":"create-unresolved-1",
+		"spec":{}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/spritzes", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected status 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response json: %v", err)
+	}
+	if payload["status"] != "fail" {
+		t.Fatalf("expected jsend fail status, got %#v", payload["status"])
+	}
+	data := payload["data"].(map[string]any)
+	publicError, ok := data["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected structured public error, got %#v", data["error"])
+	}
+	if publicError["code"] != "identity.unresolved" {
+		t.Fatalf("expected identity.unresolved code, got %#v", publicError["code"])
+	}
+	if publicError["operation"] != "spritz.create" {
+		t.Fatalf("expected spritz.create operation, got %#v", publicError["operation"])
+	}
+	if publicError["requestId"] != "create-unresolved-1" {
+		t.Fatalf("expected requestId create-unresolved-1, got %#v", publicError["requestId"])
+	}
+	if publicError["retryable"] != false {
+		t.Fatalf("expected retryable false, got %#v", publicError["retryable"])
+	}
+	subject, ok := publicError["subject"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected subject payload, got %#v", publicError["subject"])
+	}
+	if subject["presetId"] != "zeno" {
+		t.Fatalf("expected presetId zeno, got %#v", subject["presetId"])
+	}
+}
+
 func TestCreateSpritzRejectsMissingRequiredResolvedFieldFromInstanceClass(t *testing.T) {
 	s := newCreateSpritzTestServer(t)
 	s.presets = presetCatalog{
