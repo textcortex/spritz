@@ -224,6 +224,45 @@ func (s *server) replaceInternalSpritz(c echo.Context) error {
 		return writeError(c, http.StatusBadRequest, "replacement must not reuse the source instance name")
 	}
 
+	sourceSummary := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      sourceName,
+		},
+	}
+	sourceExists := true
+	if err := s.client.Get(c.Request().Context(), client.ObjectKey{
+		Namespace: namespace,
+		Name:      sourceName,
+	}, sourceSummary); err != nil {
+		if apierrors.IsNotFound(err) {
+			sourceExists = false
+		} else {
+			return writeError(c, http.StatusInternalServerError, err.Error())
+		}
+	}
+	if sourceExists {
+		binding, err := s.getBindingByRuntime(c.Request().Context(), namespace, sourceSummary)
+		if err != nil {
+			return writeError(c, http.StatusInternalServerError, err.Error())
+		}
+		if binding != nil {
+			storedBinding, replayed, err := s.replaceInternalBinding(
+				c.Request().Context(),
+				binding,
+				body.TargetRevision,
+			)
+			if err != nil {
+				return writeError(c, http.StatusInternalServerError, err.Error())
+			}
+			replacement := replacementRuntimeFromBinding(storedBinding)
+			if replacement == nil {
+				return writeError(c, http.StatusServiceUnavailable, "binding replacement is unavailable")
+			}
+			return writeReplaceResponse(c, sourceSummary, replacement, replayed)
+		}
+	}
+
 	replaceReservationFingerprint := replacementRequestFingerprint(
 		replacementPrincipal,
 		body.TargetRevision,
@@ -241,12 +280,6 @@ func (s *server) replaceInternalSpritz(c echo.Context) error {
 			return writeError(c, http.StatusConflict, errIdempotencyUsedDifferent.Error())
 		}
 		return writeError(c, http.StatusInternalServerError, err.Error())
-	}
-	sourceSummary := &spritzv1.Spritz{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: namespace,
-			Name:      sourceName,
-		},
 	}
 	if strings.TrimSpace(reservation.name) != "" {
 		existingReplacement, err := s.findReservedReplacementReplayTarget(
@@ -285,16 +318,9 @@ func (s *server) replaceInternalSpritz(c echo.Context) error {
 			return writeReplaceResponse(c, sourceSummary, existingReplacement, true)
 		}
 	}
-	if err := s.client.Get(c.Request().Context(), client.ObjectKey{
-		Namespace: namespace,
-		Name:      sourceName,
-	}, sourceSummary); err != nil {
-		if apierrors.IsNotFound(err) {
-			return writeError(c, http.StatusNotFound, "not found")
-		}
-		return writeError(c, http.StatusInternalServerError, err.Error())
+	if !sourceExists {
+		return writeError(c, http.StatusNotFound, "not found")
 	}
-
 	recorder, err := s.invokeCreateSpritzWithPrincipal(
 		c,
 		replacementPrincipal,

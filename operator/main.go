@@ -71,6 +71,14 @@ func main() {
 		logger.Error(err, "unable to create controller")
 		os.Exit(1)
 	}
+	if err := (&controllers.SpritzBindingReconciler{
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		IngressDefaults: controllers.NewBindingIngressDefaultsFromEnv(),
+	}).SetupWithManager(mgr); err != nil {
+		logger.Error(err, "unable to create binding controller")
+		os.Exit(1)
+	}
 
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		logger.Error(err, "problem running manager")
