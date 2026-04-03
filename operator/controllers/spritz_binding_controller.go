@@ -2,7 +2,7 @@ package controllers
 
 import (
 	"context"
-	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -58,6 +58,17 @@ type SpritzBindingReconciler struct {
 	IngressDefaults bindingIngressDefaults
 }
 
+type bindingRequeueError struct {
+	cause error
+}
+
+func (e *bindingRequeueError) Error() string {
+	if e == nil || e.cause == nil {
+		return "binding reconcile retry requested"
+	}
+	return e.cause.Error()
+}
+
 func (r *SpritzBindingReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -76,6 +87,11 @@ func (r *SpritzBindingReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if err := r.reconcileBinding(ctx, &binding); err != nil {
+		var retryErr *bindingRequeueError
+		if errors.As(err, &retryErr) {
+			logger.Info("binding reconcile will retry", "error", retryErr.Error())
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
 		logger.Error(err, "failed to reconcile spritz binding")
 		return ctrl.Result{RequeueAfter: 2 * time.Second}, err
 	}
@@ -126,11 +142,19 @@ func (r *SpritzBindingReconciler) reconcileBinding(ctx context.Context, binding 
 	}
 
 	if cleanupExists {
-		if err := r.deleteRuntimeIfPresent(ctx, cleanup); err != nil {
-			r.setFailureStatus(binding, &now, spritzv1.BindingPhaseCleaningUp, "cleanup_failed", err.Error())
-			return r.updateBindingStatus(ctx, binding)
+		if binding.Status.CleanupInstanceRef != nil {
+			binding.Status.CleanupInstanceRef.Phase = strings.TrimSpace(cleanup.Status.Phase)
 		}
-		binding.Status.CleanupInstanceRef = nil
+		if err := r.deleteRuntimeIfPresent(ctx, cleanup); err != nil {
+			return r.updateFailureStatusAndRetry(
+				ctx,
+				binding,
+				&now,
+				spritzv1.BindingPhaseCleaningUp,
+				"cleanup_failed",
+				err,
+			)
+		}
 	} else if binding.Status.CleanupInstanceRef != nil {
 		binding.Status.CleanupInstanceRef = nil
 	}
@@ -152,10 +176,18 @@ func (r *SpritzBindingReconciler) reconcileBinding(ctx context.Context, binding 
 	}
 
 	if binding.Status.ActiveInstanceRef != nil && active != nil && !runtimeIsUsable(active) {
+		binding.Status.CleanupInstanceRef = cleanupRefFromRuntime(
+			binding.Status.ActiveInstanceRef,
+			active,
+		)
 		binding.Status.ActiveInstanceRef = nil
 		active = nil
 	}
 	if binding.Status.CandidateInstanceRef != nil && candidate != nil && runtimeIsTerminal(candidate) {
+		binding.Status.CleanupInstanceRef = cleanupRefFromRuntime(
+			binding.Status.CandidateInstanceRef,
+			candidate,
+		)
 		binding.Status.CandidateInstanceRef = nil
 		candidate = nil
 	}
@@ -166,8 +198,14 @@ func (r *SpritzBindingReconciler) reconcileBinding(ctx context.Context, binding 
 		if binding.Status.CandidateInstanceRef == nil {
 			nextRef, err := r.ensureCandidateRuntime(ctx, binding, desiredRevision)
 			if err != nil {
-				r.setFailureStatus(binding, &now, spritzv1.BindingPhaseFailed, "candidate_create_failed", err.Error())
-				return r.updateBindingStatus(ctx, binding)
+				return r.updateFailureStatusAndRetry(
+					ctx,
+					binding,
+					&now,
+					spritzv1.BindingPhaseFailed,
+					"candidate_create_failed",
+					err,
+				)
 			}
 			binding.Status.CandidateInstanceRef = nextRef
 			r.setProgressingStatus(binding, &now, spritzv1.BindingPhaseCreating, "candidate_creating", "creating initial runtime")
@@ -188,8 +226,14 @@ func (r *SpritzBindingReconciler) reconcileBinding(ctx context.Context, binding 
 		if binding.Status.CandidateInstanceRef == nil {
 			nextRef, err := r.ensureCandidateRuntime(ctx, binding, desiredRevision)
 			if err != nil {
-				r.setFailureStatus(binding, &now, spritzv1.BindingPhaseFailed, "candidate_create_failed", err.Error())
-				return r.updateBindingStatus(ctx, binding)
+				return r.updateFailureStatusAndRetry(
+					ctx,
+					binding,
+					&now,
+					spritzv1.BindingPhaseFailed,
+					"candidate_create_failed",
+					err,
+				)
 			}
 			binding.Status.CandidateInstanceRef = nextRef
 			r.setProgressingStatus(binding, &now, spritzv1.BindingPhaseCreating, "candidate_creating", "creating replacement runtime")
@@ -373,6 +417,35 @@ func (r *SpritzBindingReconciler) deleteRuntimeIfPresent(ctx context.Context, sp
 	return nil
 }
 
+func (r *SpritzBindingReconciler) updateFailureStatusAndRetry(
+	ctx context.Context,
+	binding *spritzv1.SpritzBinding,
+	now *metav1.Time,
+	phase string,
+	code string,
+	cause error,
+) error {
+	r.setFailureStatus(binding, now, phase, code, cause.Error())
+	if err := r.updateBindingStatus(ctx, binding); err != nil {
+		return err
+	}
+	return &bindingRequeueError{cause: cause}
+}
+
+func cleanupRefFromRuntime(
+	ref *spritzv1.SpritzBindingInstanceRef,
+	spritz *spritzv1.Spritz,
+) *spritzv1.SpritzBindingInstanceRef {
+	if ref == nil {
+		return nil
+	}
+	cleanup := ref.DeepCopy()
+	if spritz != nil {
+		cleanup.Phase = strings.TrimSpace(spritz.Status.Phase)
+	}
+	return cleanup
+}
+
 func (r *SpritzBindingReconciler) attachBindingOwnership(
 	ctx context.Context,
 	binding *spritzv1.SpritzBinding,
@@ -535,54 +608,12 @@ func metaSetBindingCondition(conditions *[]metav1.Condition, condition metav1.Co
 }
 
 func bindingRuntimeName(binding *spritzv1.SpritzBinding, sequence int64) string {
-	prefix := bindingRuntimePrefix(binding)
-	base := fmt.Sprintf("%s-%02d", prefix, sequence)
-	if len(base) <= 63 {
-		return base
-	}
-	return base[:63]
-}
-
-func bindingRuntimePrefix(binding *spritzv1.SpritzBinding) string {
-	prefix := sanitizeBindingNameToken(binding.Spec.Template.NamePrefix)
-	if prefix == "" {
-		prefix = sanitizeBindingNameToken(binding.Spec.Template.PresetID)
-	}
-	if prefix == "" {
-		prefix = "spritz"
-	}
-	sum := sha256.Sum256([]byte(strings.TrimSpace(binding.Spec.BindingKey)))
-	base := fmt.Sprintf("%s-%x", prefix, sum[:6])
-	if len(base) <= 56 {
-		return base
-	}
-	return base[:56]
-}
-
-func sanitizeBindingNameToken(value string) string {
-	raw := strings.ToLower(strings.TrimSpace(value))
-	if raw == "" {
-		return ""
-	}
-	var out strings.Builder
-	lastDash := false
-	for _, r := range raw {
-		switch {
-		case r >= 'a' && r <= 'z':
-			out.WriteRune(r)
-			lastDash = false
-		case r >= '0' && r <= '9':
-			out.WriteRune(r)
-			lastDash = false
-		default:
-			if out.Len() == 0 || lastDash {
-				continue
-			}
-			out.WriteByte('-')
-			lastDash = true
-		}
-	}
-	return strings.Trim(out.String(), "-")
+	return spritzv1.BindingRuntimeNameForSequence(
+		strings.TrimSpace(binding.Spec.BindingKey),
+		binding.Spec.Template.NamePrefix,
+		binding.Spec.Template.PresetID,
+		sequence,
+	)
 }
 
 func applyBindingIngressDefaults(spec *spritzv1.SpritzSpec, name, namespace string, defaults bindingIngressDefaults) {

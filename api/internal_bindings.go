@@ -316,13 +316,21 @@ func (s *server) replaceInternalBinding(
 	if binding == nil {
 		return nil, false, nil
 	}
-	replayed := strings.TrimSpace(binding.Spec.DesiredRevision) == strings.TrimSpace(targetRevision)
-	if binding.Spec.DesiredRevision != strings.TrimSpace(targetRevision) {
-		binding.Spec.DesiredRevision = strings.TrimSpace(targetRevision)
+	desiredRevision := strings.TrimSpace(targetRevision)
+	replayed := strings.TrimSpace(binding.Spec.DesiredRevision) == desiredRevision
+	needsUpdate := false
+	if binding.Spec.DesiredRevision != desiredRevision {
+		binding.Spec.DesiredRevision = desiredRevision
+		needsUpdate = true
+	}
+	if !bindingReadyOnDesiredRevision(binding) {
 		if binding.Annotations == nil {
 			binding.Annotations = map[string]string{}
 		}
 		binding.Annotations[spritzv1.BindingReconcileRequestedAtAnnotationKey] = time.Now().UTC().Format(time.RFC3339Nano)
+		needsUpdate = true
+	}
+	if needsUpdate {
 		if err := s.client.Update(ctx, binding); err != nil {
 			return nil, false, err
 		}
@@ -334,31 +342,94 @@ func (s *server) replaceInternalBinding(
 	return &stored, replayed, nil
 }
 
-func replacementRuntimeFromBinding(binding *spritzv1.SpritzBinding) *spritzv1.Spritz {
+func replacementRuntimeFromBinding(binding *spritzv1.SpritzBinding, fallbackName string) *spritzv1.Spritz {
 	if binding == nil {
 		return nil
 	}
 	ref := binding.Status.CandidateInstanceRef
-	if ref == nil && binding.Status.ActiveInstanceRef != nil && strings.TrimSpace(binding.Status.ObservedRevision) == strings.TrimSpace(binding.Spec.DesiredRevision) {
+	if ref == nil && bindingReadyOnDesiredRevision(binding) {
 		ref = binding.Status.ActiveInstanceRef
 	}
-	if ref == nil {
+	if ref != nil {
+		revision := strings.TrimSpace(ref.Revision)
+		if revision == "" {
+			revision = bindingObservedRevision(binding)
+		}
+		if revision == "" {
+			revision = strings.TrimSpace(binding.Spec.DesiredRevision)
+		}
+		return &spritzv1.Spritz{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: ref.Namespace,
+				Name:      ref.Name,
+				Annotations: map[string]string{
+					targetRevisionAnnotationKey: revision,
+				},
+			},
+			Status: spritzv1.SpritzStatus{
+				Phase: strings.TrimSpace(ref.Phase),
+			},
+		}
+	}
+	name := strings.TrimSpace(fallbackName)
+	if name == "" {
+		name = predictedBindingCandidateName(binding)
+	}
+	if name == "" {
 		return nil
 	}
-	revision := strings.TrimSpace(ref.Revision)
+	revision := strings.TrimSpace(binding.Spec.DesiredRevision)
 	if revision == "" {
-		revision = strings.TrimSpace(binding.Status.ObservedRevision)
+		revision = bindingObservedRevision(binding)
 	}
 	return &spritzv1.Spritz{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: ref.Namespace,
-			Name:      ref.Name,
+			Namespace: binding.Namespace,
+			Name:      name,
 			Annotations: map[string]string{
 				targetRevisionAnnotationKey: revision,
 			},
 		},
 		Status: spritzv1.SpritzStatus{
-			Phase: strings.TrimSpace(ref.Phase),
+			Phase: "Provisioning",
 		},
 	}
+}
+
+func bindingReadyOnDesiredRevision(binding *spritzv1.SpritzBinding) bool {
+	if binding == nil || binding.Status.ActiveInstanceRef == nil {
+		return false
+	}
+	if binding.Status.CandidateInstanceRef != nil {
+		return false
+	}
+	return bindingObservedRevision(binding) == strings.TrimSpace(binding.Spec.DesiredRevision)
+}
+
+func bindingObservedRevision(binding *spritzv1.SpritzBinding) string {
+	if binding == nil {
+		return ""
+	}
+	if revision := strings.TrimSpace(binding.Status.ObservedRevision); revision != "" {
+		return revision
+	}
+	if binding.Status.ActiveInstanceRef != nil {
+		return strings.TrimSpace(binding.Status.ActiveInstanceRef.Revision)
+	}
+	return ""
+}
+
+func predictedBindingCandidateName(binding *spritzv1.SpritzBinding) string {
+	if binding == nil {
+		return ""
+	}
+	if binding.Status.CandidateInstanceRef != nil {
+		return strings.TrimSpace(binding.Status.CandidateInstanceRef.Name)
+	}
+	return spritzv1.BindingRuntimeNameForSequence(
+		strings.TrimSpace(binding.Spec.BindingKey),
+		binding.Spec.Template.NamePrefix,
+		binding.Spec.Template.PresetID,
+		binding.Status.NextRuntimeSequence+1,
+	)
 }

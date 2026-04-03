@@ -224,6 +224,25 @@ func (s *server) replaceInternalSpritz(c echo.Context) error {
 		return writeError(c, http.StatusBadRequest, "replacement must not reuse the source instance name")
 	}
 
+	replaceReservationFingerprint := replacementRequestFingerprint(
+		replacementPrincipal,
+		body.TargetRevision,
+		replacementFingerprint,
+	)
+	reservation, err := s.ensureReplaceReservation(
+		c.Request().Context(),
+		namespace,
+		sourceName,
+		body.IdempotencyKey,
+		replaceReservationFingerprint,
+	)
+	if err != nil {
+		if isProvisionerConflict(err) {
+			return writeError(c, http.StatusConflict, errIdempotencyUsedDifferent.Error())
+		}
+		return writeError(c, http.StatusInternalServerError, err.Error())
+	}
+
 	sourceSummary := &spritzv1.Spritz{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: namespace,
@@ -255,31 +274,25 @@ func (s *server) replaceInternalSpritz(c echo.Context) error {
 			if err != nil {
 				return writeError(c, http.StatusInternalServerError, err.Error())
 			}
-			replacement := replacementRuntimeFromBinding(storedBinding)
+			replacement := replacementRuntimeFromBinding(storedBinding, strings.TrimSpace(reservation.name))
 			if replacement == nil {
 				return writeError(c, http.StatusServiceUnavailable, "binding replacement is unavailable")
 			}
+			if err := s.completeReplaceReservation(
+				c.Request().Context(),
+				namespace,
+				sourceName,
+				body.IdempotencyKey,
+				replaceReservationFingerprint,
+				replacement.Name,
+			); err != nil {
+				if isProvisionerConflict(err) {
+					return writeError(c, http.StatusConflict, errIdempotencyUsedDifferent.Error())
+				}
+				return writeError(c, http.StatusInternalServerError, err.Error())
+			}
 			return writeReplaceResponse(c, sourceSummary, replacement, replayed)
 		}
-	}
-
-	replaceReservationFingerprint := replacementRequestFingerprint(
-		replacementPrincipal,
-		body.TargetRevision,
-		replacementFingerprint,
-	)
-	reservation, err := s.ensureReplaceReservation(
-		c.Request().Context(),
-		namespace,
-		sourceName,
-		body.IdempotencyKey,
-		replaceReservationFingerprint,
-	)
-	if err != nil {
-		if isProvisionerConflict(err) {
-			return writeError(c, http.StatusConflict, errIdempotencyUsedDifferent.Error())
-		}
-		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
 	if strings.TrimSpace(reservation.name) != "" {
 		existingReplacement, err := s.findReservedReplacementReplayTarget(
