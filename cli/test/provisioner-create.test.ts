@@ -359,6 +359,71 @@ test('create explains unresolved external owners with connect-account guidance',
   assert.match(stderr, /--owner-provider and --owner-subject/i);
 });
 
+test('create preserves preset-input unresolved messages without external-owner guidance', async (t) => {
+  const server = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+    req.on('end', () => {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'fail',
+        data: {
+          message: 'This request could not be linked to the required preset inputs yet.',
+          error: {
+            code: 'identity.unresolved',
+            operation: 'spritz.create',
+            message: 'This request could not be linked to the required preset inputs yet.',
+            retryable: false,
+            subject: {
+              presetId: 'openclaw',
+            },
+          },
+        },
+      }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    server.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+
+  const child = spawn(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      cliPath,
+      'create',
+      '--preset',
+      'openclaw',
+      '--preset-inputs',
+      '{"agentId":"ag-123"}',
+    ],
+    {
+      env: {
+        ...process.env,
+        SPRITZ_API_URL: `http://127.0.0.1:${address.port}/api`,
+        SPRITZ_BEARER_TOKEN: 'service-token',
+        SPRITZ_CONFIG_DIR: mkdtempSync(path.join(os.tmpdir(), 'spz-config-')),
+        SPRITZ_OWNER_ID: 'user-123',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+
+  let stderr = '';
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  const exitCode = await new Promise<number | null>((resolve) => child.on('exit', resolve));
+  assert.notEqual(exitCode, 0, 'spz create should fail for unresolved preset inputs');
+  assert.match(stderr, /required preset inputs/i);
+  assert.doesNotMatch(stderr, /connect their account/i);
+});
+
 test('create without owner input guides agent callers toward external owner flags', async () => {
   const child = spawn(
     process.execPath,

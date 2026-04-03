@@ -211,7 +211,7 @@ Example:
   "operation": "spritz.create",
   "publicCode": "identity.unresolved",
   "component": "preset-resolver",
-  "resolverId": "textcortex-runtime-bindings",
+  "resolverId": "preset-create-resolver",
   "upstreamStatus": "unresolved",
   "cause": "owner lookup returned no matching account"
 }

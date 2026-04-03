@@ -769,6 +769,19 @@ function jsendErrorMessage(jsend: { status: string; data?: any; message?: string
   );
 }
 
+function hasExternalOwnerIdentity(data: unknown): boolean {
+  if (!data || typeof data !== 'object') return false;
+  const identity = (data as Record<string, unknown>).identity;
+  if (!identity || typeof identity !== 'object') return false;
+  const record = identity as Record<string, unknown>;
+  return (
+    typeof record.provider === 'string' &&
+    record.provider.trim().length > 0 &&
+    typeof record.subject === 'string' &&
+    record.subject.trim().length > 0
+  );
+}
+
 async function authHeaders(): Promise<Record<string, string>> {
   const { profile } = await resolveProfile({ allowFlag: true });
   const token = argValue('--token') || process.env.SPRITZ_BEARER_TOKEN || profile?.bearerToken;
@@ -1444,7 +1457,11 @@ async function main() {
         body: JSON.stringify(body),
       });
     } catch (error) {
-      if (error instanceof SpritzRequestError && error.code === 'identity.unresolved') {
+      if (
+        error instanceof SpritzRequestError &&
+        error.code === 'identity.unresolved' &&
+        hasExternalOwnerIdentity(error.data)
+      ) {
         throw new Error(unresolvedExternalOwnerMessage(error, guidance));
       }
       throw error;
