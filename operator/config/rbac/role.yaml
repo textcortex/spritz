@@ -4,7 +4,7 @@ metadata:
   name: spritz-operator
 rules:
   - apiGroups: ["spritz.sh"]
-    resources: ["spritzes", "spritzes/status", "spritzes/finalizers"]
+    resources: ["spritzes", "spritzes/status", "spritzes/finalizers", "spritzbindings", "spritzbindings/status", "spritzbindings/finalizers"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
