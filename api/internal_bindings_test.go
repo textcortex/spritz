@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,6 +18,46 @@ import (
 
 func TestInternalUpsertBindingCreatesAndFetchesBinding(t *testing.T) {
 	s := newInternalSpritzesTestServer(t)
+	personalAgent := s.instanceClasses.byID["personal-agent"]
+	personalAgent.Creation.RequiredResolvedFields = []string{requiredResolvedFieldServiceAccountName}
+	s.instanceClasses.byID["personal-agent"] = personalAgent
+
+	resolverHits := 0
+	resolver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resolverHits++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "resolved",
+			"mutations": map[string]any{
+				"spec": map[string]any{
+					"serviceAccountName": "zeno-agent-user-123",
+					"agentRef": map[string]any{
+						"type":     "external",
+						"provider": "example-agent-catalog",
+						"id":       "ag-123",
+					},
+				},
+			},
+		})
+	}))
+	defer resolver.Close()
+
+	s.extensions = extensionRegistry{
+		resolvers: []configuredResolver{
+			{
+				id:            "test-zeno-binding",
+				extensionType: extensionTypeResolver,
+				operation:     extensionOperationPresetCreateResolve,
+				match: extensionMatchRule{
+					presetIDs: map[string]struct{}{"zeno": {}},
+				},
+				transport: configuredHTTPTransport{
+					url:     resolver.URL,
+					timeout: time.Second,
+				},
+			},
+		},
+	}
 	e := echo.New()
 	s.registerRoutes(e)
 
@@ -66,6 +107,27 @@ func TestInternalUpsertBindingCreatesAndFetchesBinding(t *testing.T) {
 	}
 	if !strings.Contains(getRec.Body.String(), `"presetId":"zeno"`) {
 		t.Fatalf("expected fetched preset id in response, got %s", getRec.Body.String())
+	}
+
+	var stored spritzv1.SpritzBinding
+	if err := s.client.Get(
+		context.Background(),
+		client.ObjectKey{
+			Namespace: "default",
+			Name:      bindingResourceNameForKey("channel-installation-binding-1"),
+		},
+		&stored,
+	); err != nil {
+		t.Fatalf("failed to load stored binding: %v", err)
+	}
+	if stored.Spec.Template.Spec.ServiceAccountName != "zeno-agent-user-123" {
+		t.Fatalf("expected resolved service account to be stored, got %#v", stored.Spec.Template.Spec)
+	}
+	if stored.Spec.Template.Spec.AgentRef == nil || stored.Spec.Template.Spec.AgentRef.ID != "ag-123" {
+		t.Fatalf("expected resolved agent ref to be stored, got %#v", stored.Spec.Template.Spec.AgentRef)
+	}
+	if resolverHits != 1 {
+		t.Fatalf("expected resolver to be called once, got %d", resolverHits)
 	}
 }
 
