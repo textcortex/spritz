@@ -13,7 +13,7 @@ func TestClassifyInstallUpsertErrorPreservesTypedBackendAvailabilityCodes(t *tes
 		body:       `{"error":"runtime_binding_unavailable"}`,
 	}
 
-	if got := classifyInstallUpsertError(err); got != installResultCodeRuntimeBindingUnavailable {
+	if got := classifyInstallUpsertError(err); got != installResultCodeRuntimeUnavailable {
 		t.Fatalf("expected runtime binding unavailable, got %q", got)
 	}
 }
@@ -26,7 +26,7 @@ func TestClassifyInstallUpsertErrorMapsLegacyOwnerRefUnresolvedPayloads(t *testi
 		body:       `{"status":"unresolved","field":"ownerRef"}`,
 	}
 
-	if got := classifyInstallUpsertError(err); got != installResultCodeExternalIdentityUnresolved {
+	if got := classifyInstallUpsertError(err); got != installResultCodeIdentityUnresolved {
 		t.Fatalf("expected external identity unresolved, got %q", got)
 	}
 }

@@ -95,12 +95,13 @@ type externalOwnerConfig struct {
 }
 
 type externalOwnerResolutionError struct {
-	status   int
-	code     string
-	message  string
-	provider string
-	tenant   string
-	subject  string
+	status    int
+	code      string
+	message   string
+	requestID string
+	provider  string
+	tenant    string
+	subject   string
 }
 
 type externalOwnerResolverRequest struct {
@@ -288,12 +289,13 @@ func (c externalOwnerConfig) resolve(ctx context.Context, principal principal, r
 	policy, ok := c.policyForPrincipal(principal)
 	if !ok {
 		return externalOwnerResolution{}, externalOwnerResolutionError{
-			status:   http.StatusForbidden,
-			code:     "external_identity_forbidden",
-			message:  "external identity resolution is not allowed for this principal",
-			provider: strings.TrimSpace(ref.Provider),
-			tenant:   strings.TrimSpace(ref.Tenant),
-			subject:  strings.TrimSpace(ref.Subject),
+			status:    http.StatusForbidden,
+			code:      "external_identity_forbidden",
+			message:   "external identity resolution is not allowed for this principal",
+			requestID: strings.TrimSpace(requestID),
+			provider:  strings.TrimSpace(ref.Provider),
+			tenant:    strings.TrimSpace(ref.Tenant),
+			subject:   strings.TrimSpace(ref.Subject),
 		}
 	}
 	normalized, err := normalizeExternalOwnerRef(ref)
@@ -302,45 +304,49 @@ func (c externalOwnerConfig) resolve(ctx context.Context, principal principal, r
 	}
 	if _, ok := policy.AllowedProviders[normalized.Provider]; !ok {
 		return externalOwnerResolution{}, externalOwnerResolutionError{
-			status:   http.StatusForbidden,
-			code:     "external_identity_forbidden",
-			message:  "provider is not allowed for this principal",
-			provider: normalized.Provider,
-			tenant:   normalized.Tenant,
-			subject:  normalized.Subject,
+			status:    http.StatusForbidden,
+			code:      "external_identity_forbidden",
+			message:   "provider is not allowed for this principal",
+			requestID: strings.TrimSpace(requestID),
+			provider:  normalized.Provider,
+			tenant:    normalized.Tenant,
+			subject:   normalized.Subject,
 		}
 	}
 	tenantRequired := policy.requiresTenant(normalized.Provider)
 	if normalized.Tenant == "" && tenantRequired {
 		return externalOwnerResolution{}, externalOwnerResolutionError{
-			status:   http.StatusForbidden,
-			code:     "external_identity_forbidden",
-			message:  "tenant is required for this principal",
-			provider: normalized.Provider,
-			tenant:   normalized.Tenant,
-			subject:  normalized.Subject,
+			status:    http.StatusForbidden,
+			code:      "external_identity_forbidden",
+			message:   "tenant is required for this principal",
+			requestID: strings.TrimSpace(requestID),
+			provider:  normalized.Provider,
+			tenant:    normalized.Tenant,
+			subject:   normalized.Subject,
 		}
 	}
 	if len(policy.AllowedTenants) > 0 {
 		if normalized.Tenant != "" {
 			if _, ok := policy.AllowedTenants[normalized.Tenant]; !ok {
 				return externalOwnerResolution{}, externalOwnerResolutionError{
-					status:   http.StatusForbidden,
-					code:     "external_identity_forbidden",
-					message:  "tenant is not allowed for this principal",
-					provider: normalized.Provider,
-					tenant:   normalized.Tenant,
-					subject:  normalized.Subject,
+					status:    http.StatusForbidden,
+					code:      "external_identity_forbidden",
+					message:   "tenant is not allowed for this principal",
+					requestID: strings.TrimSpace(requestID),
+					provider:  normalized.Provider,
+					tenant:    normalized.Tenant,
+					subject:   normalized.Subject,
 				}
 			}
 		} else if tenantRequired {
 			return externalOwnerResolution{}, externalOwnerResolutionError{
-				status:   http.StatusForbidden,
-				code:     "external_identity_forbidden",
-				message:  "tenant is required for this principal",
-				provider: normalized.Provider,
-				tenant:   normalized.Tenant,
-				subject:  normalized.Subject,
+				status:    http.StatusForbidden,
+				code:      "external_identity_forbidden",
+				message:   "tenant is required for this principal",
+				requestID: strings.TrimSpace(requestID),
+				provider:  normalized.Provider,
+				tenant:    normalized.Tenant,
+				subject:   normalized.Subject,
 			}
 		}
 	}
@@ -348,12 +354,13 @@ func (c externalOwnerConfig) resolve(ctx context.Context, principal principal, r
 	resolution, err := c.resolver.ResolveExternalOwner(ctx, policy, principal, normalized, requestID)
 	if err != nil {
 		return externalOwnerResolution{}, externalOwnerResolutionError{
-			status:   http.StatusServiceUnavailable,
-			code:     "external_identity_resolution_unavailable",
-			message:  "external identity resolution is unavailable",
-			provider: normalized.Provider,
-			tenant:   normalized.Tenant,
-			subject:  normalized.Subject,
+			status:    http.StatusServiceUnavailable,
+			code:      "external_identity_resolution_unavailable",
+			message:   "external identity resolution is unavailable",
+			requestID: strings.TrimSpace(requestID),
+			provider:  normalized.Provider,
+			tenant:    normalized.Tenant,
+			subject:   normalized.Subject,
 		}
 	}
 
@@ -368,50 +375,55 @@ func (c externalOwnerConfig) resolve(ctx context.Context, principal principal, r
 	case externalOwnerResolved:
 		if strings.TrimSpace(resolution.OwnerID) == "" {
 			return externalOwnerResolution{}, externalOwnerResolutionError{
-				status:   http.StatusServiceUnavailable,
-				code:     "external_identity_resolution_unavailable",
-				message:  "external identity resolution returned an invalid owner",
-				provider: normalized.Provider,
-				tenant:   normalized.Tenant,
-				subject:  normalized.Subject,
+				status:    http.StatusServiceUnavailable,
+				code:      "external_identity_resolution_unavailable",
+				message:   "external identity resolution returned an invalid owner",
+				requestID: strings.TrimSpace(requestID),
+				provider:  normalized.Provider,
+				tenant:    normalized.Tenant,
+				subject:   normalized.Subject,
 			}
 		}
 		return resolution, nil
 	case externalOwnerUnresolved:
 		return externalOwnerResolution{}, externalOwnerResolutionError{
-			status:   http.StatusConflict,
-			code:     "external_identity_unresolved",
-			message:  "external identity is unresolved",
-			provider: normalized.Provider,
-			tenant:   normalized.Tenant,
-			subject:  normalized.Subject,
+			status:    http.StatusConflict,
+			code:      "external_identity_unresolved",
+			message:   "external identity is unresolved",
+			requestID: strings.TrimSpace(requestID),
+			provider:  normalized.Provider,
+			tenant:    normalized.Tenant,
+			subject:   normalized.Subject,
 		}
 	case externalOwnerForbidden:
 		return externalOwnerResolution{}, externalOwnerResolutionError{
-			status:   http.StatusForbidden,
-			code:     "external_identity_forbidden",
-			message:  "external identity resolution is forbidden",
-			provider: normalized.Provider,
-			tenant:   normalized.Tenant,
-			subject:  normalized.Subject,
+			status:    http.StatusForbidden,
+			code:      "external_identity_forbidden",
+			message:   "external identity resolution is forbidden",
+			requestID: strings.TrimSpace(requestID),
+			provider:  normalized.Provider,
+			tenant:    normalized.Tenant,
+			subject:   normalized.Subject,
 		}
 	case externalOwnerAmbiguous:
 		return externalOwnerResolution{}, externalOwnerResolutionError{
-			status:   http.StatusConflict,
-			code:     "external_identity_ambiguous",
-			message:  "external identity is ambiguous",
-			provider: normalized.Provider,
-			tenant:   normalized.Tenant,
-			subject:  normalized.Subject,
+			status:    http.StatusConflict,
+			code:      "external_identity_ambiguous",
+			message:   "external identity is ambiguous",
+			requestID: strings.TrimSpace(requestID),
+			provider:  normalized.Provider,
+			tenant:    normalized.Tenant,
+			subject:   normalized.Subject,
 		}
 	default:
 		return externalOwnerResolution{}, externalOwnerResolutionError{
-			status:   http.StatusServiceUnavailable,
-			code:     "external_identity_resolution_unavailable",
-			message:  "external identity resolution is unavailable",
-			provider: normalized.Provider,
-			tenant:   normalized.Tenant,
-			subject:  normalized.Subject,
+			status:    http.StatusServiceUnavailable,
+			code:      "external_identity_resolution_unavailable",
+			message:   "external identity resolution is unavailable",
+			requestID: strings.TrimSpace(requestID),
+			provider:  normalized.Provider,
+			tenant:    normalized.Tenant,
+			subject:   normalized.Subject,
 		}
 	}
 }
@@ -554,16 +566,61 @@ func (e externalOwnerResolutionError) Error() string {
 }
 
 func (e externalOwnerResolutionError) responseData() map[string]any {
-	data := map[string]any{
-		"message": e.message,
-		"error":   e.code,
-		"identity": map[string]string{
-			"provider": e.provider,
-			"subject":  e.subject,
-		},
+	identity := map[string]string{
+		"provider": e.provider,
+		"subject":  e.subject,
 	}
 	if strings.TrimSpace(e.tenant) != "" {
-		data["identity"].(map[string]string)["tenant"] = e.tenant
+		identity["tenant"] = e.tenant
 	}
-	return data
+	payload := externalOwnerPublicError(e).responseData()
+	payload["identity"] = identity
+	return payload
+}
+
+func externalOwnerPublicError(err externalOwnerResolutionError) publicError {
+	safeDetails := map[string]any{
+		"provider": err.provider,
+	}
+	if tenant := strings.TrimSpace(err.tenant); tenant != "" {
+		safeDetails["tenant"] = tenant
+	}
+	switch err.code {
+	case "external_identity_unresolved":
+		return createPublicError(
+			publicErrorCodeIdentityUnresolved,
+			"This request could not be linked to an owner account yet.",
+			false,
+			err.requestID,
+			nil,
+			safeDetails,
+		)
+	case "external_identity_forbidden":
+		return createPublicError(
+			publicErrorCodeIdentityForbidden,
+			"This identity is not allowed to create an instance in this deployment.",
+			false,
+			err.requestID,
+			nil,
+			safeDetails,
+		)
+	case "external_identity_ambiguous":
+		return createPublicError(
+			publicErrorCodeIdentityAmbiguous,
+			"This request matched more than one possible owner account.",
+			false,
+			err.requestID,
+			nil,
+			safeDetails,
+		)
+	default:
+		return createPublicError(
+			publicErrorCodeResolverUnavailable,
+			"External identity resolution is temporarily unavailable.",
+			true,
+			err.requestID,
+			nil,
+			safeDetails,
+		)
+	}
 }

@@ -345,6 +345,22 @@ function normalizeErrorMessage(value: unknown): string {
   return normalizeHtmlErrorText(text);
 }
 
+function structuredPublicError(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+}
+
+function jsendPublicErrorMessage(jsend: Record<string, unknown> | null): string {
+  if (!jsend) return '';
+  const data = structuredPublicError(jsend.data);
+  const directError = structuredPublicError(data?.error);
+  return (
+    normalizeErrorMessage(directError?.message) ||
+    normalizeErrorMessage(data?.message) ||
+    normalizeErrorMessage(jsend.message) ||
+    normalizeErrorMessage(data?.error)
+  );
+}
+
 export async function request<T = unknown>(path: string, options: RequestOptions = {}): Promise<T | null> {
   const headers = new Headers(options.headers || {});
   const token = getAuthToken();
@@ -361,9 +377,7 @@ export async function request<T = unknown>(path: string, options: RequestOptions
 
   if (res.ok && jsend && jsend.status !== 'success') {
     const message =
-      normalizeErrorMessage(jsend.message) ||
-      normalizeErrorMessage((jsend.data as Record<string, unknown>)?.message) ||
-      normalizeErrorMessage((jsend.data as Record<string, unknown>)?.error) ||
+      jsendPublicErrorMessage(jsend as Record<string, unknown>) ||
       normalizeErrorMessage(text) ||
       res.statusText ||
       'Request failed';
@@ -375,10 +389,7 @@ export async function request<T = unknown>(path: string, options: RequestOptions
 
   if (!res.ok) {
     const message =
-      (jsend &&
-        (normalizeErrorMessage(jsend.message) ||
-          normalizeErrorMessage((jsend.data as Record<string, unknown>)?.message) ||
-          normalizeErrorMessage((jsend.data as Record<string, unknown>)?.error))) ||
+      (jsend && jsendPublicErrorMessage(jsend as Record<string, unknown>)) ||
       normalizeErrorMessage((data as Record<string, unknown>)?.error) ||
       normalizeErrorMessage((data as Record<string, unknown>)?.message) ||
       normalizeErrorMessage(text) ||

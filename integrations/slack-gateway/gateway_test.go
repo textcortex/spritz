@@ -302,8 +302,8 @@ func TestOAuthCallbackRedirectsToControlledRetryableErrorWhenBackendUpsertFails(
 	if got := redirectURL.Query().Get("status"); got != "error" {
 		t.Fatalf("expected error status, got %q", got)
 	}
-	if got := redirectURL.Query().Get("code"); got != "installation_registry_unavailable" {
-		t.Fatalf("expected installation registry unavailable code, got %q", got)
+	if got := redirectURL.Query().Get("code"); got != "resolver.unavailable" {
+		t.Fatalf("expected resolver.unavailable code, got %q", got)
 	}
 
 	resultReq := httptest.NewRequest(http.MethodGet, redirectURL.RequestURI(), nil)
@@ -402,8 +402,8 @@ func TestOAuthCallbackRedirectsToControlledOwnerResolutionError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse callback redirect: %v", err)
 	}
-	if got := redirectURL.Query().Get("code"); got != "external_identity_unresolved" {
-		t.Fatalf("expected external identity unresolved code, got %q", got)
+	if got := redirectURL.Query().Get("code"); got != "identity.unresolved" {
+		t.Fatalf("expected identity.unresolved code, got %q", got)
 	}
 
 	resultReq := httptest.NewRequest(http.MethodGet, redirectURL.RequestURI(), nil)
@@ -460,8 +460,8 @@ func TestOAuthCallbackRedirectsDeniedProviderAuthToControlledResult(t *testing.T
 	if err != nil {
 		t.Fatalf("parse callback redirect: %v", err)
 	}
-	if got := redirectURL.Query().Get("code"); got != "provider_authorization_denied" {
-		t.Fatalf("expected provider authorization denied code, got %q", got)
+	if got := redirectURL.Query().Get("code"); got != "auth.denied" {
+		t.Fatalf("expected auth.denied code, got %q", got)
 	}
 }
 

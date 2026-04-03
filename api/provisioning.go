@@ -318,12 +318,13 @@ func (s *server) resolveCreateOwner(ctx context.Context, body *createRequest, pr
 		}
 		if !s.externalOwners.enabled() {
 			return spritzv1.SpritzOwner{}, nil, externalOwnerResolutionError{
-				status:   http.StatusForbidden,
-				code:     "external_identity_forbidden",
-				message:  "external identity resolution is not configured",
-				provider: normalizedRef.Provider,
-				tenant:   normalizedRef.Tenant,
-				subject:  normalizedRef.Subject,
+				status:    http.StatusForbidden,
+				code:      "external_identity_forbidden",
+				message:   "external identity resolution is not configured",
+				requestID: strings.TrimSpace(body.RequestID),
+				provider:  normalizedRef.Provider,
+				tenant:    normalizedRef.Tenant,
+				subject:   normalizedRef.Subject,
 			}
 		}
 		resolution, err := s.externalOwners.resolve(ctx, principal, normalizedRef, body.RequestID)
