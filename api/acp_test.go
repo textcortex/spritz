@@ -82,6 +82,8 @@ type fakeACPBootstrapServer struct {
 	server       *httptest.Server
 	mu           sync.Mutex
 	loadIDs      []string
+	loadCWDs     []string
+	newCWDs      []string
 	newCalls     int
 	initRequests []acpBootstrapInitializeRequest
 }
@@ -140,12 +142,14 @@ func newFakeACPBootstrapServer(t *testing.T, options fakeACPBootstrapServerOptio
 			case "session/load":
 				var params struct {
 					SessionID string `json:"sessionId"`
+					CWD       string `json:"cwd"`
 				}
 				if err := json.Unmarshal(message.Params, &params); err != nil {
 					t.Fatalf("failed to decode load params: %v", err)
 				}
 				fakeServer.mu.Lock()
 				fakeServer.loadIDs = append(fakeServer.loadIDs, params.SessionID)
+				fakeServer.loadCWDs = append(fakeServer.loadCWDs, params.CWD)
 				fakeServer.mu.Unlock()
 				if options.LoadError != nil {
 					if err := conn.WriteJSON(map[string]any{
@@ -176,8 +180,15 @@ func newFakeACPBootstrapServer(t *testing.T, options fakeACPBootstrapServerOptio
 					t.Fatalf("failed to write load result: %v", err)
 				}
 			case "session/new":
+				var params struct {
+					CWD string `json:"cwd"`
+				}
+				if err := json.Unmarshal(message.Params, &params); err != nil {
+					t.Fatalf("failed to decode new session params: %v", err)
+				}
 				fakeServer.mu.Lock()
 				fakeServer.newCalls++
+				fakeServer.newCWDs = append(fakeServer.newCWDs, params.CWD)
 				fakeServer.mu.Unlock()
 				sessionID := options.NewSessionID
 				if sessionID == "" {
@@ -371,6 +382,36 @@ func TestCreateACPConversationGeneratesIndependentConversationID(t *testing.T) {
 	}
 }
 
+func TestCreateACPConversationLeavesCWDUnsetWhenRequestOmitsIt(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	s := newACPTestServer(t, spritz)
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/acp/conversations", s.createACPConversation)
+
+	body := strings.NewReader(`{"spritzName":"tidy-otter"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/acp/conversations", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Status string                      `json:"status"`
+		Data   spritzv1.SpritzConversation `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode conversation response: %v", err)
+	}
+	if payload.Data.Spec.CWD != "" {
+		t.Fatalf("expected empty cwd override, got %q", payload.Data.Spec.CWD)
+	}
+}
+
 func TestCreateACPConversationRejectsAgentsWithoutLoadSessionSupport(t *testing.T) {
 	spritz := readyACPSpritz("tidy-otter", "user-1")
 	spritz.Status.ACP.Capabilities.LoadSession = false
@@ -458,6 +499,46 @@ func TestListAndPatchACPConversationsByID(t *testing.T) {
 	}
 	if getPayload.Data.Spec.Title != "Renamed" || getPayload.Data.Spec.SessionID != "sess-tidy-otter-new" || getPayload.Data.Spec.CWD != "/workspace/app" {
 		t.Fatalf("expected patched conversation fields, got %#v", getPayload.Data.Spec)
+	}
+}
+
+func TestPatchACPConversationClearsCWDOverrideWhenEmpty(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	conversation := conversationFor("tidy-otter-new", "tidy-otter", "user-1", "Latest", metav1.Now())
+	conversation.Spec.CWD = "/workspace/app"
+
+	s := newACPTestServer(t, spritz, conversation)
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.PATCH("/api/acp/conversations/:id", s.updateACPConversation)
+	secured.GET("/api/acp/conversations/:id", s.getACPConversation)
+
+	patchReq := httptest.NewRequest(http.MethodPatch, "/api/acp/conversations/"+conversation.Name, strings.NewReader(`{"cwd":""}`))
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchReq.Header.Set("X-Spritz-User-Id", "user-1")
+	patchRec := httptest.NewRecorder()
+	e.ServeHTTP(patchRec, patchReq)
+	if patchRec.Code != http.StatusOK {
+		t.Fatalf("expected status 200 from patch, got %d: %s", patchRec.Code, patchRec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/acp/conversations/"+conversation.Name, nil)
+	getReq.Header.Set("X-Spritz-User-Id", "user-1")
+	getRec := httptest.NewRecorder()
+	e.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("expected status 200 from get, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+
+	var getPayload struct {
+		Status string                      `json:"status"`
+		Data   spritzv1.SpritzConversation `json:"data"`
+	}
+	if err := json.Unmarshal(getRec.Body.Bytes(), &getPayload); err != nil {
+		t.Fatalf("failed to decode get response: %v", err)
+	}
+	if getPayload.Data.Spec.CWD != "" {
+		t.Fatalf("expected cleared cwd override, got %#v", getPayload.Data.Spec)
 	}
 }
 
@@ -610,8 +691,58 @@ func TestBootstrapACPConversationLoadsStoredSessionWithoutMutatingIdentity(t *te
 	if len(fakeACP.loadIDs) != 1 || fakeACP.loadIDs[0] != "session-existing" {
 		t.Fatalf("expected session/load for session-existing, got %#v", fakeACP.loadIDs)
 	}
+	if len(fakeACP.loadCWDs) != 1 || fakeACP.loadCWDs[0] != "/home/dev" {
+		t.Fatalf("expected session/load cwd /home/dev, got %#v", fakeACP.loadCWDs)
+	}
 	if fakeACP.newCalls != 0 {
 		t.Fatalf("expected no session/new calls, got %d", fakeACP.newCalls)
+	}
+}
+
+func TestBootstrapACPConversationNormalizesLegacyHomeCWDToResolvedDefault(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	spritz.Spec.Repo = &spritzv1.SpritzRepo{
+		URL: "https://example.com/open/spritz.git",
+		Dir: "/workspace/platform",
+	}
+	conversation := conversationFor("tidy-otter-conv", "tidy-otter", "user-1", "Latest", metav1.Now())
+	conversation.Spec.SessionID = "session-existing"
+	conversation.Spec.CWD = "/home/dev"
+	fakeACP := newFakeACPBootstrapServer(t, fakeACPBootstrapServerOptions{})
+
+	s := newACPTestServer(t, spritz, conversation)
+	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/acp/conversations/:id/bootstrap", s.bootstrapACPConversation)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/acp/conversations/"+conversation.Name+"/bootstrap", nil)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Status string `json:"status"`
+		Data   struct {
+			EffectiveCWD string `json:"effectiveCwd"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode bootstrap response: %v", err)
+	}
+	if payload.Data.EffectiveCWD != "/workspace/platform" {
+		t.Fatalf("expected effective cwd /workspace/platform, got %q", payload.Data.EffectiveCWD)
+	}
+
+	fakeACP.mu.Lock()
+	defer fakeACP.mu.Unlock()
+	if len(fakeACP.loadCWDs) != 1 || fakeACP.loadCWDs[0] != "/workspace/platform" {
+		t.Fatalf("expected session/load cwd /workspace/platform, got %#v", fakeACP.loadCWDs)
 	}
 }
 

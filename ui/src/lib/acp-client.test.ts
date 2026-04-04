@@ -66,10 +66,11 @@ describe('createACPClient', () => {
     vi.restoreAllMocks();
   });
 
-  const CONVERSATION: ConversationInfo = {
+  const CONVERSATION = {
     metadata: { name: 'conv-1' },
-    spec: { sessionId: 'sess-1' },
-  };
+    spec: { sessionId: 'sess-1', cwd: '/home/dev' },
+    status: { effectiveCwd: '/workspace/platform' },
+  } as unknown as ConversationInfo;
 
   function createTestClient(overrides: Partial<ACPClientOptions> = {}) {
     return createACPClient({
@@ -193,6 +194,23 @@ describe('createACPClient', () => {
     await startPromise;
 
     expect(onReplayStateChange).toHaveBeenNthCalledWith(2, false);
+  });
+
+  it('uses the backend-resolved effective cwd for session replay', async () => {
+    const client = createTestClient();
+    const startPromise = client.start();
+    lastWs.simulateOpen();
+
+    const initializeMessage = JSON.parse(lastWs.sent[0]);
+    lastWs.simulateMessage({ jsonrpc: '2.0', id: initializeMessage.id, result: {} });
+    await flushMicrotasks();
+
+    const sessionLoadMessage = JSON.parse(lastWs.sent[1]);
+    expect(sessionLoadMessage.method).toBe('session/load');
+    expect(sessionLoadMessage.params.cwd).toBe('/workspace/platform');
+
+    lastWs.simulateMessage({ jsonrpc: '2.0', id: sessionLoadMessage.id, result: {} });
+    await startPromise;
   });
 
   it('dispatches session/request_permission to onPermissionRequest', async () => {

@@ -64,6 +64,7 @@ export interface ConversationInfo {
   status?: {
     bindingState?: string;
     lastActivityAt?: string;
+    effectiveCwd?: string;
   };
 }
 

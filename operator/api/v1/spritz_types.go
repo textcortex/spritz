@@ -281,6 +281,7 @@ type SpritzConversationStatus struct {
 	// +kubebuilder:validation:Enum=pending;active;missing;replaced;error
 	BindingState           string       `json:"bindingState,omitempty"`
 	BoundSessionID         string       `json:"boundSessionId,omitempty"`
+	EffectiveCWD           string       `json:"effectiveCwd,omitempty"`
 	PreviousSessionID      string       `json:"previousSessionId,omitempty"`
 	LastBoundAt            *metav1.Time `json:"lastBoundAt,omitempty"`
 	LastReplayAt           *metav1.Time `json:"lastReplayAt,omitempty"`

@@ -227,7 +227,7 @@ func (s *server) runInternalDebugChat(ctx context.Context, conversation *spritzv
 		return nil, nil, err
 	}
 
-	bootstrap, err := s.bootstrapACPConversationBindingWithClient(bootstrapCtx, conversation, client, initResult)
+	bootstrap, err := s.bootstrapACPConversationBindingWithClient(bootstrapCtx, conversation, spritz, client, initResult)
 	if err != nil {
 		return nil, nil, err
 	}

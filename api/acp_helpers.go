@@ -72,14 +72,6 @@ func normalizeConversationCapabilities(status *spritzv1.SpritzACPStatus) *spritz
 	return capabilities
 }
 
-func normalizeConversationCWD(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return defaultACPCWD
-	}
-	return trimmed
-}
-
 func conversationDisplayTitle(conversation *spritzv1.SpritzConversation) string {
 	if conversation == nil {
 		return defaultACPConversationTitle
