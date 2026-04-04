@@ -73,6 +73,7 @@ type spritzBootstrapResponse struct {
 	Status string `json:"status"`
 	Data   struct {
 		EffectiveSessionID string `json:"effectiveSessionId"`
+		EffectiveCWD       string `json:"effectiveCwd"`
 		Conversation       struct {
 			Metadata struct {
 				Name string `json:"name"`
@@ -81,6 +82,9 @@ type spritzBootstrapResponse struct {
 				SessionID string `json:"sessionId"`
 				CWD       string `json:"cwd"`
 			} `json:"spec"`
+			Status struct {
+				EffectiveCWD string `json:"effectiveCwd"`
+			} `json:"status"`
 		} `json:"conversation"`
 	} `json:"data"`
 }
@@ -198,7 +202,6 @@ func (g *slackGateway) upsertChannelConversation(ctx context.Context, session ch
 		"externalChannelId":      strings.TrimSpace(event.Channel),
 		"externalConversationId": strings.TrimSpace(externalConversationID),
 		"title":                  fmt.Sprintf("Slack %s", strings.TrimSpace(event.Channel)),
-		"cwd":                    defaultConversationCWD,
 	}
 	var payload spritzConversationUpsertResponse
 	if err := g.postSpritzJSON(ctx, http.MethodPost, "/api/channel-conversations/upsert", session.AccessToken, body, &payload, nil); err != nil {
@@ -216,12 +219,16 @@ func (g *slackGateway) bootstrapConversation(ctx context.Context, serviceToken, 
 	if sessionID == "" {
 		sessionID = strings.TrimSpace(payload.Data.Conversation.Spec.SessionID)
 	}
-	cwd := strings.TrimSpace(payload.Data.Conversation.Spec.CWD)
-	if cwd == "" {
-		cwd = defaultConversationCWD
-	}
+	cwd := firstNonEmpty(
+		payload.Data.EffectiveCWD,
+		payload.Data.Conversation.Status.EffectiveCWD,
+		payload.Data.Conversation.Spec.CWD,
+	)
 	if sessionID == "" {
 		return "", "", fmt.Errorf("bootstrap did not return a session id")
+	}
+	if cwd == "" {
+		return "", "", fmt.Errorf("bootstrap did not return a cwd")
 	}
 	return sessionID, cwd, nil
 }

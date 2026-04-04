@@ -13,10 +13,9 @@ import (
 )
 
 const (
-	slackProvider          = "slack"
-	slackWorkspaceScope    = "workspace"
-	defaultSlackPresetID   = "zeno"
-	defaultConversationCWD = "/home/dev"
+	slackProvider        = "slack"
+	slackWorkspaceScope  = "workspace"
+	defaultSlackPresetID = "zeno"
 )
 
 type slackGateway struct {
