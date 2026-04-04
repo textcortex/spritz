@@ -9,11 +9,6 @@ import (
 	spritzv1 "spritz.sh/operator/api/v1"
 )
 
-var legacyInheritedConversationCWDs = map[string]struct{}{
-	defaultACPCWD: {},
-	"/workspace":  {},
-}
-
 // normalizeConversationCWD trims client input and preserves empty values so the
 // conversation resource can distinguish "no override" from an explicit cwd.
 func normalizeConversationCWD(value string) string {
@@ -28,25 +23,28 @@ func resolveConversationEffectiveCWD(spritz *spritzv1.Spritz, conversation *spri
 	if conversation == nil {
 		return defaultCWD
 	}
-	if override := normalizeConversationOverrideCWD(spritz, conversation.Spec.CWD); override != "" {
+	if override := normalizeConversationOverrideCWD(spritz, conversation); override != "" {
 		return override
 	}
 	return defaultCWD
 }
 
-// normalizeConversationOverrideCWD clears legacy copied defaults so bootstrap
-// can distinguish a real override from inherited instance state.
-func normalizeConversationOverrideCWD(spritz *spritzv1.Spritz, value string) string {
-	override := normalizeConversationCWD(value)
+// normalizeConversationOverrideCWD distinguishes an explicit override from an
+// inherited instance default without guessing about ambiguous historical values.
+func normalizeConversationOverrideCWD(spritz *spritzv1.Spritz, conversation *spritzv1.SpritzConversation) string {
+	if conversation == nil {
+		return ""
+	}
+	override := normalizeConversationCWD(conversation.Spec.CWD)
 	if override == "" {
 		return ""
 	}
 
 	defaultCWD := resolveSpritzDefaultCWD(spritz)
-	if override == defaultCWD {
-		return ""
+	if conversationHasExplicitCWDOverride(conversation) {
+		return override
 	}
-	if _, ok := legacyInheritedConversationCWDs[override]; ok && override != defaultCWD {
+	if override == defaultCWD {
 		return ""
 	}
 	return override
@@ -161,4 +159,34 @@ func inferConversationRepoName(raw string) string {
 		return ""
 	}
 	return base
+}
+
+func conversationHasExplicitCWDOverride(conversation *spritzv1.SpritzConversation) bool {
+	if conversation == nil || conversation.Annotations == nil {
+		return false
+	}
+	value := strings.TrimSpace(conversation.Annotations[acpConversationExplicitCWDKey])
+	switch strings.ToLower(value) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func setConversationCWDOverride(conversation *spritzv1.SpritzConversation, value string) {
+	if conversation == nil {
+		return
+	}
+	conversation.Spec.CWD = normalizeConversationCWD(value)
+	if conversation.Spec.CWD == "" {
+		if conversation.Annotations != nil {
+			delete(conversation.Annotations, acpConversationExplicitCWDKey)
+		}
+		return
+	}
+	if conversation.Annotations == nil {
+		conversation.Annotations = map[string]string{}
+	}
+	conversation.Annotations[acpConversationExplicitCWDKey] = "true"
 }

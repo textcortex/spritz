@@ -481,7 +481,7 @@ func (s *server) bootstrapACPConversationBindingWithClient(
 
 	updatedConversation, err := s.updateConversationBinding(ctx, conversation.Namespace, conversation.Name, func(current *spritzv1.SpritzConversation) {
 		now := metav1.Now()
-		current.Spec.CWD = normalizeConversationOverrideCWD(spritz, current.Spec.CWD)
+		setConversationCWDOverride(current, normalizeConversationOverrideCWD(spritz, current))
 		current.Spec.SessionID = effectiveSessionID
 		current.Spec.AgentInfo = agentInfo
 		current.Spec.Capabilities = capabilities

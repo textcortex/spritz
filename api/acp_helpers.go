@@ -122,7 +122,7 @@ func buildACPConversationResource(spritz *spritzv1.Spritz, requestedTitle, reque
 	if title == "" {
 		title = defaultACPConversationTitle
 	}
-	return &spritzv1.SpritzConversation{
+	conversation := &spritzv1.SpritzConversation{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: spritzv1.GroupVersion.String(),
 			Kind:       "SpritzConversation",
@@ -153,7 +153,9 @@ func buildACPConversationResource(spritz *spritzv1.Spritz, requestedTitle, reque
 		Status: spritzv1.SpritzConversationStatus{
 			BindingState: "pending",
 		},
-	}, nil
+	}
+	setConversationCWDOverride(conversation, requestedCWD)
+	return conversation, nil
 }
 
 func (s *server) getAuthorizedSpritz(ctx context.Context, principal principal, namespace, name string) (*spritzv1.Spritz, error) {

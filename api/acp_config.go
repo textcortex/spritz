@@ -17,6 +17,7 @@ const (
 	acpConversationLabelValue     = "true"
 	acpConversationSpritzLabelKey = "spritz.sh/spritz-name"
 	acpConversationOwnerLabelKey  = ownerLabelKey
+	acpConversationExplicitCWDKey = "spritz.sh/acp-cwd-override-explicit"
 )
 
 type acpConfig struct {

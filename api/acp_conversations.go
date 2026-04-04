@@ -165,9 +165,14 @@ func (s *server) updateACPConversation(c echo.Context) error {
 		}
 		changed = true
 	}
-	if body.CWD != nil && conversation.Spec.CWD != normalizeConversationCWD(*body.CWD) {
-		conversation.Spec.CWD = normalizeConversationCWD(*body.CWD)
-		changed = true
+	if body.CWD != nil {
+		nextCWD := normalizeConversationCWD(*body.CWD)
+		nextExplicit := nextCWD != ""
+		currentExplicit := conversationHasExplicitCWDOverride(conversation)
+		if conversation.Spec.CWD != nextCWD || currentExplicit != nextExplicit {
+			setConversationCWDOverride(conversation, *body.CWD)
+			changed = true
+		}
 	}
 	if changed {
 		if err := s.client.Update(c.Request().Context(), conversation); err != nil {

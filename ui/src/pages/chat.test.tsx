@@ -734,6 +734,12 @@ describe('ChatPage draft persistence', () => {
         expect.objectContaining({ effectiveCwd: '/workspace/platform' }),
       );
     });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Needs CWD' }));
+
+    await waitFor(() => {
+      expect(countBootstrapCalls('conv-cwd')).toBe(1);
+    });
   });
 
   it('surfaces terminal bootstrap failures without retrying again in the background', async () => {

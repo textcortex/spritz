@@ -699,7 +699,7 @@ func TestBootstrapACPConversationLoadsStoredSessionWithoutMutatingIdentity(t *te
 	}
 }
 
-func TestBootstrapACPConversationNormalizesLegacyHomeCWDToResolvedDefault(t *testing.T) {
+func TestBootstrapACPConversationUsesResolvedDefaultWhenOverrideMissing(t *testing.T) {
 	spritz := readyACPSpritz("tidy-otter", "user-1")
 	spritz.Spec.Repo = &spritzv1.SpritzRepo{
 		URL: "https://example.com/open/spritz.git",
@@ -707,7 +707,7 @@ func TestBootstrapACPConversationNormalizesLegacyHomeCWDToResolvedDefault(t *tes
 	}
 	conversation := conversationFor("tidy-otter-conv", "tidy-otter", "user-1", "Latest", metav1.Now())
 	conversation.Spec.SessionID = "session-existing"
-	conversation.Spec.CWD = "/home/dev"
+	conversation.Spec.CWD = ""
 	fakeACP := newFakeACPBootstrapServer(t, fakeACPBootstrapServerOptions{})
 
 	s := newACPTestServer(t, spritz, conversation)
@@ -743,6 +743,53 @@ func TestBootstrapACPConversationNormalizesLegacyHomeCWDToResolvedDefault(t *tes
 	defer fakeACP.mu.Unlock()
 	if len(fakeACP.loadCWDs) != 1 || fakeACP.loadCWDs[0] != "/workspace/platform" {
 		t.Fatalf("expected session/load cwd /workspace/platform, got %#v", fakeACP.loadCWDs)
+	}
+}
+
+func TestBootstrapACPConversationPreservesExplicitWorkspaceOverride(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	spritz.Spec.Repo = &spritzv1.SpritzRepo{
+		URL: "https://example.com/open/spritz.git",
+		Dir: "/workspace/platform",
+	}
+	conversation := conversationFor("tidy-otter-conv", "tidy-otter", "user-1", "Latest", metav1.Now())
+	conversation.Spec.SessionID = "session-existing"
+	setConversationCWDOverride(conversation, "/workspace")
+	fakeACP := newFakeACPBootstrapServer(t, fakeACPBootstrapServerOptions{})
+
+	s := newACPTestServer(t, spritz, conversation)
+	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/acp/conversations/:id/bootstrap", s.bootstrapACPConversation)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/acp/conversations/"+conversation.Name+"/bootstrap", nil)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Status string `json:"status"`
+		Data   struct {
+			EffectiveCWD string `json:"effectiveCwd"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode bootstrap response: %v", err)
+	}
+	if payload.Data.EffectiveCWD != "/workspace" {
+		t.Fatalf("expected explicit cwd override to be preserved, got %q", payload.Data.EffectiveCWD)
+	}
+
+	fakeACP.mu.Lock()
+	defer fakeACP.mu.Unlock()
+	if len(fakeACP.loadCWDs) != 1 || fakeACP.loadCWDs[0] != "/workspace" {
+		t.Fatalf("expected session/load cwd /workspace, got %#v", fakeACP.loadCWDs)
 	}
 }
 

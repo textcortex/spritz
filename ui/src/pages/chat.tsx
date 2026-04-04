@@ -257,6 +257,30 @@ export function ChatPage() {
     );
   }, []);
 
+  const applyConversationUpdate = useCallback((conversation: ConversationInfo) => {
+    setSelectedConversation(conversation);
+    setAgents((prev) =>
+      prev.map((group) => {
+        const sameSpritz = group.spritz.metadata.name === (conversation.spec?.spritzName || '');
+        const hasConversation = group.conversations.some((item) => item.metadata.name === conversation.metadata.name);
+        if (!sameSpritz && !hasConversation) {
+          return group;
+        }
+        const nextConversations = hasConversation
+          ? group.conversations.map((item) =>
+              item.metadata.name === conversation.metadata.name ? conversation : item,
+            )
+          : sameSpritz
+            ? [...group.conversations, conversation]
+            : group.conversations;
+        return {
+          ...group,
+          conversations: sortConversationsByRecency(nextConversations),
+        };
+      }),
+    );
+  }, []);
+
   const {
     transcript,
     clientReady,
@@ -270,7 +294,7 @@ export function ChatPage() {
     conversation: selectedConversation,
     apiBaseUrl: config.apiBaseUrl || '',
     websocketBaseUrl: config.websocketBaseUrl || '',
-    onConversationUpdate: setSelectedConversation,
+    onConversationUpdate: applyConversationUpdate,
     onConversationTitle: applyConversationTitle,
   });
 
