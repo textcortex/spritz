@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -141,6 +142,36 @@ func (s *server) upsertInternalBinding(c echo.Context) error {
 		return writeCreateRequestError(c, err)
 	}
 	requestBody = normalized.body
+	namespace = normalized.namespace
+
+	_, resolvedExternalOwner, err := s.resolveCreateOwner(
+		c.Request().Context(),
+		&requestBody,
+		internalPrincipal,
+	)
+	if err != nil {
+		var resolutionErr externalOwnerResolutionError
+		if errors.As(err, &resolutionErr) {
+			return writeJSendFailData(c, resolutionErr.status, resolutionErr.responseData())
+		}
+		if errors.Is(err, errForbidden) {
+			return writeError(c, http.StatusForbidden, "forbidden")
+		}
+		return writeError(c, http.StatusBadRequest, err.Error())
+	}
+	if err := s.resolveCreateAdmission(c.Request().Context(), internalPrincipal, namespace, &requestBody); err != nil {
+		var admissionErr *admissionError
+		if errors.As(err, &admissionErr) {
+			if admissionErr.data != nil {
+				return writeJSendFailData(c, admissionErr.status, admissionErr.data)
+			}
+			return writeError(c, admissionErr.status, admissionErr.message)
+		}
+		return writeError(c, http.StatusInternalServerError, err.Error())
+	}
+	if err := resolveCreateLifetimes(&requestBody.Spec, s.provisioners, true); err != nil {
+		return writeError(c, http.StatusBadRequest, err.Error())
+	}
 
 	if err := s.ensureServiceAccount(c.Request().Context(), namespace, requestBody.Spec.ServiceAccountName); err != nil {
 		return writeError(c, http.StatusInternalServerError, "failed to ensure service account")
@@ -154,12 +185,24 @@ func (s *server) upsertInternalBinding(c echo.Context) error {
 		labels[presetLabelKey] = strings.TrimSpace(requestBody.PresetID)
 	}
 
-	annotations := cloneStringMap(s.defaultMetadata)
+	annotations := mergeStringMap(s.defaultMetadata, requestBody.Annotations)
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
 	if strings.TrimSpace(requestBody.PresetID) != "" {
 		annotations[presetIDAnnotationKey] = strings.TrimSpace(requestBody.PresetID)
+	}
+	if resolvedExternalOwner != nil {
+		externalOwnerAnnotations := map[string]string{
+			externalOwnerIssuerAnnotationKey:      resolvedExternalOwner.Issuer,
+			externalOwnerProviderAnnotationKey:    resolvedExternalOwner.Provider,
+			externalOwnerSubjectHashAnnotationKey: resolvedExternalOwner.SubjectHash,
+			externalOwnerResolvedAtAnnotationKey:  resolvedExternalOwner.ResolvedAt.Format(time.RFC3339),
+		}
+		if strings.TrimSpace(resolvedExternalOwner.Tenant) != "" {
+			externalOwnerAnnotations[externalOwnerTenantAnnotationKey] = resolvedExternalOwner.Tenant
+		}
+		annotations = mergeStringMap(annotations, externalOwnerAnnotations)
 	}
 
 	applySSHDefaults(&requestBody.Spec, s.sshDefaults, namespace)

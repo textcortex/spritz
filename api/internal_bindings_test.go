@@ -69,6 +69,61 @@ func TestInternalUpsertBindingCreatesAndFetchesBinding(t *testing.T) {
 	}
 }
 
+func TestInternalUpsertBindingPreservesNormalizedCreateAnnotations(t *testing.T) {
+	s := newInternalSpritzesTestServer(t)
+	e := echo.New()
+	s.registerRoutes(e)
+
+	body := `{
+		"desiredRevision": "sha256:rev-1",
+		"principal": {"id": "channel-gateway"},
+		"request": {
+			"presetId": "zeno",
+			"ownerId": "user-123",
+			"requestId": "binding-upsert-annotations",
+			"source": "channel-gateway",
+			"spec": {}
+		}
+	}`
+	req := httptest.NewRequest(http.MethodPut, "/api/internal/v1/bindings/channel-installation-binding-annotations", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer spritz-internal-token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var stored spritzv1.SpritzBinding
+	if err := s.client.Get(
+		context.Background(),
+		client.ObjectKey{
+			Namespace: "default",
+			Name:      bindingResourceNameForKey("channel-installation-binding-annotations"),
+		},
+		&stored,
+	); err != nil {
+		t.Fatalf("failed to load stored binding: %v", err)
+	}
+
+	if stored.Spec.Template.Annotations[instanceClassAnnotationKey] != "personal-agent" {
+		t.Fatalf(
+			"expected template to preserve %q, got %#v",
+			instanceClassAnnotationKey,
+			stored.Spec.Template.Annotations,
+		)
+	}
+	if stored.Spec.Template.Annotations[instanceClassVersionAnnotationKey] != "v1" {
+		t.Fatalf(
+			"expected template to preserve %q, got %#v",
+			instanceClassVersionAnnotationKey,
+			stored.Spec.Template.Annotations,
+		)
+	}
+}
+
 func TestInternalReplaceSpritzUsesBindingLifecycleWhenRuntimeIsOwnedByBinding(t *testing.T) {
 	targetRevision := "sha256:rev-2"
 	binding := &spritzv1.SpritzBinding{
