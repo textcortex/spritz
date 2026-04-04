@@ -47,6 +47,9 @@ func normalizeConversationOverrideCWD(spritz *spritzv1.Spritz, conversation *spr
 	if override == defaultCWD {
 		return ""
 	}
+	if override == defaultACPCWD {
+		return ""
+	}
 	return override
 }
 

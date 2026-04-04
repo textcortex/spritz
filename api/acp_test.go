@@ -497,8 +497,11 @@ func TestListAndPatchACPConversationsByID(t *testing.T) {
 	if err := json.Unmarshal(getRec.Body.Bytes(), &getPayload); err != nil {
 		t.Fatalf("failed to decode get response: %v", err)
 	}
-	if getPayload.Data.Spec.Title != "Renamed" || getPayload.Data.Spec.SessionID != "sess-tidy-otter-new" || getPayload.Data.Spec.CWD != "/workspace/app" {
+	if getPayload.Data.Spec.Title != "Renamed" || getPayload.Data.Spec.SessionID != "" || getPayload.Data.Spec.CWD != "/workspace/app" {
 		t.Fatalf("expected patched conversation fields, got %#v", getPayload.Data.Spec)
+	}
+	if getPayload.Data.Status.BindingState != "pending" || getPayload.Data.Status.BoundSessionID != "" || getPayload.Data.Status.EffectiveCWD != "" || getPayload.Data.Status.PreviousSessionID != "sess-tidy-otter-new" {
+		t.Fatalf("expected cwd patch to invalidate the binding, got %#v", getPayload.Data.Status)
 	}
 }
 
@@ -506,6 +509,9 @@ func TestPatchACPConversationClearsCWDOverrideWhenEmpty(t *testing.T) {
 	spritz := readyACPSpritz("tidy-otter", "user-1")
 	conversation := conversationFor("tidy-otter-new", "tidy-otter", "user-1", "Latest", metav1.Now())
 	conversation.Spec.CWD = "/workspace/app"
+	conversation.Status.BindingState = "active"
+	conversation.Status.BoundSessionID = conversation.Spec.SessionID
+	conversation.Status.EffectiveCWD = "/workspace/app"
 
 	s := newACPTestServer(t, spritz, conversation)
 	e := echo.New()
@@ -539,6 +545,12 @@ func TestPatchACPConversationClearsCWDOverrideWhenEmpty(t *testing.T) {
 	}
 	if getPayload.Data.Spec.CWD != "" {
 		t.Fatalf("expected cleared cwd override, got %#v", getPayload.Data.Spec)
+	}
+	if getPayload.Data.Spec.SessionID != "" {
+		t.Fatalf("expected session id to be cleared after cwd change, got %#v", getPayload.Data.Spec)
+	}
+	if getPayload.Data.Status.BindingState != "pending" || getPayload.Data.Status.EffectiveCWD != "" {
+		t.Fatalf("expected conversation binding to require rebootstrap, got %#v", getPayload.Data.Status)
 	}
 }
 
@@ -699,7 +711,7 @@ func TestBootstrapACPConversationLoadsStoredSessionWithoutMutatingIdentity(t *te
 	}
 }
 
-func TestBootstrapACPConversationUsesResolvedDefaultWhenOverrideMissing(t *testing.T) {
+func TestBootstrapACPConversationNormalizesLegacyHomeCWDToResolvedDefault(t *testing.T) {
 	spritz := readyACPSpritz("tidy-otter", "user-1")
 	spritz.Spec.Repo = &spritzv1.SpritzRepo{
 		URL: "https://example.com/open/spritz.git",
@@ -707,7 +719,7 @@ func TestBootstrapACPConversationUsesResolvedDefaultWhenOverrideMissing(t *testi
 	}
 	conversation := conversationFor("tidy-otter-conv", "tidy-otter", "user-1", "Latest", metav1.Now())
 	conversation.Spec.SessionID = "session-existing"
-	conversation.Spec.CWD = ""
+	conversation.Spec.CWD = "/home/dev"
 	fakeACP := newFakeACPBootstrapServer(t, fakeACPBootstrapServerOptions{})
 
 	s := newACPTestServer(t, spritz, conversation)
@@ -790,6 +802,90 @@ func TestBootstrapACPConversationPreservesExplicitWorkspaceOverride(t *testing.T
 	defer fakeACP.mu.Unlock()
 	if len(fakeACP.loadCWDs) != 1 || fakeACP.loadCWDs[0] != "/workspace" {
 		t.Fatalf("expected session/load cwd /workspace, got %#v", fakeACP.loadCWDs)
+	}
+}
+
+func TestBootstrapACPConversationPreservesExplicitHomeOverride(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	spritz.Spec.Repo = &spritzv1.SpritzRepo{
+		URL: "https://example.com/open/spritz.git",
+		Dir: "/workspace/platform",
+	}
+	conversation := conversationFor("tidy-otter-conv", "tidy-otter", "user-1", "Latest", metav1.Now())
+	conversation.Spec.SessionID = "session-existing"
+	setConversationCWDOverride(conversation, "/home/dev")
+	fakeACP := newFakeACPBootstrapServer(t, fakeACPBootstrapServerOptions{})
+
+	s := newACPTestServer(t, spritz, conversation)
+	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/acp/conversations/:id/bootstrap", s.bootstrapACPConversation)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/acp/conversations/"+conversation.Name+"/bootstrap", nil)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Status string `json:"status"`
+		Data   struct {
+			EffectiveCWD string `json:"effectiveCwd"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode bootstrap response: %v", err)
+	}
+	if payload.Data.EffectiveCWD != "/home/dev" {
+		t.Fatalf("expected explicit home cwd override to be preserved, got %q", payload.Data.EffectiveCWD)
+	}
+
+	fakeACP.mu.Lock()
+	defer fakeACP.mu.Unlock()
+	if len(fakeACP.loadCWDs) != 1 || fakeACP.loadCWDs[0] != "/home/dev" {
+		t.Fatalf("expected session/load cwd /home/dev, got %#v", fakeACP.loadCWDs)
+	}
+}
+
+func TestBootstrapACPConversationBackfillsExplicitCWDAnnotation(t *testing.T) {
+	spritz := readyACPSpritz("tidy-otter", "user-1")
+	spritz.Spec.Repo = &spritzv1.SpritzRepo{
+		URL: "https://example.com/open/spritz.git",
+		Dir: "/workspace/platform",
+	}
+	conversation := conversationFor("tidy-otter-conv", "tidy-otter", "user-1", "Latest", metav1.Now())
+	conversation.Spec.SessionID = "session-existing"
+	conversation.Spec.CWD = "/workspace/custom"
+	conversation.Annotations = nil
+	fakeACP := newFakeACPBootstrapServer(t, fakeACPBootstrapServerOptions{})
+
+	s := newACPTestServer(t, spritz, conversation)
+	s.acp.instanceURL = func(namespace, name string) string { return fakeACP.url }
+
+	e := echo.New()
+	secured := e.Group("", s.authMiddleware())
+	secured.POST("/api/acp/conversations/:id/bootstrap", s.bootstrapACPConversation)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/acp/conversations/"+conversation.Name+"/bootstrap", nil)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	stored := &spritzv1.SpritzConversation{}
+	if err := s.client.Get(context.Background(), clientKey("spritz-test", conversation.Name), stored); err != nil {
+		t.Fatalf("failed to reload conversation: %v", err)
+	}
+	if stored.Annotations[acpConversationExplicitCWDKey] != "true" {
+		t.Fatalf("expected explicit cwd annotation to be backfilled, got %#v", stored.Annotations)
 	}
 }
 

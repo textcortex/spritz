@@ -538,18 +538,20 @@ func (s *server) updateConversationBinding(ctx context.Context, namespace, name 
 		}
 		beforeSpec := current.Spec
 		beforeStatus := current.Status
+		beforeAnnotations := cloneStringMap(current.Annotations)
 		mutate(current)
 		specChanged := !apiequality.Semantic.DeepEqual(beforeSpec, current.Spec)
 		statusChanged := !apiequality.Semantic.DeepEqual(beforeStatus, current.Status)
+		annotationsChanged := !apiequality.Semantic.DeepEqual(beforeAnnotations, current.Annotations)
 		desiredStatus := current.Status
-		if specChanged {
+		if specChanged || annotationsChanged {
 			if err := s.client.Update(ctx, current); err != nil {
 				return err
 			}
 		}
 		if statusChanged {
 			statusTarget := current
-			if specChanged {
+			if specChanged || annotationsChanged {
 				statusTarget = &spritzv1.SpritzConversation{}
 				if err := s.client.Get(ctx, clientKey(namespace, name), statusTarget); err != nil {
 					return err
