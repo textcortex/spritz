@@ -72,14 +72,6 @@ func normalizeConversationCapabilities(status *spritzv1.SpritzACPStatus) *spritz
 	return capabilities
 }
 
-func normalizeConversationCWD(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return defaultACPCWD
-	}
-	return trimmed
-}
-
 func conversationDisplayTitle(conversation *spritzv1.SpritzConversation) string {
 	if conversation == nil {
 		return defaultACPConversationTitle
@@ -130,7 +122,7 @@ func buildACPConversationResource(spritz *spritzv1.Spritz, requestedTitle, reque
 	if title == "" {
 		title = defaultACPConversationTitle
 	}
-	return &spritzv1.SpritzConversation{
+	conversation := &spritzv1.SpritzConversation{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: spritzv1.GroupVersion.String(),
 			Kind:       "SpritzConversation",
@@ -161,7 +153,9 @@ func buildACPConversationResource(spritz *spritzv1.Spritz, requestedTitle, reque
 		Status: spritzv1.SpritzConversationStatus{
 			BindingState: "pending",
 		},
-	}, nil
+	}
+	setConversationCWDOverride(conversation, requestedCWD)
+	return conversation, nil
 }
 
 func (s *server) getAuthorizedSpritz(ctx context.Context, principal principal, namespace, name string) (*spritzv1.Spritz, error) {

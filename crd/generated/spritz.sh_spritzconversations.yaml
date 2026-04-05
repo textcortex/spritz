@@ -133,6 +133,8 @@ spec:
                 type: string
               boundSessionId:
                 type: string
+              effectiveCwd:
+                type: string
               lastBoundAt:
                 format: date-time
                 type: string

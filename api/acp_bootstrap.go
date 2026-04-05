@@ -21,6 +21,7 @@ import (
 type acpBootstrapResponse struct {
 	Conversation       *spritzv1.SpritzConversation    `json:"conversation"`
 	EffectiveSessionID string                          `json:"effectiveSessionId,omitempty"`
+	EffectiveCWD       string                          `json:"effectiveCwd,omitempty"`
 	BindingState       string                          `json:"bindingState,omitempty"`
 	Loaded             bool                            `json:"loaded,omitempty"`
 	Replaced           bool                            `json:"replaced,omitempty"`
@@ -417,10 +418,16 @@ func (s *server) bootstrapACPConversationBinding(ctx context.Context, conversati
 		return nil, err
 	}
 
-	return s.bootstrapACPConversationBindingWithClient(ctx, conversation, client, initResult)
+	return s.bootstrapACPConversationBindingWithClient(ctx, conversation, spritz, client, initResult)
 }
 
-func (s *server) bootstrapACPConversationBindingWithClient(ctx context.Context, conversation *spritzv1.SpritzConversation, client *acpBootstrapInstanceClient, initResult *acpBootstrapInitializeResult) (*acpBootstrapResponse, error) {
+func (s *server) bootstrapACPConversationBindingWithClient(
+	ctx context.Context,
+	conversation *spritzv1.SpritzConversation,
+	spritz *spritzv1.Spritz,
+	client *acpBootstrapInstanceClient,
+	initResult *acpBootstrapInitializeResult,
+) (*acpBootstrapResponse, error) {
 	if !initResult.AgentCapabilities.LoadSession {
 		err := errors.New("agent does not support session/load")
 		s.recordConversationBindingError(ctx, conversation.Namespace, conversation.Name, "", err)
@@ -429,6 +436,7 @@ func (s *server) bootstrapACPConversationBindingWithClient(ctx context.Context, 
 
 	agentInfo := normalizeBootstrapAgentInfo(initResult)
 	capabilities := normalizeBootstrapCapabilities(initResult)
+	effectiveCWD := resolveConversationEffectiveCWD(spritz, conversation)
 	effectiveSessionID := strings.TrimSpace(conversation.Spec.SessionID)
 	previousSessionID := ""
 	bindingState := "active"
@@ -438,12 +446,12 @@ func (s *server) bootstrapACPConversationBindingWithClient(ctx context.Context, 
 	var err error
 
 	if effectiveSessionID != "" {
-		replayMessageCount, err = client.loadSession(ctx, effectiveSessionID, normalizeConversationCWD(conversation.Spec.CWD))
+		replayMessageCount, err = client.loadSession(ctx, effectiveSessionID, effectiveCWD)
 		if err != nil {
 			var rpcErr *acpBootstrapRPCError
 			if errors.As(err, &rpcErr) && rpcErr.missingSession() {
 				previousSessionID = effectiveSessionID
-				effectiveSessionID, err = client.newSession(ctx, normalizeConversationCWD(conversation.Spec.CWD))
+				effectiveSessionID, err = client.newSession(ctx, effectiveCWD)
 				if err != nil {
 					s.recordConversationBindingError(ctx, conversation.Namespace, conversation.Name, previousSessionID, err)
 					return nil, err
@@ -458,7 +466,7 @@ func (s *server) bootstrapACPConversationBindingWithClient(ctx context.Context, 
 			loaded = true
 		}
 	} else {
-		effectiveSessionID, err = client.newSession(ctx, normalizeConversationCWD(conversation.Spec.CWD))
+		effectiveSessionID, err = client.newSession(ctx, effectiveCWD)
 		if err != nil {
 			s.recordConversationBindingError(ctx, conversation.Namespace, conversation.Name, "", err)
 			return nil, err
@@ -473,11 +481,13 @@ func (s *server) bootstrapACPConversationBindingWithClient(ctx context.Context, 
 
 	updatedConversation, err := s.updateConversationBinding(ctx, conversation.Namespace, conversation.Name, func(current *spritzv1.SpritzConversation) {
 		now := metav1.Now()
+		setConversationCWDOverride(current, normalizeConversationOverrideCWD(spritz, current))
 		current.Spec.SessionID = effectiveSessionID
 		current.Spec.AgentInfo = agentInfo
 		current.Spec.Capabilities = capabilities
 		current.Status.BoundSessionID = effectiveSessionID
 		current.Status.BindingState = bindingState
+		current.Status.EffectiveCWD = effectiveCWD
 		current.Status.PreviousSessionID = previousSessionID
 		current.Status.LastBoundAt = &now
 		current.Status.LastReplayMessageCount = replayMessageCount
@@ -496,6 +506,7 @@ func (s *server) bootstrapACPConversationBindingWithClient(ctx context.Context, 
 	return &acpBootstrapResponse{
 		Conversation:       updatedConversation,
 		EffectiveSessionID: effectiveSessionID,
+		EffectiveCWD:       effectiveCWD,
 		BindingState:       bindingState,
 		Loaded:             loaded,
 		Replaced:           replaced,
@@ -527,18 +538,20 @@ func (s *server) updateConversationBinding(ctx context.Context, namespace, name 
 		}
 		beforeSpec := current.Spec
 		beforeStatus := current.Status
+		beforeAnnotations := cloneStringMap(current.Annotations)
 		mutate(current)
 		specChanged := !apiequality.Semantic.DeepEqual(beforeSpec, current.Spec)
 		statusChanged := !apiequality.Semantic.DeepEqual(beforeStatus, current.Status)
+		annotationsChanged := !apiequality.Semantic.DeepEqual(beforeAnnotations, current.Annotations)
 		desiredStatus := current.Status
-		if specChanged {
+		if specChanged || annotationsChanged {
 			if err := s.client.Update(ctx, current); err != nil {
 				return err
 			}
 		}
 		if statusChanged {
 			statusTarget := current
-			if specChanged {
+			if specChanged || annotationsChanged {
 				statusTarget = &spritzv1.SpritzConversation{}
 				if err := s.client.Get(ctx, clientKey(namespace, name), statusTarget); err != nil {
 					return err

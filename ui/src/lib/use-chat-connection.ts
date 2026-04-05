@@ -129,6 +129,8 @@ export function useChatConnection({
       if (forceBootstrap) return true;
       const sessionId = String(conv.spec?.sessionId || '').trim();
       if (!sessionId) return true;
+      const effectiveCwd = String(conv.status?.effectiveCwd || '').trim();
+      if (!effectiveCwd) return true;
       return String(conv.status?.bindingState || '').trim().toLowerCase() !== 'active';
     }
 
@@ -206,6 +208,7 @@ export function useChatConnection({
           if (cancelled) return;
 
           const newSessionId = String(bootstrapData.effectiveSessionId || '');
+          const newEffectiveCwd = String(bootstrapData.effectiveCwd || '').trim();
           const replaced = Boolean(bootstrapData.replaced) ||
             (effectiveSessionId && newSessionId && effectiveSessionId !== newSessionId);
 
@@ -215,10 +218,30 @@ export function useChatConnection({
           }
 
           effectiveSessionId = newSessionId;
+          const bootstrapConversation = bootstrapData.conversation as ConversationInfo | undefined;
           effectiveConversation = {
-            metadata: activeConversation.metadata,
-            spec: { ...activeConversation.spec, sessionId: effectiveSessionId },
-            status: { ...activeConversation.status, bindingState: 'active' },
+            metadata: {
+              ...activeConversation.metadata,
+              ...(bootstrapConversation?.metadata || {}),
+            },
+            spec: {
+              ...activeConversation.spec,
+              ...(bootstrapConversation?.spec || {}),
+              sessionId: effectiveSessionId,
+            },
+            status: {
+              ...activeConversation.status,
+              ...(bootstrapConversation?.status || {}),
+              bindingState: String(
+                bootstrapData.bindingState ||
+                bootstrapConversation?.status?.bindingState ||
+                'active',
+              ),
+              effectiveCwd:
+                newEffectiveCwd ||
+                String(bootstrapConversation?.status?.effectiveCwd || '').trim() ||
+                String(activeConversation.status?.effectiveCwd || '').trim(),
+            },
           };
           onConversationUpdate(effectiveConversation);
         }

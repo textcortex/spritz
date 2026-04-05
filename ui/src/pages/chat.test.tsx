@@ -7,6 +7,7 @@ import { createMockStorage } from '@/test/helpers';
 import { ConfigProvider, config, resolveConfig, type RawSpritzConfig } from '@/lib/config';
 import { NoticeProvider } from '@/components/notice-banner';
 import { ChatPage } from './chat';
+import type { ConversationInfo } from '@/types/acp';
 
 const {
   requestMock,
@@ -257,16 +258,16 @@ vi.mock('@/components/ui/tooltip', () => ({
   }) => <>{render || children}</>,
 }));
 
-const CONVERSATIONS = [
+const CONVERSATIONS: ConversationInfo[] = [
   {
     metadata: { name: 'conv-1' },
     spec: { sessionId: 'sess-1', title: 'Conversation One', spritzName: 'covo' },
-    status: { bindingState: 'active' },
+    status: { bindingState: 'active', effectiveCwd: '/workspace/repo' },
   },
   {
     metadata: { name: 'conv-2' },
     spec: { sessionId: 'sess-2', title: 'Conversation Two', spritzName: 'covo' },
-    status: { bindingState: 'active' },
+    status: { bindingState: 'active', effectiveCwd: '/workspace/repo' },
   },
 ];
 
@@ -310,10 +311,10 @@ function createSpritz(
 }
 
 function createConversation(
-  overrides: Partial<(typeof CONVERSATIONS)[number]> & {
-    metadata?: Partial<(typeof CONVERSATIONS)[number]['metadata']>;
-    spec?: Partial<(typeof CONVERSATIONS)[number]['spec']>;
-    status?: Partial<(typeof CONVERSATIONS)[number]['status'] & { lastActivityAt?: string }>;
+  overrides: Partial<ConversationInfo> & {
+    metadata?: Partial<ConversationInfo['metadata']>;
+    spec?: Partial<ConversationInfo['spec']>;
+    status?: Partial<NonNullable<ConversationInfo['status']>>;
   } = {},
 ) {
   return {
@@ -326,6 +327,7 @@ function createConversation(
     },
     status: {
       bindingState: 'active',
+      effectiveCwd: '/workspace/repo',
       ...(overrides.status || {}),
     },
   };
@@ -679,6 +681,65 @@ describe('ChatPage draft persistence', () => {
       expect(countBootstrapCalls('conv-bootstrap')).toBe(2);
       expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).disabled).toBe(false);
     }, { timeout: 4000 });
+  });
+
+  it('bootstraps active conversations that still lack an effective cwd', async () => {
+    const conversation = createConversation({
+      metadata: { name: 'conv-cwd' },
+      spec: { sessionId: 'sess-cwd', title: 'Needs CWD', spritzName: 'covo' },
+      status: { bindingState: 'active', effectiveCwd: '' },
+    });
+    setupRequestMock({ conversations: [conversation] as typeof CONVERSATIONS });
+    requestMock.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === '/spritzes') {
+        return Promise.resolve({ items: [createSpritz()] });
+      }
+      if (path === '/acp/conversations?spritz=covo') {
+        return Promise.resolve({ items: [conversation] });
+      }
+      if (path === '/acp/conversations/conv-cwd/bootstrap' && options?.method === 'POST') {
+        return Promise.resolve({
+          effectiveSessionId: 'sess-cwd',
+          effectiveCwd: '/workspace/platform',
+          conversation: createConversation({
+            metadata: { name: 'conv-cwd' },
+            spec: { sessionId: 'sess-cwd', title: 'Needs CWD', spritzName: 'covo' },
+            status: { bindingState: 'active', effectiveCwd: '/workspace/platform' },
+          }),
+        });
+      }
+      if (path === '/acp/conversations/conv-cwd/connect-ticket' && options?.method === 'POST') {
+        return Promise.resolve({
+          type: 'connect-ticket',
+          ticket: 'ticket-123',
+          expiresAt: '2026-03-30T12:34:56Z',
+          protocol: 'spritz-acp.v1',
+          connectPath: '/api/acp/conversations/conv-cwd/connect',
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    renderChatPage('/c/covo/conv-cwd', {
+      apiBaseUrl: '/api',
+      auth: {
+        mode: 'bearer',
+        tokenStorageKeys: 'spritz-token',
+      },
+    });
+
+    await waitFor(() => {
+      expect(countBootstrapCalls('conv-cwd')).toBe(1);
+      expect((getLastACPOptions()?.conversation as Record<string, unknown>)?.status).toEqual(
+        expect.objectContaining({ effectiveCwd: '/workspace/platform' }),
+      );
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Needs CWD' }));
+
+    await waitFor(() => {
+      expect(countBootstrapCalls('conv-cwd')).toBe(1);
+    });
   });
 
   it('surfaces terminal bootstrap failures without retrying again in the background', async () => {

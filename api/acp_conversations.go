@@ -9,6 +9,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	spritzv1 "spritz.sh/operator/api/v1"
@@ -157,24 +158,50 @@ func (s *server) updateACPConversation(c echo.Context) error {
 		return writeError(c, http.StatusBadRequest, err.Error())
 	}
 
-	changed := false
-	if body.Title != nil && conversation.Spec.Title != strings.TrimSpace(*body.Title) {
-		conversation.Spec.Title = strings.TrimSpace(*body.Title)
-		if conversation.Spec.Title == "" {
-			conversation.Spec.Title = defaultACPConversationTitle
+	if body.Title == nil && body.CWD == nil {
+		return writeJSON(c, http.StatusOK, conversation)
+	}
+
+	updatedConversation, err := s.updateConversationBinding(c.Request().Context(), conversation.Namespace, conversation.Name, func(current *spritzv1.SpritzConversation) {
+		if body.Title != nil && current.Spec.Title != strings.TrimSpace(*body.Title) {
+			current.Spec.Title = strings.TrimSpace(*body.Title)
+			if current.Spec.Title == "" {
+				current.Spec.Title = defaultACPConversationTitle
+			}
 		}
-		changed = true
-	}
-	if body.CWD != nil && conversation.Spec.CWD != normalizeConversationCWD(*body.CWD) {
-		conversation.Spec.CWD = normalizeConversationCWD(*body.CWD)
-		changed = true
-	}
-	if changed {
-		if err := s.client.Update(c.Request().Context(), conversation); err != nil {
-			return writeError(c, http.StatusInternalServerError, err.Error())
+		if body.CWD == nil {
+			return
 		}
+
+		nextCWD := normalizeConversationCWD(*body.CWD)
+		nextExplicit := nextCWD != ""
+		currentExplicit := conversationHasExplicitCWDOverride(current)
+		if current.Spec.CWD == nextCWD && currentExplicit == nextExplicit {
+			return
+		}
+
+		setConversationCWDOverride(current, *body.CWD)
+
+		previousSessionID := strings.TrimSpace(current.Status.BoundSessionID)
+		if previousSessionID == "" {
+			previousSessionID = strings.TrimSpace(current.Spec.SessionID)
+		}
+		current.Spec.SessionID = ""
+		current.Status.BindingState = "pending"
+		current.Status.BoundSessionID = ""
+		current.Status.EffectiveCWD = ""
+		current.Status.PreviousSessionID = previousSessionID
+		current.Status.LastBoundAt = nil
+		current.Status.LastReplayAt = nil
+		current.Status.LastReplayMessageCount = 0
+		current.Status.LastError = ""
+		now := metav1.Now()
+		current.Status.UpdatedAt = &now
+	})
+	if err != nil {
+		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
-	return writeJSON(c, http.StatusOK, conversation)
+	return writeJSON(c, http.StatusOK, updatedConversation)
 }
 
 func decodeACPBody(c echo.Context, target any) error {

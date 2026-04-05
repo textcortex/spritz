@@ -69,6 +69,7 @@ export function createACPClient(options: ACPClientOptions): ACPClient {
   let replaying = false;
   const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void; method: string }>();
   const sessionId = conversation?.spec?.sessionId || '';
+  const effectiveCwd = String(conversation?.status?.effectiveCwd || '').trim();
 
   function cleanupPending(error: Error) {
     pending.forEach(({ reject }) => reject(error));
@@ -182,11 +183,14 @@ export function createACPClient(options: ACPClientOptions): ACPClient {
               replaying = true;
               onReplayStateChange?.(true);
               try {
-                await requestRPC('session/load', {
+                const loadParams: Record<string, unknown> = {
                   sessionId,
-                  cwd: conversation?.spec?.cwd || '/workspace',
                   mcpServers: [],
-                });
+                };
+                if (effectiveCwd) {
+                  loadParams.cwd = effectiveCwd;
+                }
+                await requestRPC('session/load', loadParams);
               } finally {
                 replaying = false;
                 onReplayStateChange?.(false);
