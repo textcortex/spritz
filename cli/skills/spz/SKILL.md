@@ -17,6 +17,7 @@ Typical cases:
 - suggest a DNS-safe random name for an instance
 - inspect an instance URL
 - attach to terminal access
+- forward a local port into one instance
 - manage local `spz` profiles for different Spritz environments
 
 ## What Spritz is
@@ -176,6 +177,12 @@ Open a terminal:
 spz terminal openclaw-tide-wind
 ```
 
+Forward a local port into one instance:
+
+```bash
+spz port-forward openclaw-tide-wind --local 3000 --remote 3000
+```
+
 Use profiles:
 
 ```bash
@@ -199,6 +206,7 @@ spz profile use staging
 - do not construct instance URLs yourself
 - use idempotency keys for any retried or externally triggered create operation
 - for service principals, expect create to succeed and list/delete to be denied unless extra scopes were granted
+- prefer `spz port-forward` over raw `ssh -L` when you need local access to one private instance port
 
 ## Bundled skill usage
 

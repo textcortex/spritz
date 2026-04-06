@@ -507,6 +507,7 @@ Usage:
   spritz open <name> [--namespace <ns>]
   spritz terminal <name> [--namespace <ns>] [--session <name>] [--transport <ws|ssh>] [--print]
   spritz ssh <name> [--namespace <ns>] [--session <name>] [--transport <ws|ssh>] [--print]
+  spritz port-forward <name> [--namespace <ns>] --local <port> --remote <port> [--print]
   spritz chat send (--instance <name> | --conversation <id>) --message <text> [--reason <text>] [--cwd <path>] [--title <title>] [--namespace <ns>] [--json]
   spritz profile list
   spritz profile current
@@ -645,6 +646,21 @@ async function generateSSHKeypair() {
   const publicKeyPath = `${privateKeyPath}.pub`;
   const publicKey = await readFile(publicKeyPath, 'utf8');
   return { dir, privateKeyPath, publicKey };
+}
+
+function parsePortFlag(flag: string): number {
+  const raw = argValue(flag)?.trim();
+  if (!raw) {
+    throw new Error(`${flag} is required`);
+  }
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`${flag} must be a valid TCP port`);
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    throw new Error(`${flag} must be between 1 and 65535`);
+  }
+  return parsed;
 }
 
 function normalizeProfileName(value: string): string {
@@ -1139,9 +1155,14 @@ async function openTerminalWs(name: string, namespace: string | undefined, print
 }
 
 /**
- * Opens a terminal session via SSH by minting a short-lived cert.
+ * Builds and executes an SSH command using a short-lived Spritz-minted cert.
  */
-async function openTerminalSSH(name: string, namespace: string | undefined, printOnly: boolean) {
+async function openSSHConnection(
+  name: string,
+  namespace: string | undefined,
+  printOnly: boolean,
+  extraArgs: string[] = [],
+) {
   const keypair = await generateSSHKeypair();
   let keepTemp = false;
   try {
@@ -1169,7 +1190,7 @@ async function openTerminalSSH(name: string, namespace: string | undefined, prin
       args.push('-o', 'StrictHostKeyChecking=accept-new');
     }
     const port = data.port || 22;
-    args.push('-p', String(port), `${data.user}@${data.host}`);
+    args.push(...extraArgs, '-p', String(port), `${data.user}@${data.host}`);
     const commandLine = `${sshBinary} ${args.join(' ')}`;
     if (printOnly) {
       console.log(commandLine);
@@ -1183,6 +1204,27 @@ async function openTerminalSSH(name: string, namespace: string | undefined, prin
       await rm(keypair.dir, { recursive: true, force: true });
     }
   }
+}
+
+/**
+ * Opens a terminal session via SSH by minting a short-lived cert.
+ */
+async function openTerminalSSH(name: string, namespace: string | undefined, printOnly: boolean) {
+  await openSSHConnection(name, namespace, printOnly);
+}
+
+/**
+ * Opens a local loopback port forward to a loopback port inside one instance.
+ */
+async function openPortForward(
+  name: string,
+  namespace: string | undefined,
+  printOnly: boolean,
+  localPort: number,
+  remotePort: number,
+) {
+  const forwardSpec = `127.0.0.1:${localPort}:127.0.0.1:${remotePort}`;
+  await openSSHConnection(name, namespace, printOnly, ['-N', '-L', forwardSpec]);
 }
 
 /**
@@ -1538,6 +1580,23 @@ async function main() {
       return;
     }
     console.log(data.assistantText);
+    return;
+  }
+
+  if (command === 'port-forward') {
+    const name = rest[0];
+    if (!name) throw new Error('name is required');
+    if (argValueInfo('--session').present) {
+      throw new Error('--session is not supported with port-forward');
+    }
+    if (argValueInfo('--transport').present) {
+      throw new Error('--transport is not supported with port-forward');
+    }
+    const ns = await resolveNamespace();
+    const printOnly = hasFlag('--print');
+    const localPort = parsePortFlag('--local');
+    const remotePort = parsePortFlag('--remote');
+    await openPortForward(name, ns, printOnly, localPort, remotePort);
     return;
   }
 
