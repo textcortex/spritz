@@ -92,7 +92,9 @@ func newSSHGatewayConfig() (sshGatewayConfig, error) {
 
 	return sshGatewayConfig{
 		enabled:         true,
-		listenAddr:      fmt.Sprintf(":%d", listenPort),
+		// Bind explicitly on IPv4 so Kubernetes Service traffic can reach the SSH
+		// gateway even on clusters where an unspecified address becomes IPv6-only.
+		listenAddr:      fmt.Sprintf("0.0.0.0:%d", listenPort),
 		publicHost:      publicHost,
 		publicPort:      publicPort,
 		user:            user,
