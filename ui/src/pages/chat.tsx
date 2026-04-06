@@ -288,6 +288,7 @@ export function ChatPage() {
     status,
     permissionQueue,
     sendPrompt,
+    appendOptimisticMessage,
     cancelPrompt,
     shiftPermissionQueue,
   } = useChatConnection({
@@ -344,9 +345,18 @@ export function ChatPage() {
         ? ''
         : buildFallbackConversationTitle(text);
 
-      // ACP owns durable transcript entries, including the echoed user prompt.
-      // Keep send feedback in ephemeral UI state and wait for ACP to write the
-      // real message so the transcript cannot diverge or duplicate.
+      // Show the user bubble immediately (optimistic). The server echo
+      // will be deduplicated via findLiveReplayCandidateIndex in acp-transcript.
+      appendOptimisticMessage(text);
+
+      // Clear composer and draft immediately so the input feels responsive.
+      if (activeConversationId && activeSpritzName) {
+        clearChatDraft(activeSpritzName, activeConversationId);
+        if (selectedConversationRef.current?.metadata?.name === activeConversationId) {
+          setComposerText('');
+        }
+      }
+
       try {
         await sendPrompt(text);
         if (activeConversationId && fallbackTitle) {
@@ -356,12 +366,6 @@ export function ChatPage() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title: fallbackTitle }),
           }).catch(() => {});
-        }
-        if (activeConversationId && activeSpritzName) {
-          clearChatDraft(activeSpritzName, activeConversationId);
-          if (selectedConversationRef.current?.metadata?.name === activeConversationId) {
-            setComposerText('');
-          }
         }
       } catch (err) {
         if (activeConversationId && activeSpritzName) {
@@ -373,7 +377,7 @@ export function ChatPage() {
         toast.error(err instanceof Error ? err.message : 'Failed to send message.');
       }
     },
-    [applyConversationTitle, composerText, name, sendPrompt],
+    [appendOptimisticMessage, applyConversationTitle, composerText, name, sendPrompt],
   );
 
   const handleSelectConversation = useCallback((conv: ConversationInfo) => {

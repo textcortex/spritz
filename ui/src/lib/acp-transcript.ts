@@ -302,13 +302,21 @@ export function applySessionUpdate(
     transcript.thinkingStartTime = 0;
     transcript.thinkingElapsedSeconds = 0;
 
-    // ACP is the source of truth for durable chat transcript messages. The
-    // chat page should not append a separate local user bubble for the same
-    // prompt; it should wait for this echoed user_message_chunk instead.
     if (historical) {
       appendHistoricalText(transcript, 'user', text, (update.historyMessageId || update.messageId) as string);
     } else {
-      appendStreamingText(transcript, 'user', text);
+      // Check for an optimistic user message to upgrade instead of duplicating.
+      const optimisticIdx = findLiveReplayCandidateIndex(transcript, 'user', text);
+      if (optimisticIdx !== -1) {
+        const optimistic = transcript.messages[optimisticIdx];
+        const messageKey = String((update.historyMessageId || update.messageId) || '').trim();
+        if (messageKey) optimistic._historyMessageId = messageKey;
+        const textBlock = optimistic.blocks.find((b) => b.type === 'text');
+        if (textBlock) textBlock.text = text;
+        optimistic.streaming = false;
+      } else {
+        appendStreamingText(transcript, 'user', text);
+      }
     }
     return null;
   }
