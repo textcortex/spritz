@@ -31,6 +31,7 @@ interface UseChatConnectionResult {
   status: string;
   permissionQueue: PermissionEntry[];
   sendPrompt: (text: string) => Promise<void>;
+  appendOptimisticMessage: (text: string) => void;
   cancelPrompt: () => void;
   shiftPermissionQueue: () => void;
 }
@@ -93,6 +94,16 @@ export function useChatConnection({
     await client.sendPrompt(text);
     setStatus('Completed');
   }, []);
+
+  const appendOptimisticMessage = useCallback((text: string) => {
+    const session = transcriptSessionRef.current;
+    session.transcript.messages.push({
+      role: 'user',
+      blocks: [{ type: 'text', text }],
+      streaming: false,
+    });
+    syncTranscript(session.transcript);
+  }, [syncTranscript]);
 
   const cancelPrompt = useCallback(() => {
     clientRef.current?.cancelPrompt();
@@ -413,6 +424,7 @@ export function useChatConnection({
     status,
     permissionQueue,
     sendPrompt,
+    appendOptimisticMessage,
     cancelPrompt,
     shiftPermissionQueue,
   };
