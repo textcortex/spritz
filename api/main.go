@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -62,6 +63,8 @@ type server struct {
 	instanceProxyTransport      http.RoundTripper
 	nameGeneratorFactory        func(context.Context, string, string) (func() string, error)
 	activityRecorder            func(context.Context, string, string, time.Time) error
+	findRunningPodFunc          func(context.Context, string, string, string) (*corev1.Pod, error)
+	openSSHPortForwardFunc      func(context.Context, *corev1.Pod, uint32) (net.Conn, io.Closer, error)
 }
 
 func main() {
