@@ -47,3 +47,12 @@ test('create help for agent audience prefers external owner guidance', async () 
   assert.match(result.stdout, /tag the person who requested the instance/i);
   assert.match(result.stdout, /what was created and how to open it/i);
 });
+
+test('top-level help lists port-forward command', async () => {
+  const result = await runCli(['--help']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(
+    result.stdout,
+    /spritz port-forward <name> \[--namespace <ns>\] --local <port> --remote <port> \[--print\]/,
+  );
+});
