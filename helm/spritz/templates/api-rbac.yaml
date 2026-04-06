@@ -20,7 +20,7 @@ rules:
     resources: ["configmaps"]
     verbs: ["get", "list", "create", "update", "delete"]
   - apiGroups: [""]
-    resources: ["pods/exec"]
+    resources: ["pods/exec", "pods/portforward"]
     verbs: ["create"]
   - apiGroups: [""]
     resources: ["secrets"]
