@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"strings"
 	"time"
 
@@ -58,4 +59,54 @@ func (s *server) markSpritzActivity(ctx context.Context, namespace, name string,
 		current.Status.LastActivityAt = &timestamp
 		return s.client.Status().Update(ctx, current)
 	})
+}
+
+func spritzActivityRefreshInterval(spec spritzv1.SpritzSpec, fallback time.Duration) time.Duration {
+	interval := fallback
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	if raw := spec.IdleTTL; raw != "" {
+		if idleTTL, err := time.ParseDuration(raw); err == nil && idleTTL > 0 {
+			candidate := idleTTL / 2
+			if candidate <= 0 {
+				candidate = idleTTL
+			}
+			if candidate > 0 && candidate < interval {
+				interval = candidate
+			}
+		}
+	}
+	if interval <= 0 {
+		return time.Minute
+	}
+	return interval
+}
+
+func (s *server) startSpritzActivityLoop(ctx context.Context, spritz *spritzv1.Spritz, fallback time.Duration, source string) {
+	if s == nil || spritz == nil {
+		return
+	}
+	record := func(when time.Time) {
+		refreshCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.recordSpritzActivity(refreshCtx, spritz.Namespace, spritz.Name, when); err != nil {
+			log.Printf("spritz %s: failed to refresh activity name=%s namespace=%s err=%v", source, spritz.Name, spritz.Namespace, err)
+		}
+	}
+	record(time.Now())
+
+	interval := spritzActivityRefreshInterval(spritz.Spec, fallback)
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case tick := <-ticker.C:
+				record(tick)
+			}
+		}
+	}()
 }
