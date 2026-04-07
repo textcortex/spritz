@@ -341,7 +341,161 @@ test('port-forward proxies localhost traffic over websocket by default', async (
   assert.equal(exitCode, 0, `spz port-forward should exit cleanly: ${stderr}`);
 });
 
-test('port-forward fails during startup when websocket validation is rejected', async (t) => {
+test('port-forward preserves EOF-framed exchanges over websocket', async (t) => {
+  const localPort = await getFreePort();
+  const server = http.createServer();
+  const wss = new WebSocketServer({ noServer: true });
+  await listen(server);
+  t.after(() => {
+    wss.close();
+    server.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+
+  server.on('upgrade', (req, socket, head) => {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req);
+    });
+  });
+  wss.on('connection', (ws) => {
+    const chunks: Buffer[] = [];
+    ws.on('message', (payload, isBinary) => {
+      if (isBinary) {
+        chunks.push(Buffer.from(payload as Buffer));
+        return;
+      }
+      const control = JSON.parse(payload.toString('utf8'));
+      assert.equal(control.type, 'eof');
+      assert.equal(Buffer.concat(chunks).toString('utf8'), 'ping');
+      ws.send(Buffer.from('pong'));
+      ws.send(JSON.stringify({ type: 'eof' }));
+    });
+  });
+
+  const child = spawnCli(
+    ['port-forward', 'devbox1', '--namespace', 'spritz', '--local', String(localPort), '--remote', '4000'],
+    buildTestEnv(`http://127.0.0.1:${address.port}/api`),
+  );
+  let stderr = '';
+  const stderrBuffer = { value: '' };
+  child.stderr.on('data', (chunk) => {
+    const text = chunk.toString();
+    stderr += text;
+    stderrBuffer.value += text;
+  });
+  t.after(() => {
+    child.kill('SIGTERM');
+  });
+
+  await waitForPattern(stderrBuffer, new RegExp(`forwarding 127\\.0\\.0\\.1:${localPort}`));
+
+  const client = net.connect(localPort, '127.0.0.1');
+  const replyPromise = new Promise<string>((resolve, reject) => {
+    let payload = '';
+    client.on('data', (chunk) => {
+      payload += chunk.toString();
+    });
+    client.on('end', () => resolve(payload));
+    client.on('error', reject);
+  });
+  client.write('ping');
+  client.end();
+
+  const reply = await replyPromise;
+  assert.equal(reply, 'pong');
+
+  child.kill('SIGTERM');
+  const exitCode = await new Promise<number | null>((resolve) => child.on('exit', resolve));
+  assert.equal(exitCode, 0, `spz port-forward should exit cleanly: ${stderr}`);
+});
+
+test('port-forward falls back to SSH when websocket startup validation is rejected by default', async (t) => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), 'spz-port-forward-'));
+  const fakeKeygen = path.join(tempDir, 'ssh-keygen');
+  const fakeSsh = path.join(tempDir, 'ssh');
+  const sshArgsLog = path.join(tempDir, 'ssh-args.log');
+  const server = http.createServer((req, res) => {
+    if ((req.url || '').includes('/ssh')) {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      req.on('end', () => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          status: 'success',
+          data: {
+            host: '127.0.0.1',
+            user: 'spritz',
+            cert: 'ssh-ed25519-cert-v01@openssh.com AAAATEST',
+            port: 2201,
+            known_hosts: '[127.0.0.1]:2201 ssh-ed25519 AAAAKNOWNHOST',
+          },
+        }));
+      });
+      return;
+    }
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('missing');
+  });
+  await listen(server);
+  t.after(() => {
+    server.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+
+  writeExecutable(
+    fakeKeygen,
+    `#!/usr/bin/env bash
+set -euo pipefail
+target=""
+while (($#)); do
+  if [[ "$1" == "-f" ]]; then
+    target="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+printf '%s\\n' 'PRIVATE KEY' > "$target"
+printf '%s\\n' 'ssh-ed25519 AAAATEST generated@test' > "\${target}.pub"
+chmod 600 "$target" "\${target}.pub"
+`,
+  );
+  writeExecutable(
+    fakeSsh,
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$@" > "$SSH_ARGS_LOG"
+`,
+  );
+
+  const child = spawnCli(
+    ['port-forward', 'devbox1', '--namespace', 'spritz', '--local', '3000', '--remote', '4000'],
+    buildTestEnv(`http://127.0.0.1:${address.port}/api`, {
+      SPRITZ_SSH_KEYGEN: fakeKeygen,
+      SPRITZ_SSH_BINARY: fakeSsh,
+      SSH_ARGS_LOG: sshArgsLog,
+    }),
+  );
+
+  let stderr = '';
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  const exitCode = await new Promise<number | null>((resolve) => child.on('exit', resolve));
+  assert.equal(exitCode, 0, `spz port-forward should fall back to SSH: ${stderr}`);
+  assert.match(stderr, /Websocket port-forward unavailable; falling back to legacy SSH/);
+
+  const args = readFileSync(sshArgsLog, 'utf8').trim().split('\n');
+  assert.ok(args.includes('-N'));
+  const localIndex = args.indexOf('-L');
+  assert.notEqual(localIndex, -1);
+  assert.equal(args[localIndex + 1], '127.0.0.1:3000:127.0.0.1:4000');
+});
+
+test('port-forward fails during startup when websocket validation is rejected for explicit websocket transport', async (t) => {
   const localPort = await getFreePort();
   const server = http.createServer((req, res) => {
     res.writeHead(503, { 'Content-Type': 'text/plain' });
@@ -355,7 +509,7 @@ test('port-forward fails during startup when websocket validation is rejected', 
   assert.ok(address && typeof address === 'object');
 
   const child = spawnCli(
-    ['port-forward', 'devbox1', '--local', String(localPort), '--remote', '4000'],
+    ['port-forward', 'devbox1', '--transport', 'ws', '--local', String(localPort), '--remote', '4000'],
     buildTestEnv(`http://127.0.0.1:${address.port}/api`),
   );
 

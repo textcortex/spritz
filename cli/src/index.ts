@@ -749,10 +749,10 @@ function resolveTransport(): 'ws' | 'ssh' {
   return normalizeTransport(terminalTransportDefault);
 }
 
-function resolvePortForwardTransport(): 'ws' | 'ssh' {
+function resolvePortForwardTransport(): 'auto' | 'ws' | 'ssh' {
   const flag = argValue('--transport');
   if (flag) return normalizeTransport(flag);
-  return 'ws';
+  return 'auto';
 }
 
 function isJSend(payload: any): payload is { status: string; data?: any; message?: string } {
@@ -1071,6 +1071,35 @@ function portForwardDescription(localPort: number, remotePort: number, url: stri
   return `127.0.0.1:${localPort} -> 127.0.0.1:${remotePort} via ${url}`;
 }
 
+function portForwardControl(type: 'eof'): string {
+  return JSON.stringify({ type });
+}
+
+function parsePortForwardControl(data: RawData): { type: 'eof' } | null {
+  const text =
+    typeof data === 'string'
+      ? data
+      : Buffer.isBuffer(data)
+        ? data.toString('utf8')
+      : data instanceof ArrayBuffer
+        ? Buffer.from(data).toString('utf8')
+        : Array.isArray(data)
+          ? Buffer.concat(data.map((chunk) => Buffer.from(chunk))).toString('utf8')
+          : null;
+  if (text == null) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed?.type === 'eof') {
+      return { type: 'eof' };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function terminalResizePayload(): string {
   const cols = process.stdout.columns ?? 80;
   const rows = process.stdout.rows ?? 24;
@@ -1292,7 +1321,7 @@ async function openPortForwardWs(
   };
   await validatePortForwardWebSocket(url, headers);
   const sockets = new Set<net.Socket>();
-  const server = net.createServer((socket) => {
+  const server = net.createServer({ allowHalfOpen: true }, (socket) => {
     sockets.add(socket);
     socket.pause();
     socket.on('close', () => {
@@ -1417,10 +1446,19 @@ async function bridgePortForwardSocket(socket: net.Socket, url: string, headers:
   await new Promise<void>((resolve, reject) => {
     let opened = false;
     let finished = false;
+    let socketEnded = false;
+    let wsEnded = false;
+    const maybeFinish = () => {
+      if (!socketEnded || !wsEnded) {
+        return;
+      }
+      finish();
+    };
     const finish = (err?: Error) => {
       if (finished) return;
       finished = true;
       socket.off('data', onSocketData);
+      socket.off('end', onSocketEnd);
       socket.off('error', onSocketError);
       socket.off('close', onSocketClose);
       ws.off('open', onWsOpen);
@@ -1444,16 +1482,35 @@ async function bridgePortForwardSocket(socket: net.Socket, url: string, headers:
         ws.send(chunk);
       }
     };
+    const onSocketEnd = () => {
+      socketEnded = true;
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(portForwardControl('eof'));
+      }
+      maybeFinish();
+    };
     const onSocketError = (err: Error) => finish(err);
     const onSocketClose = () => finish();
     const onWsOpen = () => {
       opened = true;
       socket.resume();
     };
-    const onWsMessage = (data: RawData) => {
+    const onWsMessage = (data: RawData, isBinary: boolean) => {
+      const control = isBinary ? null : parsePortForwardControl(data);
+      if (control?.type === 'eof') {
+        wsEnded = true;
+        if (socket.writable) {
+          socket.end();
+        }
+        maybeFinish();
+        return;
+      }
       writePortForwardOutput(socket, data);
     };
-    const onWsClose = () => finish();
+    const onWsClose = () => {
+      wsEnded = true;
+      maybeFinish();
+    };
     const onWsError = (err: Error) => {
       if (!opened) {
         finish(err);
@@ -1463,6 +1520,7 @@ async function bridgePortForwardSocket(socket: net.Socket, url: string, headers:
     };
 
     socket.on('data', onSocketData);
+    socket.on('end', onSocketEnd);
     socket.on('error', onSocketError);
     socket.on('close', onSocketClose);
     ws.on('open', onWsOpen);
@@ -1846,7 +1904,21 @@ async function main() {
       await openPortForwardSSH(name, ns, printOnly, localPort, remotePort);
       return;
     }
-    await openPortForwardWs(name, ns, printOnly, localPort, remotePort);
+    if (transport === 'ws') {
+      await openPortForwardWs(name, ns, printOnly, localPort, remotePort);
+      return;
+    }
+    try {
+      await openPortForwardWs(name, ns, printOnly, localPort, remotePort);
+      return;
+    } catch (err) {
+      if (printOnly) {
+        throw err;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`Websocket port-forward unavailable; falling back to legacy SSH: ${message}`);
+      await openPortForwardSSH(name, ns, false, localPort, remotePort);
+    }
     return;
   }
 

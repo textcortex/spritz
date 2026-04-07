@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,6 +27,10 @@ type portForwardConfig struct {
 	containerName   string
 	allowedOrigins  map[string]struct{}
 	activityRefresh time.Duration
+}
+
+type portForwardControlMessage struct {
+	Type string `json:"type"`
 }
 
 func newPortForwardConfig() portForwardConfig {
@@ -159,15 +164,22 @@ func proxyWebSocketNetConn(ws *websocket.Conn, upstream net.Conn) error {
 		errCh <- copyNetConnToWebSocket(upstream, ws)
 	}()
 
-	err := <-errCh
+	var firstErr error
+	for completed := 0; completed < 2; completed++ {
+		err := <-errCh
+		if err == nil || errors.Is(err, io.EOF) || websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+			continue
+		}
+		if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			continue
+		}
+		if firstErr == nil {
+			firstErr = err
+			closeAll()
+		}
+	}
 	closeAll()
-	if err == nil || errors.Is(err, io.EOF) || websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-		return nil
-	}
-	if ne, ok := err.(net.Error); ok && ne.Timeout() {
-		return nil
-	}
-	return err
+	return firstErr
 }
 
 func (s *server) findPortForwardPod(ctx context.Context, namespace, name, container string) (*corev1.Pod, error) {
@@ -183,7 +195,20 @@ func copyWebSocketToNetConn(ws *websocket.Conn, upstream net.Conn) error {
 		if err != nil {
 			return err
 		}
-		if msgType != websocket.BinaryMessage && msgType != websocket.TextMessage {
+		if msgType == websocket.TextMessage {
+			control, err := parsePortForwardControl(payload)
+			if err != nil {
+				return err
+			}
+			if control.Type == "eof" {
+				if err := closeConnWrite(upstream); err != nil {
+					return err
+				}
+				return nil
+			}
+			continue
+		}
+		if msgType != websocket.BinaryMessage {
 			continue
 		}
 		if len(payload) == 0 {
@@ -206,9 +231,37 @@ func copyNetConnToWebSocket(upstream net.Conn, ws *websocket.Conn) error {
 		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(500*time.Millisecond))
+				if writeErr := ws.WriteMessage(websocket.TextMessage, mustMarshalPortForwardControl(portForwardControlMessage{Type: "eof"})); writeErr != nil {
+					return writeErr
+				}
 			}
 			return err
 		}
 	}
+}
+
+func parsePortForwardControl(payload []byte) (portForwardControlMessage, error) {
+	var message portForwardControlMessage
+	if err := json.Unmarshal(payload, &message); err != nil {
+		return portForwardControlMessage{}, fmt.Errorf("invalid port-forward control: %w", err)
+	}
+	return message, nil
+}
+
+func mustMarshalPortForwardControl(message portForwardControlMessage) []byte {
+	payload, err := json.Marshal(message)
+	if err != nil {
+		panic(err)
+	}
+	return payload
+}
+
+func closeConnWrite(conn net.Conn) error {
+	type closeWriter interface {
+		CloseWrite() error
+	}
+	if writer, ok := conn.(closeWriter); ok {
+		return writer.CloseWrite()
+	}
+	return conn.Close()
 }
