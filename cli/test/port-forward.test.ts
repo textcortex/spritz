@@ -341,6 +341,46 @@ test('port-forward proxies localhost traffic over websocket by default', async (
   assert.equal(exitCode, 0, `spz port-forward should exit cleanly: ${stderr}`);
 });
 
+test('port-forward fails during startup when websocket validation is rejected', async (t) => {
+  const localPort = await getFreePort();
+  const server = http.createServer((req, res) => {
+    res.writeHead(503, { 'Content-Type': 'text/plain' });
+    res.end('unavailable');
+  });
+  await listen(server);
+  t.after(() => {
+    server.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+
+  const child = spawnCli(
+    ['port-forward', 'devbox1', '--local', String(localPort), '--remote', '4000'],
+    buildTestEnv(`http://127.0.0.1:${address.port}/api`),
+  );
+
+  let stderr = '';
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  const exitCode = await new Promise<number | null>((resolve) => child.on('exit', resolve));
+  assert.notEqual(exitCode, 0, 'spz port-forward should fail before listening');
+  assert.match(stderr, /port-forward validation failed: 503/);
+
+  await assert.rejects(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        const socket = net.connect(localPort, '127.0.0.1');
+        socket.once('connect', () => {
+          socket.destroy();
+          resolve();
+        });
+        socket.once('error', reject);
+      }),
+  );
+});
+
 test('port-forward rejects missing remote port', async () => {
   const child = spawnCli(
     ['port-forward', 'devbox1', '--local', '3000'],

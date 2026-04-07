@@ -66,7 +66,7 @@ func spritzActivityRefreshInterval(spec spritzv1.SpritzSpec, fallback time.Durat
 	if interval <= 0 {
 		interval = time.Minute
 	}
-	if raw := spec.IdleTTL; raw != "" {
+	if raw := strings.TrimSpace(spec.IdleTTL); raw != "" {
 		if idleTTL, err := time.ParseDuration(raw); err == nil && idleTTL > 0 {
 			candidate := idleTTL / 2
 			if candidate <= 0 {

@@ -1290,6 +1290,7 @@ async function openPortForwardWs(
     ...(await authHeaders()),
     Origin: origin,
   };
+  await validatePortForwardWebSocket(url, headers);
   const sockets = new Set<net.Socket>();
   const server = net.createServer((socket) => {
     sockets.add(socket);
@@ -1344,6 +1345,65 @@ async function openPortForwardWs(
     process.on('SIGTERM', shutdown);
     process.on('SIGHUP', shutdown);
     server.on('error', onServerError);
+  });
+}
+
+async function validatePortForwardWebSocket(url: string, headers: Record<string, string>) {
+  const ws = new WebSocket(url, {
+    headers,
+    handshakeTimeout: Number.isFinite(requestTimeoutMs) ? requestTimeoutMs : 10000,
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let opened = false;
+    let readyTimer: NodeJS.Timeout | undefined;
+    const finish = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (readyTimer) {
+        clearTimeout(readyTimer);
+      }
+      ws.off('open', onOpen);
+      ws.off('close', onClose);
+      ws.off('error', onError);
+      ws.off('unexpected-response', onUnexpectedResponse);
+      if (!err && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        ws.close();
+      }
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve();
+    };
+    const onOpen = () => {
+      opened = true;
+      readyTimer = setTimeout(() => finish(), 250);
+    };
+    const onClose = (code: number, reason: Buffer) => {
+      if (!opened) {
+        finish(new Error(`port-forward validation failed: websocket closed (${code})`));
+        return;
+      }
+      if (code !== 1000) {
+        const suffix = reason.length > 0 ? ` ${reason.toString()}` : '';
+        finish(new Error(`port-forward validation failed: websocket closed (${code})${suffix}`));
+      }
+    };
+    const onError = (err: Error) => {
+      finish(err);
+    };
+    const onUnexpectedResponse = (_req: any, res: any) => {
+      const status = typeof res?.statusCode === 'number' ? String(res.statusCode) : 'unknown';
+      const text = typeof res?.statusMessage === 'string' && res.statusMessage.trim() ? ` ${res.statusMessage.trim()}` : '';
+      finish(new Error(`port-forward validation failed: ${status}${text}`));
+    };
+
+    ws.on('open', onOpen);
+    ws.on('close', onClose);
+    ws.on('error', onError);
+    ws.on('unexpected-response', onUnexpectedResponse);
   });
 }
 
