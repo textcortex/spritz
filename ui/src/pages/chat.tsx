@@ -157,11 +157,35 @@ export function ChatPage() {
       }
 
       if (currentUrlConversationId) {
-        const match = group.conversations.find((conversation) => conversation.metadata.name === currentUrlConversationId);
+        let match = group.conversations.find((conversation) => conversation.metadata.name === currentUrlConversationId);
+        if (!match) {
+          // Conversation not in the list yet (e.g. Discord-spawned, not yet propagated).
+          // Try fetching it directly before falling through to auto-create.
+          try {
+            const directConv = await request<ConversationInfo>(
+              `/acp/conversations/${encodeURIComponent(currentUrlConversationId)}`,
+            );
+            if (directConv?.metadata?.name === currentUrlConversationId) {
+              match = directConv;
+              const updatedGroups = groups.map((g) =>
+                g.spritz.metadata.name === currentName
+                  ? { ...g, conversations: sortConversationsByRecency([...g.conversations, directConv]) }
+                  : g,
+              );
+              setAgents(updatedGroups);
+            }
+          } catch {
+            // Conversation genuinely doesn't exist yet — don't auto-create a
+            // second one. Let the provisioning poller pick it up.
+          }
+        }
         if (match) {
           setSelectedConversation(match);
           return false;
         }
+        // URL names a specific conversation that isn't available yet.
+        // Don't fall through to auto-create a second conversation.
+        return true;
       }
 
       const latestConversation = getLatestConversation(group.conversations);
@@ -220,6 +244,18 @@ export function ChatPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Sync selected conversation when URL params change (e.g. navigating from Discord link
+  // or switching conversations). fetchAgents only runs on mount, so this effect handles
+  // subsequent URL changes by looking up the conversation in already-fetched agent data.
+  useEffect(() => {
+    if (!urlConversationId || agents.length === 0) return;
+    const group = agents.find((g) => g.spritz.metadata.name === name);
+    const match = group?.conversations.find((c) => c.metadata.name === urlConversationId);
+    if (match) {
+      setSelectedConversation(match);
+    }
+  }, [name, urlConversationId, agents]);
+
   useEffect(() => {
     if (!provisioningSpritz) {
       return;
@@ -272,7 +308,7 @@ export function ChatPage() {
 
   const applyConversationUpdate = useCallback((conversation: ConversationInfo) => {
     setSelectedConversation((prev) =>
-      prev && prev.metadata.name === conversation.metadata.name ? conversation : prev,
+      !prev || prev.metadata.name === conversation.metadata.name ? conversation : prev,
     );
     setAgents((prev) =>
       prev.map((group) => {
