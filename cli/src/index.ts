@@ -1507,10 +1507,7 @@ async function bridgePortForwardSocket(socket: net.Socket, url: string, headers:
       }
       writePortForwardOutput(socket, data);
     };
-    const onWsClose = () => {
-      wsEnded = true;
-      maybeFinish();
-    };
+    const onWsClose = () => finish();
     const onWsError = (err: Error) => {
       if (!opened) {
         finish(err);

@@ -410,6 +410,70 @@ test('port-forward preserves EOF-framed exchanges over websocket', async (t) => 
   assert.equal(exitCode, 0, `spz port-forward should exit cleanly: ${stderr}`);
 });
 
+test('port-forward closes the local client when the websocket tunnel drops after startup', async (t) => {
+  const localPort = await getFreePort();
+  const server = http.createServer();
+  const wss = new WebSocketServer({ noServer: true });
+  await listen(server);
+  t.after(() => {
+    wss.close();
+    server.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+
+  let connections = 0;
+  server.on('upgrade', (req, socket, head) => {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req);
+    });
+  });
+  wss.on('connection', (ws) => {
+    connections += 1;
+    if (connections === 1) {
+      return;
+    }
+    ws.close(1011, 'boom');
+  });
+
+  const child = spawnCli(
+    ['port-forward', 'devbox1', '--transport', 'ws', '--namespace', 'spritz', '--local', String(localPort), '--remote', '4000'],
+    buildTestEnv(`http://127.0.0.1:${address.port}/api`),
+  );
+  let stderr = '';
+  const stderrBuffer = { value: '' };
+  child.stderr.on('data', (chunk) => {
+    const text = chunk.toString();
+    stderr += text;
+    stderrBuffer.value += text;
+  });
+  t.after(() => {
+    child.kill('SIGTERM');
+  });
+
+  await waitForPattern(stderrBuffer, new RegExp(`forwarding 127\\.0\\.0\\.1:${localPort}`));
+
+  const client = net.connect(localPort, '127.0.0.1');
+  const clientClosed = new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timed out waiting for local socket to close')), 2000);
+    client.on('error', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    client.on('close', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+
+  await clientClosed;
+  client.destroy();
+
+  child.kill('SIGTERM');
+  const exitCode = await new Promise<number | null>((resolve) => child.on('exit', resolve));
+  assert.equal(exitCode, 0, `spz port-forward should exit cleanly: ${stderr}`);
+});
+
 test('port-forward falls back to SSH when websocket startup validation is rejected by default', async (t) => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), 'spz-port-forward-'));
   const fakeKeygen = path.join(tempDir, 'ssh-keygen');

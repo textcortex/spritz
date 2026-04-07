@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -238,5 +239,94 @@ func TestOpenPortForwardPreservesEOFFramedExchange(t *testing.T) {
 
 	if err := <-upstreamDone; err != nil {
 		t.Fatalf("upstream exchange failed: %v", err)
+	}
+}
+
+func TestOpenPortForwardClosesUpstreamWhenWebSocketCloses(t *testing.T) {
+	scheme := newTestSpritzScheme(t)
+	spritz := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tidal-falcon",
+			Namespace: "spritz-test",
+		},
+		Spec: spritzv1.SpritzSpec{
+			Owner: spritzv1.SpritzOwner{ID: "user-1"},
+		},
+	}
+
+	upstreamListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen upstream: %v", err)
+	}
+	defer upstreamListener.Close()
+
+	upstreamDone := make(chan error, 1)
+	go func() {
+		conn, err := upstreamListener.Accept()
+		if err != nil {
+			upstreamDone <- err
+			return
+		}
+		defer conn.Close()
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		buffer := make([]byte, 1)
+		_, err = conn.Read(buffer)
+		if err == nil || !errors.Is(err, io.EOF) {
+			upstreamDone <- err
+			return
+		}
+		upstreamDone <- nil
+	}()
+
+	s := &server{
+		client: ctrlclientfake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(spritz).
+			Build(),
+		scheme:    scheme,
+		namespace: "spritz-test",
+		auth: authConfig{
+			mode:              authModeHeader,
+			headerID:          "X-Spritz-User-Id",
+			headerDefaultType: principalTypeHuman,
+		},
+		internalAuth: internalAuthConfig{enabled: false},
+		portForward:  portForwardConfig{enabled: true, containerName: "spritz"},
+		findRunningPodFunc: func(ctx context.Context, namespace, name, container string) (*corev1.Pod, error) {
+			return &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "tidal-falcon-pod",
+					Namespace: namespace,
+				},
+			}, nil
+		},
+		openPodPortForwardFunc: func(ctx context.Context, pod *corev1.Pod, remotePort uint32) (net.Conn, io.Closer, error) {
+			conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", upstreamListener.Addr().String())
+			if err != nil {
+				return nil, nil, err
+			}
+			return conn, closeFunc(func() error { return nil }), nil
+		},
+	}
+
+	e := echo.New()
+	e.GET("/api/spritzes/:name/port-forward", s.openPortForward)
+	srv := httptest.NewServer(e)
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/spritzes/tidal-falcon/port-forward?port=3000"
+	headers := http.Header{}
+	headers.Set("X-Spritz-User-Id", "user-1")
+	headers.Set("Origin", srv.URL)
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, headers)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close websocket: %v", err)
+	}
+	if err := <-upstreamDone; err != nil {
+		t.Fatalf("expected upstream to close after websocket exit: %v", err)
 	}
 }

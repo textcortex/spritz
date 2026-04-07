@@ -33,6 +33,8 @@ type portForwardControlMessage struct {
 	Type string `json:"type"`
 }
 
+var errPortForwardHalfClose = errors.New("port-forward half-close")
+
 func newPortForwardConfig() portForwardConfig {
 	return portForwardConfig{
 		enabled:         parseBoolEnv("SPRITZ_PORT_FORWARD_ENABLED", true),
@@ -164,22 +166,35 @@ func proxyWebSocketNetConn(ws *websocket.Conn, upstream net.Conn) error {
 		errCh <- copyNetConnToWebSocket(upstream, ws)
 	}()
 
-	var firstErr error
+	halfClosed := 0
 	for completed := 0; completed < 2; completed++ {
 		err := <-errCh
-		if err == nil || errors.Is(err, io.EOF) || websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-			continue
-		}
-		if ne, ok := err.(net.Error); ok && ne.Timeout() {
-			continue
-		}
-		if firstErr == nil {
-			firstErr = err
+		switch {
+		case err == nil:
 			closeAll()
+			return nil
+		case errors.Is(err, errPortForwardHalfClose):
+			halfClosed++
+			if halfClosed == 2 {
+				closeAll()
+				return nil
+			}
+		case errors.Is(err, io.EOF), errors.Is(err, context.Canceled), websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway):
+			closeAll()
+			return nil
+		case func() bool {
+			ne, ok := err.(net.Error)
+			return ok && ne.Timeout()
+		}():
+			closeAll()
+			return nil
+		default:
+			closeAll()
+			return err
 		}
 	}
 	closeAll()
-	return firstErr
+	return nil
 }
 
 func (s *server) findPortForwardPod(ctx context.Context, namespace, name, container string) (*corev1.Pod, error) {
@@ -204,7 +219,7 @@ func copyWebSocketToNetConn(ws *websocket.Conn, upstream net.Conn) error {
 				if err := closeConnWrite(upstream); err != nil {
 					return err
 				}
-				return nil
+				return errPortForwardHalfClose
 			}
 			continue
 		}
@@ -234,6 +249,7 @@ func copyNetConnToWebSocket(upstream net.Conn, ws *websocket.Conn) error {
 				if writeErr := ws.WriteMessage(websocket.TextMessage, mustMarshalPortForwardControl(portForwardControlMessage{Type: "eof"})); writeErr != nil {
 					return writeErr
 				}
+				return errPortForwardHalfClose
 			}
 			return err
 		}
