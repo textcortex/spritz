@@ -58,7 +58,10 @@ function getLatestConversation(conversations: ConversationInfo[]): ConversationI
 }
 
 export function ChatPage() {
-  const { name, conversationId: urlConversationId } = useParams<{ name: string; conversationId: string }>();
+  const { '*': splat } = useParams();
+  const splatSegments = (splat || '').split('/').filter(Boolean);
+  const name = splatSegments[0] ? decodeURIComponent(splatSegments[0]) : undefined;
+  const urlConversationId = splatSegments[1] ? decodeURIComponent(splatSegments[1]) : undefined;
   const navigate = useNavigate();
   const config = useConfig();
   const { showNotice } = useNotice();
@@ -76,7 +79,11 @@ export function ChatPage() {
   const composerRef = useRef<ComposerHandle>(null);
   const selectedConversationRef = useRef<ConversationInfo | null>(null);
   const autoCreatingConversationForRef = useRef<string | null>(null);
+  const nameRef = useRef(name);
+  const urlConversationIdRef = useRef(urlConversationId);
 
+  nameRef.current = name;
+  urlConversationIdRef.current = urlConversationId;
   selectedConversationRef.current = selectedConversation;
 
   const selectedSpritzName = selectedConversation?.spec?.spritzName || name || '';
@@ -89,15 +96,18 @@ export function ChatPage() {
     : null;
   const provisioningStatusLine = getProvisioningStatusLine(provisioningSpritz);
 
-  // Fetch agents and conversations
+  // Fetch agents and conversations. Uses refs for URL params so
+  // the callback identity is stable across navigations.
   const fetchAgents = useCallback(async (): Promise<boolean> => {
+    const currentName = nameRef.current;
+    const currentUrlConversationId = urlConversationIdRef.current;
     try {
       const spritzList = await request<{ items: Spritz[] }>('/spritzes');
       let items = spritzList?.items || [];
-      if (name && !items.some((spritz) => spritz.metadata.name === name)) {
+      if (currentName && !items.some((spritz) => spritz.metadata.name === currentName)) {
         try {
-          const routeSpritz = await request<Spritz>(`/spritzes/${encodeURIComponent(name)}`);
-          if (routeSpritz?.metadata?.name === name) {
+          const routeSpritz = await request<Spritz>(`/spritzes/${encodeURIComponent(currentName)}`);
+          if (routeSpritz?.metadata?.name === currentName) {
             items = [routeSpritz, ...items];
           }
         } catch {
@@ -123,13 +133,14 @@ export function ChatPage() {
         }),
       );
 
+      groups.sort((a, b) => a.spritz.metadata.name.localeCompare(b.spritz.metadata.name));
       setAgents(groups);
 
-      if (!name) {
+      if (!currentName) {
         return false;
       }
 
-      const routeSpritz = items.find((spritz) => spritz.metadata.name === name);
+      const routeSpritz = items.find((spritz) => spritz.metadata.name === currentName);
       if (!routeSpritz) {
         setSelectedConversation(null);
         return true;
@@ -139,14 +150,14 @@ export function ChatPage() {
         return true;
       }
 
-      const group = groups.find((entry) => entry.spritz.metadata.name === name);
+      const group = groups.find((entry) => entry.spritz.metadata.name === currentName);
       if (!group) {
         setSelectedConversation(null);
         return false;
       }
 
-      if (urlConversationId) {
-        const match = group.conversations.find((conversation) => conversation.metadata.name === urlConversationId);
+      if (currentUrlConversationId) {
+        const match = group.conversations.find((conversation) => conversation.metadata.name === currentUrlConversationId);
         if (match) {
           setSelectedConversation(match);
           return false;
@@ -156,28 +167,28 @@ export function ChatPage() {
       const latestConversation = getLatestConversation(group.conversations);
       if (latestConversation) {
         setSelectedConversation(latestConversation);
-        if (urlConversationId !== latestConversation.metadata.name) {
-          navigate(chatConversationPath(name, latestConversation.metadata.name), { replace: true });
+        if (currentUrlConversationId !== latestConversation.metadata.name) {
+          navigate(chatConversationPath(currentName, latestConversation.metadata.name), { replace: true });
         }
         return false;
       }
 
-      if (autoCreatingConversationForRef.current === name) {
+      if (autoCreatingConversationForRef.current === currentName) {
         return false;
       }
 
-      autoCreatingConversationForRef.current = name;
-      setCreatingConversationFor(name);
+      autoCreatingConversationForRef.current = currentName;
+      setCreatingConversationFor(currentName);
       try {
         const conv = await request<ConversationInfo>('/acp/conversations', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ spritzName: name }),
+          body: JSON.stringify({ spritzName: currentName }),
         });
         if (conv) {
           setAgents((currentGroups) =>
             currentGroups.map((currentGroup) =>
-              currentGroup.spritz.metadata.name === name
+              currentGroup.spritz.metadata.name === currentName
                 ? {
                     ...currentGroup,
                     conversations: sortConversationsByRecency([...currentGroup.conversations, conv]),
@@ -186,13 +197,13 @@ export function ChatPage() {
             ),
           );
           setSelectedConversation(conv);
-          navigate(chatConversationPath(name, conv.metadata.name), { replace: true });
+          navigate(chatConversationPath(currentName, conv.metadata.name), { replace: true });
         }
       } catch (err) {
         showNotice(err instanceof Error ? err.message : 'Failed to start a conversation.');
       } finally {
         autoCreatingConversationForRef.current = null;
-        setCreatingConversationFor((current) => (current === name ? null : current));
+        setCreatingConversationFor((current) => (current === currentName ? null : current));
       }
       return false;
     } catch (err) {
@@ -201,11 +212,13 @@ export function ChatPage() {
     } finally {
       setLoading(false);
     }
-  }, [name, urlConversationId, navigate, showNotice]);
+  }, [navigate, showNotice]);
 
+  // Initial fetch — runs once on mount (fetchAgents is now stable).
   useEffect(() => {
     fetchAgents();
-  }, [fetchAgents]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!provisioningSpritz) {
@@ -235,7 +248,7 @@ export function ChatPage() {
         window.clearTimeout(timerId);
       }
     };
-  }, [fetchAgents, provisioningSpritz?.metadata.name]);
+  }, [fetchAgents, provisioningSpritz?.metadata.name]); // fetchAgents is stable (refs for URL params)
 
   const applyConversationTitle = useCallback((conversationId: string, title?: string | null) => {
     const normalized = String(title || '').trim();
@@ -258,7 +271,9 @@ export function ChatPage() {
   }, []);
 
   const applyConversationUpdate = useCallback((conversation: ConversationInfo) => {
-    setSelectedConversation(conversation);
+    setSelectedConversation((prev) =>
+      prev && prev.metadata.name === conversation.metadata.name ? conversation : prev,
+    );
     setAgents((prev) =>
       prev.map((group) => {
         const sameSpritz = group.spritz.metadata.name === (conversation.spec?.spritzName || '');
@@ -404,9 +419,17 @@ export function ChatPage() {
         });
         if (conv) {
           setSelectedConversation(conv);
+          setAgents((currentGroups) =>
+            currentGroups.map((group) =>
+              group.spritz.metadata.name === normalizedSpritzName
+                ? {
+                    ...group,
+                    conversations: sortConversationsByRecency([...group.conversations, conv]),
+                  }
+                : group,
+            ),
+          );
           navigate(chatConversationPath(normalizedSpritzName, conv.metadata.name), { replace: true });
-          // Refresh agent list
-          fetchAgents();
         }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Failed to create conversation.');
@@ -414,7 +437,7 @@ export function ChatPage() {
         setCreatingConversationFor((current) => (current === normalizedSpritzName ? null : current));
       }
     },
-    [creatingConversationFor, fetchAgents, navigate],
+    [creatingConversationFor, navigate],
   );
 
   if (loading) {

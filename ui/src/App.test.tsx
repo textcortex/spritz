@@ -30,7 +30,7 @@ function renderAtRoute(path: string) {
             <Route index element={<div data-testid="chat-page">Chat Page</div>} />
             <Route path="create" element={<div data-testid="create-page">Create Page</div>} />
             <Route path="terminal/:name" element={<div data-testid="terminal-page">Terminal Page</div>} />
-            <Route path="c/:name?" element={<div data-testid="chat-page">Chat Page</div>} />
+            <Route path="c/*" element={<div data-testid="chat-page">Chat Page</div>} />
           </Routes>
         </NoticeProvider>
       </ConfigProvider>
@@ -51,6 +51,11 @@ describe('App routing', () => {
 
   it('renders ChatPage at /c/some-name', () => {
     renderAtRoute('/c/some-name');
+    expect(screen.getByTestId('chat-page')).toBeDefined();
+  });
+
+  it('renders ChatPage at /c/some-name/some-conversation (same route, no remount)', () => {
+    renderAtRoute('/c/some-name/some-conversation');
     expect(screen.getByTestId('chat-page')).toBeDefined();
   });
 

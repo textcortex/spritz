@@ -134,6 +134,11 @@ export function chatConversationRoutePath(): string {
   return `${chatRoutePrefixSegment()}/:name/:conversationId`;
 }
 
+/** Returns a single catch-all React Router path for all chat sub-routes. */
+export function chatCatchAllRoutePath(): string {
+  return `${chatRoutePrefixSegment()}/*`;
+}
+
 export const hideRepoInputs = parseBoolean(config.repoDefaults.hideInputs, false);
 export const defaultRepoUrl = String(config.repoDefaults.url || '').trim();
 export const defaultRepoBranch = String(config.repoDefaults.branch || '').trim();

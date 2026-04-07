@@ -49,16 +49,6 @@ interface SidebarProps {
   onCloseMobile: () => void;
 }
 
-function sortAgentGroupsForFocus(groups: AgentGroup[], focusedSpritzName?: string | null): AgentGroup[] {
-  if (!focusedSpritzName) return groups;
-  return [...groups].sort((left, right) => {
-    const leftFocused = left.spritz.metadata.name === focusedSpritzName;
-    const rightFocused = right.spritz.metadata.name === focusedSpritzName;
-    if (leftFocused === rightFocused) return 0;
-    return leftFocused ? -1 : 1;
-  });
-}
-
 export function Sidebar({
   agents,
   selectedConversationId,
@@ -72,7 +62,9 @@ export function Sidebar({
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
-  const orderedAgents = sortAgentGroupsForFocus(agents, focusedSpritzName);
+  const orderedAgents = [...agents].sort((a, b) =>
+    a.spritz.metadata.name.localeCompare(b.spritz.metadata.name),
+  );
   const firstAgentName = orderedAgents.length > 0 ? orderedAgents[0].spritz.metadata.name : null;
   const focusMode = Boolean(focusedSpritzName);
   const focusedAgentInList = Boolean(

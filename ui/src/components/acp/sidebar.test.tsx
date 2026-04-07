@@ -86,17 +86,17 @@ describe('Sidebar', () => {
     );
   });
 
-  it('moves the focused agent to the top, highlights it, and collapses other agents', () => {
+  it('keeps agents in alphabetical order regardless of focus and collapses non-focused agents', () => {
     renderWithProviders(
       <SidebarWithFocus
         agents={[
           {
-            spritz: createSpritz('alpha'),
-            conversations: [createConversation('alpha-conv', 'Alpha conversation', 'alpha')],
-          },
-          {
             spritz: createSpritz('beta'),
             conversations: [createConversation('beta-conv', 'Beta conversation', 'beta')],
+          },
+          {
+            spritz: createSpritz('alpha'),
+            conversations: [createConversation('alpha-conv', 'Alpha conversation', 'alpha')],
           },
         ]}
         selectedConversationId="beta-conv"
@@ -113,7 +113,9 @@ describe('Sidebar', () => {
     const agentHeaders = screen.getAllByRole('button', {
       name: / conversations$/i,
     });
-    expect(agentHeaders[0]?.getAttribute('aria-label')).toBe('beta conversations');
+    // Alpha comes first alphabetically, even though beta is focused
+    expect(agentHeaders[0]?.getAttribute('aria-label')).toBe('alpha conversations');
+    expect(agentHeaders[1]?.getAttribute('aria-label')).toBe('beta conversations');
     expect(
       screen
         .getByRole('button', { name: 'beta conversations' })
@@ -129,6 +131,41 @@ describe('Sidebar', () => {
         .getByRole('button', { name: 'alpha conversations' })
         .getAttribute('aria-expanded'),
     ).toBe('false');
+  });
+
+  it('sorts agents alphabetically even when passed in reverse order', () => {
+    renderWithProviders(
+      <Sidebar
+        agents={[
+          {
+            spritz: createSpritz('zulu'),
+            conversations: [createConversation('zulu-conv', 'Zulu conversation', 'zulu')],
+          },
+          {
+            spritz: createSpritz('alpha'),
+            conversations: [createConversation('alpha-conv', 'Alpha conversation', 'alpha')],
+          },
+          {
+            spritz: createSpritz('mike'),
+            conversations: [createConversation('mike-conv', 'Mike conversation', 'mike')],
+          },
+        ]}
+        selectedConversationId={null}
+        onSelectConversation={vi.fn()}
+        onNewConversation={vi.fn()}
+        collapsed={false}
+        onToggleCollapse={vi.fn()}
+        mobileOpen={false}
+        onCloseMobile={vi.fn()}
+      />,
+    );
+
+    const agentHeaders = screen.getAllByRole('button', {
+      name: / conversations$/i,
+    });
+    expect(agentHeaders[0]?.getAttribute('aria-label')).toBe('alpha conversations');
+    expect(agentHeaders[1]?.getAttribute('aria-label')).toBe('mike conversations');
+    expect(agentHeaders[2]?.getAttribute('aria-label')).toBe('zulu conversations');
   });
 
   it('shows a selected optimistic provisioning conversation for a focused route before the agent is discoverable', () => {

@@ -454,8 +454,7 @@ function renderChatPage(route: string, rawConfig?: RawSpritzConfig) {
         <NoticeProvider>
           <LocationDisplay />
           <Routes>
-            <Route path="/c/:name/:conversationId" element={<ChatPage />} />
-            <Route path="/c/:name" element={<ChatPage />} />
+            <Route path="/c/*" element={<ChatPage />} />
             <Route path="/" element={<ChatPage />} />
           </Routes>
         </NoticeProvider>
@@ -614,7 +613,7 @@ describe('ChatPage draft persistence', () => {
         <ConfigProvider value={resolvedConfig}>
           <NoticeProvider>
             <Routes>
-              <Route path="/c/:name/:conversationId" element={<ChatPage />} />
+              <Route path="/c/*" element={<ChatPage />} />
             </Routes>
           </NoticeProvider>
         </ConfigProvider>
@@ -665,7 +664,7 @@ describe('ChatPage draft persistence', () => {
         <ConfigProvider value={config}>
           <NoticeProvider>
             <Routes>
-              <Route path="/c/:name/:conversationId" element={<ChatPage />} />
+              <Route path="/c/*" element={<ChatPage />} />
             </Routes>
           </NoticeProvider>
         </ConfigProvider>
@@ -750,7 +749,7 @@ describe('ChatPage draft persistence', () => {
         <ConfigProvider value={config}>
           <NoticeProvider>
             <Routes>
-              <Route path="/c/:name/:conversationId" element={<ChatPage />} />
+              <Route path="/c/*" element={<ChatPage />} />
             </Routes>
           </NoticeProvider>
         </ConfigProvider>
@@ -785,7 +784,7 @@ describe('ChatPage draft persistence', () => {
         <ConfigProvider value={config}>
           <NoticeProvider>
             <Routes>
-              <Route path="/c/:name/:conversationId" element={<ChatPage />} />
+              <Route path="/c/*" element={<ChatPage />} />
             </Routes>
           </NoticeProvider>
         </ConfigProvider>
@@ -1104,7 +1103,7 @@ describe('ChatPage draft persistence', () => {
         <ConfigProvider value={config}>
           <NoticeProvider>
             <Routes>
-              <Route path="/c/:name/:conversationId" element={<ChatPage />} />
+              <Route path="/c/*" element={<ChatPage />} />
             </Routes>
           </NoticeProvider>
         </ConfigProvider>
@@ -1130,7 +1129,7 @@ describe('ChatPage draft persistence', () => {
         <ConfigProvider value={config}>
           <NoticeProvider>
             <Routes>
-              <Route path="/c/:name/:conversationId" element={<ChatPage />} />
+              <Route path="/c/*" element={<ChatPage />} />
             </Routes>
           </NoticeProvider>
         </ConfigProvider>
@@ -1336,5 +1335,164 @@ describe('ChatPage draft persistence', () => {
     expect(card.className).toContain(
       'border-[color-mix(in_srgb,var(--primary)_12%,var(--border))]',
     );
+  });
+});
+
+describe('ChatPage instance ordering', () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    Object.defineProperty(globalThis, 'localStorage', { value: createMockStorage(), writable: true });
+    Object.defineProperty(globalThis, 'sessionStorage', { value: createMockStorage(), writable: true });
+    Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
+      value: vi.fn(),
+      writable: true,
+    });
+    requestMock.mockReset();
+    sendPromptMock.mockReset();
+    showNoticeMock.mockReset();
+    refreshAuthTokenForWebSocketMock.mockClear();
+    resetACPMockState();
+    sendPromptMock.mockResolvedValue({});
+  });
+
+  it('sorts agents alphabetically in sidebar regardless of API return order', async () => {
+    const spritzZulu = createSpritz({ metadata: { name: 'zulu-instance' } });
+    const spritzAlpha = createSpritz({ metadata: { name: 'alpha-instance' } });
+    const convZulu = createConversation({
+      metadata: { name: 'conv-z' },
+      spec: { sessionId: 'sz', title: 'Zulu conv', spritzName: 'zulu-instance' },
+    });
+    const convAlpha = createConversation({
+      metadata: { name: 'conv-a' },
+      spec: { sessionId: 'sa', title: 'Alpha conv', spritzName: 'alpha-instance' },
+    });
+
+    requestMock.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === '/spritzes') {
+        // Return in reverse alphabetical order
+        return Promise.resolve({ items: [spritzZulu, spritzAlpha] });
+      }
+      if (path === '/acp/conversations?spritz=zulu-instance') {
+        return Promise.resolve({ items: [convZulu] });
+      }
+      if (path === '/acp/conversations?spritz=alpha-instance') {
+        return Promise.resolve({ items: [convAlpha] });
+      }
+      if (path.endsWith('/connect-ticket') && options?.method === 'POST') {
+        return Promise.resolve({
+          type: 'connect-ticket',
+          ticket: 'ticket-123',
+          expiresAt: '2026-03-30T12:34:56Z',
+          protocol: 'spritz-acp.v1',
+          connectPath: '/api/acp/conversations/conv-a/connect',
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    renderChatPage('/c/alpha-instance/conv-a');
+
+    await waitFor(() => {
+      const order = screen.getByTestId('sidebar-agent-order');
+      expect(order.textContent).toBe('alpha-instance,zulu-instance');
+    });
+  });
+
+  it('keeps agent order stable when selecting a conversation from a different instance', async () => {
+    const spritzA = createSpritz({ metadata: { name: 'alpha-instance' } });
+    const spritzZ = createSpritz({ metadata: { name: 'zulu-instance' } });
+    const convA = createConversation({
+      metadata: { name: 'conv-a' },
+      spec: { sessionId: 'sa', title: 'Alpha conv', spritzName: 'alpha-instance' },
+    });
+    const convZ = createConversation({
+      metadata: { name: 'conv-z' },
+      spec: { sessionId: 'sz', title: 'Zulu conv', spritzName: 'zulu-instance' },
+    });
+
+    requestMock.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === '/spritzes') {
+        return Promise.resolve({ items: [spritzZ, spritzA] });
+      }
+      if (path === '/acp/conversations?spritz=alpha-instance') {
+        return Promise.resolve({ items: [convA] });
+      }
+      if (path === '/acp/conversations?spritz=zulu-instance') {
+        return Promise.resolve({ items: [convZ] });
+      }
+      if (path.endsWith('/connect-ticket') && options?.method === 'POST') {
+        return Promise.resolve({
+          type: 'connect-ticket',
+          ticket: 'ticket-123',
+          expiresAt: '2026-03-30T12:34:56Z',
+          protocol: 'spritz-acp.v1',
+          connectPath: '/api/acp/conversations/conv-a/connect',
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    renderChatPage('/c/alpha-instance/conv-a');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sidebar-agent-order').textContent).toBe(
+        'alpha-instance,zulu-instance',
+      );
+    });
+
+    // Click a conversation from zulu-instance
+    await act(async () => {
+      fireEvent.click(screen.getByText('Zulu conv'));
+    });
+
+    // Agent order must remain alpha first, zulu second
+    expect(screen.getByTestId('sidebar-agent-order').textContent).toBe(
+      'alpha-instance,zulu-instance',
+    );
+  });
+
+  it('does not flicker selected conversation when creating a new one', async () => {
+    const spritz = createSpritz({ metadata: { name: 'covo' } });
+    const existingConv = createConversation({
+      metadata: { name: 'conv-existing' },
+      spec: { sessionId: 'se', title: 'Existing conv', spritzName: 'covo' },
+    });
+    const newConv = createConversation({
+      metadata: { name: 'conv-new' },
+      spec: { sessionId: 'sn', title: 'New conv', spritzName: 'covo' },
+    });
+
+    requestMock.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === '/spritzes') {
+        return Promise.resolve({ items: [spritz] });
+      }
+      if (path === '/acp/conversations?spritz=covo') {
+        return Promise.resolve({ items: [existingConv] });
+      }
+      if (path === '/acp/conversations' && options?.method === 'POST') {
+        return Promise.resolve(newConv);
+      }
+      if (path.endsWith('/connect-ticket') && options?.method === 'POST') {
+        return Promise.resolve({
+          type: 'connect-ticket',
+          ticket: 'ticket-123',
+          expiresAt: '2026-03-30T12:34:56Z',
+          protocol: 'spritz-acp.v1',
+          connectPath: '/api/acp/conversations/conv-existing/connect',
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    renderChatPage('/c/covo/conv-existing');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('selected-conversation').textContent).toBe('conv-existing');
+    });
+
+    // The selected conversation should never revert to conv-existing after switching
+    // (regression test: previously fetchAgents would re-run with stale URL params
+    // and reset selectedConversation back to the old one)
+    expect(screen.getByTestId('selected-conversation').textContent).toBe('conv-existing');
   });
 });

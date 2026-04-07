@@ -6,7 +6,7 @@ import { Layout } from '@/components/layout';
 import { ChatPage } from '@/pages/chat';
 import { CreatePage } from '@/pages/create';
 import { TerminalPage } from '@/pages/terminal';
-import { chatConversationRoutePath, chatRoutePath } from '@/lib/urls';
+import { chatCatchAllRoutePath } from '@/lib/urls';
 
 export function App() {
   return (
@@ -19,8 +19,7 @@ export function App() {
               <Route index element={<ChatPage />} />
               <Route path="create" element={<CreatePage />} />
               <Route path="terminal/:name" element={<TerminalPage />} />
-              <Route path={chatRoutePath(true)} element={<ChatPage />} />
-              <Route path={chatConversationRoutePath()} element={<ChatPage />} />
+              <Route path={chatCatchAllRoutePath()} element={<ChatPage />} />
             </Route>
           </Routes>
         </NoticeProvider>
