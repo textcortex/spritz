@@ -369,23 +369,44 @@ func (s *server) findChannelConversation(c echo.Context, namespace string, sprit
 	); err != nil {
 		return nil, false, err
 	}
+	var baseRouteMatch *spritzv1.SpritzConversation
 	for i := range baseList.Items {
 		item := &baseList.Items[i]
-		if !channelConversationMatchesBaseIdentity(item, identity) || !channelConversationHasAnyExternalConversationID(item, matchExternalConversationIDs) {
+		if !channelConversationMatchesBaseIdentity(item, identity) {
 			continue
 		}
-		if match != nil && item.Name == match.Name {
+		if channelConversationHasAnyExternalConversationID(item, matchExternalConversationIDs) {
+			if match != nil && item.Name == match.Name {
+				continue
+			}
+			if match != nil {
+				return nil, true, echo.NewHTTPError(http.StatusConflict, "channel conversation is ambiguous")
+			}
+			match = item.DeepCopy()
 			continue
 		}
+
+		// During the Slack cutover, a previously used channel may only have an
+		// older per-thread/per-message identity. Reuse that lone base-route match
+		// instead of forking a fresh channel-scoped conversation.
 		if match != nil {
+			continue
+		}
+		if baseRouteMatch != nil && item.Name == baseRouteMatch.Name {
+			continue
+		}
+		if baseRouteMatch != nil {
 			return nil, true, echo.NewHTTPError(http.StatusConflict, "channel conversation is ambiguous")
 		}
-		match = item.DeepCopy()
+		baseRouteMatch = item.DeepCopy()
 	}
-	if match == nil {
-		return nil, false, nil
+	if match != nil {
+		return match, true, nil
 	}
-	return match, true, nil
+	if baseRouteMatch != nil {
+		return baseRouteMatch, true, nil
+	}
+	return nil, false, nil
 }
 
 func applyChannelConversationMetadata(conversation *spritzv1.SpritzConversation, identity normalizedChannelConversationIdentity, requestID string, spritz *spritzv1.Spritz) {

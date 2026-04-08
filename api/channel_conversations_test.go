@@ -466,6 +466,65 @@ func TestUpsertChannelConversationReusesLegacyConversationWithoutBaseRouteLabel(
 	}
 }
 
+func TestUpsertChannelConversationMigratesLoneBaseRouteConversationWhenLookupMisses(t *testing.T) {
+	spritz := readyACPSpritz("zeno-acme", "owner-123")
+	legacyIdentity := normalizedChannelConversationIdentity{
+		principalID:            "shared-slack-gateway",
+		provider:               "slack",
+		externalScopeType:      "workspace",
+		externalTenantID:       "T_workspace_1",
+		externalChannelID:      "C_channel_1",
+		externalConversationID: "1711387375.000100",
+	}
+	conversation, err := buildACPConversationResource(spritz, "Slack concierge", "")
+	if err != nil {
+		t.Fatalf("build conversation: %v", err)
+	}
+	conversation.Name = channelConversationName(spritz.Name, spritz.Spec.Owner.ID, legacyIdentity)
+	applyChannelConversationMetadata(conversation, legacyIdentity, "legacy-request", spritz)
+
+	s := newChannelConversationsTestServer(t, spritz, conversation)
+	e := echo.New()
+	s.registerRoutes(e)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, newChannelConversationsRequest(`{
+		"principalId":"shared-slack-gateway",
+		"instanceId":"zeno-acme",
+		"ownerId":"owner-123",
+		"provider":"slack",
+		"externalScopeType":"workspace",
+		"externalTenantId":"T_workspace_1",
+		"externalChannelId":"C_channel_1",
+		"externalConversationId":"C_channel_1",
+		"lookupExternalConversationIds":["1711389999.000200"],
+		"title":"Slack concierge"
+	}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected lone base-route migration to reuse, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Data struct {
+			Created      bool                        `json:"created"`
+			Conversation spritzv1.SpritzConversation `json:"conversation"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Data.Created {
+		t.Fatalf("expected lone base-route migration to reuse the legacy conversation")
+	}
+	if payload.Data.Conversation.Name != conversation.Name {
+		t.Fatalf("expected legacy conversation %q, got %q", conversation.Name, payload.Data.Conversation.Name)
+	}
+	aliases := channelConversationExternalConversationAliases(&payload.Data.Conversation)
+	if len(aliases) != 1 || aliases[0] != "C_channel_1" {
+		t.Fatalf("expected canonical channel id alias to be persisted, got %#v", aliases)
+	}
+}
+
 func TestUpsertChannelConversationMigratesLegacyLookupIDsWithoutBaseRouteLabel(t *testing.T) {
 	spritz := readyACPSpritz("zeno-acme", "owner-123")
 	legacyIdentity := normalizedChannelConversationIdentity{
