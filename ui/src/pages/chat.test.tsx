@@ -1542,9 +1542,6 @@ describe('ChatPage instance ordering', () => {
       if (path === '/acp/conversations' && options?.method === 'POST') {
         return Promise.resolve(newConv);
       }
-      if (path.endsWith('/bootstrap') && options?.method === 'POST') {
-        return Promise.resolve({ effectiveSessionId: 'sess-bootstrap' });
-      }
       if (path.endsWith('/connect-ticket') && options?.method === 'POST') {
         return Promise.resolve({
           type: 'connect-ticket',
@@ -1562,6 +1559,10 @@ describe('ChatPage instance ordering', () => {
     await waitFor(() => {
       expect(screen.getByTestId('selected-conversation').textContent).toBe('conv-b');
     });
+
+    // Prevent ACP client start from resolving so the WebSocket lifecycle
+    // doesn't run — we only test state updates and navigation here.
+    setACPStartPending(true);
 
     // Click "new conversation" for beta-instance (the focused instance)
     await act(async () => {
@@ -1611,9 +1612,6 @@ describe('ChatPage instance ordering', () => {
       if (path === '/acp/conversations' && options?.method === 'POST') {
         return Promise.resolve(newConv);
       }
-      if (path.endsWith('/bootstrap') && options?.method === 'POST') {
-        return Promise.resolve({ effectiveSessionId: 'sess-bootstrap' });
-      }
       if (path.endsWith('/connect-ticket') && options?.method === 'POST') {
         return Promise.resolve({
           type: 'connect-ticket',
@@ -1631,6 +1629,9 @@ describe('ChatPage instance ordering', () => {
     await waitFor(() => {
       expect(screen.getByTestId('selected-conversation').textContent).toBe('conv-old-2');
     });
+
+    // Prevent ACP client start from resolving for the new conversation
+    setACPStartPending(true);
 
     // Create a new conversation
     await act(async () => {
