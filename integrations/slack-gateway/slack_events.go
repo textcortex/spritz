@@ -950,14 +950,16 @@ func slackReplyThreadTS(event slackEventInner) string {
 	return ""
 }
 
+// slackExternalConversationID returns the durable ACP conversation identity for
+// an inbound Slack event. DMs stay scoped to the Slack channel itself, and
+// shared channels also stay channel-scoped so repeated turns in the same room
+// reuse the same underlying conversation even when the visible Slack reply is
+// posted in a thread.
 func slackExternalConversationID(event slackEventInner) string {
 	if isSlackDirectMessageEvent(event) {
 		return strings.TrimSpace(event.Channel)
 	}
-	if threadTS := strings.TrimSpace(event.ThreadTS); threadTS != "" {
-		return threadTS
-	}
-	return strings.TrimSpace(event.TS)
+	return strings.TrimSpace(event.Channel)
 }
 
 func (g *slackGateway) postGatewaySlackMessage(

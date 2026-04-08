@@ -689,8 +689,8 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 			if channelConversationCall.payloads[0]["principalId"] != "shared-slack-gateway" {
 				t.Fatalf("expected shared gateway principal in first channel conversation payload, got %#v", channelConversationCall.payloads[0]["principalId"])
 			}
-			if channelConversationCall.payloads[0]["externalConversationId"] != "1711387375.000100" {
-				t.Fatalf("expected root-message conversation identity, got %#v", channelConversationCall.payloads[0]["externalConversationId"])
+			if channelConversationCall.payloads[0]["externalConversationId"] != "C_1" {
+				t.Fatalf("expected channel-scoped conversation identity, got %#v", channelConversationCall.payloads[0]["externalConversationId"])
 			}
 			if channelConversationCall.payloads[1]["conversationId"] != "conv-1" {
 				t.Fatalf("expected alias upsert to target the created conversation, got %#v", channelConversationCall.payloads[1]["conversationId"])
@@ -1532,8 +1532,8 @@ func TestBuildSlackPromptTextPrependsTrustedContext(t *testing.T) {
 	if payload["actor_user_id"] != "U_requester" {
 		t.Fatalf("expected actor metadata, got %#v", payload["actor_user_id"])
 	}
-	if payload["conversation_id"] != "1711387375.000100" {
-		t.Fatalf("expected top-level conversation identity, got %#v", payload["conversation_id"])
+	if payload["conversation_id"] != "C_channel_1" {
+		t.Fatalf("expected top-level channel conversation identity, got %#v", payload["conversation_id"])
 	}
 	if payload["direct_message"] != false {
 		t.Fatalf("expected non-DM metadata, got %#v", payload["direct_message"])
@@ -1641,8 +1641,8 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 		ChannelType: "channel",
 		TS:          "1711387375.000100",
 	}
-	if slackExternalConversationID(topLevelChannel) != "1711387375.000100" {
-		t.Fatalf("expected top-level channel messages to key by root message ts")
+	if slackExternalConversationID(topLevelChannel) != "C_workspace_channel" {
+		t.Fatalf("expected top-level channel messages to key by channel id")
 	}
 	if slackReplyThreadTS(topLevelChannel) != "" {
 		t.Fatalf("expected top-level channel mentions to reply inline")
@@ -1655,8 +1655,8 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 		ThreadTS:    "1711387375.000100",
 		TS:          "1711387376.000100",
 	}
-	if slackExternalConversationID(threadedChannel) != "1711387375.000100" {
-		t.Fatalf("expected threaded channel messages to key by thread root ts")
+	if slackExternalConversationID(threadedChannel) != "C_workspace_channel" {
+		t.Fatalf("expected threaded channel messages to key by channel id")
 	}
 	if slackReplyThreadTS(threadedChannel) != "1711387375.000100" {
 		t.Fatalf("expected threaded channel mentions to reply in-thread")
