@@ -369,7 +369,8 @@ func (s *server) findChannelConversation(c echo.Context, namespace string, sprit
 	); err != nil {
 		return nil, false, err
 	}
-	var baseRouteMatch *spritzv1.SpritzConversation
+	var fallbackMatch *spritzv1.SpritzConversation
+	fallbackMatchCount := 0
 	for i := range baseList.Items {
 		item := &baseList.Items[i]
 		if !channelConversationMatchesBaseIdentity(item, identity) {
@@ -392,19 +393,16 @@ func (s *server) findChannelConversation(c echo.Context, namespace string, sprit
 		if match != nil {
 			continue
 		}
-		if baseRouteMatch != nil && item.Name == baseRouteMatch.Name {
+		if fallbackMatch != nil && item.Name == fallbackMatch.Name {
 			continue
 		}
-		if baseRouteMatch != nil {
-			return nil, true, echo.NewHTTPError(http.StatusConflict, "channel conversation is ambiguous")
+		if fallbackMatch == nil {
+			fallbackMatch = item.DeepCopy()
 		}
-		baseRouteMatch = item.DeepCopy()
+		fallbackMatchCount++
 	}
 	if match != nil {
 		return match, true, nil
-	}
-	if baseRouteMatch != nil {
-		return baseRouteMatch, true, nil
 	}
 
 	legacyList := &spritzv1.SpritzConversationList{}
@@ -420,7 +418,6 @@ func (s *server) findChannelConversation(c echo.Context, namespace string, sprit
 	); err != nil {
 		return nil, false, err
 	}
-	var legacyMatch *spritzv1.SpritzConversation
 	for i := range legacyList.Items {
 		item := &legacyList.Items[i]
 		if strings.TrimSpace(item.Labels[channelConversationBaseRouteLabelKey]) != "" {
@@ -443,19 +440,19 @@ func (s *server) findChannelConversation(c echo.Context, namespace string, sprit
 		// Some pre-cutover conversations predate the base-route label entirely.
 		// Reuse that lone legacy match instead of forking a new channel-scoped
 		// conversation on the first post-deploy top-level message.
-		if legacyMatch != nil && item.Name == legacyMatch.Name {
+		if fallbackMatch != nil && item.Name == fallbackMatch.Name {
 			continue
 		}
-		if legacyMatch != nil {
-			return nil, true, echo.NewHTTPError(http.StatusConflict, "channel conversation is ambiguous")
+		if fallbackMatch == nil {
+			fallbackMatch = item.DeepCopy()
 		}
-		legacyMatch = item.DeepCopy()
+		fallbackMatchCount++
 	}
 	if match != nil {
 		return match, true, nil
 	}
-	if legacyMatch != nil {
-		return legacyMatch, true, nil
+	if fallbackMatchCount == 1 {
+		return fallbackMatch, true, nil
 	}
 	return nil, false, nil
 }
