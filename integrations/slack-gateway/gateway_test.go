@@ -692,6 +692,10 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 			if channelConversationCall.payloads[0]["externalConversationId"] != "C_1" {
 				t.Fatalf("expected channel-scoped conversation identity, got %#v", channelConversationCall.payloads[0]["externalConversationId"])
 			}
+			lookupIDs, ok := channelConversationCall.payloads[0]["lookupExternalConversationIds"].([]any)
+			if !ok || len(lookupIDs) != 1 || fmt.Sprint(lookupIDs[0]) != "1711387375.000100" {
+				t.Fatalf("expected legacy conversation lookup id to be sent, got %#v", channelConversationCall.payloads[0]["lookupExternalConversationIds"])
+			}
 			if channelConversationCall.payloads[1]["conversationId"] != "conv-1" {
 				t.Fatalf("expected alias upsert to target the created conversation, got %#v", channelConversationCall.payloads[1]["conversationId"])
 			}
@@ -1441,6 +1445,7 @@ func TestUpsertChannelConversationUsesChannelForDirectMessages(t *testing.T) {
 		"T_workspace_1",
 		"",
 		"D_workspace_bot",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("upsert channel conversation failed: %v", err)
@@ -1618,6 +1623,9 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 	if slackReplyThreadTS(fallbackDM) != "" {
 		t.Fatalf("expected D-prefixed channels to reply inline")
 	}
+	if lookupIDs := slackLegacyConversationLookupIDs(fallbackDM); len(lookupIDs) != 0 {
+		t.Fatalf("expected D-prefixed channels to omit legacy lookup ids, got %#v", lookupIDs)
+	}
 
 	groupDM := slackEventInner{
 		Type:        "message",
@@ -1634,6 +1642,9 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 	if slackReplyThreadTS(groupDM) != "" {
 		t.Fatalf("expected mpim replies to stay inline")
 	}
+	if lookupIDs := slackLegacyConversationLookupIDs(groupDM); len(lookupIDs) != 0 {
+		t.Fatalf("expected mpim conversations to omit legacy lookup ids, got %#v", lookupIDs)
+	}
 
 	topLevelChannel := slackEventInner{
 		Type:        "app_mention",
@@ -1646,6 +1657,9 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 	}
 	if slackReplyThreadTS(topLevelChannel) != "" {
 		t.Fatalf("expected top-level channel mentions to reply inline")
+	}
+	if lookupIDs := slackLegacyConversationLookupIDs(topLevelChannel); len(lookupIDs) != 1 || lookupIDs[0] != "1711387375.000100" {
+		t.Fatalf("expected top-level channel mentions to expose the legacy root-message id, got %#v", lookupIDs)
 	}
 
 	threadedChannel := slackEventInner{
@@ -1660,6 +1674,9 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 	}
 	if slackReplyThreadTS(threadedChannel) != "1711387375.000100" {
 		t.Fatalf("expected threaded channel mentions to reply in-thread")
+	}
+	if lookupIDs := slackLegacyConversationLookupIDs(threadedChannel); len(lookupIDs) != 1 || lookupIDs[0] != "1711387375.000100" {
+		t.Fatalf("expected threaded channel mentions to expose the legacy thread id, got %#v", lookupIDs)
 	}
 }
 

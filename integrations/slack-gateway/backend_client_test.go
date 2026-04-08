@@ -51,6 +51,7 @@ func TestUpsertChannelConversationOmitsImplicitDefaultCWD(t *testing.T) {
 		"T123",
 		"",
 		"slack-thread-1",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("upsert channel conversation: %v", err)
@@ -60,6 +61,9 @@ func TestUpsertChannelConversationOmitsImplicitDefaultCWD(t *testing.T) {
 	}
 	if _, exists := upsertPayload["cwd"]; exists {
 		t.Fatalf("expected channel conversation upsert to omit cwd, got %#v", upsertPayload)
+	}
+	if _, exists := upsertPayload["lookupExternalConversationIds"]; exists {
+		t.Fatalf("expected channel conversation upsert to omit lookup ids when none are provided, got %#v", upsertPayload)
 	}
 }
 

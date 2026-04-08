@@ -271,6 +271,114 @@ func TestUpsertChannelConversationPersistsAndResolvesReplyAliases(t *testing.T) 
 	}
 }
 
+func TestUpsertChannelConversationMigratesLegacyLookupIDsToCanonicalAlias(t *testing.T) {
+	s := newChannelConversationsTestServer(t, readyACPSpritz("zeno-acme", "owner-123"))
+	e := echo.New()
+	s.registerRoutes(e)
+
+	legacyRec := httptest.NewRecorder()
+	e.ServeHTTP(legacyRec, newChannelConversationsRequest(`{
+		"principalId":"shared-slack-gateway",
+		"instanceId":"zeno-acme",
+		"ownerId":"owner-123",
+		"provider":"slack",
+		"externalScopeType":"workspace",
+		"externalTenantId":"T_workspace_1",
+		"externalChannelId":"C_channel_1",
+		"externalConversationId":"1711387375.000100",
+		"title":"Slack concierge"
+	}`))
+	if legacyRec.Code != http.StatusCreated {
+		t.Fatalf("expected legacy request to create, got %d: %s", legacyRec.Code, legacyRec.Body.String())
+	}
+
+	migrateRec := httptest.NewRecorder()
+	e.ServeHTTP(migrateRec, newChannelConversationsRequest(`{
+		"principalId":"shared-slack-gateway",
+		"instanceId":"zeno-acme",
+		"ownerId":"owner-123",
+		"provider":"slack",
+		"externalScopeType":"workspace",
+		"externalTenantId":"T_workspace_1",
+		"externalChannelId":"C_channel_1",
+		"externalConversationId":"C_channel_1",
+		"lookupExternalConversationIds":["1711387375.000100"],
+		"title":"Slack concierge"
+	}`))
+	if migrateRec.Code != http.StatusOK {
+		t.Fatalf("expected migration request to reuse, got %d: %s", migrateRec.Code, migrateRec.Body.String())
+	}
+
+	var migratePayload struct {
+		Data struct {
+			Created      bool                        `json:"created"`
+			Conversation spritzv1.SpritzConversation `json:"conversation"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(migrateRec.Body.Bytes(), &migratePayload); err != nil {
+		t.Fatalf("failed to decode migration response: %v", err)
+	}
+	if migratePayload.Data.Created {
+		t.Fatalf("expected migration request to reuse the legacy conversation")
+	}
+	if migratePayload.Data.Conversation.Annotations[channelConversationExternalConversationIDAnnotationKey] != "1711387375.000100" {
+		t.Fatalf("expected legacy conversation identity to remain primary, got %#v", migratePayload.Data.Conversation.Annotations[channelConversationExternalConversationIDAnnotationKey])
+	}
+	aliases := channelConversationExternalConversationAliases(&migratePayload.Data.Conversation)
+	if len(aliases) != 1 || aliases[0] != "C_channel_1" {
+		t.Fatalf("expected canonical channel id alias to be persisted, got %#v", aliases)
+	}
+}
+
+func TestUpsertChannelConversationRejectsLookupIDConflictsWithCanonicalMatch(t *testing.T) {
+	spritz := readyACPSpritz("zeno-acme", "owner-123")
+	canonicalIdentity := normalizedChannelConversationIdentity{
+		principalID:            "shared-slack-gateway",
+		provider:               "slack",
+		externalScopeType:      "workspace",
+		externalTenantID:       "T_workspace_1",
+		externalChannelID:      "C_channel_1",
+		externalConversationID: "C_channel_1",
+	}
+	legacyIdentity := canonicalIdentity
+	legacyIdentity.externalConversationID = "1711387375.000100"
+
+	canonicalConversation, err := buildACPConversationResource(spritz, "Slack concierge", "")
+	if err != nil {
+		t.Fatalf("build canonical conversation: %v", err)
+	}
+	canonicalConversation.Name = channelConversationName(spritz.Name, spritz.Spec.Owner.ID, canonicalIdentity)
+	applyChannelConversationMetadata(canonicalConversation, canonicalIdentity, "canonical-request", spritz)
+
+	legacyConversation, err := buildACPConversationResource(spritz, "Slack concierge", "")
+	if err != nil {
+		t.Fatalf("build legacy conversation: %v", err)
+	}
+	legacyConversation.Name = channelConversationName(spritz.Name, spritz.Spec.Owner.ID, legacyIdentity)
+	applyChannelConversationMetadata(legacyConversation, legacyIdentity, "legacy-request", spritz)
+
+	s := newChannelConversationsTestServer(t, spritz, canonicalConversation, legacyConversation)
+	e := echo.New()
+	s.registerRoutes(e)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, newChannelConversationsRequest(`{
+		"principalId":"shared-slack-gateway",
+		"instanceId":"zeno-acme",
+		"ownerId":"owner-123",
+		"provider":"slack",
+		"externalScopeType":"workspace",
+		"externalTenantId":"T_workspace_1",
+		"externalChannelId":"C_channel_1",
+		"externalConversationId":"C_channel_1",
+		"lookupExternalConversationIds":["1711387375.000100"],
+		"title":"Slack concierge"
+	}`))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected canonical and lookup identity conflict to be rejected, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func legacyChannelConversationRouteHash(identity normalizedChannelConversationIdentity, ownerID, instanceID string) string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{
 		identity.principalID,

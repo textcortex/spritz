@@ -679,6 +679,7 @@ func (g *slackGateway) processMessageEventWithDelivery(
 			envelope.TeamID,
 			result.conversationID,
 			replyMessageTS,
+			nil,
 		); err != nil {
 			cancelAlias()
 			g.logger.Error(
@@ -716,6 +717,7 @@ func (g *slackGateway) executeConversationPrompt(
 		envelope.TeamID,
 		"",
 		externalConversationID,
+		slackLegacyConversationLookupIDs(event),
 	)
 	if err != nil {
 		return conversationPromptResult{}, err
@@ -960,6 +962,25 @@ func slackExternalConversationID(event slackEventInner) string {
 		return strings.TrimSpace(event.Channel)
 	}
 	return strings.TrimSpace(event.Channel)
+}
+
+func slackLegacyExternalConversationID(event slackEventInner) string {
+	if isSlackDirectMessageEvent(event) {
+		return strings.TrimSpace(event.Channel)
+	}
+	if threadTS := strings.TrimSpace(event.ThreadTS); threadTS != "" {
+		return threadTS
+	}
+	return strings.TrimSpace(event.TS)
+}
+
+func slackLegacyConversationLookupIDs(event slackEventInner) []string {
+	legacyID := slackLegacyExternalConversationID(event)
+	canonicalID := slackExternalConversationID(event)
+	if legacyID == "" || legacyID == canonicalID {
+		return nil
+	}
+	return []string{legacyID}
 }
 
 func (g *slackGateway) postGatewaySlackMessage(

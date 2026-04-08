@@ -189,7 +189,7 @@ func (g *slackGateway) exchangeChannelSession(ctx context.Context, teamID string
 	}, nil
 }
 
-func (g *slackGateway) upsertChannelConversation(ctx context.Context, session channelSession, event slackEventInner, teamID, conversationID, externalConversationID string) (string, error) {
+func (g *slackGateway) upsertChannelConversation(ctx context.Context, session channelSession, event slackEventInner, teamID, conversationID, externalConversationID string, lookupExternalConversationIDs []string) (string, error) {
 	body := map[string]any{
 		"namespace":              session.Namespace,
 		"conversationId":         strings.TrimSpace(conversationID),
@@ -202,6 +202,9 @@ func (g *slackGateway) upsertChannelConversation(ctx context.Context, session ch
 		"externalChannelId":      strings.TrimSpace(event.Channel),
 		"externalConversationId": strings.TrimSpace(externalConversationID),
 		"title":                  fmt.Sprintf("Slack %s", strings.TrimSpace(event.Channel)),
+	}
+	if len(lookupExternalConversationIDs) > 0 {
+		body["lookupExternalConversationIds"] = lookupExternalConversationIDs
 	}
 	var payload spritzConversationUpsertResponse
 	if err := g.postSpritzJSON(ctx, http.MethodPost, "/api/channel-conversations/upsert", session.AccessToken, body, &payload, nil); err != nil {

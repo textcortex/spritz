@@ -61,7 +61,7 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 		if !channelConversationMatchesBaseIdentity(existing, identity) || !channelConversationBelongsToSpritz(existing, spritz) {
 			return writeError(c, http.StatusConflict, "channel conversation is ambiguous")
 		}
-		conversation, found, err := s.findChannelConversation(c, namespace, spritz, identity)
+		conversation, found, err := s.findChannelConversation(c, namespace, spritz, identity, normalizedBody.LookupExternalConversationIDs)
 		if err != nil {
 			if httpErr, ok := err.(*echo.HTTPError); ok {
 				return writeError(c, httpErr.Code, httpErr.Message.(string))
@@ -91,7 +91,7 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 		}
 		return writeJSON(c, http.StatusOK, map[string]any{"created": false, "conversation": existing})
 	}
-	conversation, found, err := s.findChannelConversation(c, namespace, spritz, identity)
+	conversation, found, err := s.findChannelConversation(c, namespace, spritz, identity, normalizedBody.LookupExternalConversationIDs)
 	if err != nil {
 		if httpErr, ok := err.(*echo.HTTPError); ok {
 			return writeError(c, httpErr.Code, httpErr.Message.(string))
@@ -99,6 +99,26 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
 	if found {
+		changed := false
+		if !channelConversationHasExternalConversationID(conversation, identity.externalConversationID) {
+			aliasChanged, err := appendChannelConversationAlias(conversation, identity.externalConversationID)
+			if err != nil {
+				return writeError(c, http.StatusInternalServerError, err.Error())
+			}
+			changed = changed || aliasChanged
+		}
+		if normalizedBody.RequestID != "" {
+			if conversation.Annotations == nil {
+				conversation.Annotations = map[string]string{}
+			}
+			conversation.Annotations[requestIDAnnotationKey] = normalizedBody.RequestID
+			changed = true
+		}
+		if changed {
+			if err := s.client.Update(c.Request().Context(), conversation); err != nil {
+				return s.writeACPResourceError(c, err)
+			}
+		}
 		return writeJSON(c, http.StatusOK, map[string]any{"created": false, "conversation": conversation})
 	}
 
