@@ -663,34 +663,12 @@ func (g *slackGateway) processMessageEventWithDelivery(
 	replyThreadTS := slackReplyThreadTS(event)
 	replyCtx, cancelReply := context.WithTimeout(context.WithoutCancel(ctx), g.cfg.HTTPTimeout)
 	defer cancelReply()
-	replyMessageTS, err := g.postSlackMessage(replyCtx, session.ProviderAuth.BotAccessToken, event.Channel, result.reply, replyThreadTS)
+	_, err = g.postSlackMessage(replyCtx, session.ProviderAuth.BotAccessToken, event.Channel, result.reply, replyThreadTS)
 	if err != nil {
 		// Once the ACP prompt has already been delivered, suppress duplicate
 		// Slack retries from re-running the same agent side effects.
 		success = result.promptSent
 		return err
-	}
-	if replyThreadTS == "" && !isSlackDirectMessageEvent(event) && strings.TrimSpace(replyMessageTS) != "" {
-		aliasCtx, cancelAlias := context.WithTimeout(context.WithoutCancel(ctx), g.cfg.HTTPTimeout)
-		if _, err := g.upsertChannelConversation(
-			aliasCtx,
-			session,
-			event,
-			envelope.TeamID,
-			result.conversationID,
-			replyMessageTS,
-			nil,
-		); err != nil {
-			cancelAlias()
-			g.logger.Error(
-				"slack reply alias persistence failed",
-				"error", err,
-				"conversation_id", result.conversationID,
-				"reply_message_ts", replyMessageTS,
-			)
-		} else {
-			cancelAlias()
-		}
 	}
 	success = true
 	return nil

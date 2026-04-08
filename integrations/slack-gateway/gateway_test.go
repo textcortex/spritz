@@ -678,8 +678,8 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 			}
 			channelConversationCall.Lock()
 			defer channelConversationCall.Unlock()
-			if len(channelConversationCall.authHeaders) != 2 {
-				t.Fatalf("expected root upsert plus alias upsert, got %#v", channelConversationCall.authHeaders)
+			if len(channelConversationCall.authHeaders) != 1 {
+				t.Fatalf("expected only the root upsert, got %#v", channelConversationCall.authHeaders)
 			}
 			for _, authHeader := range channelConversationCall.authHeaders {
 				if authHeader != "Bearer owner-token" {
@@ -695,12 +695,6 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 			lookupIDs, ok := channelConversationCall.payloads[0]["lookupExternalConversationIds"].([]any)
 			if !ok || len(lookupIDs) != 1 || fmt.Sprint(lookupIDs[0]) != "1711387375.000100" {
 				t.Fatalf("expected legacy conversation lookup id to be sent, got %#v", channelConversationCall.payloads[0]["lookupExternalConversationIds"])
-			}
-			if channelConversationCall.payloads[1]["conversationId"] != "conv-1" {
-				t.Fatalf("expected alias upsert to target the created conversation, got %#v", channelConversationCall.payloads[1]["conversationId"])
-			}
-			if channelConversationCall.payloads[1]["externalConversationId"] != "1711387376.000100" {
-				t.Fatalf("expected alias upsert to persist the bot reply ts, got %#v", channelConversationCall.payloads[1]["externalConversationId"])
 			}
 			promptPayload.Lock()
 			capturedPromptPayload := promptPayload.value
@@ -2072,7 +2066,7 @@ func TestProcessMessageEventPostsFallbackAfterPromptTimeout(t *testing.T) {
 	}
 }
 
-func TestProcessMessageEventPersistsReplyAliasAfterPromptTimeout(t *testing.T) {
+func TestProcessMessageEventDoesNotPersistReplyAliasAfterPromptTimeout(t *testing.T) {
 	var channelConversationCalls struct {
 		sync.Mutex
 		payloads []map[string]any
@@ -2232,14 +2226,8 @@ func TestProcessMessageEventPersistsReplyAliasAfterPromptTimeout(t *testing.T) {
 
 	channelConversationCalls.Lock()
 	defer channelConversationCalls.Unlock()
-	if len(channelConversationCalls.payloads) != 2 {
-		t.Fatalf("expected root upsert plus alias persistence, got %#v", channelConversationCalls.payloads)
-	}
-	if channelConversationCalls.payloads[1]["conversationId"] != "conv-1" {
-		t.Fatalf("expected alias persistence to target conv-1, got %#v", channelConversationCalls.payloads[1]["conversationId"])
-	}
-	if channelConversationCalls.payloads[1]["externalConversationId"] != "1711387376.000100" {
-		t.Fatalf("expected alias persistence to use the bot reply ts, got %#v", channelConversationCalls.payloads[1]["externalConversationId"])
+	if len(channelConversationCalls.payloads) != 1 {
+		t.Fatalf("expected only the root upsert, got %#v", channelConversationCalls.payloads)
 	}
 }
 
@@ -2643,8 +2631,8 @@ func TestProcessMessageEventRecoversAfterRuntimeDisappearsMidFlight(t *testing.T
 	if sessionExchangeCalls.Load() != 4 {
 		t.Fatalf("expected 4 session exchange attempts, got %d", sessionExchangeCalls.Load())
 	}
-	if upsertCalls.Load() != 4 {
-		t.Fatalf("expected two prompt retries plus alias persistence, got %d", upsertCalls.Load())
+	if upsertCalls.Load() != 3 {
+		t.Fatalf("expected only the root upserts across retries, got %d", upsertCalls.Load())
 	}
 }
 
@@ -2843,8 +2831,8 @@ func TestProcessMessageEventRecoversAfterRuntimeReusesSameInstanceID(t *testing.
 	if !sessionExchangeForceRefresh[1] {
 		t.Fatalf("expected recovery exchange to force refresh, got %#v", sessionExchangeForceRefresh)
 	}
-	if upsertCalls.Load() != 3 {
-		t.Fatalf("expected recovery retry plus alias persistence, got %d", upsertCalls.Load())
+	if upsertCalls.Load() != 2 {
+		t.Fatalf("expected only the root upserts across recovery, got %d", upsertCalls.Load())
 	}
 }
 
@@ -3664,8 +3652,8 @@ func TestProcessMessageEventPostsSingleWakeUpAcrossSessionAndRuntimeRecovery(t *
 	if sessionExchangeCalls.Load() != 5 {
 		t.Fatalf("expected 5 session exchange attempts, got %d", sessionExchangeCalls.Load())
 	}
-	if upsertCalls.Load() != 3 {
-		t.Fatalf("expected recovery retry plus alias persistence, got %d", upsertCalls.Load())
+	if upsertCalls.Load() != 2 {
+		t.Fatalf("expected only the root upserts across recovery, got %d", upsertCalls.Load())
 	}
 }
 
@@ -4248,8 +4236,8 @@ func TestProcessMessageEventRetriesACPUnavailableBeforeRefreshingBinding(t *test
 	if len(sessionExchangeForceRefresh) != 1 || sessionExchangeForceRefresh[0] {
 		t.Fatalf("expected no force-refresh session exchange during ACP retry, got %#v", sessionExchangeForceRefresh)
 	}
-	if upsertCalls.Load() != 3 {
-		t.Fatalf("expected failed upsert, successful retry, and alias persistence, got %d", upsertCalls.Load())
+	if upsertCalls.Load() != 2 {
+		t.Fatalf("expected only the failed and successful root upserts, got %d", upsertCalls.Load())
 	}
 }
 
@@ -4459,8 +4447,8 @@ func TestProcessMessageEventKeepsSameRuntimePendingAcrossShortACPWarmup(t *testi
 	if len(sessionExchangeForceRefresh) != 1 || sessionExchangeForceRefresh[0] {
 		t.Fatalf("expected no force-refresh session exchange during short ACP warmup, got %#v", sessionExchangeForceRefresh)
 	}
-	if upsertCalls.Load() != 5 {
-		t.Fatalf("expected four prompt attempts plus alias persistence, got %d", upsertCalls.Load())
+	if upsertCalls.Load() != 4 {
+		t.Fatalf("expected only the root upserts across prompt attempts, got %d", upsertCalls.Load())
 	}
 }
 
