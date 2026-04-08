@@ -184,14 +184,12 @@ vi.mock('@/components/acp/sidebar', () => ({
     agents,
     selectedConversationId,
     onSelectConversation,
-    onNewConversation,
     focusedSpritzName,
     focusedSpritz,
   }: {
     agents: Array<{ spritz: { metadata: { name: string } }; conversations: Array<{ metadata: { name: string }; spec?: { title?: string } }> }>;
     selectedConversationId: string | null;
     onSelectConversation: (conversation: { metadata: { name: string } }) => void;
-    onNewConversation: (spritzName: string) => void;
     focusedSpritzName?: string | null;
     focusedSpritz?: { metadata: { name: string } } | null;
   }) => (
@@ -202,11 +200,6 @@ vi.mock('@/components/acp/sidebar', () => ({
       <div data-testid="sidebar-focused-spritz">
         {focusedSpritz?.metadata?.name || focusedSpritzName || ''}
       </div>
-      {agents.flatMap((group) => (
-        <div key={group.spritz.metadata.name} data-testid={`conv-order-${group.spritz.metadata.name}`}>
-          {group.conversations.map((c) => c.metadata.name).join(',')}
-        </div>
-      ))}
       {agents.flatMap((group) =>
         group.conversations.map((conversation) => (
           <div key={conversation.metadata.name}>
@@ -216,16 +209,6 @@ vi.mock('@/components/acp/sidebar', () => ({
           </div>
         )),
       )}
-      {agents.map((group) => (
-        <button
-          key={`new-${group.spritz.metadata.name}`}
-          type="button"
-          data-testid={`new-conv-${group.spritz.metadata.name}`}
-          onClick={() => onNewConversation(group.spritz.metadata.name)}
-        >
-          New {group.spritz.metadata.name}
-        </button>
-      ))}
       <div data-testid="selected-conversation">{selectedConversationId || ''}</div>
     </div>
   ),
@@ -1511,137 +1494,5 @@ describe('ChatPage instance ordering', () => {
     // (regression test: previously fetchAgents would re-run with stale URL params
     // and reset selectedConversation back to the old one)
     expect(screen.getByTestId('selected-conversation').textContent).toBe('conv-existing');
-  });
-
-  it('creates new conversation for the focused instance and navigates to it', async () => {
-    const spritzAlpha = createSpritz({ metadata: { name: 'alpha-instance' } });
-    const spritzBeta = createSpritz({ metadata: { name: 'beta-instance' } });
-    const convAlpha = createConversation({
-      metadata: { name: 'conv-a' },
-      spec: { sessionId: 'sa', title: 'Alpha conv', spritzName: 'alpha-instance' },
-    });
-    const convBeta = createConversation({
-      metadata: { name: 'conv-b' },
-      spec: { sessionId: 'sb', title: 'Beta conv', spritzName: 'beta-instance' },
-    });
-    const newConv = createConversation({
-      metadata: { name: 'conv-new' },
-      spec: { sessionId: 'sn', title: 'New conv', spritzName: 'beta-instance' },
-    });
-
-    requestMock.mockImplementation((path: string, options?: { method?: string }) => {
-      if (path === '/spritzes') {
-        return Promise.resolve({ items: [spritzAlpha, spritzBeta] });
-      }
-      if (path === '/acp/conversations?spritz=alpha-instance') {
-        return Promise.resolve({ items: [convAlpha] });
-      }
-      if (path === '/acp/conversations?spritz=beta-instance') {
-        return Promise.resolve({ items: [convBeta] });
-      }
-      if (path === '/acp/conversations' && options?.method === 'POST') {
-        return Promise.resolve(newConv);
-      }
-      if (path.endsWith('/connect-ticket') && options?.method === 'POST') {
-        return Promise.resolve({
-          type: 'connect-ticket',
-          ticket: 'ticket-123',
-          expiresAt: '2026-03-30T12:34:56Z',
-          protocol: 'spritz-acp.v1',
-          connectPath: '/api/acp/conversations/conv-b/connect',
-        });
-      }
-      return Promise.resolve({});
-    });
-
-    renderChatPage('/c/beta-instance/conv-b');
-
-    await waitFor(() => {
-      expect(screen.getByTestId('selected-conversation').textContent).toBe('conv-b');
-    });
-
-    // Prevent ACP client start from resolving so the WebSocket lifecycle
-    // doesn't run — we only test state updates and navigation here.
-    setACPStartPending(true);
-
-    // Click "new conversation" for beta-instance (the focused instance)
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('new-conv-beta-instance'));
-    });
-
-    // Should navigate to the new conversation, not stay on the old one
-    await waitFor(() => {
-      expect(screen.getByTestId('selected-conversation').textContent).toBe('conv-new');
-    });
-
-    // URL should reflect the new conversation
-    expect(screen.getByTestId('location-path').textContent).toBe('/c/beta-instance/conv-new');
-
-    // The POST should have been called with the correct spritzName
-    const postCall = requestMock.mock.calls.find(
-      (args: unknown[]) => args[0] === '/acp/conversations' && (args[1] as Record<string, string> | undefined)?.method === 'POST',
-    );
-    expect(postCall).toBeTruthy();
-    expect(JSON.parse((postCall![1] as Record<string, string>).body)).toEqual({ spritzName: 'beta-instance' });
-  });
-
-  it('prepends new conversation at top of instance conversation list', async () => {
-    const spritz = createSpritz({ metadata: { name: 'covo' } });
-    const existingConv1 = createConversation({
-      metadata: { name: 'conv-old-1' },
-      spec: { sessionId: 's1', title: 'Old conv 1', spritzName: 'covo' },
-      status: { lastActivityAt: '2026-04-01T00:00:00Z' },
-    });
-    const existingConv2 = createConversation({
-      metadata: { name: 'conv-old-2' },
-      spec: { sessionId: 's2', title: 'Old conv 2', spritzName: 'covo' },
-      status: { lastActivityAt: '2026-04-02T00:00:00Z' },
-    });
-    const newConv = createConversation({
-      metadata: { name: 'conv-new' },
-      spec: { sessionId: 'sn', title: 'New conv', spritzName: 'covo' },
-    });
-
-    requestMock.mockImplementation((path: string, options?: { method?: string }) => {
-      if (path === '/spritzes') {
-        return Promise.resolve({ items: [spritz] });
-      }
-      if (path === '/acp/conversations?spritz=covo') {
-        return Promise.resolve({ items: [existingConv2, existingConv1] });
-      }
-      if (path === '/acp/conversations' && options?.method === 'POST') {
-        return Promise.resolve(newConv);
-      }
-      if (path.endsWith('/connect-ticket') && options?.method === 'POST') {
-        return Promise.resolve({
-          type: 'connect-ticket',
-          ticket: 'ticket-123',
-          expiresAt: '2026-03-30T12:34:56Z',
-          protocol: 'spritz-acp.v1',
-          connectPath: '/api/acp/conversations/conv-old-2/connect',
-        });
-      }
-      return Promise.resolve({});
-    });
-
-    renderChatPage('/c/covo/conv-old-2');
-
-    await waitFor(() => {
-      expect(screen.getByTestId('selected-conversation').textContent).toBe('conv-old-2');
-    });
-
-    // Prevent ACP client start from resolving for the new conversation
-    setACPStartPending(true);
-
-    // Create a new conversation
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('new-conv-covo'));
-    });
-
-    // New conversation should be at the top of the list (prepended)
-    await waitFor(() => {
-      const convOrder = screen.getByTestId('conv-order-covo').textContent;
-      expect(convOrder).toMatch(/^conv-new,/);
-    });
   });
 });
