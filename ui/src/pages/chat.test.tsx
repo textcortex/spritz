@@ -1542,6 +1542,9 @@ describe('ChatPage instance ordering', () => {
       if (path === '/acp/conversations' && options?.method === 'POST') {
         return Promise.resolve(newConv);
       }
+      if (path.endsWith('/bootstrap') && options?.method === 'POST') {
+        return Promise.resolve({ effectiveSessionId: 'sess-bootstrap' });
+      }
       if (path.endsWith('/connect-ticket') && options?.method === 'POST') {
         return Promise.resolve({
           type: 'connect-ticket',
@@ -1607,6 +1610,9 @@ describe('ChatPage instance ordering', () => {
       }
       if (path === '/acp/conversations' && options?.method === 'POST') {
         return Promise.resolve(newConv);
+      }
+      if (path.endsWith('/bootstrap') && options?.method === 'POST') {
+        return Promise.resolve({ effectiveSessionId: 'sess-bootstrap' });
       }
       if (path.endsWith('/connect-ticket') && options?.method === 'POST') {
         return Promise.resolve({
