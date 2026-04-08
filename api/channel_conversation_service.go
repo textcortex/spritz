@@ -406,6 +406,57 @@ func (s *server) findChannelConversation(c echo.Context, namespace string, sprit
 	if baseRouteMatch != nil {
 		return baseRouteMatch, true, nil
 	}
+
+	legacyList := &spritzv1.SpritzConversationList{}
+	if err := s.client.List(
+		c.Request().Context(),
+		legacyList,
+		client.InNamespace(namespace),
+		client.MatchingLabels{
+			acpConversationLabelKey:       acpConversationLabelValue,
+			acpConversationOwnerLabelKey:  ownerLabelValue(spritz.Spec.Owner.ID),
+			acpConversationSpritzLabelKey: spritz.Name,
+		},
+	); err != nil {
+		return nil, false, err
+	}
+	var legacyMatch *spritzv1.SpritzConversation
+	for i := range legacyList.Items {
+		item := &legacyList.Items[i]
+		if strings.TrimSpace(item.Labels[channelConversationBaseRouteLabelKey]) != "" {
+			continue
+		}
+		if !channelConversationMatchesBaseIdentity(item, identity) {
+			continue
+		}
+		if channelConversationHasAnyExternalConversationID(item, matchExternalConversationIDs) {
+			if match != nil && item.Name == match.Name {
+				continue
+			}
+			if match != nil {
+				return nil, true, echo.NewHTTPError(http.StatusConflict, "channel conversation is ambiguous")
+			}
+			match = item.DeepCopy()
+			continue
+		}
+
+		// Some pre-cutover conversations predate the base-route label entirely.
+		// Reuse that lone legacy match instead of forking a new channel-scoped
+		// conversation on the first post-deploy top-level message.
+		if legacyMatch != nil && item.Name == legacyMatch.Name {
+			continue
+		}
+		if legacyMatch != nil {
+			return nil, true, echo.NewHTTPError(http.StatusConflict, "channel conversation is ambiguous")
+		}
+		legacyMatch = item.DeepCopy()
+	}
+	if match != nil {
+		return match, true, nil
+	}
+	if legacyMatch != nil {
+		return legacyMatch, true, nil
+	}
 	return nil, false, nil
 }
 
