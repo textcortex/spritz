@@ -168,6 +168,74 @@ describe('Sidebar', () => {
     expect(agentHeaders[2]?.getAttribute('aria-label')).toBe('zulu conversations');
   });
 
+  it('calls onNewConversation with focused instance name, not first alphabetical', async () => {
+    const onNewConversation = vi.fn();
+    const { default: userEvent } = await import('@testing-library/user-event');
+
+    renderWithProviders(
+      <SidebarWithFocus
+        agents={[
+          {
+            spritz: createSpritz('alpha'),
+            conversations: [createConversation('alpha-conv', 'Alpha conversation', 'alpha')],
+          },
+          {
+            spritz: createSpritz('beta'),
+            conversations: [createConversation('beta-conv', 'Beta conversation', 'beta')],
+          },
+        ]}
+        selectedConversationId="beta-conv"
+        onSelectConversation={vi.fn()}
+        onNewConversation={onNewConversation}
+        collapsed={false}
+        onToggleCollapse={vi.fn()}
+        mobileOpen={false}
+        onCloseMobile={vi.fn()}
+        focusedSpritzName="beta"
+      />,
+    );
+
+    // Click the top-level "New chat" button (pencil icon)
+    const newChatButton = screen.getByRole('button', { name: 'New chat' });
+    await userEvent.click(newChatButton);
+
+    // Should create for focused instance "beta", not alphabetically first "alpha"
+    expect(onNewConversation).toHaveBeenCalledWith('beta');
+  });
+
+  it('falls back to first agent for New chat when no instance is focused', async () => {
+    const onNewConversation = vi.fn();
+    const { default: userEvent } = await import('@testing-library/user-event');
+
+    renderWithProviders(
+      <Sidebar
+        agents={[
+          {
+            spritz: createSpritz('alpha'),
+            conversations: [createConversation('alpha-conv', 'Alpha conversation', 'alpha')],
+          },
+          {
+            spritz: createSpritz('beta'),
+            conversations: [createConversation('beta-conv', 'Beta conversation', 'beta')],
+          },
+        ]}
+        selectedConversationId={null}
+        onSelectConversation={vi.fn()}
+        onNewConversation={onNewConversation}
+        collapsed={false}
+        onToggleCollapse={vi.fn()}
+        mobileOpen={false}
+        onCloseMobile={vi.fn()}
+      />,
+    );
+
+    const newChatButton = screen.getByRole('button', { name: 'New chat' });
+    await userEvent.click(newChatButton);
+
+    // No focused instance, so falls back to first alphabetical ("alpha")
+    expect(onNewConversation).toHaveBeenCalledWith('alpha');
+  });
+
   it('shows a selected optimistic provisioning conversation for a focused route before the agent is discoverable', () => {
     renderWithProviders(
       <SidebarWithFocus
