@@ -318,30 +318,37 @@ func (s *server) findChannelConversation(c echo.Context, namespace string, sprit
 		[]string{identity.externalConversationID},
 		lookupExternalConversationIDs...,
 	)
-	exactList := &spritzv1.SpritzConversationList{}
-	if err := s.client.List(
-		c.Request().Context(),
-		exactList,
-		client.InNamespace(namespace),
-		client.MatchingLabels{
-			acpConversationLabelKey:          acpConversationLabelValue,
-			acpConversationOwnerLabelKey:     ownerLabelValue(spritz.Spec.Owner.ID),
-			acpConversationSpritzLabelKey:    spritz.Name,
-			channelConversationRouteLabelKey: channelConversationRouteHash(identity, spritz.Spec.Owner.ID, spritz.Name),
-		},
-	); err != nil {
-		return nil, false, err
-	}
 	var match *spritzv1.SpritzConversation
-	for i := range exactList.Items {
-		item := &exactList.Items[i]
-		if !channelConversationMatchesBaseIdentity(item, identity) || !channelConversationHasAnyExternalConversationID(item, matchExternalConversationIDs) {
-			continue
+	for _, externalConversationID := range matchExternalConversationIDs {
+		candidateIdentity := identity
+		candidateIdentity.externalConversationID = externalConversationID
+		exactList := &spritzv1.SpritzConversationList{}
+		if err := s.client.List(
+			c.Request().Context(),
+			exactList,
+			client.InNamespace(namespace),
+			client.MatchingLabels{
+				acpConversationLabelKey:          acpConversationLabelValue,
+				acpConversationOwnerLabelKey:     ownerLabelValue(spritz.Spec.Owner.ID),
+				acpConversationSpritzLabelKey:    spritz.Name,
+				channelConversationRouteLabelKey: channelConversationRouteHash(candidateIdentity, spritz.Spec.Owner.ID, spritz.Name),
+			},
+		); err != nil {
+			return nil, false, err
 		}
-		if match != nil {
-			return nil, true, echo.NewHTTPError(http.StatusConflict, "channel conversation is ambiguous")
+		for i := range exactList.Items {
+			item := &exactList.Items[i]
+			if !channelConversationMatchesBaseIdentity(item, identity) || !channelConversationHasAnyExternalConversationID(item, matchExternalConversationIDs) {
+				continue
+			}
+			if match != nil && item.Name == match.Name {
+				continue
+			}
+			if match != nil {
+				return nil, true, echo.NewHTTPError(http.StatusConflict, "channel conversation is ambiguous")
+			}
+			match = item.DeepCopy()
 		}
-		match = item.DeepCopy()
 	}
 
 	baseList := &spritzv1.SpritzConversationList{}

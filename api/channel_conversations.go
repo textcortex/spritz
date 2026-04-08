@@ -99,7 +99,7 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
 	if found {
-		changed := false
+		changed := ensureChannelConversationBaseRouteLabel(conversation, identity, spritz)
 		if !channelConversationHasExternalConversationID(conversation, identity.externalConversationID) {
 			aliasChanged, err := appendChannelConversationAlias(conversation, identity.externalConversationID)
 			if err != nil {
