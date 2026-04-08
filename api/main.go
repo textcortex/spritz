@@ -44,6 +44,7 @@ type server struct {
 	routeModel                  spritzv1.SharedHostRouteModel
 	instanceProxy               instanceProxyConfig
 	terminal                    terminalConfig
+	portForward                 portForwardConfig
 	sshGateway                  sshGatewayConfig
 	sshDefaults                 sshDefaults
 	sshMintLimiter              *sshMintLimiter
@@ -64,7 +65,7 @@ type server struct {
 	nameGeneratorFactory        func(context.Context, string, string) (func() string, error)
 	activityRecorder            func(context.Context, string, string, time.Time) error
 	findRunningPodFunc          func(context.Context, string, string, string) (*corev1.Pod, error)
-	openSSHPortForwardFunc      func(context.Context, *corev1.Pod, uint32) (net.Conn, io.Closer, error)
+	openPodPortForwardFunc      func(context.Context, *corev1.Pod, uint32) (net.Conn, io.Closer, error)
 }
 
 func main() {
@@ -114,6 +115,7 @@ func main() {
 	routeModel := spritzRouteModelFromEnv()
 	instanceProxy := newInstanceProxyConfig()
 	terminal := newTerminalConfig()
+	portForward := newPortForwardConfig()
 	acp := newACPConfig()
 	extensions, err := newExtensionRegistry()
 	if err != nil {
@@ -185,6 +187,7 @@ func main() {
 		routeModel:        routeModel,
 		instanceProxy:     instanceProxy,
 		terminal:          terminal,
+		portForward:       portForward,
 		sshGateway:        sshGateway,
 		sshDefaults:       sshDefaults,
 		sshMintLimiter:    sshMintLimiter,
@@ -300,6 +303,9 @@ func (s *server) registerRoutes(e *echo.Echo) {
 	group.GET("/acp/conversations/:id/connect", s.openACPConversationConnection)
 	if s.terminal.enabled {
 		group.GET("/spritzes/:name/terminal", s.openTerminal)
+	}
+	if s.portForward.enabled {
+		group.GET("/spritzes/:name/port-forward", s.openPortForward)
 	}
 	if s.instanceProxy.enabled {
 		rootSecured := e.Group("", s.authMiddleware())

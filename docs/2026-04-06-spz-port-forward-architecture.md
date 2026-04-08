@@ -2,7 +2,7 @@
 date: 2026-04-06
 author: Onur Solmaz <onur@textcortex.com>
 title: spz Port-Forward Architecture
-tags: [spritz, spz, cli, ssh, port-forwarding, architecture]
+tags: [spritz, spz, cli, ssh, websocket, https, port-forwarding, architecture]
 ---
 
 ## Overview
@@ -20,15 +20,22 @@ spz port-forward <instance> --local <port> --remote <port>
 This should be the canonical Spritz CLI shape for forwarding a local loopback
 port to a private port inside one Spritz instance.
 
-It should be implemented as an instance-scoped control-plane feature, not as a
-Kubernetes workflow, not as a browser preview product, and not as a
-deployment-specific convenience alias.
+It should be implemented as an instance-scoped control-plane feature. The
+preferred public transport should be the authenticated Spritz control plane
+over HTTPS/WebSocket on port `443`, not raw public SSH on port `22`.
+
+It should not be framed as a Kubernetes workflow, not as a browser preview
+product, and not as a deployment-specific convenience alias.
 
 ## TL;DR
 
 - Spritz core should add `spz port-forward`.
-- The command should be explicit and transport-agnostic in meaning, while the
-  first implementation should reuse the existing SSH credential minting path.
+- The command should be explicit and transport-agnostic in meaning.
+- The preferred public transport should be authenticated HTTPS/WebSocket over
+  the existing Spritz control plane on port `443`.
+- The current SSH-backed implementation may remain as a fallback, but SSH
+  should be treated as deprecated for default public use unless somebody
+  explicitly asks for it.
 - The command should default to:
   - local bind host `127.0.0.1`
   - remote target host `127.0.0.1`
@@ -97,8 +104,12 @@ This should be the core primitive. It should mean:
 - forward to one private remote port inside one named instance
 - keep the tunnel alive until interrupted
 
-The first implementation should be built on the existing SSH certificate mint
-flow already used by `spz ssh`.
+The public-facing design should prefer an authenticated control-plane tunnel
+over HTTPS/WebSocket on `443`.
+
+The existing SSH certificate mint flow may still be used as an implementation
+fallback where raw TCP is available or explicitly desired, but Spritz should
+not require public raw SSH exposure as the default internet-facing transport.
 
 The product contract, however, should be described as "instance port
 forwarding", not as "raw SSH with custom flags". That distinction matters:
@@ -106,6 +117,26 @@ forwarding", not as "raw SSH with custom flags". That distinction matters:
 - users reason about what they want to do, not the transport internals
 - the control plane remains the owner of authorization and target resolution
 - future transports may change without renaming the user-facing intent
+
+## Preferred Public Transport
+
+The ideal Spritz system should not require a public inbound instance port at
+all.
+
+For public usage, `spz port-forward` should terminate on the existing Spritz
+control plane host over HTTPS/WebSocket on `443`, and the control plane should
+perform the pod-scoped forwarding inside the cluster.
+
+This is the preferred architecture because it:
+
+- works in environments where raw public TCP may be restricted
+- keeps auth, policy, rate limiting, and audit under the control plane
+- avoids depending on cloud-specific behavior for arbitrary inbound TCP
+- gives one clean public access surface instead of separate web and SSH entry
+  points
+
+SSH may still exist as a transport, but it should not be the primary public
+story.
 
 ## Why `spz port-forward` Instead Of `spz preview`
 
@@ -266,20 +297,27 @@ Press Ctrl+C to stop.
 
 ## Relationship To `spz ssh`
 
-`spz ssh` should remain the raw shell-access command.
+`spz ssh` should remain the raw shell-access command when explicitly needed.
 
 `spz port-forward` should be a sibling command with a narrower purpose:
 
 - `spz ssh`: interactive shell access
 - `spz port-forward`: local access to one private instance port
 
-The implementation may share most of the credential plumbing.
+The implementation may still share credential plumbing, but the public default
+for `spz port-forward` should not be "SSH unless proven otherwise".
 
-That is good:
+That split is still good:
 
 - less duplicated auth logic
-- one consistent trust and host-verification path
 - one clear control-plane contract for instance access
+
+For now:
+
+- `spz ssh` remains available
+- SSH-backed `spz port-forward` may remain available
+- SSH should be considered deprecated as the default public transport unless a
+  deployment or operator explicitly asks for it
 
 ## Downstream Wrappers
 
@@ -297,6 +335,8 @@ contract.
 The holy grail shape is:
 
 - Spritz core provides `spz port-forward`
+- Spritz routes public interactive access through one authenticated control
+  plane on `443`
 - downstream deployments compose deployment-specific UX on top of it
 
 That keeps Spritz portable while still enabling polished local workflows where
@@ -307,7 +347,7 @@ needed.
 ### Phase 1: Core CLI Primitive
 
 - add `spz port-forward`
-- reuse the existing SSH credential minting path
+- keep the user-facing contract transport-agnostic
 - support one local forward per command invocation
 - keep both local and remote hosts pinned to loopback
 
@@ -318,11 +358,35 @@ Acceptance criteria:
 - the command requires no Kubernetes credentials
 - the command targets one named instance, not a pod
 
-### Phase 2: CLI Help And Tests
+### Phase 2: Public Control-Plane Transport
+
+- implement forwarding over the authenticated Spritz control plane on
+  HTTPS/WebSocket
+- make that path the preferred public transport
+- avoid requiring any public raw TCP listener on the instance gateway
+
+Acceptance criteria:
+
+- the standard public path works over `443`
+- no public per-instance or per-feature raw TCP exposure is required
+- authorization remains owned by the Spritz control plane
+
+### Phase 3: SSH Fallback
+
+- keep the SSH-backed transport available for private networks, operators, or
+  deployments that explicitly want it
+- document that SSH is a fallback transport, not the preferred public one
+
+Acceptance criteria:
+
+- SSH remains available when explicitly requested
+- SSH is no longer the default public transport assumption in docs or UX
+
+### Phase 4: CLI Help And Tests
 
 - document the new command in CLI help
 - add help tests for the new usage line
-- add command tests for printed SSH execution shape or equivalent command
+- add command tests for printed transport execution shape or equivalent command
   plumbing
 
 Acceptance criteria:
@@ -330,7 +394,7 @@ Acceptance criteria:
 - the new command is discoverable through `spz --help`
 - printed guidance stays generic and deployment-agnostic
 
-### Phase 3: Downstream Composition
+### Phase 5: Downstream Composition
 
 - allow downstreams to add wrappers without changing the core primitive
 - document that application auth remains outside Spritz forwarding
@@ -346,10 +410,13 @@ This architecture is successful when all of the following are true:
 
 - the standard path for instance port access is `spz port-forward`, not raw
   `ssh -L`
+- the preferred public path runs through the authenticated Spritz control
+  plane on `443`
 - the caller does not need Kubernetes credentials
 - the command works by instance identity rather than pod identity
 - the default bind scope is local loopback only
 - the application behind the forwarded port can keep its own auth model
+- SSH remains optional rather than mandatory for public use
 - downstream wrappers can exist without forcing Spritz core to become
   app-specific
 

@@ -53,6 +53,6 @@ test('top-level help lists port-forward command', async () => {
   assert.equal(result.code, 0, result.stderr);
   assert.match(
     result.stdout,
-    /spritz port-forward <name> \[--namespace <ns>\] --local <port> --remote <port> \[--print\]/,
+    /spritz port-forward <name> \[--namespace <ns>\] --local <port> --remote <port> \[--transport <ws\|ssh>\] \[--print\]/,
   );
 });

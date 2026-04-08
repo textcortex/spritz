@@ -145,7 +145,7 @@ func TestSSHGatewayPortForwardProxiesToInjectedUpstream(t *testing.T) {
 				},
 			}, nil
 		},
-		openSSHPortForwardFunc: func(ctx context.Context, pod *corev1.Pod, remotePort uint32) (net.Conn, io.Closer, error) {
+		openPodPortForwardFunc: func(ctx context.Context, pod *corev1.Pod, remotePort uint32) (net.Conn, io.Closer, error) {
 			forwardedPort.Store(int32(remotePort))
 			conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", echoListener.Addr().String())
 			if err != nil {

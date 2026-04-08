@@ -201,7 +201,7 @@ func (s *server) handleSSHPortForward(srv *sshserver.Server, conn *gossh.ServerC
 	}
 	s.ensureSSHActivityLoop(ctx, spritz)
 
-	upstream, cleanup, err := s.openSSHPortForward(ctx, pod, request.DestPort)
+	upstream, cleanup, err := s.openPodPortForward(ctx, pod, request.DestPort)
 	if err != nil {
 		log.Printf("spritz ssh: forward open failed name=%s namespace=%s port=%d err=%v", name, namespace, request.DestPort, err)
 		newChan.Reject(gossh.ConnectionFailed, "port forward unavailable")
@@ -277,9 +277,9 @@ func (s *server) findSSHGatewayPod(ctx context.Context, namespace, name, contain
 	return s.findRunningPod(ctx, namespace, name, container)
 }
 
-func (s *server) openSSHPortForward(ctx context.Context, pod *corev1.Pod, remotePort uint32) (net.Conn, io.Closer, error) {
-	if s.openSSHPortForwardFunc != nil {
-		return s.openSSHPortForwardFunc(ctx, pod, remotePort)
+func (s *server) openPodPortForward(ctx context.Context, pod *corev1.Pod, remotePort uint32) (net.Conn, io.Closer, error) {
+	if s.openPodPortForwardFunc != nil {
+		return s.openPodPortForwardFunc(ctx, pod, remotePort)
 	}
 	if s.clientset == nil || s.restConfig == nil {
 		return nil, nil, errors.New("ssh port forwarding is not configured")
@@ -364,53 +364,11 @@ func (s *server) openSSHPortForward(ctx context.Context, pod *corev1.Pod, remote
 }
 
 func sshActivityRefreshInterval(spec spritzv1.SpritzSpec, fallback time.Duration) time.Duration {
-	interval := fallback
-	if interval <= 0 {
-		interval = time.Minute
-	}
-	if raw := strings.TrimSpace(spec.IdleTTL); raw != "" {
-		if idleTTL, err := time.ParseDuration(raw); err == nil && idleTTL > 0 {
-			candidate := idleTTL / 2
-			if candidate <= 0 {
-				candidate = idleTTL
-			}
-			if candidate > 0 && candidate < interval {
-				interval = candidate
-			}
-		}
-	}
-	if interval <= 0 {
-		return time.Minute
-	}
-	return interval
+	return spritzActivityRefreshInterval(spec, fallback)
 }
 
 func (s *server) startSSHActivityLoop(ctx context.Context, spritz *spritzv1.Spritz) {
-	if s == nil || spritz == nil {
-		return
-	}
-	record := func(when time.Time) {
-		refreshCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := s.recordSpritzActivity(refreshCtx, spritz.Namespace, spritz.Name, when); err != nil {
-			log.Printf("spritz ssh: failed to refresh activity name=%s namespace=%s err=%v", spritz.Name, spritz.Namespace, err)
-		}
-	}
-	record(time.Now())
-
-	interval := sshActivityRefreshInterval(spritz.Spec, s.sshGateway.activityRefresh)
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case tick := <-ticker.C:
-				record(tick)
-			}
-		}
-	}()
+	s.startSpritzActivityLoop(ctx, spritz, s.sshGateway.activityRefresh, "ssh")
 }
 
 func (s *server) streamSSH(ctx context.Context, pod *corev1.Pod, sess sshserver.Session, hasPty bool, sizeQueue *terminalSizeQueue) error {
