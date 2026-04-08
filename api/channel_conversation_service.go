@@ -27,19 +27,20 @@ const (
 )
 
 type channelConversationUpsertRequest struct {
-	RequestID              string `json:"requestId,omitempty"`
-	Namespace              string `json:"namespace,omitempty"`
-	ConversationID         string `json:"conversationId,omitempty"`
-	PrincipalID            string `json:"principalId"`
-	InstanceID             string `json:"instanceId"`
-	OwnerID                string `json:"ownerId"`
-	Provider               string `json:"provider"`
-	ExternalScopeType      string `json:"externalScopeType"`
-	ExternalTenantID       string `json:"externalTenantId"`
-	ExternalChannelID      string `json:"externalChannelId"`
-	ExternalConversationID string `json:"externalConversationId"`
-	Title                  string `json:"title,omitempty"`
-	CWD                    string `json:"cwd,omitempty"`
+	RequestID                     string   `json:"requestId,omitempty"`
+	Namespace                     string   `json:"namespace,omitempty"`
+	ConversationID                string   `json:"conversationId,omitempty"`
+	PrincipalID                   string   `json:"principalId"`
+	InstanceID                    string   `json:"instanceId"`
+	OwnerID                       string   `json:"ownerId"`
+	Provider                      string   `json:"provider"`
+	ExternalScopeType             string   `json:"externalScopeType"`
+	ExternalTenantID              string   `json:"externalTenantId"`
+	ExternalChannelID             string   `json:"externalChannelId"`
+	ExternalConversationID        string   `json:"externalConversationId"`
+	LookupExternalConversationIDs []string `json:"lookupExternalConversationIds,omitempty"`
+	Title                         string   `json:"title,omitempty"`
+	CWD                           string   `json:"cwd,omitempty"`
 }
 
 type normalizedChannelConversationIdentity struct {
@@ -93,6 +94,10 @@ func normalizeChannelConversationUpsertRequest(body channelConversationUpsertReq
 	if body.ExternalConversationID == "" {
 		return channelConversationUpsertRequest{}, normalizedChannelConversationIdentity{}, echo.NewHTTPError(http.StatusBadRequest, "externalConversationId is required")
 	}
+	body.LookupExternalConversationIDs = normalizeLookupExternalConversationIDs(
+		body.ExternalConversationID,
+		body.LookupExternalConversationIDs,
+	)
 
 	return body, normalizedChannelConversationIdentity{
 		principalID:            body.PrincipalID,
@@ -102,6 +107,30 @@ func normalizeChannelConversationUpsertRequest(body channelConversationUpsertReq
 		externalChannelID:      body.ExternalChannelID,
 		externalConversationID: body.ExternalConversationID,
 	}, nil
+}
+
+func normalizeLookupExternalConversationIDs(primaryID string, lookupIDs []string) []string {
+	primaryID = strings.TrimSpace(primaryID)
+	if len(lookupIDs) == 0 {
+		return nil
+	}
+	normalized := make([]string, 0, len(lookupIDs))
+	seen := map[string]struct{}{}
+	for _, lookupID := range lookupIDs {
+		lookupID = strings.TrimSpace(lookupID)
+		if lookupID == "" || lookupID == primaryID {
+			continue
+		}
+		if _, ok := seen[lookupID]; ok {
+			continue
+		}
+		seen[lookupID] = struct{}{}
+		normalized = append(normalized, lookupID)
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
 }
 
 func channelConversationRouteHash(identity normalizedChannelConversationIdentity, ownerID, instanceID string) string {
@@ -211,6 +240,15 @@ func channelConversationHasExternalConversationID(conversation *spritzv1.SpritzC
 	return false
 }
 
+func channelConversationHasAnyExternalConversationID(conversation *spritzv1.SpritzConversation, externalConversationIDs []string) bool {
+	for _, externalConversationID := range externalConversationIDs {
+		if channelConversationHasExternalConversationID(conversation, externalConversationID) {
+			return true
+		}
+	}
+	return false
+}
+
 func channelConversationMatchesIdentity(conversation *spritzv1.SpritzConversation, identity normalizedChannelConversationIdentity) bool {
 	return channelConversationMatchesBaseIdentity(conversation, identity) &&
 		channelConversationHasExternalConversationID(conversation, identity.externalConversationID)
@@ -275,31 +313,42 @@ func (s *server) getAdminScopedACPReadySpritz(c echo.Context, namespace, instanc
 	return spritz, nil
 }
 
-func (s *server) findChannelConversation(c echo.Context, namespace string, spritz *spritzv1.Spritz, identity normalizedChannelConversationIdentity) (*spritzv1.SpritzConversation, bool, error) {
-	exactList := &spritzv1.SpritzConversationList{}
-	if err := s.client.List(
-		c.Request().Context(),
-		exactList,
-		client.InNamespace(namespace),
-		client.MatchingLabels{
-			acpConversationLabelKey:          acpConversationLabelValue,
-			acpConversationOwnerLabelKey:     ownerLabelValue(spritz.Spec.Owner.ID),
-			acpConversationSpritzLabelKey:    spritz.Name,
-			channelConversationRouteLabelKey: channelConversationRouteHash(identity, spritz.Spec.Owner.ID, spritz.Name),
-		},
-	); err != nil {
-		return nil, false, err
-	}
+func (s *server) findChannelConversation(c echo.Context, namespace string, spritz *spritzv1.Spritz, identity normalizedChannelConversationIdentity, lookupExternalConversationIDs []string) (*spritzv1.SpritzConversation, bool, error) {
+	matchExternalConversationIDs := append(
+		[]string{identity.externalConversationID},
+		lookupExternalConversationIDs...,
+	)
 	var match *spritzv1.SpritzConversation
-	for i := range exactList.Items {
-		item := &exactList.Items[i]
-		if !channelConversationMatchesIdentity(item, identity) {
-			continue
+	for _, externalConversationID := range matchExternalConversationIDs {
+		candidateIdentity := identity
+		candidateIdentity.externalConversationID = externalConversationID
+		exactList := &spritzv1.SpritzConversationList{}
+		if err := s.client.List(
+			c.Request().Context(),
+			exactList,
+			client.InNamespace(namespace),
+			client.MatchingLabels{
+				acpConversationLabelKey:          acpConversationLabelValue,
+				acpConversationOwnerLabelKey:     ownerLabelValue(spritz.Spec.Owner.ID),
+				acpConversationSpritzLabelKey:    spritz.Name,
+				channelConversationRouteLabelKey: channelConversationRouteHash(candidateIdentity, spritz.Spec.Owner.ID, spritz.Name),
+			},
+		); err != nil {
+			return nil, false, err
 		}
-		if match != nil {
-			return nil, true, echo.NewHTTPError(http.StatusConflict, "channel conversation is ambiguous")
+		for i := range exactList.Items {
+			item := &exactList.Items[i]
+			if !channelConversationMatchesBaseIdentity(item, identity) || !channelConversationHasAnyExternalConversationID(item, matchExternalConversationIDs) {
+				continue
+			}
+			if match != nil && item.Name == match.Name {
+				continue
+			}
+			if match != nil {
+				return nil, true, echo.NewHTTPError(http.StatusConflict, "channel conversation is ambiguous")
+			}
+			match = item.DeepCopy()
 		}
-		match = item.DeepCopy()
 	}
 
 	baseList := &spritzv1.SpritzConversationList{}
@@ -320,23 +369,92 @@ func (s *server) findChannelConversation(c echo.Context, namespace string, sprit
 	); err != nil {
 		return nil, false, err
 	}
+	var fallbackMatch *spritzv1.SpritzConversation
+	fallbackMatchCount := 0
 	for i := range baseList.Items {
 		item := &baseList.Items[i]
-		if !channelConversationMatchesIdentity(item, identity) {
+		if !channelConversationMatchesBaseIdentity(item, identity) {
 			continue
 		}
-		if match != nil && item.Name == match.Name {
+		if channelConversationHasAnyExternalConversationID(item, matchExternalConversationIDs) {
+			if match != nil && item.Name == match.Name {
+				continue
+			}
+			if match != nil {
+				return nil, true, echo.NewHTTPError(http.StatusConflict, "channel conversation is ambiguous")
+			}
+			match = item.DeepCopy()
 			continue
 		}
+
+		// During the Slack cutover, a previously used channel may only have an
+		// older per-thread/per-message identity. Reuse that lone base-route match
+		// instead of forking a fresh channel-scoped conversation.
 		if match != nil {
-			return nil, true, echo.NewHTTPError(http.StatusConflict, "channel conversation is ambiguous")
+			continue
 		}
-		match = item.DeepCopy()
+		if fallbackMatch != nil && item.Name == fallbackMatch.Name {
+			continue
+		}
+		if fallbackMatch == nil {
+			fallbackMatch = item.DeepCopy()
+		}
+		fallbackMatchCount++
 	}
-	if match == nil {
-		return nil, false, nil
+	if match != nil {
+		return match, true, nil
 	}
-	return match, true, nil
+
+	legacyList := &spritzv1.SpritzConversationList{}
+	if err := s.client.List(
+		c.Request().Context(),
+		legacyList,
+		client.InNamespace(namespace),
+		client.MatchingLabels{
+			acpConversationLabelKey:       acpConversationLabelValue,
+			acpConversationOwnerLabelKey:  ownerLabelValue(spritz.Spec.Owner.ID),
+			acpConversationSpritzLabelKey: spritz.Name,
+		},
+	); err != nil {
+		return nil, false, err
+	}
+	for i := range legacyList.Items {
+		item := &legacyList.Items[i]
+		if strings.TrimSpace(item.Labels[channelConversationBaseRouteLabelKey]) != "" {
+			continue
+		}
+		if !channelConversationMatchesBaseIdentity(item, identity) {
+			continue
+		}
+		if channelConversationHasAnyExternalConversationID(item, matchExternalConversationIDs) {
+			if match != nil && item.Name == match.Name {
+				continue
+			}
+			if match != nil {
+				return nil, true, echo.NewHTTPError(http.StatusConflict, "channel conversation is ambiguous")
+			}
+			match = item.DeepCopy()
+			continue
+		}
+
+		// Some pre-cutover conversations predate the base-route label entirely.
+		// Reuse that lone legacy match instead of forking a new channel-scoped
+		// conversation on the first post-deploy top-level message.
+		if fallbackMatch != nil && item.Name == fallbackMatch.Name {
+			continue
+		}
+		if fallbackMatch == nil {
+			fallbackMatch = item.DeepCopy()
+		}
+		fallbackMatchCount++
+	}
+	if match != nil {
+		return match, true, nil
+	}
+	if fallbackMatchCount == 1 {
+		return fallbackMatch, true, nil
+	}
+	return nil, false, nil
 }
 
 func applyChannelConversationMetadata(conversation *spritzv1.SpritzConversation, identity normalizedChannelConversationIdentity, requestID string, spritz *spritzv1.Spritz) {

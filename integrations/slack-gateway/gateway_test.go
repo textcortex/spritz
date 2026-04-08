@@ -678,8 +678,8 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 			}
 			channelConversationCall.Lock()
 			defer channelConversationCall.Unlock()
-			if len(channelConversationCall.authHeaders) != 2 {
-				t.Fatalf("expected root upsert plus alias upsert, got %#v", channelConversationCall.authHeaders)
+			if len(channelConversationCall.authHeaders) != 1 {
+				t.Fatalf("expected only the root upsert, got %#v", channelConversationCall.authHeaders)
 			}
 			for _, authHeader := range channelConversationCall.authHeaders {
 				if authHeader != "Bearer owner-token" {
@@ -689,14 +689,12 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 			if channelConversationCall.payloads[0]["principalId"] != "shared-slack-gateway" {
 				t.Fatalf("expected shared gateway principal in first channel conversation payload, got %#v", channelConversationCall.payloads[0]["principalId"])
 			}
-			if channelConversationCall.payloads[0]["externalConversationId"] != "1711387375.000100" {
-				t.Fatalf("expected root-message conversation identity, got %#v", channelConversationCall.payloads[0]["externalConversationId"])
+			if channelConversationCall.payloads[0]["externalConversationId"] != "C_1" {
+				t.Fatalf("expected channel-scoped conversation identity, got %#v", channelConversationCall.payloads[0]["externalConversationId"])
 			}
-			if channelConversationCall.payloads[1]["conversationId"] != "conv-1" {
-				t.Fatalf("expected alias upsert to target the created conversation, got %#v", channelConversationCall.payloads[1]["conversationId"])
-			}
-			if channelConversationCall.payloads[1]["externalConversationId"] != "1711387376.000100" {
-				t.Fatalf("expected alias upsert to persist the bot reply ts, got %#v", channelConversationCall.payloads[1]["externalConversationId"])
+			lookupIDs, ok := channelConversationCall.payloads[0]["lookupExternalConversationIds"].([]any)
+			if !ok || len(lookupIDs) != 1 || fmt.Sprint(lookupIDs[0]) != "1711387375.000100" {
+				t.Fatalf("expected legacy conversation lookup id to be sent, got %#v", channelConversationCall.payloads[0]["lookupExternalConversationIds"])
 			}
 			promptPayload.Lock()
 			capturedPromptPayload := promptPayload.value
@@ -1441,6 +1439,7 @@ func TestUpsertChannelConversationUsesChannelForDirectMessages(t *testing.T) {
 		"T_workspace_1",
 		"",
 		"D_workspace_bot",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("upsert channel conversation failed: %v", err)
@@ -1532,8 +1531,8 @@ func TestBuildSlackPromptTextPrependsTrustedContext(t *testing.T) {
 	if payload["actor_user_id"] != "U_requester" {
 		t.Fatalf("expected actor metadata, got %#v", payload["actor_user_id"])
 	}
-	if payload["conversation_id"] != "1711387375.000100" {
-		t.Fatalf("expected top-level conversation identity, got %#v", payload["conversation_id"])
+	if payload["conversation_id"] != "C_channel_1" {
+		t.Fatalf("expected top-level channel conversation identity, got %#v", payload["conversation_id"])
 	}
 	if payload["direct_message"] != false {
 		t.Fatalf("expected non-DM metadata, got %#v", payload["direct_message"])
@@ -1618,6 +1617,9 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 	if slackReplyThreadTS(fallbackDM) != "" {
 		t.Fatalf("expected D-prefixed channels to reply inline")
 	}
+	if lookupIDs := slackLegacyConversationLookupIDs(fallbackDM); len(lookupIDs) != 0 {
+		t.Fatalf("expected D-prefixed channels to omit legacy lookup ids, got %#v", lookupIDs)
+	}
 
 	groupDM := slackEventInner{
 		Type:        "message",
@@ -1634,6 +1636,9 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 	if slackReplyThreadTS(groupDM) != "" {
 		t.Fatalf("expected mpim replies to stay inline")
 	}
+	if lookupIDs := slackLegacyConversationLookupIDs(groupDM); len(lookupIDs) != 0 {
+		t.Fatalf("expected mpim conversations to omit legacy lookup ids, got %#v", lookupIDs)
+	}
 
 	topLevelChannel := slackEventInner{
 		Type:        "app_mention",
@@ -1641,11 +1646,14 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 		ChannelType: "channel",
 		TS:          "1711387375.000100",
 	}
-	if slackExternalConversationID(topLevelChannel) != "1711387375.000100" {
-		t.Fatalf("expected top-level channel messages to key by root message ts")
+	if slackExternalConversationID(topLevelChannel) != "C_workspace_channel" {
+		t.Fatalf("expected top-level channel messages to key by channel id")
 	}
 	if slackReplyThreadTS(topLevelChannel) != "" {
 		t.Fatalf("expected top-level channel mentions to reply inline")
+	}
+	if lookupIDs := slackLegacyConversationLookupIDs(topLevelChannel); len(lookupIDs) != 1 || lookupIDs[0] != "1711387375.000100" {
+		t.Fatalf("expected top-level channel mentions to expose the legacy root-message id, got %#v", lookupIDs)
 	}
 
 	threadedChannel := slackEventInner{
@@ -1655,11 +1663,14 @@ func TestSlackDirectMessageHelpersReuseSharedDetection(t *testing.T) {
 		ThreadTS:    "1711387375.000100",
 		TS:          "1711387376.000100",
 	}
-	if slackExternalConversationID(threadedChannel) != "1711387375.000100" {
-		t.Fatalf("expected threaded channel messages to key by thread root ts")
+	if slackExternalConversationID(threadedChannel) != "C_workspace_channel" {
+		t.Fatalf("expected threaded channel messages to key by channel id")
 	}
 	if slackReplyThreadTS(threadedChannel) != "1711387375.000100" {
 		t.Fatalf("expected threaded channel mentions to reply in-thread")
+	}
+	if lookupIDs := slackLegacyConversationLookupIDs(threadedChannel); len(lookupIDs) != 1 || lookupIDs[0] != "1711387375.000100" {
+		t.Fatalf("expected threaded channel mentions to expose the legacy thread id, got %#v", lookupIDs)
 	}
 }
 
@@ -2055,7 +2066,7 @@ func TestProcessMessageEventPostsFallbackAfterPromptTimeout(t *testing.T) {
 	}
 }
 
-func TestProcessMessageEventPersistsReplyAliasAfterPromptTimeout(t *testing.T) {
+func TestProcessMessageEventDoesNotPersistReplyAliasAfterPromptTimeout(t *testing.T) {
 	var channelConversationCalls struct {
 		sync.Mutex
 		payloads []map[string]any
@@ -2215,14 +2226,8 @@ func TestProcessMessageEventPersistsReplyAliasAfterPromptTimeout(t *testing.T) {
 
 	channelConversationCalls.Lock()
 	defer channelConversationCalls.Unlock()
-	if len(channelConversationCalls.payloads) != 2 {
-		t.Fatalf("expected root upsert plus alias persistence, got %#v", channelConversationCalls.payloads)
-	}
-	if channelConversationCalls.payloads[1]["conversationId"] != "conv-1" {
-		t.Fatalf("expected alias persistence to target conv-1, got %#v", channelConversationCalls.payloads[1]["conversationId"])
-	}
-	if channelConversationCalls.payloads[1]["externalConversationId"] != "1711387376.000100" {
-		t.Fatalf("expected alias persistence to use the bot reply ts, got %#v", channelConversationCalls.payloads[1]["externalConversationId"])
+	if len(channelConversationCalls.payloads) != 1 {
+		t.Fatalf("expected only the root upsert, got %#v", channelConversationCalls.payloads)
 	}
 }
 
@@ -2626,8 +2631,8 @@ func TestProcessMessageEventRecoversAfterRuntimeDisappearsMidFlight(t *testing.T
 	if sessionExchangeCalls.Load() != 4 {
 		t.Fatalf("expected 4 session exchange attempts, got %d", sessionExchangeCalls.Load())
 	}
-	if upsertCalls.Load() != 4 {
-		t.Fatalf("expected two prompt retries plus alias persistence, got %d", upsertCalls.Load())
+	if upsertCalls.Load() != 3 {
+		t.Fatalf("expected only the root upserts across retries, got %d", upsertCalls.Load())
 	}
 }
 
@@ -2826,8 +2831,8 @@ func TestProcessMessageEventRecoversAfterRuntimeReusesSameInstanceID(t *testing.
 	if !sessionExchangeForceRefresh[1] {
 		t.Fatalf("expected recovery exchange to force refresh, got %#v", sessionExchangeForceRefresh)
 	}
-	if upsertCalls.Load() != 3 {
-		t.Fatalf("expected recovery retry plus alias persistence, got %d", upsertCalls.Load())
+	if upsertCalls.Load() != 2 {
+		t.Fatalf("expected only the root upserts across recovery, got %d", upsertCalls.Load())
 	}
 }
 
@@ -3647,8 +3652,8 @@ func TestProcessMessageEventPostsSingleWakeUpAcrossSessionAndRuntimeRecovery(t *
 	if sessionExchangeCalls.Load() != 5 {
 		t.Fatalf("expected 5 session exchange attempts, got %d", sessionExchangeCalls.Load())
 	}
-	if upsertCalls.Load() != 3 {
-		t.Fatalf("expected recovery retry plus alias persistence, got %d", upsertCalls.Load())
+	if upsertCalls.Load() != 2 {
+		t.Fatalf("expected only the root upserts across recovery, got %d", upsertCalls.Load())
 	}
 }
 
@@ -4231,8 +4236,8 @@ func TestProcessMessageEventRetriesACPUnavailableBeforeRefreshingBinding(t *test
 	if len(sessionExchangeForceRefresh) != 1 || sessionExchangeForceRefresh[0] {
 		t.Fatalf("expected no force-refresh session exchange during ACP retry, got %#v", sessionExchangeForceRefresh)
 	}
-	if upsertCalls.Load() != 3 {
-		t.Fatalf("expected failed upsert, successful retry, and alias persistence, got %d", upsertCalls.Load())
+	if upsertCalls.Load() != 2 {
+		t.Fatalf("expected only the failed and successful root upserts, got %d", upsertCalls.Load())
 	}
 }
 
@@ -4442,8 +4447,8 @@ func TestProcessMessageEventKeepsSameRuntimePendingAcrossShortACPWarmup(t *testi
 	if len(sessionExchangeForceRefresh) != 1 || sessionExchangeForceRefresh[0] {
 		t.Fatalf("expected no force-refresh session exchange during short ACP warmup, got %#v", sessionExchangeForceRefresh)
 	}
-	if upsertCalls.Load() != 5 {
-		t.Fatalf("expected four prompt attempts plus alias persistence, got %d", upsertCalls.Load())
+	if upsertCalls.Load() != 4 {
+		t.Fatalf("expected only the root upserts across prompt attempts, got %d", upsertCalls.Load())
 	}
 }
 

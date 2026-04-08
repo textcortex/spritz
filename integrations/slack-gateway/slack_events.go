@@ -663,33 +663,12 @@ func (g *slackGateway) processMessageEventWithDelivery(
 	replyThreadTS := slackReplyThreadTS(event)
 	replyCtx, cancelReply := context.WithTimeout(context.WithoutCancel(ctx), g.cfg.HTTPTimeout)
 	defer cancelReply()
-	replyMessageTS, err := g.postSlackMessage(replyCtx, session.ProviderAuth.BotAccessToken, event.Channel, result.reply, replyThreadTS)
+	_, err = g.postSlackMessage(replyCtx, session.ProviderAuth.BotAccessToken, event.Channel, result.reply, replyThreadTS)
 	if err != nil {
 		// Once the ACP prompt has already been delivered, suppress duplicate
 		// Slack retries from re-running the same agent side effects.
 		success = result.promptSent
 		return err
-	}
-	if replyThreadTS == "" && !isSlackDirectMessageEvent(event) && strings.TrimSpace(replyMessageTS) != "" {
-		aliasCtx, cancelAlias := context.WithTimeout(context.WithoutCancel(ctx), g.cfg.HTTPTimeout)
-		if _, err := g.upsertChannelConversation(
-			aliasCtx,
-			session,
-			event,
-			envelope.TeamID,
-			result.conversationID,
-			replyMessageTS,
-		); err != nil {
-			cancelAlias()
-			g.logger.Error(
-				"slack reply alias persistence failed",
-				"error", err,
-				"conversation_id", result.conversationID,
-				"reply_message_ts", replyMessageTS,
-			)
-		} else {
-			cancelAlias()
-		}
 	}
 	success = true
 	return nil
@@ -716,6 +695,7 @@ func (g *slackGateway) executeConversationPrompt(
 		envelope.TeamID,
 		"",
 		externalConversationID,
+		slackLegacyConversationLookupIDs(event),
 	)
 	if err != nil {
 		return conversationPromptResult{}, err
@@ -950,7 +930,19 @@ func slackReplyThreadTS(event slackEventInner) string {
 	return ""
 }
 
+// slackExternalConversationID returns the durable ACP conversation identity for
+// an inbound Slack event. DMs stay scoped to the Slack channel itself, and
+// shared channels also stay channel-scoped so repeated turns in the same room
+// reuse the same underlying conversation even when the visible Slack reply is
+// posted in a thread.
 func slackExternalConversationID(event slackEventInner) string {
+	if isSlackDirectMessageEvent(event) {
+		return strings.TrimSpace(event.Channel)
+	}
+	return strings.TrimSpace(event.Channel)
+}
+
+func slackLegacyExternalConversationID(event slackEventInner) string {
 	if isSlackDirectMessageEvent(event) {
 		return strings.TrimSpace(event.Channel)
 	}
@@ -958,6 +950,15 @@ func slackExternalConversationID(event slackEventInner) string {
 		return threadTS
 	}
 	return strings.TrimSpace(event.TS)
+}
+
+func slackLegacyConversationLookupIDs(event slackEventInner) []string {
+	legacyID := slackLegacyExternalConversationID(event)
+	canonicalID := slackExternalConversationID(event)
+	if legacyID == "" || legacyID == canonicalID {
+		return nil
+	}
+	return []string{legacyID}
 }
 
 func (g *slackGateway) postGatewaySlackMessage(

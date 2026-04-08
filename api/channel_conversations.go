@@ -5,8 +5,51 @@ import (
 
 	"github.com/labstack/echo/v4"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/client-go/util/retry"
 	spritzv1 "spritz.sh/operator/api/v1"
 )
+
+func (s *server) backfillFoundChannelConversation(
+	c echo.Context,
+	namespace string,
+	conversationName string,
+	identity normalizedChannelConversationIdentity,
+	spritz *spritzv1.Spritz,
+	requestID string,
+) (*spritzv1.SpritzConversation, error) {
+	var updated *spritzv1.SpritzConversation
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := &spritzv1.SpritzConversation{}
+		if err := s.client.Get(c.Request().Context(), clientKey(namespace, conversationName), current); err != nil {
+			return err
+		}
+		changed := ensureChannelConversationBaseRouteLabel(current, identity, spritz)
+		if !channelConversationHasExternalConversationID(current, identity.externalConversationID) {
+			aliasChanged, err := appendChannelConversationAlias(current, identity.externalConversationID)
+			if err != nil {
+				return err
+			}
+			changed = changed || aliasChanged
+		}
+		if requestID != "" {
+			if current.Annotations == nil {
+				current.Annotations = map[string]string{}
+			}
+			current.Annotations[requestIDAnnotationKey] = requestID
+			changed = true
+		}
+		if !changed {
+			updated = current.DeepCopy()
+			return nil
+		}
+		if err := s.client.Update(c.Request().Context(), current); err != nil {
+			return err
+		}
+		updated = current.DeepCopy()
+		return nil
+	})
+	return updated, err
+}
 
 func (s *server) upsertChannelConversation(c echo.Context) error {
 	if !s.acp.enabled {
@@ -61,7 +104,7 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 		if !channelConversationMatchesBaseIdentity(existing, identity) || !channelConversationBelongsToSpritz(existing, spritz) {
 			return writeError(c, http.StatusConflict, "channel conversation is ambiguous")
 		}
-		conversation, found, err := s.findChannelConversation(c, namespace, spritz, identity)
+		conversation, found, err := s.findChannelConversation(c, namespace, spritz, identity, normalizedBody.LookupExternalConversationIDs)
 		if err != nil {
 			if httpErr, ok := err.(*echo.HTTPError); ok {
 				return writeError(c, httpErr.Code, httpErr.Message.(string))
@@ -71,27 +114,20 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 		if found && conversation.Name != existing.Name {
 			return writeError(c, http.StatusConflict, "channel conversation is ambiguous")
 		}
-		changed := ensureChannelConversationBaseRouteLabel(existing, identity, spritz)
-		aliasChanged, err := appendChannelConversationAlias(existing, identity.externalConversationID)
+		updatedConversation, err := s.backfillFoundChannelConversation(
+			c,
+			namespace,
+			existing.Name,
+			identity,
+			spritz,
+			normalizedBody.RequestID,
+		)
 		if err != nil {
-			return writeError(c, http.StatusInternalServerError, err.Error())
+			return s.writeACPResourceError(c, err)
 		}
-		changed = changed || aliasChanged
-		if normalizedBody.RequestID != "" {
-			if existing.Annotations == nil {
-				existing.Annotations = map[string]string{}
-			}
-			existing.Annotations[requestIDAnnotationKey] = normalizedBody.RequestID
-			changed = true
-		}
-		if changed {
-			if err := s.client.Update(c.Request().Context(), existing); err != nil {
-				return s.writeACPResourceError(c, err)
-			}
-		}
-		return writeJSON(c, http.StatusOK, map[string]any{"created": false, "conversation": existing})
+		return writeJSON(c, http.StatusOK, map[string]any{"created": false, "conversation": updatedConversation})
 	}
-	conversation, found, err := s.findChannelConversation(c, namespace, spritz, identity)
+	conversation, found, err := s.findChannelConversation(c, namespace, spritz, identity, normalizedBody.LookupExternalConversationIDs)
 	if err != nil {
 		if httpErr, ok := err.(*echo.HTTPError); ok {
 			return writeError(c, httpErr.Code, httpErr.Message.(string))
@@ -99,7 +135,18 @@ func (s *server) upsertChannelConversation(c echo.Context) error {
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
 	if found {
-		return writeJSON(c, http.StatusOK, map[string]any{"created": false, "conversation": conversation})
+		updatedConversation, err := s.backfillFoundChannelConversation(
+			c,
+			namespace,
+			conversation.Name,
+			identity,
+			spritz,
+			normalizedBody.RequestID,
+		)
+		if err != nil {
+			return s.writeACPResourceError(c, err)
+		}
+		return writeJSON(c, http.StatusOK, map[string]any{"created": false, "conversation": updatedConversation})
 	}
 
 	conversation, err = buildACPConversationResource(spritz, normalizedBody.Title, normalizedBody.CWD)
