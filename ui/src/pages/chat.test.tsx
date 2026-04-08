@@ -1575,10 +1575,10 @@ describe('ChatPage instance ordering', () => {
 
     // The POST should have been called with the correct spritzName
     const postCall = requestMock.mock.calls.find(
-      ([path, opts]: [string, { method?: string }?]) => path === '/acp/conversations' && opts?.method === 'POST',
+      (args: unknown[]) => args[0] === '/acp/conversations' && (args[1] as Record<string, string> | undefined)?.method === 'POST',
     );
     expect(postCall).toBeTruthy();
-    expect(JSON.parse(postCall![1].body)).toEqual({ spritzName: 'beta-instance' });
+    expect(JSON.parse((postCall![1] as Record<string, string>).body)).toEqual({ spritzName: 'beta-instance' });
   });
 
   it('prepends new conversation at top of instance conversation list', async () => {
