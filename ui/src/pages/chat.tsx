@@ -57,6 +57,7 @@ function getLatestConversation(conversations: ConversationInfo[]): ConversationI
   return sortConversationsByRecency(conversations)[0] || null;
 }
 
+
 export function ChatPage() {
   const { '*': splat } = useParams();
   const splatSegments = (splat || '').split('/').filter(Boolean);
@@ -79,12 +80,14 @@ export function ChatPage() {
   const composerRef = useRef<ComposerHandle>(null);
   const selectedConversationRef = useRef<ConversationInfo | null>(null);
   const autoCreatingConversationForRef = useRef<string | null>(null);
+  const creatingConversationForRef = useRef<string | null>(null);
   const nameRef = useRef(name);
   const urlConversationIdRef = useRef(urlConversationId);
 
   nameRef.current = name;
   urlConversationIdRef.current = urlConversationId;
   selectedConversationRef.current = selectedConversation;
+  creatingConversationForRef.current = creatingConversationFor;
 
   const selectedSpritzName = selectedConversation?.spec?.spritzName || name || '';
   const selectedConversationId = selectedConversation?.metadata?.name || '';
@@ -215,7 +218,7 @@ export function ChatPage() {
               currentGroup.spritz.metadata.name === currentName
                 ? {
                     ...currentGroup,
-                    conversations: sortConversationsByRecency([...currentGroup.conversations, conv]),
+                    conversations: [conv, ...currentGroup.conversations],
                   }
                 : currentGroup,
             ),
@@ -443,7 +446,7 @@ export function ChatPage() {
     async (spritzName: string) => {
       const normalizedSpritzName = String(spritzName || '').trim();
       if (!normalizedSpritzName) return;
-      if (creatingConversationFor === normalizedSpritzName) {
+      if (creatingConversationForRef.current === normalizedSpritzName) {
         return;
       }
       setCreatingConversationFor(normalizedSpritzName);
@@ -454,18 +457,18 @@ export function ChatPage() {
           body: JSON.stringify({ spritzName: normalizedSpritzName }),
         });
         if (conv) {
+          navigate(chatConversationPath(normalizedSpritzName, conv.metadata.name), { replace: true });
           setSelectedConversation(conv);
           setAgents((currentGroups) =>
             currentGroups.map((group) =>
               group.spritz.metadata.name === normalizedSpritzName
                 ? {
                     ...group,
-                    conversations: sortConversationsByRecency([...group.conversations, conv]),
+                    conversations: [conv, ...group.conversations],
                   }
                 : group,
             ),
           );
-          navigate(chatConversationPath(normalizedSpritzName, conv.metadata.name), { replace: true });
         }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Failed to create conversation.');
@@ -473,7 +476,7 @@ export function ChatPage() {
         setCreatingConversationFor((current) => (current === normalizedSpritzName ? null : current));
       }
     },
-    [creatingConversationFor, navigate],
+    [navigate],
   );
 
   if (loading) {
