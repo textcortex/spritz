@@ -66,6 +66,7 @@ export function Sidebar({
     a.spritz.metadata.name.localeCompare(b.spritz.metadata.name),
   );
   const firstAgentName = orderedAgents.length > 0 ? orderedAgents[0].spritz.metadata.name : null;
+  const newChatTargetName = focusedSpritzName || firstAgentName;
   const focusMode = Boolean(focusedSpritzName);
   const focusedAgentInList = Boolean(
     focusedSpritzName && orderedAgents.some((group) => group.spritz.metadata.name === focusedSpritzName),
@@ -101,9 +102,9 @@ export function Sidebar({
               <button
                 type="button"
                 aria-label="New chat"
-                disabled={!firstAgentName || creatingConversationFor === firstAgentName}
+                disabled={!newChatTargetName || creatingConversationFor === newChatTargetName}
                 className="flex size-9 items-center justify-center rounded-[var(--radius-lg)] text-foreground/70 transition-colors hover:bg-[var(--surface-emphasis)] hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => { if (firstAgentName && creatingConversationFor !== firstAgentName) onNewConversation(firstAgentName); }}
+                onClick={() => { if (newChatTargetName && creatingConversationFor !== newChatTargetName) onNewConversation(newChatTargetName); }}
               />
             }
           >
@@ -146,10 +147,10 @@ export function Sidebar({
         <nav aria-label="Sidebar navigation" className="flex shrink-0 flex-col gap-0.5">
           <button
             type="button"
-            disabled={!firstAgentName || creatingConversationFor === firstAgentName}
+            disabled={!newChatTargetName || creatingConversationFor === newChatTargetName}
             className="flex w-full items-center gap-3 rounded-[var(--radius-lg)] px-3 py-2 text-[14px] text-foreground/80 transition-colors hover:bg-[var(--surface-emphasis)] hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
             onClick={() => {
-              if (firstAgentName && creatingConversationFor !== firstAgentName) onNewConversation(firstAgentName);
+              if (newChatTargetName && creatingConversationFor !== newChatTargetName) onNewConversation(newChatTargetName);
               close();
             }}
           >
