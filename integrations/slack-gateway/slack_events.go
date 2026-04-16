@@ -660,6 +660,17 @@ func (g *slackGateway) processMessageEventWithDelivery(
 		result.reply = "I hit an internal error while processing that request."
 		g.logger.Error("acp prompt failed", "error", err, "conversation_id", result.conversationID)
 	}
+	if result.deliveryType == promptDeliveryNoReply {
+		g.logger.Info(
+			"acp prompt completed without a visible reply",
+			"conversation_id", result.conversationID,
+			"team_id", strings.TrimSpace(envelope.TeamID),
+			"channel_id", strings.TrimSpace(event.Channel),
+			"message_ts", strings.TrimSpace(event.TS),
+		)
+		success = true
+		return nil
+	}
 	replyThreadTS := slackReplyThreadTS(event)
 	replyCtx, cancelReply := context.WithTimeout(context.WithoutCancel(ctx), g.cfg.HTTPTimeout)
 	defer cancelReply()
@@ -676,6 +687,7 @@ func (g *slackGateway) processMessageEventWithDelivery(
 
 type conversationPromptResult struct {
 	conversationID string
+	deliveryType   promptDeliveryType
 	reply          string
 	promptSent     bool
 }
@@ -709,7 +721,7 @@ func (g *slackGateway) executeConversationPrompt(
 	if err != nil {
 		return conversationPromptResult{conversationID: conversationID}, err
 	}
-	reply, promptSent, err := g.promptConversation(
+	promptResult, err := g.promptConversation(
 		ctx,
 		g.cfg.SpritzServiceToken,
 		session.Namespace,
@@ -720,8 +732,9 @@ func (g *slackGateway) executeConversationPrompt(
 	)
 	return conversationPromptResult{
 		conversationID: conversationID,
-		reply:          reply,
-		promptSent:     promptSent,
+		deliveryType:   promptResult.typeName,
+		reply:          promptResult.reply,
+		promptSent:     promptResult.promptSent,
 	}, err
 }
 

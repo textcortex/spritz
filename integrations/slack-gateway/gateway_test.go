@@ -1743,7 +1743,7 @@ func TestPromptConversationRejectsInteractivePermissionRequests(t *testing.T) {
 	}
 	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	reply, promptSent, err := gateway.promptConversation(
+	result, err := gateway.promptConversation(
 		t.Context(),
 		"owner-token",
 		"spritz-staging",
@@ -1755,11 +1755,11 @@ func TestPromptConversationRejectsInteractivePermissionRequests(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected promptConversation to fail when permission is denied")
 	}
-	if !promptSent {
+	if !result.promptSent {
 		t.Fatalf("expected prompt delivery to be marked as sent")
 	}
-	if strings.TrimSpace(reply) != "" {
-		t.Fatalf("expected no reply text on permission denial, got %q", reply)
+	if strings.TrimSpace(result.reply) != "" {
+		t.Fatalf("expected no reply text on permission denial, got %q", result.reply)
 	}
 	select {
 	case response := <-permissionResponse:
@@ -1850,7 +1850,7 @@ func TestPromptConversationPreservesChunkBoundaryWhitespaceAndNewlines(t *testin
 	}
 	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	reply, promptSent, err := gateway.promptConversation(
+	result, err := gateway.promptConversation(
 		t.Context(),
 		"owner-token",
 		"spritz-staging",
@@ -1862,12 +1862,79 @@ func TestPromptConversationPreservesChunkBoundaryWhitespaceAndNewlines(t *testin
 	if err != nil {
 		t.Fatalf("promptConversation returned error: %v", err)
 	}
-	if !promptSent {
+	if !result.promptSent {
 		t.Fatalf("expected prompt delivery to be marked as sent")
 	}
 	want := "I'll spawn a dedicated agent for you using the\nSpritz controls.\n\nThe Slack account could not be resolved.\n"
-	if reply != want {
-		t.Fatalf("expected reply %q, got %q", want, reply)
+	if result.typeName != promptDeliveryMessage {
+		t.Fatalf("expected message delivery type, got %q", result.typeName)
+	}
+	if result.reply != want {
+		t.Fatalf("expected reply %q, got %q", want, result.reply)
+	}
+}
+
+func TestPromptConversationAllowsEmptyVisibleReply(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	spritz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/acp/conversations/conv-1/connect" {
+			t.Fatalf("unexpected spritz path %s", r.URL.Path)
+		}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("upgrade failed: %v", err)
+		}
+		defer conn.Close()
+		for {
+			_, payload, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var message map[string]any
+			if err := json.Unmarshal(payload, &message); err != nil {
+				t.Fatalf("decode ws payload: %v", err)
+			}
+			switch message["method"] {
+			case "initialize":
+				_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{"protocolVersion": 1}})
+			case "session/load":
+				_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
+			case "session/prompt":
+				_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
+				return
+			default:
+				t.Fatalf("unexpected ACP method %#v", message["method"])
+			}
+		}
+	}))
+	defer spritz.Close()
+
+	cfg := config{
+		SpritzBaseURL: spritz.URL,
+		HTTPTimeout:   5 * time.Second,
+	}
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	result, err := gateway.promptConversation(
+		t.Context(),
+		"owner-token",
+		"spritz-staging",
+		"conv-1",
+		"session-1",
+		"/home/dev",
+		"hello",
+	)
+	if err != nil {
+		t.Fatalf("expected empty visible reply to succeed, got %v", err)
+	}
+	if !result.promptSent {
+		t.Fatalf("expected prompt delivery to be marked as sent")
+	}
+	if result.typeName != promptDeliveryNoReply {
+		t.Fatalf("expected no-reply delivery type, got %q", result.typeName)
+	}
+	if result.reply != "" {
+		t.Fatalf("expected empty reply text, got %q", result.reply)
 	}
 }
 
@@ -5645,6 +5712,135 @@ func TestProcessMessageEventAllowsRetryWhenPromptWasNotDelivered(t *testing.T) {
 	}
 	if postCalls.Load() != 0 {
 		t.Fatalf("expected no slack reply on undelivered prompt failure, got %d posts", postCalls.Load())
+	}
+}
+
+func TestProcessMessageEventSuppressesSlackReplyWhenRuntimeHasNoVisibleOutput(t *testing.T) {
+	var postCalls atomic.Int32
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v1/spritz/channel-sessions/exchange" {
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"session": map[string]any{
+				"accessToken": "owner-token",
+				"ownerAuthId": "owner-123",
+				"namespace":   "spritz-staging",
+				"instanceId":  "zeno-acme",
+				"providerAuth": map[string]any{
+					"providerInstallRef": "cred_slack_workspace_1",
+					"apiAppId":           "A_app_1",
+					"teamId":             "T_workspace_1",
+					"botUserId":          "U_bot",
+					"botAccessToken":     "xoxb-installed",
+				},
+			},
+		})
+	}))
+	defer backend.Close()
+
+	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat.postMessage" {
+			t.Fatalf("unexpected slack path %s", r.URL.Path)
+		}
+		postCalls.Add(1)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	}))
+	defer slackAPI.Close()
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	spritz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/channel-conversations/upsert":
+			writeJSON(w, http.StatusCreated, map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"created": true,
+					"conversation": map[string]any{
+						"metadata": map[string]any{"name": "conv-1"},
+						"spec":     map[string]any{"cwd": "/home/dev"},
+					},
+				},
+			})
+		case "/api/acp/conversations/conv-1/bootstrap":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"effectiveSessionId": "session-1",
+					"conversation": map[string]any{
+						"metadata": map[string]any{"name": "conv-1"},
+						"spec":     map[string]any{"sessionId": "session-1", "cwd": "/home/dev"},
+					},
+				},
+			})
+		case "/api/acp/conversations/conv-1/connect":
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				t.Fatalf("upgrade failed: %v", err)
+			}
+			defer conn.Close()
+			for {
+				_, payload, err := conn.ReadMessage()
+				if err != nil {
+					return
+				}
+				var message map[string]any
+				if err := json.Unmarshal(payload, &message); err != nil {
+					t.Fatalf("decode ws payload: %v", err)
+				}
+				switch message["method"] {
+				case "initialize":
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{"protocolVersion": 1}})
+				case "session/load":
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
+				case "session/prompt":
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
+					return
+				default:
+					t.Fatalf("unexpected ACP method %#v", message["method"])
+				}
+			}
+		default:
+			t.Fatalf("unexpected spritz path %s", r.URL.Path)
+		}
+	}))
+	defer spritz.Close()
+
+	cfg := config{
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      slackAPI.URL,
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        spritz.URL,
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
+	}
+	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	envelope := slackEnvelope{
+		Type:     "event_callback",
+		TeamID:   "T_workspace_1",
+		APIAppID: "A_app_1",
+		EventID:  "Ev_no_reply",
+		Event: slackEventInner{
+			Type:        "app_mention",
+			User:        "U_1",
+			Text:        "<@U_bot> hello",
+			Channel:     "C_1",
+			ChannelType: "channel",
+			TS:          "1711387375.000100",
+		},
+	}
+
+	if err := gateway.processMessageEvent(t.Context(), envelope); err != nil {
+		t.Fatalf("expected empty visible output to be treated as success, got %v", err)
+	}
+	if postCalls.Load() != 0 {
+		t.Fatalf("expected no slack post for empty visible output, got %d", postCalls.Load())
 	}
 }
 

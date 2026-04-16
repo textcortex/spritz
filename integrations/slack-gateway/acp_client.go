@@ -25,17 +25,30 @@ type acpRPCMessage struct {
 	} `json:"error,omitempty"`
 }
 
-func (g *slackGateway) promptConversation(ctx context.Context, serviceToken, namespace, conversationID, sessionID, cwd, prompt string) (string, bool, error) {
+type promptDeliveryType string
+
+const (
+	promptDeliveryMessage promptDeliveryType = "deliver_message"
+	promptDeliveryNoReply promptDeliveryType = "no_reply"
+)
+
+type promptConversationResult struct {
+	typeName   promptDeliveryType
+	reply      string
+	promptSent bool
+}
+
+func (g *slackGateway) promptConversation(ctx context.Context, serviceToken, namespace, conversationID, sessionID, cwd, prompt string) (promptConversationResult, error) {
 	wsURL, err := g.spritzWebSocketURL("/api/acp/conversations/"+url.PathEscape(conversationID)+"/connect", map[string]string{"namespace": namespace})
 	if err != nil {
-		return "", false, err
+		return promptConversationResult{}, err
 	}
 	dialer := websocket.Dialer{HandshakeTimeout: g.cfg.HTTPTimeout}
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+serviceToken)
 	conn, _, err := dialer.DialContext(ctx, wsURL, headers)
 	if err != nil {
-		return "", false, err
+		return promptConversationResult{}, err
 	}
 	defer conn.Close()
 
@@ -49,14 +62,14 @@ func (g *slackGateway) promptConversation(ctx context.Context, serviceToken, nam
 			"version": "1.0.0",
 		},
 	}, nil); err != nil {
-		return "", false, err
+		return promptConversationResult{}, err
 	}
 	if _, _, err := client.call(ctx, "session/load", map[string]any{
 		"sessionId":  sessionID,
 		"cwd":        cwd,
 		"mcpServers": []any{},
 	}, nil); err != nil {
-		return "", false, err
+		return promptConversationResult{}, err
 	}
 	chunks := make([]any, 0, 8)
 	if _, promptSent, err := client.call(ctx, "session/prompt", map[string]any{
@@ -80,13 +93,24 @@ func (g *slackGateway) promptConversation(ctx context.Context, serviceToken, nam
 		}
 		chunks = append(chunks, payload.Update["content"])
 	}); err != nil {
-		return acptext.JoinChunks(chunks), promptSent, err
+		return promptConversationResult{
+			typeName:   promptDeliveryMessage,
+			reply:      acptext.JoinChunks(chunks),
+			promptSent: promptSent,
+		}, err
 	}
 	text := acptext.JoinChunks(chunks)
 	if strings.TrimSpace(text) == "" {
-		return "", true, fmt.Errorf("agent returned an empty reply")
+		return promptConversationResult{
+			typeName:   promptDeliveryNoReply,
+			promptSent: true,
+		}, nil
 	}
-	return text, true, nil
+	return promptConversationResult{
+		typeName:   promptDeliveryMessage,
+		reply:      text,
+		promptSent: true,
+	}, nil
 }
 
 type acpPromptClient struct {
