@@ -28,6 +28,7 @@ const DEFAULT_OPENCLAW_ACP_AGENT_INFO = {
   title: "OpenClaw ACP Gateway",
 };
 const SILENT_REPLY_TOKEN = "NO_REPLY";
+const SUPPRESSED_LEADING_ASSISTANT_TAG_NAMES = ["think", "thinking"];
 const UUIDISH_SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -110,6 +111,8 @@ const silentExactRegexByToken = new Map();
 const silentTrailingRegexByToken = new Map();
 const silentLeadingRegexByToken = new Map();
 const silentLeadingAttachedRegexByToken = new Map();
+const leadingSuppressedAssistantBlockRegexByTagSet = new Map();
+const leadingSuppressedAssistantTagPrefixesByTagSet = new Map();
 
 /**
  * Returns whether text is exactly the OpenClaw silent reply token.
@@ -198,6 +201,61 @@ function isSilentReplyPrefixText(text, token = SILENT_REPLY_TOKEN) {
   return tokenUpper === SILENT_REPLY_TOKEN && normalized === "NO";
 }
 
+function buildSuppressedAssistantTagKey(tagNames = SUPPRESSED_LEADING_ASSISTANT_TAG_NAMES) {
+  return tagNames.join("|").toLowerCase();
+}
+
+function getLeadingSuppressedAssistantBlockRegex(
+  tagNames = SUPPRESSED_LEADING_ASSISTANT_TAG_NAMES,
+) {
+  const key = buildSuppressedAssistantTagKey(tagNames);
+  let regex = leadingSuppressedAssistantBlockRegexByTagSet.get(key);
+  if (!regex) {
+    const tagPattern = tagNames.map((tag) => tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+    regex = new RegExp(
+      `^(?:\\s*<(?:${tagPattern})\\b[^>]*>[\\s\\S]*?<\\/(?:${tagPattern})>\\s*)+`,
+      "iu",
+    );
+    leadingSuppressedAssistantBlockRegexByTagSet.set(key, regex);
+  }
+  return regex;
+}
+
+function stripLeadingSuppressedAssistantBlocks(
+  text,
+  tagNames = SUPPRESSED_LEADING_ASSISTANT_TAG_NAMES,
+) {
+  return text.replace(getLeadingSuppressedAssistantBlockRegex(tagNames), "").trim();
+}
+
+function isSuppressedAssistantTagPrefixText(
+  text,
+  tagNames = SUPPRESSED_LEADING_ASSISTANT_TAG_NAMES,
+) {
+  if (!text) {
+    return false;
+  }
+  const normalized = text.trimStart().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  const key = buildSuppressedAssistantTagKey(tagNames);
+  let prefixes = leadingSuppressedAssistantTagPrefixesByTagSet.get(key);
+  if (!prefixes) {
+    prefixes = new Set(["<", "</"]);
+    for (const tagName of tagNames) {
+      for (const tagPrefix of [`<${tagName}`, `</${tagName}`]) {
+        for (let index = 1; index <= tagPrefix.length; index += 1) {
+          prefixes.add(tagPrefix.slice(0, index));
+        }
+        prefixes.add(`${tagPrefix}>`);
+      }
+    }
+    leadingSuppressedAssistantTagPrefixesByTagSet.set(key, prefixes);
+  }
+  return prefixes.has(normalized);
+}
+
 /**
  * Normalizes OpenClaw assistant text so silent control tokens never become
  * ACP-visible assistant output.
@@ -213,7 +271,15 @@ function normalizeAssistantTextForAcp(text, { suppressLeadFragments = false } = 
   if (isSilentReplyText(normalized)) {
     return "";
   }
-  if (suppressLeadFragments && isSilentReplyPrefixText(normalized)) {
+  if (
+    suppressLeadFragments &&
+    (isSilentReplyPrefixText(normalized) ||
+      isSuppressedAssistantTagPrefixText(normalized))
+  ) {
+    return "";
+  }
+  normalized = stripLeadingSuppressedAssistantBlocks(normalized);
+  if (!normalized) {
     return "";
   }
   if (startsWithSilentToken(normalized)) {
