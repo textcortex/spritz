@@ -212,6 +212,37 @@ test("history replay strips ACP sender metadata and cwd prefix from user text", 
   ]);
 });
 
+test("history replay suppresses assistant NO_REPLY-only text", () => {
+  const updates = buildHistoryReplayUpdates([
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "  NO_REPLY  " }],
+    },
+  ]);
+
+  assert.deepEqual(updates, []);
+});
+
+test("history replay strips a glued leading NO_REPLY token from assistant text", () => {
+  const updates = buildHistoryReplayUpdates([
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "NO_REPLYActual answer" }],
+    },
+  ]);
+
+  assert.deepEqual(updates, [
+    {
+      sessionUpdate: "agent_message_chunk",
+      historyMessageId: "history-0",
+      content: {
+        type: "text",
+        text: "Actual answer",
+      },
+    },
+  ]);
+});
+
 test("findPendingPromptBySessionKey falls back to the sole session match when run IDs differ", () => {
   const pending = {
     sessionId: "session-1",
@@ -486,6 +517,137 @@ test("handleDeltaEvent does not wait on transcript fetch before assistant text",
         content: {
           type: "text",
           text: "hi",
+        },
+      },
+    },
+  ]);
+});
+
+test("handleDeltaEvent suppresses NO_REPLY lead fragments and silent-only finals", async () => {
+  class FakeBaseAgent {
+    constructor() {
+      const updates = [];
+      this.connection = {
+        updates,
+        async sessionUpdate(payload) {
+          updates.push(payload);
+        },
+      };
+      this.pendingPrompts = new Map([
+        [
+          "session-1",
+          {
+            sessionId: "session-1",
+            sessionKey: "agent:main:spritz-acp:session-1",
+            idempotencyKey: "client-run-id",
+          },
+        ],
+      ]);
+    }
+
+    async handleDeltaEvent(sessionId, messageData) {
+      const content = messageData.content ?? [];
+      const pending = this.pendingPrompts.get(sessionId);
+      if (!pending) {
+        return;
+      }
+      const fullText = content
+        .filter((block) => block?.type === "text")
+        .map((block) => block.text ?? "")
+        .join("\n")
+        .trimEnd();
+      if (!fullText) {
+        return;
+      }
+      await this.connection.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: fullText,
+          },
+        },
+      });
+    }
+  }
+
+  const SpritzAgent = createSpritzAcpGatewayAgentClass(FakeBaseAgent, {});
+  const agent = new SpritzAgent();
+
+  for (const text of ["NO", "NO_", "NO_RE", "NO_REPLY"]) {
+    await agent.handleDeltaEvent("session-1", {
+      content: [{ type: "text", text }],
+    });
+  }
+
+  assert.deepEqual(agent.connection.updates, []);
+});
+
+test("handleDeltaEvent keeps normal NO-prefixed text", async () => {
+  class FakeBaseAgent {
+    constructor() {
+      const updates = [];
+      this.connection = {
+        updates,
+        async sessionUpdate(payload) {
+          updates.push(payload);
+        },
+      };
+      this.pendingPrompts = new Map([
+        [
+          "session-1",
+          {
+            sessionId: "session-1",
+            sessionKey: "agent:main:spritz-acp:session-1",
+            idempotencyKey: "client-run-id",
+          },
+        ],
+      ]);
+    }
+
+    async handleDeltaEvent(sessionId, messageData) {
+      const content = messageData.content ?? [];
+      const pending = this.pendingPrompts.get(sessionId);
+      if (!pending) {
+        return;
+      }
+      const fullText = content
+        .filter((block) => block?.type === "text")
+        .map((block) => block.text ?? "")
+        .join("\n")
+        .trimEnd();
+      if (!fullText) {
+        return;
+      }
+      await this.connection.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: fullText,
+          },
+        },
+      });
+    }
+  }
+
+  const SpritzAgent = createSpritzAcpGatewayAgentClass(FakeBaseAgent, {});
+  const agent = new SpritzAgent();
+
+  await agent.handleDeltaEvent("session-1", {
+    content: [{ type: "text", text: "NOW" }],
+  });
+
+  assert.deepEqual(agent.connection.updates, [
+    {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "text",
+          text: "NOW",
         },
       },
     },
