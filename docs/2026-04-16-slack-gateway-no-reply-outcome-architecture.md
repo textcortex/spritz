@@ -16,6 +16,13 @@ reply, the gateway should usually send nothing to Slack.
 
 This document defines the long-term contract for that behavior.
 
+The verified ownership boundary is:
+
+- OpenClaw-specific silent control tokens such as `NO_REPLY` must be consumed
+  in the OpenClaw ACP bridge before they become ACP-visible assistant text
+- the Slack gateway should stay ACP-generic and only decide between "deliver a
+  visible message", "deliver nothing", and "surface a real failure"
+
 Related docs:
 
 - [Slack Channel Gateway Implementation Plan](2026-03-24-slack-channel-gateway-implementation-plan.md)
@@ -83,6 +90,14 @@ For Slack, that means:
 - `hard_error`: post the generic failure message only when product policy says
   the user should see one
 
+The ownership rule is:
+
+- OpenClaw semantics belong in the OpenClaw ACP bridge
+- channel transport semantics belong in the Slack gateway
+
+That means literal `NO_REPLY` handling should not be owned primarily by the
+Slack gateway.
+
 ## Why This Is the Right Abstraction
 
 The Slack gateway is a delivery adapter. Its job is to:
@@ -136,6 +151,33 @@ Recommended shape:
 
 The internal representation does not need to match this JSON exactly, but the
 typed semantics should.
+
+## Verified Current Behavior
+
+The current system has two different layers:
+
+1. OpenClaw, which has a real silent sentinel token: `NO_REPLY`
+2. Spritz Slack gateway, which consumes ACP `agent_message_chunk` updates
+
+Verified facts:
+
+- OpenClaw treats exact `NO_REPLY` as a silent reply token and suppresses it in
+  its own delivery layer
+- upstream OpenClaw ACP behavior can still forward raw assistant text blocks
+  through ACP
+- the Spritz OpenClaw ACP wrapper currently forwards assistant text from
+  transcript replay as `agent_message_chunk` without stripping `NO_REPLY`
+- the Spritz Slack gateway currently treats only empty assembled assistant text
+  as `no_reply`
+
+So the current bug is not "Slack needs provider-specific Kimi logic."
+
+The current bug is:
+
+- an OpenClaw-specific silent token can cross the OpenClaw-to-ACP boundary as
+  visible assistant text
+- once that happens, the Slack gateway has no typed signal telling it that the
+  outcome was intentionally silent
 
 ### Required fields
 
@@ -225,7 +267,9 @@ no-message completions, not real failures.
 
 The current Slack gateway flow in
 [`integrations/slack-gateway/slack_events.go`](/Users/onur/repos/spritz/integrations/slack-gateway/slack_events.go)
-still treats part of this space as an error path.
+still treats part of this space as an error path, and the current OpenClaw ACP
+wrapper does not fully normalize OpenClaw silent control output before it
+reaches the gateway.
 
 Today, after prompting the runtime:
 
@@ -238,8 +282,12 @@ That behavior is reasonable for true failures, but wrong for the specific case
 where the prompt completed and the only issue is missing visible output.
 
 The implementation gap is not "Slack needs to understand one model provider."
-The gap is "the runtime result contract does not cleanly distinguish no visible
-reply from hard failure."
+The gap is:
+
+- the OpenClaw ACP bridge does not fully translate OpenClaw silent semantics
+  into an ACP-visible no-reply outcome
+- the runtime result contract does not cleanly distinguish no visible reply
+  from hard failure once the gateway receives the ACP stream
 
 ## Recommended Implementation Shape
 
@@ -253,6 +301,21 @@ instead of relying on a mixed interpretation of:
 - error presence
 
 That keeps the decision at the right layer.
+
+### 1a. Consume OpenClaw silent tokens in the ACP bridge
+
+For the OpenClaw-backed path specifically, the bridge that converts OpenClaw
+runtime events into ACP updates should own OpenClaw sentinel handling.
+
+Rules:
+
+- exact silent outputs such as `NO_REPLY` must not be emitted as visible
+  `agent_message_chunk` text
+- silent-token lead fragments must not leak during streaming
+- if OpenClaw produces no deliverable assistant text after normalization, the
+  bridge should complete the prompt without a visible assistant message
+
+This keeps OpenClaw-specific knowledge in the OpenClaw integration boundary.
 
 ### 2. Centralize empty-visible-output classification
 
@@ -273,6 +336,14 @@ The Slack gateway should only map typed outcomes to channel behavior:
 - post failure message
 
 This keeps the adapter simple and reusable.
+
+Defense in depth is still acceptable:
+
+- Slack gateway may suppress empty final text
+- Slack gateway may optionally guard against exact silent control tokens if
+  they somehow slip through
+
+But that guard should not be the primary owner of OpenClaw sentinel semantics.
 
 ### 4. Keep structured operator visibility
 
@@ -321,14 +392,19 @@ Required tests:
 
 1. runtime returns normal visible text
    - Slack gateway posts exactly one reply
-2. runtime completes with empty visible output
+2. OpenClaw ACP bridge receives exact `NO_REPLY`
+   - bridge emits no visible `agent_message_chunk`
+   - prompt resolves as a no-reply outcome
+3. OpenClaw ACP bridge receives silent-token lead fragments
+   - fragments do not leak into visible assistant output
+4. runtime completes with empty visible output
    - Slack gateway posts nothing
    - gateway reports success for delivery bookkeeping
-3. runtime fails before prompt completion
+5. runtime fails before prompt completion
    - Slack gateway follows the hard-failure path
-4. runtime fails after a typed `hard_error`
+6. runtime fails after a typed `hard_error`
    - Slack gateway posts the generic error message when configured to do so
-5. Slack post fails after `deliver_message`
+7. Slack post fails after `deliver_message`
    - gateway preserves existing retry and deduplication behavior
 
 Important assertion:
@@ -367,18 +443,23 @@ not as Slack-only conditional logic.
 
 ## Migration Plan
 
-1. Define the typed prompt delivery outcome in the conversation prompt layer.
-2. Update Slack gateway prompt handling to consume the typed result.
-3. Add regression tests for `no_reply`.
-4. Add outcome metrics and logs.
-5. Reuse the same contract in other channel adapters if and when needed.
+1. Normalize OpenClaw silent control output in the OpenClaw ACP bridge.
+2. Define or preserve a typed no-reply prompt delivery outcome in the prompt
+   layer.
+3. Update Slack gateway prompt handling to consume the typed result without
+   learning OpenClaw-specific sentinel rules.
+4. Add regression tests for bridge-level silent handling and gateway-level
+   no-reply handling.
+5. Add outcome metrics and logs.
+6. Reuse the same contract in other channel adapters if and when needed.
 
 ## Final Recommendation
 
 The production-ready fix is:
 
 - make `no_reply` a first-class outcome
-- classify empty visible output into that outcome centrally
+- consume OpenClaw `NO_REPLY` semantics in the OpenClaw ACP bridge
+- classify empty visible output into `no_reply` centrally
 - have Slack acknowledge the event and send nothing
 - reserve the generic Slack error message for real failures only
 
