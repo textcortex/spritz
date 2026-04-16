@@ -27,6 +27,7 @@ const DEFAULT_OPENCLAW_ACP_AGENT_INFO = {
   name: "openclaw-acp",
   title: "OpenClaw ACP Gateway",
 };
+const SILENT_REPLY_TOKEN = "NO_REPLY";
 const UUIDISH_SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -103,6 +104,161 @@ function normalizeHistoryContent(content) {
     return [{ type: "text", text: content }];
   }
   return [];
+}
+
+const silentExactRegexByToken = new Map();
+const silentTrailingRegexByToken = new Map();
+const silentLeadingRegexByToken = new Map();
+const silentLeadingAttachedRegexByToken = new Map();
+
+/**
+ * Returns whether text is exactly the OpenClaw silent reply token.
+ */
+function isSilentReplyText(text, token = SILENT_REPLY_TOKEN) {
+  if (!text) {
+    return false;
+  }
+  let regex = silentExactRegexByToken.get(token);
+  if (!regex) {
+    regex = new RegExp(`^\\s*${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "i");
+    silentExactRegexByToken.set(token, regex);
+  }
+  return regex.test(text);
+}
+
+/**
+ * Removes a trailing silent token from mixed-content OpenClaw assistant text.
+ */
+function stripSilentToken(text, token = SILENT_REPLY_TOKEN) {
+  let regex = silentTrailingRegexByToken.get(token);
+  if (!regex) {
+    regex = new RegExp(
+      `(?:^|\\s+|\\*+)${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`,
+      "i",
+    );
+    silentTrailingRegexByToken.set(token, regex);
+  }
+  return text.replace(regex, "").trim();
+}
+
+/**
+ * Returns whether text starts with a glued leading silent token like
+ * `NO_REPLYActual answer`.
+ */
+function startsWithSilentToken(text, token = SILENT_REPLY_TOKEN) {
+  if (!text) {
+    return false;
+  }
+  let regex = silentLeadingAttachedRegexByToken.get(token);
+  if (!regex) {
+    regex = new RegExp(
+      `^\\s*(?:${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+)*${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=[\\p{L}\\p{N}])`,
+      "iu",
+    );
+    silentLeadingAttachedRegexByToken.set(token, regex);
+  }
+  return regex.test(text);
+}
+
+/**
+ * Removes one or more leading silent tokens from assistant text.
+ */
+function stripLeadingSilentToken(text, token = SILENT_REPLY_TOKEN) {
+  let regex = silentLeadingRegexByToken.get(token);
+  if (!regex) {
+    regex = new RegExp(`^(?:\\s*${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})+\\s*`, "i");
+    silentLeadingRegexByToken.set(token, regex);
+  }
+  return text.replace(regex, "").trim();
+}
+
+/**
+ * Returns whether text is an uppercase lead fragment of `NO_REPLY` during
+ * streaming, for example `NO`, `NO_`, or `NO_RE`.
+ */
+function isSilentReplyPrefixText(text, token = SILENT_REPLY_TOKEN) {
+  if (!text) {
+    return false;
+  }
+  const trimmed = text.trimStart();
+  if (!trimmed || trimmed !== trimmed.toUpperCase()) {
+    return false;
+  }
+  const normalized = trimmed.toUpperCase();
+  if (normalized.length < 2 || /[^A-Z_]/.test(normalized)) {
+    return false;
+  }
+  const tokenUpper = token.toUpperCase();
+  if (!tokenUpper.startsWith(normalized)) {
+    return false;
+  }
+  if (normalized.includes("_")) {
+    return true;
+  }
+  return tokenUpper === SILENT_REPLY_TOKEN && normalized === "NO";
+}
+
+/**
+ * Normalizes OpenClaw assistant text so silent control tokens never become
+ * ACP-visible assistant output.
+ */
+function normalizeAssistantTextForAcp(text, { suppressLeadFragments = false } = {}) {
+  if (typeof text !== "string") {
+    return "";
+  }
+  let normalized = text.trim();
+  if (!normalized) {
+    return "";
+  }
+  if (isSilentReplyText(normalized)) {
+    return "";
+  }
+  if (suppressLeadFragments && isSilentReplyPrefixText(normalized)) {
+    return "";
+  }
+  if (startsWithSilentToken(normalized)) {
+    normalized = stripLeadingSilentToken(normalized);
+  }
+  if (normalized.toUpperCase().includes(SILENT_REPLY_TOKEN)) {
+    normalized = stripSilentToken(normalized);
+  }
+  return normalized.trim();
+}
+
+/**
+ * Sanitizes assistant content blocks before they are replayed or streamed over
+ * ACP so OpenClaw silent control tokens stay internal to the wrapper.
+ */
+function sanitizeAssistantContentForAcp(content, { suppressLeadFragments = false } = {}) {
+  const sanitized = [];
+  for (const item of normalizeHistoryContent(content)) {
+    const type = normalizeContentItemType(item);
+    if (type !== "text") {
+      sanitized.push(item);
+      continue;
+    }
+    const sourceText =
+      typeof item.text === "string"
+        ? item.text
+        : typeof item.content === "string"
+          ? item.content
+          : "";
+    const normalizedText = normalizeAssistantTextForAcp(sourceText, {
+      suppressLeadFragments,
+    });
+    if (!normalizedText) {
+      continue;
+    }
+    sanitized.push({
+      ...item,
+      ...(typeof item.text === "string" ? { text: normalizedText } : {}),
+      ...(typeof item.content === "string" ? { content: normalizedText } : {}),
+      ...(typeof item.text !== "string" && typeof item.content !== "string"
+        ? { text: normalizedText }
+        : {}),
+    });
+  }
+  return sanitized;
 }
 
 function readTextFromHistoryContent(content) {
@@ -586,7 +742,8 @@ export function buildHistoryReplayUpdates(messages = []) {
     }
 
     if (role === "assistant") {
-      for (const item of content) {
+      const sanitizedContent = sanitizeAssistantContentForAcp(content);
+      for (const item of sanitizedContent) {
         const type = typeof item.type === "string" ? item.type.toLowerCase() : "";
         if (["toolcall", "tool_call", "tooluse", "tool_use"].includes(type)) {
           const toolUpdate = buildHistoryToolCallUpdate(item);
@@ -595,7 +752,7 @@ export function buildHistoryReplayUpdates(messages = []) {
           }
         }
       }
-      const text = readTextFromHistoryContent(content);
+      const text = readTextFromHistoryContent(sanitizedContent);
       if (text) {
         updates.push({
           sessionUpdate: "agent_message_chunk",
@@ -793,7 +950,16 @@ export function createSpritzAcpGatewayAgentClass(
       if (pending) {
         await emitLiveToolCallContentUpdates(this, sessionId, pending, messageData);
       }
-      return await super.handleDeltaEvent(sessionId, messageData);
+      const sanitizedMessageData =
+        messageData && typeof messageData === "object"
+          ? {
+              ...messageData,
+              content: sanitizeAssistantContentForAcp(messageData.content, {
+                suppressLeadFragments: true,
+              }),
+            }
+          : messageData;
+      return await super.handleDeltaEvent(sessionId, sanitizedMessageData);
     }
 
     async finishPrompt(sessionId, pending, stopReason) {
