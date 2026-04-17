@@ -225,7 +225,7 @@ func (g *slackGateway) listInstallTargets(ctx context.Context, installation *sla
 		"requestId": strings.TrimSpace(requestID),
 	}
 	var payload backendInstallTargetListResponse
-	if err := g.postBackendJSON(ctx, "/internal/v2/spritz/channel-install-targets/list", body, &payload); err != nil {
+	if err := g.postBackendFastAPIJSON(ctx, "/internal/v2/spritz/channel-install-targets/list", body, &payload); err != nil {
 		return nil, err
 	}
 	if payload.Status != "resolved" {
@@ -326,6 +326,14 @@ func (g *slackGateway) postSlackMessage(ctx context.Context, token, channel, tex
 
 func (g *slackGateway) postBackendJSON(ctx context.Context, path string, body any, target any) error {
 	return g.postJSON(ctx, g.cfg.BackendBaseURL+path, g.cfg.BackendInternalToken, body, target)
+}
+
+func (g *slackGateway) postBackendFastAPIJSON(ctx context.Context, path string, body any, target any) error {
+	baseURL := g.cfg.BackendFastAPIBaseURL
+	if strings.TrimSpace(baseURL) == "" {
+		baseURL = g.cfg.BackendBaseURL
+	}
+	return g.postJSON(ctx, baseURL+path, g.cfg.BackendInternalToken, body, target)
 }
 
 func (g *slackGateway) postSpritzJSON(ctx context.Context, method, path, bearer string, body any, target any, query map[string]string) error {
