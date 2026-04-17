@@ -75,6 +75,9 @@ func (g *slackGateway) routes() http.Handler {
 	g.registerRoute(mux, "/slack/install", g.handleInstallRedirect)
 	g.registerRoute(mux, "/slack/install/select", g.handleInstallTargetSelection)
 	g.registerRoute(mux, "/slack/install/result", g.handleInstallResult)
+	g.registerRoute(mux, "/slack/workspaces", g.handleWorkspaceManagement)
+	g.registerRoute(mux, "/slack/workspaces/target", g.handleWorkspaceTarget)
+	g.registerRoute(mux, "/slack/workspaces/disconnect", g.handleWorkspaceDisconnect)
 	g.registerRoute(mux, "/slack/oauth/callback", g.handleOAuthCallback)
 	g.registerRoute(mux, "/slack/events", g.handleSlackEvents)
 	return mux
