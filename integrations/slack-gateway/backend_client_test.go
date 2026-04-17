@@ -195,7 +195,6 @@ func TestDisconnectManagedInstallationPostsExpectedPayload(t *testing.T) {
 		t.Fatalf("expected team id to be forwarded, got %#v", disconnectPayload["externalTenantId"])
 	}
 }
-
 func TestUpsertChannelConversationOmitsImplicitDefaultCWD(t *testing.T) {
 	var upsertPayload map[string]any
 	spritz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
