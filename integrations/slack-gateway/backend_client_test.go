@@ -11,6 +11,68 @@ import (
 	"time"
 )
 
+func TestListInstallTargetsUsesBackendFastAPIBaseURLWhenConfigured(t *testing.T) {
+	backendHits := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendHits++
+		t.Fatalf("unexpected backend base request to %s", r.URL.Path)
+	}))
+	defer backend.Close()
+
+	fastapiHits := 0
+	fastapi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v2/spritz/channel-install-targets/list" {
+			t.Fatalf("unexpected fastapi path %s", r.URL.Path)
+		}
+		fastapiHits++
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"targets": []map[string]any{
+				{
+					"id": "ag_workspace",
+					"profile": map[string]any{
+						"name": "Workspace Helper",
+					},
+					"presetInputs": map[string]any{
+						"agentId": "ag_workspace",
+					},
+				},
+			},
+		})
+	}))
+	defer fastapi.Close()
+
+	gateway := newSlackGateway(config{
+		BackendBaseURL:        backend.URL,
+		BackendFastAPIBaseURL: fastapi.URL,
+		BackendInternalToken:  "backend-internal-token",
+		PresetID:              "zeno",
+		PrincipalID:           "shared-slack-gateway",
+		HTTPTimeout:           5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	targets, err := gateway.listInstallTargets(
+		context.Background(),
+		&slackInstallation{
+			TeamID:           "T_workspace_1",
+			InstallingUserID: "U_installer",
+		},
+		"req_install_1",
+	)
+	if err != nil {
+		t.Fatalf("list install targets: %v", err)
+	}
+	if backendHits != 0 {
+		t.Fatalf("expected backend base URL to be unused, got %d hits", backendHits)
+	}
+	if fastapiHits != 1 {
+		t.Fatalf("expected fastapi base URL to be hit once, got %d", fastapiHits)
+	}
+	if len(targets) != 1 || targets[0].ID != "ag_workspace" {
+		t.Fatalf("unexpected install targets: %#v", targets)
+	}
+}
+
 func TestUpsertChannelConversationOmitsImplicitDefaultCWD(t *testing.T) {
 	var upsertPayload map[string]any
 	spritz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
