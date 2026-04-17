@@ -1,7 +1,8 @@
 package main
 
 import (
-	"crypto/hmac"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -19,9 +20,23 @@ type oauthStateManager struct {
 	now    func() time.Time
 }
 
+type statePayloadType string
+
+const (
+	statePayloadTypeOAuth          statePayloadType = "oauth"
+	statePayloadTypePendingInstall statePayloadType = "pending_install"
+)
+
+type pendingInstallState struct {
+	RequestID    string            `json:"requestId"`
+	Installation slackInstallation `json:"installation"`
+}
+
 type oauthStatePayload struct {
-	IssuedAt int64  `json:"iat"`
-	Nonce    string `json:"nonce"`
+	Type           statePayloadType     `json:"type"`
+	IssuedAt       int64                `json:"iat"`
+	Nonce          string               `json:"nonce"`
+	PendingInstall *pendingInstallState `json:"pendingInstall,omitempty"`
 }
 
 func newOAuthStateManager(secret string, ttl time.Duration) *oauthStateManager {
@@ -33,50 +48,104 @@ func newOAuthStateManager(secret string, ttl time.Duration) *oauthStateManager {
 }
 
 func (m *oauthStateManager) generate() (string, error) {
+	return m.generatePayload(oauthStatePayload{Type: statePayloadTypeOAuth})
+}
+
+func (m *oauthStateManager) generatePendingInstall(state pendingInstallState) (string, error) {
+	return m.generatePayload(oauthStatePayload{
+		Type:           statePayloadTypePendingInstall,
+		PendingInstall: &state,
+	})
+}
+
+func (m *oauthStateManager) generatePayload(payload oauthStatePayload) (string, error) {
 	nonceBytes := make([]byte, 16)
 	if _, err := rand.Read(nonceBytes); err != nil {
 		return "", err
 	}
-	payload := oauthStatePayload{
-		IssuedAt: m.now().UTC().Unix(),
-		Nonce:    hex.EncodeToString(nonceBytes),
+	payload.IssuedAt = m.now().UTC().Unix()
+	payload.Nonce = hex.EncodeToString(nonceBytes)
+	if payload.Type == "" {
+		payload.Type = statePayloadTypeOAuth
 	}
+
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
-	blob := base64.RawURLEncoding.EncodeToString(encoded)
-	mac := hmac.New(sha256.New, m.secret)
-	_, _ = mac.Write([]byte(blob))
-	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	return blob + "." + signature, nil
+	block, err := aes.NewCipher(m.key())
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	sealNonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(sealNonce); err != nil {
+		return "", err
+	}
+	ciphertext := gcm.Seal(nil, sealNonce, encoded, nil)
+	token := append(sealNonce, ciphertext...)
+	return base64.RawURLEncoding.EncodeToString(token), nil
 }
 
 func (m *oauthStateManager) validate(raw string) error {
-	parts := strings.Split(strings.TrimSpace(raw), ".")
-	if len(parts) != 2 {
-		return errors.New("state is invalid")
-	}
-	mac := hmac.New(sha256.New, m.secret)
-	_, _ = mac.Write([]byte(parts[0]))
-	expected := mac.Sum(nil)
-	actual, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil || !hmac.Equal(expected, actual) {
-		return errors.New("state signature is invalid")
-	}
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	payload, err := m.parse(raw)
 	if err != nil {
-		return errors.New("state payload is invalid")
+		return err
+	}
+	if payload.Type != statePayloadTypeOAuth {
+		return errors.New("state type is invalid")
+	}
+	return nil
+}
+
+func (m *oauthStateManager) parsePendingInstall(raw string) (pendingInstallState, error) {
+	payload, err := m.parse(raw)
+	if err != nil {
+		return pendingInstallState{}, err
+	}
+	if payload.Type != statePayloadTypePendingInstall || payload.PendingInstall == nil {
+		return pendingInstallState{}, errors.New("state type is invalid")
+	}
+	return *payload.PendingInstall, nil
+}
+
+func (m *oauthStateManager) parse(raw string) (oauthStatePayload, error) {
+	token, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(raw))
+	if err != nil {
+		return oauthStatePayload{}, errors.New("state is invalid")
+	}
+	block, err := aes.NewCipher(m.key())
+	if err != nil {
+		return oauthStatePayload{}, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return oauthStatePayload{}, err
+	}
+	if len(token) < gcm.NonceSize() {
+		return oauthStatePayload{}, errors.New("state is invalid")
+	}
+	payloadBytes, err := gcm.Open(nil, token[:gcm.NonceSize()], token[gcm.NonceSize():], nil)
+	if err != nil {
+		return oauthStatePayload{}, errors.New("state is invalid")
 	}
 	var payload oauthStatePayload
 	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-		return errors.New("state payload is invalid")
+		return oauthStatePayload{}, errors.New("state payload is invalid")
 	}
-	if payload.IssuedAt <= 0 || strings.TrimSpace(payload.Nonce) == "" {
-		return errors.New("state payload is incomplete")
+	if payload.IssuedAt <= 0 || strings.TrimSpace(payload.Nonce) == "" || payload.Type == "" {
+		return oauthStatePayload{}, errors.New("state payload is incomplete")
 	}
 	if issuedAt := time.Unix(payload.IssuedAt, 0).UTC(); m.now().UTC().Sub(issuedAt) > m.ttl {
-		return fmt.Errorf("state has expired")
+		return oauthStatePayload{}, fmt.Errorf("state has expired")
 	}
-	return nil
+	return payload, nil
+}
+
+func (m *oauthStateManager) key() []byte {
+	sum := sha256.Sum256(m.secret)
+	return sum[:]
 }

@@ -154,7 +154,71 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		})
 		return
 	}
-	if err := g.upsertInstallation(r.Context(), &installation, requestID); err != nil {
+	targets, err := g.listInstallTargets(r.Context(), &installation, requestID)
+	if err != nil {
+		g.logger.ErrorContext(
+			r.Context(),
+			"slack oauth callback install target lookup failed",
+			"err",
+			err,
+			"team_id",
+			installation.TeamID,
+			"installing_user_id",
+			installation.InstallingUserID,
+			"request_id",
+			requestID,
+		)
+		g.redirectToInstallResult(w, r, installResult{
+			Status:    installResultStatusError,
+			Code:      classifyInstallUpsertError(err),
+			Operation: installResultOperationChannelInstall,
+			Provider:  slackProvider,
+			RequestID: requestID,
+			TeamID:    installation.TeamID,
+		})
+		return
+	}
+	if len(targets) == 0 {
+		g.redirectToInstallResult(w, r, installResult{
+			Status:    installResultStatusError,
+			Code:      installResultCodeTargetsEmpty,
+			Operation: installResultOperationChannelInstall,
+			Provider:  slackProvider,
+			RequestID: requestID,
+			TeamID:    installation.TeamID,
+		})
+		return
+	}
+	if len(targets) > 1 {
+		pendingState, stateErr := g.state.generatePendingInstall(pendingInstallState{
+			RequestID:    requestID,
+			Installation: installation,
+		})
+		if stateErr != nil {
+			g.logger.ErrorContext(
+				r.Context(),
+				"slack oauth callback pending install state generation failed",
+				"err",
+				stateErr,
+				"team_id",
+				installation.TeamID,
+				"request_id",
+				requestID,
+			)
+			g.redirectToInstallResult(w, r, installResult{
+				Status:    installResultStatusError,
+				Code:      installResultCodeInternalError,
+				Operation: installResultOperationChannelInstall,
+				Provider:  slackProvider,
+				RequestID: requestID,
+				TeamID:    installation.TeamID,
+			})
+			return
+		}
+		g.renderInstallTargetPicker(w, pendingState, requestID, targets)
+		return
+	}
+	if err := g.upsertInstallation(r.Context(), &installation, requestID, targets[0].PresetInputs); err != nil {
 		g.logger.ErrorContext(
 			r.Context(),
 			"slack oauth callback installation upsert failed",
@@ -197,6 +261,10 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 
 func (g *slackGateway) oauthCallbackURL() string {
 	return g.cfg.PublicURL + "/slack/oauth/callback"
+}
+
+func (g *slackGateway) selectInstallTargetPath() string {
+	return g.publicPathPrefix() + "/slack/install/select"
 }
 
 func (g *slackGateway) exchangeSlackOAuthCode(ctx context.Context, code string) (slackInstallation, error) {
@@ -242,7 +310,80 @@ func (g *slackGateway) exchangeSlackOAuthCode(ctx context.Context, code string) 
 	return record, nil
 }
 
-func (g *slackGateway) upsertInstallation(ctx context.Context, installation *slackInstallation, requestID string) error {
+func (g *slackGateway) handleInstallTargetSelection(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		g.redirectToInstallResult(w, r, installResult{
+			Status:    installResultStatusError,
+			Code:      installResultCodeTargetInvalid,
+			Operation: installResultOperationChannelInstall,
+			Provider:  slackProvider,
+		})
+		return
+	}
+
+	pendingInstall, err := g.state.parsePendingInstall(strings.TrimSpace(r.FormValue("state")))
+	if err != nil {
+		resultCode := installResultCodeStateInvalid
+		if strings.Contains(strings.ToLower(err.Error()), "expired") {
+			resultCode = installResultCodeStateExpired
+		}
+		g.redirectToInstallResult(w, r, installResult{
+			Status:    installResultStatusError,
+			Code:      resultCode,
+			Operation: installResultOperationChannelInstall,
+			Provider:  slackProvider,
+		})
+		return
+	}
+
+	selectedPresetInputs, err := decodeInstallTargetSelection(strings.TrimSpace(r.FormValue("target")))
+	if err != nil {
+		g.redirectToInstallResult(w, r, installResult{
+			Status:    installResultStatusError,
+			Code:      installResultCodeTargetInvalid,
+			Operation: installResultOperationChannelInstall,
+			Provider:  slackProvider,
+			RequestID: pendingInstall.RequestID,
+			TeamID:    pendingInstall.Installation.TeamID,
+		})
+		return
+	}
+
+	requestID := firstNonEmpty(strings.TrimSpace(r.FormValue("requestId")), pendingInstall.RequestID)
+	installation := pendingInstall.Installation
+	if err := g.upsertInstallation(r.Context(), &installation, requestID, selectedPresetInputs); err != nil {
+		g.logger.ErrorContext(
+			r.Context(),
+			"slack install target selection upsert failed",
+			"err",
+			err,
+			"team_id",
+			installation.TeamID,
+			"request_id",
+			requestID,
+		)
+		g.redirectToInstallResult(w, r, installResult{
+			Status:    installResultStatusError,
+			Code:      classifyInstallUpsertError(err),
+			Operation: installResultOperationChannelInstall,
+			Provider:  slackProvider,
+			RequestID: requestID,
+			TeamID:    installation.TeamID,
+		})
+		return
+	}
+
+	g.redirectToInstallResult(w, r, installResult{
+		Status:    installResultStatusSuccess,
+		Code:      installResultCodeInstalled,
+		Operation: installResultOperationChannelInstall,
+		Provider:  slackProvider,
+		RequestID: requestID,
+		TeamID:    installation.TeamID,
+	})
+}
+
+func (g *slackGateway) upsertInstallation(ctx context.Context, installation *slackInstallation, requestID string, presetInputs map[string]any) error {
 	if installation == nil {
 		return fmt.Errorf("installation is required")
 	}
@@ -268,6 +409,9 @@ func (g *slackGateway) upsertInstallation(ctx context.Context, installation *sla
 			"scopeSet":         installation.ScopeSet,
 		},
 		"requestId": strings.TrimSpace(requestID),
+	}
+	if len(presetInputs) > 0 {
+		body["presetInputs"] = presetInputs
 	}
 	var payload backendInstallationUpsertResponse
 	if err := g.postBackendJSON(ctx, "/internal/v1/spritz/channel-installations/upsert", body, &payload); err != nil {

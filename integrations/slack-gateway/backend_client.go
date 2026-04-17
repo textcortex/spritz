@@ -54,6 +54,23 @@ type backendInstallationUpsertResponse struct {
 	} `json:"installation"`
 }
 
+type backendInstallTargetProfile struct {
+	Name     string `json:"name"`
+	ImageURL string `json:"imageUrl,omitempty"`
+}
+
+type backendInstallTarget struct {
+	ID           string                      `json:"id"`
+	Profile      backendInstallTargetProfile `json:"profile"`
+	OwnerLabel   string                      `json:"ownerLabel,omitempty"`
+	PresetInputs map[string]any              `json:"presetInputs"`
+}
+
+type backendInstallTargetListResponse struct {
+	Status  string                 `json:"status"`
+	Targets []backendInstallTarget `json:"targets"`
+}
+
 type spritzConversationUpsertResponse struct {
 	Status string `json:"status"`
 	Data   struct {
@@ -187,6 +204,34 @@ func (g *slackGateway) exchangeChannelSession(ctx context.Context, teamID string
 		InstanceID:   payload.Session.InstanceID,
 		ProviderAuth: payload.Session.ProviderAuth,
 	}, nil
+}
+
+func (g *slackGateway) listInstallTargets(ctx context.Context, installation *slackInstallation, requestID string) ([]backendInstallTarget, error) {
+	if installation == nil {
+		return nil, fmt.Errorf("installation is required")
+	}
+	body := map[string]any{
+		"principalId":       g.cfg.PrincipalID,
+		"provider":          slackProvider,
+		"externalScopeType": slackWorkspaceScope,
+		"externalTenantId":  installation.TeamID,
+		"presetId":          g.presetID(),
+		"ownerRef": map[string]any{
+			"type":     "external",
+			"provider": slackProvider,
+			"subject":  installation.InstallingUserID,
+			"tenant":   installation.TeamID,
+		},
+		"requestId": strings.TrimSpace(requestID),
+	}
+	var payload backendInstallTargetListResponse
+	if err := g.postBackendJSON(ctx, "/internal/v2/spritz/channel-install-targets/list", body, &payload); err != nil {
+		return nil, err
+	}
+	if payload.Status != "resolved" {
+		return nil, fmt.Errorf("channel install targets were not resolved")
+	}
+	return payload.Targets, nil
 }
 
 func (g *slackGateway) upsertChannelConversation(ctx context.Context, session channelSession, event slackEventInner, teamID, conversationID, externalConversationID string, lookupExternalConversationIDs []string) (string, error) {

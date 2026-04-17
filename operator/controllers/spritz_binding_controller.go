@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -193,6 +194,45 @@ func (r *SpritzBindingReconciler) reconcileBinding(ctx context.Context, binding 
 	}
 
 	desiredRevision := strings.TrimSpace(binding.Spec.DesiredRevision)
+	activeMatchesDesiredSpec := true
+	if binding.Status.ActiveInstanceRef != nil && active != nil {
+		var matchErr error
+		activeMatchesDesiredSpec, matchErr = r.runtimeMatchesBindingSpec(binding, active)
+		if matchErr != nil {
+			return r.updateFailureStatusAndRetry(
+				ctx,
+				binding,
+				&now,
+				spritzv1.BindingPhaseFailed,
+				"candidate_create_failed",
+				matchErr,
+			)
+		}
+	}
+	candidateMatchesDesiredSpec := true
+	if binding.Status.CandidateInstanceRef != nil && candidate != nil {
+		var matchErr error
+		candidateMatchesDesiredSpec, matchErr = r.runtimeMatchesBindingSpec(binding, candidate)
+		if matchErr != nil {
+			return r.updateFailureStatusAndRetry(
+				ctx,
+				binding,
+				&now,
+				spritzv1.BindingPhaseFailed,
+				"candidate_create_failed",
+				matchErr,
+			)
+		}
+	}
+	if binding.Status.CandidateInstanceRef != nil && candidate != nil && !candidateMatchesDesiredSpec && binding.Status.CleanupInstanceRef == nil {
+		binding.Status.CleanupInstanceRef = cleanupRefFromRuntime(
+			binding.Status.CandidateInstanceRef,
+			candidate,
+		)
+		binding.Status.CandidateInstanceRef = nil
+		candidate = nil
+		candidateMatchesDesiredSpec = true
+	}
 
 	if binding.Status.ActiveInstanceRef == nil {
 		if binding.Status.CandidateInstanceRef == nil {
@@ -211,18 +251,26 @@ func (r *SpritzBindingReconciler) reconcileBinding(ctx context.Context, binding 
 			r.setProgressingStatus(binding, &now, spritzv1.BindingPhaseCreating, "candidate_creating", "creating initial runtime")
 			return r.updateBindingStatus(ctx, binding)
 		}
-		if candidate != nil && runtimeIsReady(candidate) {
+		if candidate != nil && runtimeIsReady(candidate) && candidateMatchesDesiredSpec {
 			binding.Status.ActiveInstanceRef = binding.Status.CandidateInstanceRef.DeepCopy()
 			binding.Status.CandidateInstanceRef = nil
 			binding.Status.ObservedRevision = resolveInstanceRevision(binding.Status.ActiveInstanceRef, candidate, desiredRevision)
 			r.setReadyStatus(binding, &now, spritzv1.BindingPhaseReady)
 			return r.updateBindingStatus(ctx, binding)
 		}
+		if candidate != nil && !candidateMatchesDesiredSpec {
+			r.setProgressingStatus(binding, &now, spritzv1.BindingPhaseCleaningUp, "candidate_outdated", "cleaning up outdated candidate runtime")
+			return r.updateBindingStatus(ctx, binding)
+		}
 		r.setProgressingStatus(binding, &now, spritzv1.BindingPhaseWaitingReady, "candidate_not_ready", "waiting for initial candidate to become ready")
 		return r.updateBindingStatus(ctx, binding)
 	}
 
-	if desiredRevision != "" && strings.TrimSpace(binding.Status.ObservedRevision) != desiredRevision {
+	replacementNeeded := desiredRevision != "" && strings.TrimSpace(binding.Status.ObservedRevision) != desiredRevision
+	if binding.Status.ActiveInstanceRef != nil && active != nil && !activeMatchesDesiredSpec {
+		replacementNeeded = true
+	}
+	if replacementNeeded {
 		if binding.Status.CandidateInstanceRef == nil {
 			nextRef, err := r.ensureCandidateRuntime(ctx, binding, desiredRevision)
 			if err != nil {
@@ -239,13 +287,17 @@ func (r *SpritzBindingReconciler) reconcileBinding(ctx context.Context, binding 
 			r.setProgressingStatus(binding, &now, spritzv1.BindingPhaseCreating, "candidate_creating", "creating replacement runtime")
 			return r.updateBindingStatus(ctx, binding)
 		}
-		if candidate != nil && runtimeIsReady(candidate) {
+		if candidate != nil && runtimeIsReady(candidate) && candidateMatchesDesiredSpec {
 			previousActiveRef := binding.Status.ActiveInstanceRef.DeepCopy()
 			binding.Status.ActiveInstanceRef = binding.Status.CandidateInstanceRef.DeepCopy()
 			binding.Status.CandidateInstanceRef = nil
 			binding.Status.CleanupInstanceRef = previousActiveRef
 			binding.Status.ObservedRevision = resolveInstanceRevision(binding.Status.ActiveInstanceRef, candidate, desiredRevision)
 			r.setProgressingStatus(binding, &now, spritzv1.BindingPhaseCleaningUp, "cleanup_pending", "cleaning up replaced runtime")
+			return r.updateBindingStatus(ctx, binding)
+		}
+		if candidate != nil && !candidateMatchesDesiredSpec {
+			r.setProgressingStatus(binding, &now, spritzv1.BindingPhaseCleaningUp, "candidate_outdated", "cleaning up outdated candidate runtime")
 			return r.updateBindingStatus(ctx, binding)
 		}
 		r.setProgressingStatus(binding, &now, spritzv1.BindingPhaseWaitingReady, "candidate_not_ready", "waiting for replacement runtime to become ready")
@@ -335,14 +387,9 @@ func (r *SpritzBindingReconciler) buildRuntimeFromBinding(
 	desiredRevision string,
 	role string,
 ) (*spritzv1.Spritz, error) {
-	var spec spritzv1.SpritzSpec
-	binding.Spec.Template.Spec.DeepCopyInto(&spec)
-	applyBindingIngressDefaults(&spec, name, binding.Namespace, r.IngressDefaults)
-	if spec.Ingress != nil && strings.EqualFold(spec.Ingress.Mode, "gateway") && strings.TrimSpace(spec.Ingress.Host) == "" {
-		return nil, fmt.Errorf("spec.ingress.host is required when spec.ingress.mode=gateway")
-	}
-	if spec.Ingress != nil && strings.EqualFold(spec.Ingress.Mode, "gateway") && strings.TrimSpace(spec.Ingress.GatewayName) == "" {
-		return nil, fmt.Errorf("spec.ingress.gatewayName is required when spec.ingress.mode=gateway")
+	spec, err := r.desiredRuntimeSpec(binding, name)
+	if err != nil {
+		return nil, err
 	}
 
 	labels := cloneStringMap(binding.Spec.Template.Labels)
@@ -379,6 +426,36 @@ func (r *SpritzBindingReconciler) buildRuntimeFromBinding(
 		return nil, err
 	}
 	return spritz, nil
+}
+
+func (r *SpritzBindingReconciler) desiredRuntimeSpec(
+	binding *spritzv1.SpritzBinding,
+	name string,
+) (spritzv1.SpritzSpec, error) {
+	var spec spritzv1.SpritzSpec
+	binding.Spec.Template.Spec.DeepCopyInto(&spec)
+	applyBindingIngressDefaults(&spec, name, binding.Namespace, r.IngressDefaults)
+	if spec.Ingress != nil && strings.EqualFold(spec.Ingress.Mode, "gateway") && strings.TrimSpace(spec.Ingress.Host) == "" {
+		return spritzv1.SpritzSpec{}, fmt.Errorf("spec.ingress.host is required when spec.ingress.mode=gateway")
+	}
+	if spec.Ingress != nil && strings.EqualFold(spec.Ingress.Mode, "gateway") && strings.TrimSpace(spec.Ingress.GatewayName) == "" {
+		return spritzv1.SpritzSpec{}, fmt.Errorf("spec.ingress.gatewayName is required when spec.ingress.mode=gateway")
+	}
+	return spec, nil
+}
+
+func (r *SpritzBindingReconciler) runtimeMatchesBindingSpec(
+	binding *spritzv1.SpritzBinding,
+	runtime *spritzv1.Spritz,
+) (bool, error) {
+	if runtime == nil {
+		return false, nil
+	}
+	expectedSpec, err := r.desiredRuntimeSpec(binding, runtime.Name)
+	if err != nil {
+		return false, err
+	}
+	return apiequality.Semantic.DeepEqual(expectedSpec, runtime.Spec), nil
 }
 
 func (r *SpritzBindingReconciler) resolveRuntimeRef(
