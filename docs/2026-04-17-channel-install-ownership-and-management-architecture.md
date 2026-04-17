@@ -9,7 +9,8 @@ tags: [spritz, channel-gateway, install, ownership, management, architecture]
 
 This document defines who owns a shared channel installation after install
 target selection, who can manage that installation later, and how reinstall,
-target changes, and disconnects should behave.
+target changes, reconnects, disconnects, and later install configuration
+changes should behave.
 
 It builds on the install-target selection model and keeps Spritz generic:
 
@@ -128,6 +129,33 @@ The deployment remains the source of truth for:
 - which actions are currently allowed
 - whether the selected replacement target is valid
 
+### Management API is installation-centric and server-driven
+
+Spritz should manage connected workspaces through one generic installation
+surface rather than through provider-specific management pages.
+
+Pinned v1 operations:
+
+- `channel.installations.list`
+- `channel.installation.target.update`
+- `channel.installation.reconnect`
+- `channel.installation.disconnect`
+
+The UI should not infer permissions or workflow state locally.
+
+Instead, the deployment should return install rows with enough information to
+render the page safely:
+
+- stable installation identifier
+- route summary
+- current state
+- current target summary
+- `allowedActions`
+- optional `problemCode`
+
+That keeps ownership and authorization logic on the server while letting Spritz
+remain generic.
+
 ### Reinstall updates in place only for the same effective owner
 
 Provider-driven reinstall should reuse the same `(principalId, provider,
@@ -178,6 +206,34 @@ Pinned rule:
 Spritz should not auto-retarget and should not invent fallback target
 selection behavior.
 
+### `presetInputs` is for target selection, not long-term provider config
+
+The saved opaque `presetInputs` on an installation should mean:
+
+- which target this installation points at
+
+It should not become the catch-all home for future mutable provider behavior.
+
+Pinned split:
+
+- route identity determines which shared app and external tenant this
+  installation serves
+- `presetInputs` determines which deployment-owned target backs that
+  installation
+- installation config determines future provider-specific mutable behavior for
+  that installation
+
+Examples of future installation config:
+
+- provider-specific channel allowlists
+- reply policy toggles
+- required or optional delivery constraints
+- posting or mention behavior
+
+Those settings may affect runtime behavior, but they are not the same concept
+as target selection and should evolve through a separate installation-config
+surface.
+
 ### Disconnect and uninstall are soft
 
 Provider uninstall or product-side disconnect should soft-disconnect the
@@ -211,6 +267,10 @@ The minimum action set is:
 - reconnect
 - disconnect
 
+When an installation is in a broken but still durable state, the UI should
+still render the row and show a repair-needed state through `problemCode`
+rather than dropping the installation from the page.
+
 Spritz does not need to expose deployment-specific ownership rules in the UI.
 It only needs to render the installations and actions that the deployment says
 the caller may manage.
@@ -220,6 +280,7 @@ the caller may manage.
 This model implies a few stable contract expectations, even if exact endpoint
 shapes vary by deployment:
 
+- installations-list APIs must return server-driven action availability
 - target resolution must return both target selection data and effective owner
 - installation persistence must store the saved selection on the durable
   installation
@@ -227,6 +288,7 @@ shapes vary by deployment:
   the original installer
 - reinstall APIs must detect effective-owner mismatch and return conflict
 - management-target-change APIs must update target and owner together
+- mutable installation-config APIs must stay separate from target-selection APIs
 
 These behaviors matter more than the exact transport details.
 
@@ -240,6 +302,9 @@ At minimum, an implementation should validate:
 - changing to a target owned by a different principal updates effective owner
 - deleting or invalidating the saved target blocks routing until repair
 - disconnect stops routing but preserves the installation for reconnect
+- install rows expose the correct `allowedActions` and `problemCode`
+- future provider-specific configuration can change without rewriting saved
+  target selection
 - the same external tenant can still have multiple installations later when
   `principalId` differs
 
@@ -252,3 +317,5 @@ needs for:
 - updating the selected target on an installation
 - reconnecting a disconnected installation
 - surfacing repair-needed state when the saved target is no longer valid
+- defining the generic installation-config surface for provider-specific
+  mutable settings

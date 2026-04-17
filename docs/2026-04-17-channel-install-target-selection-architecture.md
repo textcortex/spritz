@@ -170,6 +170,28 @@ Reasons:
 The chosen opaque `presetInputs` should therefore be persisted on the durable
 installation object that the deployment already owns, not in Spritz core state.
 
+## What `presetInputs` Is Not
+
+`presetInputs` is the right place for install-time target selection, but it is
+not the right long-term container for every mutable provider-specific setting.
+
+Pinned split:
+
+- `presetInputs` selects the target that backs the installation
+- separate installation config should hold future provider-specific mutable
+  settings
+
+Examples of installation config that should not be folded into target
+selection:
+
+- provider-specific channel allowlists
+- reply-policy toggles
+- required or optional delivery constraints
+- posting or mention behavior
+
+That split keeps install target selection stable even as provider-specific
+behavior grows over time.
+
 ## Why Existing `agentRef` Is Not Enough
 
 The existing [Agent Profile API](2026-03-30-agent-profile-api.md) is for a

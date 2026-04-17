@@ -16,11 +16,19 @@ type installTargetPickerOption struct {
 	EncodedPresetInput string
 }
 
+type installTargetPickerHiddenField struct {
+	Name  string
+	Value string
+}
+
 type installTargetPickerPageData struct {
-	RequestID  string
-	FormAction string
-	StateToken string
-	Options    []installTargetPickerOption
+	Title        string
+	Description  string
+	RequestID    string
+	FormAction   string
+	SubmitLabel  string
+	HiddenFields []installTargetPickerHiddenField
+	Options      []installTargetPickerOption
 }
 
 var installTargetPickerTemplate = template.Must(template.New("install-target-picker").Parse(`<!doctype html>
@@ -135,11 +143,12 @@ var installTargetPickerTemplate = template.Must(template.New("install-target-pic
   </head>
   <body>
     <main>
-      <h1>Choose an install target</h1>
-      <p>Select which target this Slack workspace should use.</p>
+      <h1>{{ .Title }}</h1>
+      <p>{{ .Description }}</p>
       <form method="post" action="{{ .FormAction }}">
-        <input type="hidden" name="state" value="{{ .StateToken }}">
-        <input type="hidden" name="requestId" value="{{ .RequestID }}">
+        {{ range .HiddenFields }}
+        <input type="hidden" name="{{ .Name }}" value="{{ .Value }}">
+        {{ end }}
         {{ range $index, $option := .Options }}
         <label>
           <input type="radio" name="target" value="{{ $option.EncodedPresetInput }}" {{ if eq $index 0 }}checked{{ end }}>
@@ -160,7 +169,7 @@ var installTargetPickerTemplate = template.Must(template.New("install-target-pic
           </span>
         </label>
         {{ end }}
-        <button type="submit">Continue</button>
+        <button type="submit">{{ .SubmitLabel }}</button>
       </form>
       {{ if .RequestID }}
       <div class="meta">Request ID: <code>{{ .RequestID }}</code></div>
@@ -195,7 +204,7 @@ func decodeInstallTargetSelection(raw string) (map[string]any, error) {
 	return presetInputs, nil
 }
 
-func (g *slackGateway) renderInstallTargetPicker(w http.ResponseWriter, stateToken, requestID string, targets []backendInstallTarget) {
+func (g *slackGateway) renderInstallTargetPickerPage(w http.ResponseWriter, data installTargetPickerPageData, targets []backendInstallTarget) {
 	options := make([]installTargetPickerOption, 0, len(targets))
 	for _, target := range targets {
 		encodedPresetInput, err := encodeInstallTargetSelection(target.PresetInputs)
@@ -213,10 +222,34 @@ func (g *slackGateway) renderInstallTargetPicker(w http.ResponseWriter, stateTok
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_ = installTargetPickerTemplate.Execute(w, installTargetPickerPageData{
-		RequestID:  requestID,
-		FormAction: g.selectInstallTargetPath(),
-		StateToken: stateToken,
-		Options:    options,
-	})
+	data.Options = options
+	_ = installTargetPickerTemplate.Execute(w, data)
+}
+
+func (g *slackGateway) renderInstallTargetPicker(w http.ResponseWriter, stateToken, requestID string, targets []backendInstallTarget) {
+	g.renderInstallTargetPickerPage(w, installTargetPickerPageData{
+		Title:       "Choose an install target",
+		Description: "Select which target this Slack workspace should use.",
+		RequestID:   requestID,
+		FormAction:  g.selectInstallTargetPath(),
+		SubmitLabel: "Continue",
+		HiddenFields: []installTargetPickerHiddenField{
+			{Name: "state", Value: stateToken},
+			{Name: "requestId", Value: requestID},
+		},
+	}, targets)
+}
+
+func (g *slackGateway) renderWorkspaceTargetPicker(w http.ResponseWriter, teamID, requestID string, targets []backendInstallTarget) {
+	g.renderInstallTargetPickerPage(w, installTargetPickerPageData{
+		Title:       "Change workspace target",
+		Description: "Select which target this Slack workspace should use now.",
+		RequestID:   requestID,
+		FormAction:  g.workspaceTargetPath(),
+		SubmitLabel: "Update target",
+		HiddenFields: []installTargetPickerHiddenField{
+			{Name: "teamId", Value: teamID},
+			{Name: "requestId", Value: requestID},
+		},
+	}, targets)
 }

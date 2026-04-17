@@ -73,6 +73,129 @@ func TestListInstallTargetsUsesBackendFastAPIBaseURLWhenConfigured(t *testing.T)
 	}
 }
 
+func TestListManagedInstallationsUsesFastAPIBaseURL(t *testing.T) {
+	fastapiHits := 0
+	fastapi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v2/spritz/channel-installations/list" {
+			t.Fatalf("unexpected fastapi path %s", r.URL.Path)
+		}
+		fastapiHits++
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"installations": []map[string]any{
+				{
+					"route": map[string]any{
+						"principalId":       "shared-slack-gateway",
+						"provider":          "slack",
+						"externalScopeType": "workspace",
+						"externalTenantId":  "T_workspace_1",
+					},
+					"state": "ready",
+					"currentTarget": map[string]any{
+						"id": "ag_workspace",
+						"profile": map[string]any{
+							"name": "Workspace Helper",
+						},
+						"ownerLabel": "Personal",
+					},
+					"allowedActions": []string{"changeTarget", "disconnect"},
+				},
+			},
+		})
+	}))
+	defer fastapi.Close()
+
+	gateway := newSlackGateway(config{
+		BackendBaseURL:        "https://unused.example.test",
+		BackendFastAPIBaseURL: fastapi.URL,
+		BackendInternalToken:  "backend-internal-token",
+		PrincipalID:           "shared-slack-gateway",
+		HTTPTimeout:           5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	installations, err := gateway.listManagedInstallations(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("list managed installations: %v", err)
+	}
+	if fastapiHits != 1 {
+		t.Fatalf("expected fastapi base URL to be hit once, got %d", fastapiHits)
+	}
+	if len(installations) != 1 || installations[0].Route.ExternalTenantID != "T_workspace_1" {
+		t.Fatalf("unexpected managed installations: %#v", installations)
+	}
+}
+
+func TestUpdateManagedInstallationTargetPostsExpectedPayload(t *testing.T) {
+	var updatePayload map[string]any
+	fastapi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v2/spritz/channel-installations/target/update" {
+			t.Fatalf("unexpected fastapi path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&updatePayload); err != nil {
+			t.Fatalf("decode update payload: %v", err)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":            "resolved",
+			"needsProvisioning": true,
+		})
+	}))
+	defer fastapi.Close()
+
+	gateway := newSlackGateway(config{
+		BackendFastAPIBaseURL: fastapi.URL,
+		BackendInternalToken:  "backend-internal-token",
+		PrincipalID:           "shared-slack-gateway",
+		HTTPTimeout:           5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if err := gateway.updateManagedInstallationTarget(
+		context.Background(),
+		"user-1",
+		"T_workspace_1",
+		"req-manage-1",
+		map[string]any{"agentId": "ag_workspace"},
+	); err != nil {
+		t.Fatalf("update managed installation target: %v", err)
+	}
+	if updatePayload["callerAuthId"] != "user-1" {
+		t.Fatalf("expected caller auth id to be forwarded, got %#v", updatePayload["callerAuthId"])
+	}
+	if updatePayload["externalTenantId"] != "T_workspace_1" {
+		t.Fatalf("expected team id to be forwarded, got %#v", updatePayload["externalTenantId"])
+	}
+}
+
+func TestDisconnectManagedInstallationPostsExpectedPayload(t *testing.T) {
+	var disconnectPayload map[string]any
+	fastapi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v2/spritz/channel-installations/disconnect" {
+			t.Fatalf("unexpected fastapi path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&disconnectPayload); err != nil {
+			t.Fatalf("decode disconnect payload: %v", err)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "resolved"})
+	}))
+	defer fastapi.Close()
+
+	gateway := newSlackGateway(config{
+		BackendFastAPIBaseURL: fastapi.URL,
+		BackendInternalToken:  "backend-internal-token",
+		PrincipalID:           "shared-slack-gateway",
+		HTTPTimeout:           5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if err := gateway.disconnectManagedInstallation(context.Background(), "user-1", "T_workspace_1"); err != nil {
+		t.Fatalf("disconnect managed installation: %v", err)
+	}
+	if disconnectPayload["callerAuthId"] != "user-1" {
+		t.Fatalf("expected caller auth id to be forwarded, got %#v", disconnectPayload["callerAuthId"])
+	}
+	if disconnectPayload["externalTenantId"] != "T_workspace_1" {
+		t.Fatalf("expected team id to be forwarded, got %#v", disconnectPayload["externalTenantId"])
+	}
+}
+
 func TestUpsertChannelConversationOmitsImplicitDefaultCWD(t *testing.T) {
 	var upsertPayload map[string]any
 	spritz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

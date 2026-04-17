@@ -71,6 +71,38 @@ type backendInstallTargetListResponse struct {
 	Targets []backendInstallTarget `json:"targets"`
 }
 
+type backendInstallationTargetSummary struct {
+	ID         string                      `json:"id"`
+	Profile    backendInstallTargetProfile `json:"profile"`
+	OwnerLabel string                      `json:"ownerLabel,omitempty"`
+}
+
+type backendManagedInstallationRoute struct {
+	PrincipalID       string `json:"principalId"`
+	Provider          string `json:"provider"`
+	ExternalScopeType string `json:"externalScopeType"`
+	ExternalTenantID  string `json:"externalTenantId"`
+}
+
+type backendManagedInstallation struct {
+	Route          backendManagedInstallationRoute   `json:"route"`
+	State          string                            `json:"state"`
+	CurrentTarget  *backendInstallationTargetSummary `json:"currentTarget,omitempty"`
+	AllowedActions []string                          `json:"allowedActions"`
+	ProblemCode    string                            `json:"problemCode,omitempty"`
+	DisconnectedAt string                            `json:"disconnectedAt,omitempty"`
+}
+
+type backendManagedInstallationListResponse struct {
+	Status        string                       `json:"status"`
+	Installations []backendManagedInstallation `json:"installations"`
+}
+
+type backendManagedInstallationUpdateResponse struct {
+	Status            string `json:"status"`
+	NeedsProvisioning bool   `json:"needsProvisioning"`
+}
+
 type spritzConversationUpsertResponse struct {
 	Status string `json:"status"`
 	Data   struct {
@@ -210,19 +242,35 @@ func (g *slackGateway) listInstallTargets(ctx context.Context, installation *sla
 	if installation == nil {
 		return nil, fmt.Errorf("installation is required")
 	}
-	body := map[string]any{
-		"principalId":       g.cfg.PrincipalID,
-		"provider":          slackProvider,
-		"externalScopeType": slackWorkspaceScope,
-		"externalTenantId":  installation.TeamID,
-		"presetId":          g.presetID(),
-		"ownerRef": map[string]any{
+	return g.listInstallTargetsForOwnerAuthID(
+		ctx,
+		strings.TrimSpace(installation.TeamID),
+		"",
+		requestID,
+		map[string]any{
 			"type":     "external",
 			"provider": slackProvider,
 			"subject":  installation.InstallingUserID,
 			"tenant":   installation.TeamID,
 		},
-		"requestId": strings.TrimSpace(requestID),
+	)
+}
+
+func (g *slackGateway) listInstallTargetsForOwnerAuthID(ctx context.Context, teamID, ownerAuthID, requestID string, ownerRef map[string]any) ([]backendInstallTarget, error) {
+	body := map[string]any{
+		"principalId":       g.cfg.PrincipalID,
+		"provider":          slackProvider,
+		"externalScopeType": slackWorkspaceScope,
+		"externalTenantId":  strings.TrimSpace(teamID),
+		"presetId":          g.presetID(),
+		"requestId":         strings.TrimSpace(requestID),
+	}
+	if strings.TrimSpace(ownerAuthID) != "" {
+		body["ownerAuthId"] = strings.TrimSpace(ownerAuthID)
+	} else if ownerRef != nil {
+		body["ownerRef"] = ownerRef
+	} else {
+		return nil, fmt.Errorf("owner auth id or owner ref is required")
 	}
 	var payload backendInstallTargetListResponse
 	if err := g.postBackendFastAPIJSON(ctx, "/internal/v2/spritz/channel-install-targets/list", body, &payload); err != nil {
@@ -232,6 +280,54 @@ func (g *slackGateway) listInstallTargets(ctx context.Context, installation *sla
 		return nil, fmt.Errorf("channel install targets were not resolved")
 	}
 	return payload.Targets, nil
+}
+
+func (g *slackGateway) listManagedInstallations(ctx context.Context, callerAuthID string) ([]backendManagedInstallation, error) {
+	body := map[string]any{
+		"callerAuthId":      strings.TrimSpace(callerAuthID),
+		"principalId":       g.cfg.PrincipalID,
+		"provider":          slackProvider,
+		"externalScopeType": slackWorkspaceScope,
+	}
+	var payload backendManagedInstallationListResponse
+	if err := g.postBackendFastAPIJSON(ctx, "/internal/v2/spritz/channel-installations/list", body, &payload); err != nil {
+		return nil, err
+	}
+	if payload.Status != "resolved" {
+		return nil, fmt.Errorf("channel installations were not resolved")
+	}
+	return payload.Installations, nil
+}
+
+func (g *slackGateway) updateManagedInstallationTarget(ctx context.Context, callerAuthID, teamID, requestID string, presetInputs map[string]any) error {
+	body := map[string]any{
+		"callerAuthId":      strings.TrimSpace(callerAuthID),
+		"principalId":       g.cfg.PrincipalID,
+		"provider":          slackProvider,
+		"externalScopeType": slackWorkspaceScope,
+		"externalTenantId":  strings.TrimSpace(teamID),
+		"presetInputs":      presetInputs,
+		"requestId":         strings.TrimSpace(requestID),
+	}
+	var payload backendManagedInstallationUpdateResponse
+	if err := g.postBackendFastAPIJSON(ctx, "/internal/v2/spritz/channel-installations/target/update", body, &payload); err != nil {
+		return err
+	}
+	if payload.Status != "resolved" {
+		return fmt.Errorf("channel installation target was not updated")
+	}
+	return nil
+}
+
+func (g *slackGateway) disconnectManagedInstallation(ctx context.Context, callerAuthID, teamID string) error {
+	body := map[string]any{
+		"callerAuthId":      strings.TrimSpace(callerAuthID),
+		"principalId":       g.cfg.PrincipalID,
+		"provider":          slackProvider,
+		"externalScopeType": slackWorkspaceScope,
+		"externalTenantId":  strings.TrimSpace(teamID),
+	}
+	return g.postBackendFastAPIJSON(ctx, "/internal/v2/spritz/channel-installations/disconnect", body, nil)
 }
 
 func (g *slackGateway) upsertChannelConversation(ctx context.Context, session channelSession, event slackEventInner, teamID, conversationID, externalConversationID string, lookupExternalConversationIDs []string) (string, error) {
