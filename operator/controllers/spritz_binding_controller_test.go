@@ -81,6 +81,12 @@ func newBindingReconcilerForTest(t *testing.T, objects ...runtime.Object) (*Spri
 	}, k8sClient
 }
 
+func bindingRuntimeSpec(binding *spritzv1.SpritzBinding) spritzv1.SpritzSpec {
+	var spec spritzv1.SpritzSpec
+	binding.Spec.Template.Spec.DeepCopyInto(&spec)
+	return spec
+}
+
 func TestReconcileBindingCreatesInitialCandidateRuntime(t *testing.T) {
 	binding := newBindingTestBinding()
 	reconciler, k8sClient := newBindingReconcilerForTest(t, binding)
@@ -130,6 +136,7 @@ func TestReconcileBindingPromotesReadyInitialCandidate(t *testing.T) {
 				bindingTargetRevisionAnnotationKey: binding.Spec.DesiredRevision,
 			},
 		},
+		Spec:   bindingRuntimeSpec(binding),
 		Status: spritzv1.SpritzStatus{Phase: "Ready"},
 	}
 	binding.Status.CandidateInstanceRef = &spritzv1.SpritzBindingInstanceRef{
@@ -175,6 +182,7 @@ func TestReconcileBindingCutsOverReadyReplacementAndCleansUpOldRuntime(t *testin
 				bindingTargetRevisionAnnotationKey: "sha256:rev-1",
 			},
 		},
+		Spec:   bindingRuntimeSpec(binding),
 		Status: spritzv1.SpritzStatus{Phase: "Ready"},
 	}
 	newRuntime := &spritzv1.Spritz{
@@ -185,6 +193,7 @@ func TestReconcileBindingCutsOverReadyReplacementAndCleansUpOldRuntime(t *testin
 				bindingTargetRevisionAnnotationKey: "sha256:rev-2",
 			},
 		},
+		Spec:   bindingRuntimeSpec(binding),
 		Status: spritzv1.SpritzStatus{Phase: "Ready"},
 	}
 	binding.Spec.DesiredRevision = "sha256:rev-2"
@@ -290,6 +299,7 @@ func TestReconcileBindingKeepsCleanupRefWhileDeletionIsStillInFlight(t *testing.
 				bindingTargetRevisionAnnotationKey: "sha256:rev-2",
 			},
 		},
+		Spec:   bindingRuntimeSpec(binding),
 		Status: spritzv1.SpritzStatus{Phase: "Ready"},
 	}
 	cleanupRuntime := &spritzv1.Spritz{
@@ -300,6 +310,7 @@ func TestReconcileBindingKeepsCleanupRefWhileDeletionIsStillInFlight(t *testing.
 				bindingTargetRevisionAnnotationKey: "sha256:rev-1",
 			},
 		},
+		Spec:   bindingRuntimeSpec(binding),
 		Status: spritzv1.SpritzStatus{Phase: "Ready"},
 	}
 	binding.Spec.DesiredRevision = "sha256:rev-2"
@@ -350,6 +361,7 @@ func TestReconcileBindingMovesTerminalCandidateIntoCleanup(t *testing.T) {
 				bindingTargetRevisionAnnotationKey: "sha256:rev-1",
 			},
 		},
+		Spec:   bindingRuntimeSpec(binding),
 		Status: spritzv1.SpritzStatus{Phase: "Ready"},
 	}
 	terminalCandidate := &spritzv1.Spritz{
@@ -360,6 +372,7 @@ func TestReconcileBindingMovesTerminalCandidateIntoCleanup(t *testing.T) {
 				bindingTargetRevisionAnnotationKey: "sha256:rev-2",
 			},
 		},
+		Spec:   bindingRuntimeSpec(binding),
 		Status: spritzv1.SpritzStatus{Phase: "Error"},
 	}
 	binding.Spec.DesiredRevision = "sha256:rev-2"
@@ -395,5 +408,127 @@ func TestReconcileBindingMovesTerminalCandidateIntoCleanup(t *testing.T) {
 	}
 	if storedBinding.Status.CandidateInstanceRef.Name == terminalCandidate.Name {
 		t.Fatalf("expected a new candidate identity, got %#v", storedBinding.Status)
+	}
+}
+
+func TestReconcileBindingCreatesReplacementWhenTemplateSpecChangesWithoutRevisionChange(t *testing.T) {
+	binding := newBindingTestBinding()
+	activeRuntime := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      bindingRuntimeName(binding, 1),
+			Namespace: binding.Namespace,
+			Annotations: map[string]string{
+				bindingTargetRevisionAnnotationKey: binding.Spec.DesiredRevision,
+			},
+		},
+		Spec: spritzv1.SpritzSpec{
+			Image: "example.com/openclaw:previous",
+			Owner: spritzv1.SpritzOwner{ID: "user-1"},
+		},
+		Status: spritzv1.SpritzStatus{Phase: "Ready"},
+	}
+	binding.Status.ObservedRevision = binding.Spec.DesiredRevision
+	binding.Status.ActiveInstanceRef = &spritzv1.SpritzBindingInstanceRef{
+		Namespace: binding.Namespace,
+		Name:      activeRuntime.Name,
+		Revision:  binding.Spec.DesiredRevision,
+		Phase:     "Ready",
+	}
+	binding.Status.NextRuntimeSequence = 1
+	reconciler, k8sClient := newBindingReconcilerForTest(t, binding, activeRuntime)
+
+	if err := reconciler.reconcileBinding(context.Background(), binding); err != nil {
+		t.Fatalf("reconcileBinding returned error: %v", err)
+	}
+
+	var storedBinding spritzv1.SpritzBinding
+	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(binding), &storedBinding); err != nil {
+		t.Fatalf("failed to load binding: %v", err)
+	}
+	if storedBinding.Status.CandidateInstanceRef == nil {
+		t.Fatalf("expected replacement candidate after spec drift, got %#v", storedBinding.Status)
+	}
+	if storedBinding.Status.ActiveInstanceRef == nil || storedBinding.Status.ActiveInstanceRef.Name != activeRuntime.Name {
+		t.Fatalf("expected active runtime to remain live during replacement, got %#v", storedBinding.Status)
+	}
+	if storedBinding.Status.Phase != spritzv1.BindingPhaseCreating {
+		t.Fatalf("expected creating phase for replacement candidate, got %#v", storedBinding.Status)
+	}
+
+	var candidate spritzv1.Spritz
+	if err := k8sClient.Get(
+		context.Background(),
+		client.ObjectKey{Namespace: binding.Namespace, Name: storedBinding.Status.CandidateInstanceRef.Name},
+		&candidate,
+	); err != nil {
+		t.Fatalf("failed to load replacement candidate: %v", err)
+	}
+	if candidate.Spec.Image != binding.Spec.Template.Spec.Image {
+		t.Fatalf("expected replacement candidate to use current template image, got %#v", candidate.Spec)
+	}
+}
+
+func TestReconcileBindingReplacesOutdatedCandidateWhenTemplateSpecChangesMidRollout(t *testing.T) {
+	binding := newBindingTestBinding()
+	activeRuntime := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      bindingRuntimeName(binding, 1),
+			Namespace: binding.Namespace,
+			Annotations: map[string]string{
+				bindingTargetRevisionAnnotationKey: binding.Spec.DesiredRevision,
+			},
+		},
+		Spec: spritzv1.SpritzSpec{
+			Image: "example.com/openclaw:previous",
+			Owner: spritzv1.SpritzOwner{ID: "user-1"},
+		},
+		Status: spritzv1.SpritzStatus{Phase: "Ready"},
+	}
+	staleCandidate := &spritzv1.Spritz{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      bindingRuntimeName(binding, 2),
+			Namespace: binding.Namespace,
+			Annotations: map[string]string{
+				bindingTargetRevisionAnnotationKey: binding.Spec.DesiredRevision,
+			},
+		},
+		Spec: spritzv1.SpritzSpec{
+			Image: "example.com/openclaw:stale",
+			Owner: spritzv1.SpritzOwner{ID: "user-1"},
+		},
+		Status: spritzv1.SpritzStatus{Phase: "Provisioning"},
+	}
+	binding.Status.ObservedRevision = binding.Spec.DesiredRevision
+	binding.Status.ActiveInstanceRef = &spritzv1.SpritzBindingInstanceRef{
+		Namespace: binding.Namespace,
+		Name:      activeRuntime.Name,
+		Revision:  binding.Spec.DesiredRevision,
+		Phase:     "Ready",
+	}
+	binding.Status.CandidateInstanceRef = &spritzv1.SpritzBindingInstanceRef{
+		Namespace: binding.Namespace,
+		Name:      staleCandidate.Name,
+		Revision:  binding.Spec.DesiredRevision,
+		Phase:     "Provisioning",
+	}
+	binding.Status.NextRuntimeSequence = 2
+	reconciler, k8sClient := newBindingReconcilerForTest(t, binding, activeRuntime, staleCandidate)
+
+	if err := reconciler.reconcileBinding(context.Background(), binding); err != nil {
+		t.Fatalf("reconcileBinding returned error: %v", err)
+	}
+
+	var storedBinding spritzv1.SpritzBinding
+	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(binding), &storedBinding); err != nil {
+		t.Fatalf("failed to load binding: %v", err)
+	}
+	if storedBinding.Status.CleanupInstanceRef == nil || storedBinding.Status.CleanupInstanceRef.Name != staleCandidate.Name {
+		t.Fatalf("expected outdated candidate to move into cleanup, got %#v", storedBinding.Status)
+	}
+	if storedBinding.Status.CandidateInstanceRef == nil {
+		t.Fatalf("expected a fresh replacement candidate, got %#v", storedBinding.Status)
+	}
+	if storedBinding.Status.CandidateInstanceRef.Name == staleCandidate.Name {
+		t.Fatalf("expected stale candidate to be replaced, got %#v", storedBinding.Status)
 	}
 }

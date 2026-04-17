@@ -23,21 +23,41 @@ import (
 	"spritz.sh/acptext"
 )
 
-func TestOAuthCallbackStoresInstallationAndUpsertsRegistry(t *testing.T) {
+func TestOAuthCallbackAutoSelectsSingleInstallTargetAndUpsertsRegistry(t *testing.T) {
 	var upsertPayload map[string]any
+	listHits := 0
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/internal/v1/spritz/channel-installations/upsert" {
+		switch r.URL.Path {
+		case "/internal/v2/spritz/channel-install-targets/list":
+			listHits++
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "resolved",
+				"targets": []map[string]any{
+					{
+						"id": "ag_123",
+						"profile": map[string]any{
+							"name": "Workspace Helper",
+						},
+						"ownerLabel": "Personal",
+						"presetInputs": map[string]any{
+							"agentId": "ag_123",
+						},
+					},
+				},
+			})
+		case "/internal/v1/spritz/channel-installations/upsert":
+			if err := json.NewDecoder(r.Body).Decode(&upsertPayload); err != nil {
+				t.Fatalf("decode backend payload: %v", err)
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "resolved",
+				"installation": map[string]any{
+					"providerInstallRef": "cred_slack_workspace_1",
+				},
+			})
+		default:
 			t.Fatalf("unexpected backend path %s", r.URL.Path)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&upsertPayload); err != nil {
-			t.Fatalf("decode backend payload: %v", err)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status": "resolved",
-			"installation": map[string]any{
-				"providerInstallRef": "cred_slack_workspace_1",
-			},
-		})
 	}))
 	defer backend.Close()
 
@@ -149,6 +169,16 @@ func TestOAuthCallbackStoresInstallationAndUpsertsRegistry(t *testing.T) {
 	if upsertPayload["requestId"] != requestID {
 		t.Fatalf("expected requestId to propagate to backend, got %#v", upsertPayload["requestId"])
 	}
+	presetInputs, ok := upsertPayload["presetInputs"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected presetInputs object, got %#v", upsertPayload["presetInputs"])
+	}
+	if presetInputs["agentId"] != "ag_123" {
+		t.Fatalf("expected selected agentId ag_123, got %#v", presetInputs["agentId"])
+	}
+	if listHits != 1 {
+		t.Fatalf("expected install targets to be listed once, got %d", listHits)
+	}
 
 	resultReq := httptest.NewRequest(http.MethodGet, redirectURL.RequestURI(), nil)
 	resultRec := httptest.NewRecorder()
@@ -166,6 +196,187 @@ func TestOAuthCallbackStoresInstallationAndUpsertsRegistry(t *testing.T) {
 	}
 	if !strings.Contains(body, requestID) {
 		t.Fatalf("expected request id in result page, got %q", body)
+	}
+}
+
+func TestOAuthCallbackRendersInstallTargetPickerWhenMultipleTargetsAvailable(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/internal/v2/spritz/channel-install-targets/list":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "resolved",
+				"targets": []map[string]any{
+					{
+						"id": "ag_123",
+						"profile": map[string]any{
+							"name": "Personal Helper",
+						},
+						"ownerLabel": "Personal",
+						"presetInputs": map[string]any{
+							"agentId": "ag_123",
+						},
+					},
+					{
+						"id": "ag_456",
+						"profile": map[string]any{
+							"name": "Org Helper",
+						},
+						"ownerLabel": "Acme Workspace",
+						"presetInputs": map[string]any{
+							"agentId": "ag_456",
+						},
+					},
+				},
+			})
+		case "/internal/v1/spritz/channel-installations/upsert":
+			t.Fatal("upsert should not happen before the picker selection")
+		default:
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+	}))
+	defer backend.Close()
+
+	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":           true,
+			"app_id":       "A_app_1",
+			"scope":        "chat:write",
+			"access_token": "xoxb-installed",
+			"bot_user_id":  "U_bot",
+			"team":         map[string]any{"id": "T_workspace_1"},
+			"authed_user":  map[string]any{"id": "U_installer"},
+		})
+	}))
+	defer slackAPI.Close()
+
+	gateway := newSlackGateway(config{
+		PublicURL:            "https://gateway.example.test",
+		SlackClientID:        "client-id",
+		SlackClientSecret:    "client-secret",
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      slackAPI.URL,
+		SlackBotScopes:       []string{"chat:write"},
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        "https://spritz.example.test",
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	state, err := gateway.state.generate()
+	if err != nil {
+		t.Fatalf("state generate failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/slack/oauth/callback?code=test-code&state="+url.QueryEscape(state), nil)
+	rec := httptest.NewRecorder()
+	gateway.handleOAuthCallback(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected picker page 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Choose an install target") {
+		t.Fatalf("expected picker title, got %q", body)
+	}
+	if !strings.Contains(body, "Personal Helper") || !strings.Contains(body, "Org Helper") {
+		t.Fatalf("expected picker targets, got %q", body)
+	}
+	if !strings.Contains(body, `/slack/install/select`) {
+		t.Fatalf("expected picker form action, got %q", body)
+	}
+	if strings.Contains(body, "xoxb-installed") {
+		t.Fatalf("expected picker state to keep bot token encrypted, got %q", body)
+	}
+}
+
+func TestInstallTargetSelectionUsesSelectedPresetInputs(t *testing.T) {
+	var upsertPayload map[string]any
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v1/spritz/channel-installations/upsert" {
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&upsertPayload); err != nil {
+			t.Fatalf("decode backend payload: %v", err)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"installation": map[string]any{
+				"providerInstallRef": "cred_slack_workspace_1",
+			},
+		})
+	}))
+	defer backend.Close()
+
+	gateway := newSlackGateway(config{
+		PublicURL:            "https://gateway.example.test",
+		SlackClientID:        "client-id",
+		SlackClientSecret:    "client-secret",
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      "https://slack.example.test/api",
+		SlackBotScopes:       []string{"chat:write"},
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        "https://spritz.example.test",
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	pendingState, err := gateway.state.generatePendingInstall(pendingInstallState{
+		RequestID: "install-request-1",
+		Installation: slackInstallation{
+			TeamID:           "T_workspace_1",
+			InstallingUserID: "U_installer",
+			BotAccessToken:   "xoxb-installed",
+			BotUserID:        "U_bot",
+			APIAppID:         "A_app_1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("generate pending install state failed: %v", err)
+	}
+	encodedTarget, err := encodeInstallTargetSelection(map[string]any{"agentId": "ag_456"})
+	if err != nil {
+		t.Fatalf("encode target selection failed: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("state", pendingState)
+	form.Set("target", encodedTarget)
+	form.Set("requestId", "install-request-1")
+	req := httptest.NewRequest(http.MethodPost, "/slack/install/select", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	gateway.handleInstallTargetSelection(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 after selection submit, got %d: %s", rec.Code, rec.Body.String())
+	}
+	redirectURL, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse callback redirect: %v", err)
+	}
+	if redirectURL.Query().Get("code") != "installed" {
+		t.Fatalf("expected installed code, got %q", redirectURL.Query().Get("code"))
+	}
+	presetInputs, ok := upsertPayload["presetInputs"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected presetInputs object, got %#v", upsertPayload["presetInputs"])
+	}
+	if presetInputs["agentId"] != "ag_456" {
+		t.Fatalf("expected selected agentId ag_456, got %#v", presetInputs["agentId"])
+	}
+	providerAuth, ok := upsertPayload["providerAuth"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected providerAuth object, got %#v", upsertPayload["providerAuth"])
+	}
+	if providerAuth["botAccessToken"] != "xoxb-installed" {
+		t.Fatalf("expected stored provider auth to round-trip, got %#v", providerAuth["botAccessToken"])
 	}
 }
 
@@ -245,7 +456,27 @@ func TestRoutesServeSlackEndpointsUnderConfiguredPublicURLPathPrefix(t *testing.
 
 func TestOAuthCallbackRedirectsToControlledRetryableErrorWhenBackendUpsertFails(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "backend unavailable", http.StatusServiceUnavailable)
+		switch r.URL.Path {
+		case "/internal/v2/spritz/channel-install-targets/list":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "resolved",
+				"targets": []map[string]any{
+					{
+						"id": "ag_123",
+						"profile": map[string]any{
+							"name": "Workspace Helper",
+						},
+						"presetInputs": map[string]any{
+							"agentId": "ag_123",
+						},
+					},
+				},
+			})
+		case "/internal/v1/spritz/channel-installations/upsert":
+			http.Error(w, "backend unavailable", http.StatusServiceUnavailable)
+		default:
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
 	}))
 	defer backend.Close()
 

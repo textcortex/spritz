@@ -31,6 +31,11 @@ const (
 	installResultCodeIdentityUnresolved  installResultCode = "identity.unresolved"
 	installResultCodeIdentityForbidden   installResultCode = "identity.forbidden"
 	installResultCodeIdentityAmbiguous   installResultCode = "identity.ambiguous"
+	installResultCodeTargetsEmpty        installResultCode = "install.targets.empty"
+	installResultCodeTargetsUnavailable  installResultCode = "install.targets.unavailable"
+	installResultCodeTargetInvalid       installResultCode = "install.target.invalid"
+	installResultCodeTargetForbidden     installResultCode = "install.target.forbidden"
+	installResultCodeTargetConflict      installResultCode = "install.target.conflict"
 	installResultCodeRegistryConflict    installResultCode = "registry.conflict"
 	installResultCodeResolverUnavailable installResultCode = "resolver.unavailable"
 	installResultCodeRuntimeUnavailable  installResultCode = "runtime.unavailable"
@@ -251,6 +256,42 @@ func installResultDescriptorFor(code installResultCode, installURL string) insta
 			ActionLabel: "Start install again",
 			ActionHref:  installURL,
 		}
+	case installResultCodeTargetsEmpty:
+		return installResultDescriptor{
+			Title:       "No install targets are available",
+			Message:     "This account does not have any eligible targets for this workspace install yet.",
+			ActionLabel: "Start install again",
+			ActionHref:  installURL,
+		}
+	case installResultCodeTargetsUnavailable:
+		return installResultDescriptor{
+			Title:       "Install targets are unavailable",
+			Message:     "The install target picker could not be loaded right now. Please try again shortly.",
+			Retryable:   true,
+			ActionLabel: "Start install again",
+			ActionHref:  installURL,
+		}
+	case installResultCodeTargetInvalid:
+		return installResultDescriptor{
+			Title:       "Selected install target is invalid",
+			Message:     "The chosen install target is no longer valid. Start the install again and pick a current target.",
+			ActionLabel: "Start install again",
+			ActionHref:  installURL,
+		}
+	case installResultCodeTargetForbidden:
+		return installResultDescriptor{
+			Title:       "Selected install target is not allowed",
+			Message:     "This install target is not available for the current installer.",
+			ActionLabel: "Start install again",
+			ActionHref:  installURL,
+		}
+	case installResultCodeTargetConflict:
+		return installResultDescriptor{
+			Title:       "Install target selection is ambiguous",
+			Message:     "The requested install target could not be resolved uniquely. Start the install again and choose a specific target.",
+			ActionLabel: "Start install again",
+			ActionHref:  installURL,
+		}
 	case installResultCodeRegistryConflict:
 		return installResultDescriptor{
 			Title:       "Install conflicts with existing state",
@@ -295,6 +336,11 @@ func normalizeInstallResultCode(raw string) installResultCode {
 		installResultCodeIdentityUnresolved,
 		installResultCodeIdentityForbidden,
 		installResultCodeIdentityAmbiguous,
+		installResultCodeTargetsEmpty,
+		installResultCodeTargetsUnavailable,
+		installResultCodeTargetInvalid,
+		installResultCodeTargetForbidden,
+		installResultCodeTargetConflict,
 		installResultCodeRegistryConflict,
 		installResultCodeResolverUnavailable,
 		installResultCodeRuntimeUnavailable,
@@ -314,6 +360,16 @@ func normalizeInstallResultCode(raw string) installResultCode {
 		return installResultCodeIdentityForbidden
 	case "external_identity_ambiguous":
 		return installResultCodeIdentityAmbiguous
+	case "install_targets_empty":
+		return installResultCodeTargetsEmpty
+	case "install_targets_unavailable":
+		return installResultCodeTargetsUnavailable
+	case "install_target_invalid":
+		return installResultCodeTargetInvalid
+	case "install_target_forbidden":
+		return installResultCodeTargetForbidden
+	case "install_target_conflict":
+		return installResultCodeTargetConflict
 	case "installation_conflict":
 		return installResultCodeRegistryConflict
 	case "installation_registry_unavailable":

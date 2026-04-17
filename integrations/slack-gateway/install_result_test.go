@@ -30,3 +30,16 @@ func TestClassifyInstallUpsertErrorMapsLegacyOwnerRefUnresolvedPayloads(t *testi
 		t.Fatalf("expected external identity unresolved, got %q", got)
 	}
 }
+
+func TestClassifyInstallUpsertErrorMapsInstallTargetCodes(t *testing.T) {
+	err := &httpStatusError{
+		method:     http.MethodPost,
+		endpoint:   "/internal/installations/upsert",
+		statusCode: http.StatusNotFound,
+		body:       `{"error":"install_targets_empty"}`,
+	}
+
+	if got := classifyInstallUpsertError(err); got != installResultCodeTargetsEmpty {
+		t.Fatalf("expected install target empty code, got %q", got)
+	}
+}
