@@ -25,6 +25,7 @@ that selection resolves into the final concierge binding.
 
 Related docs:
 
+- [Channel Install Ownership and Management Architecture](2026-04-17-channel-install-ownership-and-management-architecture.md)
 - [Shared Channel Concierge Lifecycle Architecture](2026-03-31-shared-channel-concierge-lifecycle-architecture.md)
 - [Channel Install Result Surface](2026-04-02-channel-install-result-surface.md)
 - [Agent Profile API](2026-03-30-agent-profile-api.md)
