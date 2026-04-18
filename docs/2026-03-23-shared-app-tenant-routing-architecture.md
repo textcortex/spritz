@@ -677,8 +677,8 @@ The intended default behavior should be:
   not on first inbound message
 - install handling should be idempotent
 - disconnect should stop routing immediately
-- reconnect should reuse the same concierge instance identity when the
-  deployment still considers that installation valid
+- reconnect should reuse the same concierge instance identity only while the
+  deployment still considers that installation active and valid
 - outbound channel actions should go back through the shared channel gateway,
   not directly from the concierge runtime to the provider
 
@@ -698,21 +698,25 @@ Spritz should then either:
 
 This gives each tenant a stable concierge before the first real conversation.
 
-### Disconnect and reconnect
+### Disconnect and later reinstall
 
 When an installation is disconnected:
 
-- the external registry should mark it disconnected
+- the external registry should stop treating that route as actively claimed
 - `channel.route.resolve` should return `unresolved`
-- the concierge instance may remain in place for later reuse, depending on
-  deployment policy
+- the previous owner should no longer retain an active reservation on that
+  route
+- any retained concierge/runtime may remain only as detached history or a
+  reusable artifact, depending on deployment policy
 
-When an installation reconnects:
+When the workspace is installed again later:
 
-- the external registry should upsert it back to an active state
-- the same concierge instance identity should be reused when possible
-- only if policy requires a clean replacement should a new concierge be
-  created
+- the external registry should create a fresh active claim for that route
+- the new owner may be the same as the previous owner or a different
+  authorized owner
+- the same concierge instance identity may be reused under the hood only if
+  deployment policy explicitly allows it
+- otherwise a new concierge should be created
 
 If the installation is still active but the runtime has disappeared:
 
@@ -783,15 +787,18 @@ Validation for this architecture should include:
    - `principalId + provider + externalScopeType + externalTenantId`
 5. Send inbound events from both tenants through the same app integration.
 6. Verify each event routes to the correct concierge instance.
-7. Verify reinstall or reconnect returns the same concierge instance identity.
+7. Verify active-route reinstall remains idempotent while the route is still
+   claimed.
 8. Verify runtime replacement preserves concierge instance identity.
 9. Verify uninstall or disconnect disables routing for that tenant.
 
 Disconnect and uninstall behavior should be explicit:
 
-- uninstall or disconnect sets `spritz.sh/concierge.state=disconnected`
-- routing must stop immediately for disconnected instances
-- reconnect may reuse the same instance identity if policy allows
+- uninstall or disconnect must remove the route from the active registry used
+  for route resolution
+- routing must stop immediately for released routes
+- a later install may reuse the same runtime identity only if deployment
+  policy allows it, but it must be treated as a fresh active claim
 
 ## Follow-ups
 
