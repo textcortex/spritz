@@ -1,0 +1,47 @@
+name: local-smoke-tests
+
+on:
+  pull_request:
+    paths:
+      - "api/**"
+      - "operator/**"
+      - "helm/**"
+      - "e2e/local-smoke.sh"
+      - ".github/workflows/local-smoke-tests.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "api/**"
+      - "operator/**"
+      - "helm/**"
+      - "e2e/local-smoke.sh"
+      - ".github/workflows/local-smoke-tests.yml"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache-dependency-path: |
+            api/go.sum
+            operator/go.sum
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.30.0
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Run local smoke
+        env:
+          SPRITZ_E2E_API_WAIT_SECONDS: "120"
+        run: ./e2e/local-smoke.sh
