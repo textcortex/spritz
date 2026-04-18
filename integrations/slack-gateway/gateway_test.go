@@ -366,6 +366,57 @@ func TestWorkspaceManagementRendersManagedInstallations(t *testing.T) {
 	}
 }
 
+func TestWorkspaceManagementAcceptsConfiguredBrowserAuthHeaders(t *testing.T) {
+	t.Setenv("SPRITZ_AUTH_HEADER_ID", "X-Forwarded-User")
+	t.Setenv("SPRITZ_AUTH_HEADER_EMAIL", "X-Forwarded-Email")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v2/spritz/channel-installations/list" {
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"installations": []map[string]any{
+				{
+					"route": map[string]any{
+						"principalId":       "shared-slack-gateway",
+						"provider":          "slack",
+						"externalScopeType": "workspace",
+						"externalTenantId":  "T_workspace_1",
+					},
+					"state": "ready",
+					"currentTarget": map[string]any{
+						"id": "ag_workspace",
+						"profile": map[string]any{
+							"name": "Workspace Helper",
+						},
+						"ownerLabel": "Personal",
+					},
+					"allowedActions": []string{"changeTarget", "disconnect"},
+				},
+			},
+		})
+	}))
+	defer backend.Close()
+
+	gateway := newSlackGateway(config{
+		BackendFastAPIBaseURL: backend.URL,
+		BackendInternalToken:  "backend-internal-token",
+		PrincipalID:           "shared-slack-gateway",
+		HTTPTimeout:           5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	req := httptest.NewRequest(http.MethodGet, "/slack/workspaces", nil)
+	req.Header.Set("X-Forwarded-User", "user-1")
+	req.Header.Set("X-Forwarded-Email", "user@example.com")
+	rec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestWorkspaceTargetPickerUsesCurrentBrowserPrincipal(t *testing.T) {
 	var listPayload map[string]any
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

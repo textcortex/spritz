@@ -6,7 +6,7 @@ import (
 )
 
 func (g *slackGateway) handleWorkspaceManagement(w http.ResponseWriter, r *http.Request) {
-	principal, ok := requireBrowserPrincipal(w, r)
+	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
 	if !ok {
 		return
 	}
@@ -38,7 +38,7 @@ func (g *slackGateway) handleWorkspaceTarget(w http.ResponseWriter, r *http.Requ
 }
 
 func (g *slackGateway) handleWorkspaceTargetPicker(w http.ResponseWriter, r *http.Request) {
-	principal, ok := requireBrowserPrincipal(w, r)
+	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
 	if !ok {
 		return
 	}
@@ -89,7 +89,7 @@ func (g *slackGateway) handleWorkspaceTargetPicker(w http.ResponseWriter, r *htt
 }
 
 func (g *slackGateway) handleWorkspaceTargetUpdate(w http.ResponseWriter, r *http.Request) {
-	principal, ok := requireBrowserPrincipal(w, r)
+	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
 	if !ok {
 		return
 	}
@@ -151,7 +151,7 @@ func (g *slackGateway) handleWorkspaceDisconnect(w http.ResponseWriter, r *http.
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	principal, ok := requireBrowserPrincipal(w, r)
+	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
 	if !ok {
 		return
 	}

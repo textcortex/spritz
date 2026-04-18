@@ -33,6 +33,12 @@ func newSlackGateway(cfg config, logger *slog.Logger) *slackGateway {
 	if cfg.HTTPTimeout <= 0 {
 		cfg.HTTPTimeout = 15 * time.Second
 	}
+	if strings.TrimSpace(cfg.BrowserAuthHeaderID) == "" {
+		cfg.BrowserAuthHeaderID = envOrDefault("SPRITZ_AUTH_HEADER_ID", "X-Spritz-User-Id")
+	}
+	if strings.TrimSpace(cfg.BrowserAuthHeaderEmail) == "" {
+		cfg.BrowserAuthHeaderEmail = envOrDefault("SPRITZ_AUTH_HEADER_EMAIL", "X-Spritz-User-Email")
+	}
 	if cfg.DedupeTTL <= 0 {
 		cfg.DedupeTTL = 10 * time.Minute
 	}
