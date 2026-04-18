@@ -3,6 +3,8 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { ConfigProvider, config } from '@/lib/config';
 import { NoticeProvider } from '@/components/notice-banner';
+import * as AppModule from '@/App';
+import { buildLegacySlackGatewayRedirectURL } from '@/App';
 
 // Mock the page components to keep tests simple
 vi.mock('@/pages/chat', () => ({
@@ -75,5 +77,27 @@ describe('App routing', () => {
     render(<App />);
 
     expect(screen.getByTestId('chat-page')).toBeDefined();
+  });
+
+  it('maps legacy Slack gateway SPA paths to the real gateway URL', () => {
+    expect(
+      buildLegacySlackGatewayRedirectURL(
+        '/spritz/slack-gateway/slack/workspaces',
+        '?teamId=T123',
+        '#details',
+      ),
+    ).toBe('/slack-gateway/slack/workspaces?teamId=T123#details');
+  });
+
+  it('redirects legacy Slack gateway routes instead of rendering a blank page', () => {
+    const replaceSpy = vi
+      .spyOn(AppModule.browserLocation, 'replace')
+      .mockImplementation(() => undefined);
+    window.history.pushState({}, '', '/spritz/slack-gateway/slack/workspaces');
+
+    render(<AppModule.App />);
+
+    expect(replaceSpy).toHaveBeenCalledWith('/slack-gateway/slack/workspaces');
+    replaceSpy.mockRestore();
   });
 });
