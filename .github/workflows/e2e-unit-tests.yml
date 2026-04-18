@@ -26,3 +26,10 @@ jobs:
 
       - name: Run e2e unit tests
         run: node --test e2e/*.test.mjs
+
+      - name: Check ACP smoke scripts
+        run: |
+          node --check e2e/acp-smoke-lib.mjs
+          node --check e2e/acp-client.mjs
+          node --check e2e/instance-waiter.mjs
+          node --check e2e/acp-smoke.mjs
