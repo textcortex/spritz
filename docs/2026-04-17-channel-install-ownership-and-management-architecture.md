@@ -234,20 +234,24 @@ Those settings may affect runtime behavior, but they are not the same concept
 as target selection and should evolve through a separate installation-config
 surface.
 
-### Disconnect and uninstall are soft
+### Disconnect and uninstall release the active workspace claim
 
-Provider uninstall or product-side disconnect should soft-disconnect the
-installation, not hard-delete it immediately.
+Provider uninstall or product-side disconnect should release the active
+installation claim for that route.
 
 Pinned rule:
 
 - routing stops immediately
-- provider auth may be cleared according to deployment policy
-- the durable installation record remains
-- the logical concierge binding may remain for later reuse
+- provider auth tied to the released installation should be cleared or revoked
+  according to deployment policy
+- the active installation row should no longer reserve that route
+- any retained concierge/runtime may remain only as detached history or a
+  reusable artifact, not as an active claim
+- a later install for the same route should be treated as a fresh install,
+  even when the same runtime is reused under the hood
 
-This keeps reconnect flows simple and consistent with the existing shared
-channel lifecycle model.
+History and audit may still be retained, but they should not live in the same
+table or record that answers "who currently owns this workspace route."
 
 ## UX Consequences For Spritz
 
@@ -264,8 +268,12 @@ For each manageable installation, Spritz should show at least:
 The minimum action set is:
 
 - change target
-- reconnect
 - disconnect
+
+`reconnect` may still exist as a repair action for an active installation that
+is temporarily broken or missing provider auth, but it is not the path after a
+user-facing disconnect. After disconnect, the route has been released and the
+next claim should come from a fresh install flow.
 
 When an installation is in a broken but still durable state, the UI should
 still render the row and show a repair-needed state through `problemCode`
@@ -286,9 +294,14 @@ shapes vary by deployment:
   installation
 - install-management APIs must authorize against the effective owner, not just
   the original installer
-- reinstall APIs must detect effective-owner mismatch and return conflict
+- reinstall APIs must detect effective-owner mismatch and return conflict only
+  while an active claim still exists for that route
 - management-target-change APIs must update target and owner together
 - mutable installation-config APIs must stay separate from target-selection APIs
+- disconnect APIs must release the active claim instead of keeping a
+  disconnected reservation behind
+- audit/history for released installations must stay separate from the active
+  registry used for ownership conflicts and route resolution
 
 These behaviors matter more than the exact transport details.
 
@@ -296,12 +309,14 @@ These behaviors matter more than the exact transport details.
 
 At minimum, an implementation should validate:
 
-- reinstall of the same route and same effective owner updates in place
-- reinstall of the same route and different effective owner returns conflict
+- reinstall of the same active route and same effective owner updates in place
+- reinstall of the same active route and different effective owner returns
+  conflict
 - changing to a new valid target updates the installation atomically
 - changing to a target owned by a different principal updates effective owner
 - deleting or invalidating the saved target blocks routing until repair
-- disconnect stops routing but preserves the installation for reconnect
+- disconnect stops routing and releases the route for a later fresh install by
+  the same or a different authorized owner
 - install rows expose the correct `allowedActions` and `problemCode`
 - future provider-specific configuration can change without rewriting saved
   target selection
@@ -315,7 +330,7 @@ needs for:
 
 - listing manageable installations
 - updating the selected target on an installation
-- reconnecting a disconnected installation
+- reconnecting an active but temporarily broken installation
 - surfacing repair-needed state when the saved target is no longer valid
 - defining the generic installation-config surface for provider-specific
   mutable settings

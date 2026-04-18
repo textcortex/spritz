@@ -114,6 +114,26 @@ func (s *server) getInternalBinding(c echo.Context) error {
 	return writeJSON(c, http.StatusOK, summarizeInternalBinding(&binding))
 }
 
+func (s *server) deleteInternalBinding(c echo.Context) error {
+	namespace, bindingName, err := s.resolveBindingPath(c)
+	if err != nil {
+		return writeError(c, http.StatusBadRequest, err.Error())
+	}
+	binding := &spritzv1.SpritzBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      bindingName,
+		},
+	}
+	if err := s.client.Delete(c.Request().Context(), binding); err != nil {
+		if apierrors.IsNotFound(err) {
+			return writeError(c, http.StatusNotFound, "not found")
+		}
+		return writeError(c, http.StatusInternalServerError, err.Error())
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
 func (s *server) upsertInternalBinding(c echo.Context) error {
 	namespace, bindingName, err := s.resolveBindingPath(c)
 	if err != nil {

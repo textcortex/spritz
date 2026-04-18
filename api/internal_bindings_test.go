@@ -186,6 +186,51 @@ func TestInternalUpsertBindingPreservesNormalizedCreateAnnotations(t *testing.T)
 	}
 }
 
+func TestInternalDeleteBindingRemovesStoredBinding(t *testing.T) {
+	s := newInternalSpritzesTestServer(t)
+	e := echo.New()
+	s.registerRoutes(e)
+
+	body := `{
+		"desiredRevision": "sha256:rev-1",
+		"principal": {"id": "channel-gateway"},
+		"request": {
+			"presetId": "zeno",
+			"ownerId": "user-123",
+			"requestId": "binding-delete-1",
+			"source": "channel-gateway",
+			"spec": {}
+		}
+	}`
+	putReq := httptest.NewRequest(http.MethodPut, "/api/internal/v1/bindings/channel-installation-binding-delete", strings.NewReader(body))
+	putReq.Header.Set("Authorization", "Bearer spritz-internal-token")
+	putReq.Header.Set("Content-Type", "application/json")
+	putRec := httptest.NewRecorder()
+	e.ServeHTTP(putRec, putReq)
+
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", putRec.Code, putRec.Body.String())
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/internal/v1/bindings/channel-installation-binding-delete", nil)
+	deleteReq.Header.Set("Authorization", "Bearer spritz-internal-token")
+	deleteRec := httptest.NewRecorder()
+	e.ServeHTTP(deleteRec, deleteReq)
+
+	if deleteRec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", deleteRec.Code, deleteRec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/internal/v1/bindings/channel-installation-binding-delete", nil)
+	getReq.Header.Set("Authorization", "Bearer spritz-internal-token")
+	getRec := httptest.NewRecorder()
+	e.ServeHTTP(getRec, getReq)
+
+	if getRec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 after delete, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+}
+
 func TestInternalReplaceSpritzUsesBindingLifecycleWhenRuntimeIsOwnedByBinding(t *testing.T) {
 	targetRevision := "sha256:rev-2"
 	binding := &spritzv1.SpritzBinding{

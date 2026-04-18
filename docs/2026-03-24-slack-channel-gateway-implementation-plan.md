@@ -92,7 +92,10 @@ The gateway provides:
 The resolver returns:
 
 - `instanceId`
-- route state such as `ready` or `disconnected`
+- route state such as `ready`
+
+Released or disconnected workspace routes should resolve as `unresolved`
+rather than surfacing a reserved `disconnected` active state.
 
 ### 2. Installation registry client
 
@@ -182,8 +185,10 @@ Install must be idempotent:
 2. Gateway calls the external disconnect API for the same routing identity.
 3. Route resolution must immediately stop returning a concierge for that
    workspace.
-4. The concierge instance may remain for later reuse, depending on deployment
-   policy.
+4. The active workspace claim must be released so a later install may bind the
+   same workspace to a different owner.
+5. Any retained concierge/runtime may remain only as detached history or a
+   reusable artifact, depending on deployment policy.
 
 ## Inbound Event Flow
 
