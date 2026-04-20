@@ -45,6 +45,27 @@ type slackEventInner struct {
 	ThreadTS    string `json:"thread_ts,omitempty"`
 }
 
+type messageEventProcessOptions struct {
+	Synthetic bool
+	DryRun    bool
+}
+
+type messageEventProcessResult struct {
+	ConversationID  string
+	Outcome         string
+	Reply           string
+	PromptSent      bool
+	PostedMessageTS string
+}
+
+const (
+	messageEventOutcomeIgnored                = "ignored"
+	messageEventOutcomeDelivered              = "delivered"
+	messageEventOutcomeNoReply                = "no_reply"
+	messageEventOutcomeDryRun                 = "dry_run"
+	messageEventOutcomeTerminalFailureReplied = "terminal_failure_replied"
+)
+
 type channelSessionRecoveryState struct {
 	mu              sync.Mutex
 	startedAt       time.Time
@@ -526,6 +547,21 @@ func (g *slackGateway) processMessageEventWithDelivery(
 	envelope slackEnvelope,
 	delivery *slackMessageDelivery,
 ) error {
+	_, err := g.processMessageEventWithDeliveryOptions(
+		ctx,
+		envelope,
+		delivery,
+		messageEventProcessOptions{},
+	)
+	return err
+}
+
+func (g *slackGateway) processMessageEventWithDeliveryOptions(
+	ctx context.Context,
+	envelope slackEnvelope,
+	delivery *slackMessageDelivery,
+	options messageEventProcessOptions,
+) (messageEventProcessResult, error) {
 	success := false
 	defer func() {
 		delivery.finish(success)
@@ -534,7 +570,7 @@ func (g *slackGateway) processMessageEventWithDelivery(
 	event := envelope.Event
 	if normalizeSlackPromptText(event.Type, event.Text, "") == "" {
 		success = true
-		return nil
+		return messageEventProcessResult{Outcome: messageEventOutcomeIgnored}, nil
 	}
 
 	recoveryState := newChannelSessionRecoveryState()
@@ -546,24 +582,27 @@ func (g *slackGateway) processMessageEventWithDelivery(
 		false,
 	)
 	if err != nil {
-		return err
+		return messageEventProcessResult{}, err
 	}
 	if terminalHandled {
 		success = true
-		return nil
+		return messageEventProcessResult{
+			Outcome: messageEventOutcomeTerminalFailureReplied,
+		}, nil
 	}
 	if session.ProviderAuth.APIAppID != "" && strings.TrimSpace(envelope.APIAppID) != "" && session.ProviderAuth.APIAppID != strings.TrimSpace(envelope.APIAppID) {
-		return fmt.Errorf("slack api_app_id mismatch for team %s", envelope.TeamID)
+		return messageEventProcessResult{}, fmt.Errorf("slack api_app_id mismatch for team %s", envelope.TeamID)
 	}
 
-	promptText := buildSlackPromptText(
+	promptText := buildSlackPromptTextWithSynthetic(
 		envelope.TeamID,
 		event,
 		session.ProviderAuth.BotUserID,
+		options.Synthetic,
 	)
 	if promptText == "" {
 		success = true
-		return nil
+		return messageEventProcessResult{Outcome: messageEventOutcomeIgnored}, nil
 	}
 
 	result, err := g.executeConversationPrompt(ctx, envelope, event, session, promptText)
@@ -599,13 +638,17 @@ func (g *slackGateway) processMessageEventWithDelivery(
 						"channel_id", strings.TrimSpace(event.Channel),
 						"message_ts", strings.TrimSpace(event.TS),
 					)
-					return postErr
+					return messageEventProcessResult{}, postErr
 				}
 				if terminalHandled {
 					success = true
-					return nil
+					return messageEventProcessResult{
+						ConversationID: result.conversationID,
+						PromptSent:     result.promptSent,
+						Outcome:        messageEventOutcomeTerminalFailureReplied,
+					}, nil
 				}
-				return sleepErr
+				return messageEventProcessResult{}, sleepErr
 			}
 		} else {
 			recoveryState.resetPromptRetry()
@@ -617,24 +660,34 @@ func (g *slackGateway) processMessageEventWithDelivery(
 				true,
 			)
 			if recoveryErr != nil {
-				return recoveryErr
+				return messageEventProcessResult{}, recoveryErr
 			}
 			if recoveredTerminalHandled {
 				success = true
-				return nil
+				return messageEventProcessResult{
+					ConversationID: result.conversationID,
+					PromptSent:     result.promptSent,
+					Outcome:        messageEventOutcomeTerminalFailureReplied,
+				}, nil
 			}
 			session = recoveredSession
-			promptText = buildSlackPromptText(
+			promptText = buildSlackPromptTextWithSynthetic(
 				envelope.TeamID,
 				event,
 				session.ProviderAuth.BotUserID,
+				options.Synthetic,
 			)
 			if promptText == "" {
 				success = true
-				return nil
+				return messageEventProcessResult{Outcome: messageEventOutcomeIgnored}, nil
 			}
 		}
 		result, err = g.executeConversationPrompt(ctx, envelope, event, session, promptText)
+	}
+	processResult := messageEventProcessResult{
+		ConversationID: result.conversationID,
+		Reply:          result.reply,
+		PromptSent:     result.promptSent,
 	}
 	if err != nil {
 		if !result.promptSent {
@@ -648,16 +701,18 @@ func (g *slackGateway) processMessageEventWithDelivery(
 						"channel_id", strings.TrimSpace(event.Channel),
 						"message_ts", strings.TrimSpace(event.TS),
 					)
-					return postErr
+					return messageEventProcessResult{}, postErr
 				}
 				if terminalHandled {
 					success = true
-					return nil
+					processResult.Outcome = messageEventOutcomeTerminalFailureReplied
+					return processResult, nil
 				}
 			}
-			return err
+			return messageEventProcessResult{}, err
 		}
 		result.reply = "I hit an internal error while processing that request."
+		processResult.Reply = result.reply
 		g.logger.Error("acp prompt failed", "error", err, "conversation_id", result.conversationID)
 	}
 	if result.deliveryType == promptDeliveryNoReply {
@@ -669,20 +724,28 @@ func (g *slackGateway) processMessageEventWithDelivery(
 			"message_ts", strings.TrimSpace(event.TS),
 		)
 		success = true
-		return nil
+		processResult.Outcome = messageEventOutcomeNoReply
+		return processResult, nil
+	}
+	if options.DryRun {
+		success = true
+		processResult.Outcome = messageEventOutcomeDryRun
+		return processResult, nil
 	}
 	replyThreadTS := slackReplyThreadTS(event)
 	replyCtx, cancelReply := context.WithTimeout(context.WithoutCancel(ctx), g.cfg.HTTPTimeout)
 	defer cancelReply()
-	_, err = g.postSlackMessage(replyCtx, session.ProviderAuth.BotAccessToken, event.Channel, result.reply, replyThreadTS)
+	postedMessageTS, err := g.postSlackMessage(replyCtx, session.ProviderAuth.BotAccessToken, event.Channel, result.reply, replyThreadTS)
 	if err != nil {
 		// Once the ACP prompt has already been delivered, suppress duplicate
 		// Slack retries from re-running the same agent side effects.
 		success = result.promptSent
-		return err
+		return messageEventProcessResult{}, err
 	}
 	success = true
-	return nil
+	processResult.Outcome = messageEventOutcomeDelivered
+	processResult.PostedMessageTS = postedMessageTS
+	return processResult, nil
 }
 
 type conversationPromptResult struct {
@@ -908,9 +971,14 @@ type slackPromptContext struct {
 	ThreadTS       string `json:"thread_ts,omitempty"`
 	ConversationID string `json:"conversation_id"`
 	DirectMessage  bool   `json:"direct_message"`
+	Synthetic      bool   `json:"synthetic,omitempty"`
 }
 
 func buildSlackPromptText(teamID string, event slackEventInner, botUserID string) string {
+	return buildSlackPromptTextWithSynthetic(teamID, event, botUserID, false)
+}
+
+func buildSlackPromptTextWithSynthetic(teamID string, event slackEventInner, botUserID string, synthetic bool) string {
 	normalized := normalizeSlackPromptText(event.Type, event.Text, botUserID)
 	if normalized == "" {
 		return ""
@@ -928,6 +996,7 @@ func buildSlackPromptText(teamID string, event slackEventInner, botUserID string
 			ThreadTS:       strings.TrimSpace(event.ThreadTS),
 			ConversationID: slackExternalConversationID(event),
 			DirectMessage:  isSlackDirectMessageEvent(event),
+			Synthetic:      synthetic,
 		},
 	)
 	if err != nil {
