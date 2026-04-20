@@ -364,6 +364,9 @@ func TestWorkspaceManagementRendersManagedInstallations(t *testing.T) {
 	if !strings.Contains(body, "Workspace Helper") {
 		t.Fatalf("expected current target on page, got %q", body)
 	}
+	if !strings.Contains(body, "Send test") {
+		t.Fatalf("expected workspace test action on page, got %q", body)
+	}
 }
 
 func TestWorkspaceManagementAcceptsConfiguredBrowserAuthHeaders(t *testing.T) {
@@ -551,6 +554,410 @@ func TestWorkspaceDisconnectRedirectsOnSuccess(t *testing.T) {
 	location := rec.Header().Get("Location")
 	if !strings.Contains(location, "notice=workspace-disconnected") {
 		t.Fatalf("expected disconnect redirect notice, got %q", location)
+	}
+}
+
+func TestWorkspaceTestRequiresBrowserPrincipal(t *testing.T) {
+	gateway := newSlackGateway(config{
+		BackendFastAPIBaseURL: "https://backend.example.test",
+		BackendInternalToken:  "backend-internal-token",
+		PrincipalID:           "shared-slack-gateway",
+		HTTPTimeout:           5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	req := httptest.NewRequest(http.MethodGet, "/slack/workspaces/test?teamId=T_workspace_1", nil)
+	rec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkspaceTestFormRendersForManageableWorkspace(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v2/spritz/channel-installations/list" {
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"installations": []map[string]any{
+				{
+					"route": map[string]any{
+						"principalId":       "shared-slack-gateway",
+						"provider":          "slack",
+						"externalScopeType": "workspace",
+						"externalTenantId":  "T_workspace_1",
+					},
+					"state": "ready",
+					"currentTarget": map[string]any{
+						"id": "ag_workspace",
+						"profile": map[string]any{
+							"name": "Workspace Helper",
+						},
+					},
+					"allowedActions": []string{"changeTarget", "disconnect"},
+				},
+			},
+		})
+	}))
+	defer backend.Close()
+
+	gateway := newSlackGateway(config{
+		BackendFastAPIBaseURL: backend.URL,
+		BackendInternalToken:  "backend-internal-token",
+		PrincipalID:           "shared-slack-gateway",
+		HTTPTimeout:           5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	req := httptest.NewRequest(http.MethodGet, "/slack/workspaces/test?teamId=T_workspace_1", nil)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Send a synthetic Slack test message") {
+		t.Fatalf("expected synthetic test title, got %q", body)
+	}
+	if !strings.Contains(body, "Workspace Helper") {
+		t.Fatalf("expected current target name on form, got %q", body)
+	}
+}
+
+func TestWorkspaceTestSubmitDryRunSkipsSlackPostAndMarksPromptSynthetic(t *testing.T) {
+	var promptPayload map[string]any
+	slackPostHits := 0
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/internal/v2/spritz/channel-installations/list":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "resolved",
+				"installations": []map[string]any{
+					{
+						"route": map[string]any{
+							"principalId":       "shared-slack-gateway",
+							"provider":          "slack",
+							"externalScopeType": "workspace",
+							"externalTenantId":  "T_workspace_1",
+						},
+						"state": "ready",
+						"currentTarget": map[string]any{
+							"id": "ag_workspace",
+							"profile": map[string]any{
+								"name": "Workspace Helper",
+							},
+						},
+						"allowedActions": []string{"changeTarget", "disconnect"},
+					},
+				},
+			})
+		case "/internal/v1/spritz/channel-sessions/exchange":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "resolved",
+				"session": map[string]any{
+					"accessToken": "owner-token",
+					"ownerAuthId": "owner-123",
+					"namespace":   "spritz-staging",
+					"instanceId":  "zeno-acme",
+					"providerAuth": map[string]any{
+						"teamId":         "T_workspace_1",
+						"botUserId":      "U_bot",
+						"botAccessToken": "xoxb-installed",
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+	}))
+	defer backend.Close()
+
+	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slackPostHits++
+		t.Fatalf("dry-run synthetic test must not post to slack")
+	}))
+	defer slackAPI.Close()
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	spritz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/channel-conversations/upsert":
+			writeJSON(w, http.StatusCreated, map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"conversation": map[string]any{
+						"metadata": map[string]any{"name": "conv-1"},
+					},
+				},
+			})
+		case "/api/acp/conversations/conv-1/bootstrap":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"effectiveSessionId": "session-1",
+					"effectiveCwd":       "/home/dev",
+				},
+			})
+		case "/api/acp/conversations/conv-1/connect":
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				t.Fatalf("upgrade failed: %v", err)
+			}
+			defer conn.Close()
+			for {
+				_, payload, err := conn.ReadMessage()
+				if err != nil {
+					return
+				}
+				var message map[string]any
+				if err := json.Unmarshal(payload, &message); err != nil {
+					t.Fatalf("decode ws payload: %v", err)
+				}
+				switch message["method"] {
+				case "initialize":
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{"protocolVersion": 1}})
+				case "session/load":
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
+				case "session/prompt":
+					promptPayload = message
+					_ = conn.WriteJSON(map[string]any{
+						"jsonrpc": "2.0",
+						"method":  "session/update",
+						"params": map[string]any{
+							"update": map[string]any{
+								"sessionUpdate": "agent_message_chunk",
+								"content": []map[string]any{{
+									"type": "text",
+									"text": "Hello from concierge",
+								}},
+							},
+						},
+					})
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
+					return
+				default:
+					t.Fatalf("unexpected ACP method %#v", message["method"])
+				}
+			}
+		default:
+			t.Fatalf("unexpected spritz path %s", r.URL.Path)
+		}
+	}))
+	defer spritz.Close()
+
+	gateway := newSlackGateway(config{
+		BackendFastAPIBaseURL: backend.URL,
+		BackendBaseURL:        backend.URL,
+		BackendInternalToken:  "backend-internal-token",
+		SlackAPIBaseURL:       slackAPI.URL,
+		SpritzBaseURL:         spritz.URL,
+		SpritzServiceToken:    "spritz-service-token",
+		PrincipalID:           "shared-slack-gateway",
+		HTTPTimeout:           5 * time.Second,
+		DedupeTTL:             time.Minute,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	form := url.Values{}
+	form.Set("teamId", "T_workspace_1")
+	form.Set("channelId", "C_workspace_1")
+	form.Set("prompt", "synthetic smoke")
+	form.Set("mode", "dry-run")
+	req := httptest.NewRequest(http.MethodPost, "/slack/workspaces/test", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if slackPostHits != 0 {
+		t.Fatalf("expected no slack posts during dry-run, got %d", slackPostHits)
+	}
+	if !strings.Contains(rec.Body.String(), "Outcome: dry_run") {
+		t.Fatalf("expected dry_run outcome, got %q", rec.Body.String())
+	}
+	params, ok := promptPayload["params"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected prompt params, got %#v", promptPayload)
+	}
+	chunks, ok := params["prompt"].([]any)
+	if !ok || len(chunks) != 1 {
+		t.Fatalf("expected one prompt chunk, got %#v", params["prompt"])
+	}
+	chunk, ok := chunks[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected prompt chunk object, got %#v", chunks[0])
+	}
+	promptText := fmt.Sprint(chunk["text"])
+	if !strings.Contains(promptText, `"synthetic":true`) {
+		t.Fatalf("expected synthetic marker in prompt context, got %q", promptText)
+	}
+}
+
+func TestWorkspaceTestSubmitRealModePostsSlackReply(t *testing.T) {
+	var slackPayload map[string]any
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/internal/v2/spritz/channel-installations/list":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "resolved",
+				"installations": []map[string]any{
+					{
+						"route": map[string]any{
+							"principalId":       "shared-slack-gateway",
+							"provider":          "slack",
+							"externalScopeType": "workspace",
+							"externalTenantId":  "T_workspace_1",
+						},
+						"state": "ready",
+						"currentTarget": map[string]any{
+							"id": "ag_workspace",
+							"profile": map[string]any{
+								"name": "Workspace Helper",
+							},
+						},
+						"allowedActions": []string{"changeTarget", "disconnect"},
+					},
+				},
+			})
+		case "/internal/v1/spritz/channel-sessions/exchange":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "resolved",
+				"session": map[string]any{
+					"accessToken": "owner-token",
+					"ownerAuthId": "owner-123",
+					"namespace":   "spritz-staging",
+					"instanceId":  "zeno-acme",
+					"providerAuth": map[string]any{
+						"teamId":         "T_workspace_1",
+						"botUserId":      "U_bot",
+						"botAccessToken": "xoxb-installed",
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+	}))
+	defer backend.Close()
+
+	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat.postMessage" {
+			t.Fatalf("unexpected slack path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&slackPayload); err != nil {
+			t.Fatalf("decode slack post payload: %v", err)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ts": "1711387376.000100"})
+	}))
+	defer slackAPI.Close()
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	spritz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/channel-conversations/upsert":
+			writeJSON(w, http.StatusCreated, map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"conversation": map[string]any{
+						"metadata": map[string]any{"name": "conv-1"},
+					},
+				},
+			})
+		case "/api/acp/conversations/conv-1/bootstrap":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"effectiveSessionId": "session-1",
+					"effectiveCwd":       "/home/dev",
+				},
+			})
+		case "/api/acp/conversations/conv-1/connect":
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				t.Fatalf("upgrade failed: %v", err)
+			}
+			defer conn.Close()
+			for {
+				_, payload, err := conn.ReadMessage()
+				if err != nil {
+					return
+				}
+				var message map[string]any
+				if err := json.Unmarshal(payload, &message); err != nil {
+					t.Fatalf("decode ws payload: %v", err)
+				}
+				switch message["method"] {
+				case "initialize":
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{"protocolVersion": 1}})
+				case "session/load":
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
+				case "session/prompt":
+					_ = conn.WriteJSON(map[string]any{
+						"jsonrpc": "2.0",
+						"method":  "session/update",
+						"params": map[string]any{
+							"update": map[string]any{
+								"sessionUpdate": "agent_message_chunk",
+								"content": []map[string]any{{
+									"type": "text",
+									"text": "Hello from concierge",
+								}},
+							},
+						},
+					})
+					_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": message["id"], "result": map[string]any{}})
+					return
+				default:
+					t.Fatalf("unexpected ACP method %#v", message["method"])
+				}
+			}
+		default:
+			t.Fatalf("unexpected spritz path %s", r.URL.Path)
+		}
+	}))
+	defer spritz.Close()
+
+	gateway := newSlackGateway(config{
+		BackendFastAPIBaseURL: backend.URL,
+		BackendBaseURL:        backend.URL,
+		BackendInternalToken:  "backend-internal-token",
+		SlackAPIBaseURL:       slackAPI.URL,
+		SpritzBaseURL:         spritz.URL,
+		SpritzServiceToken:    "spritz-service-token",
+		PrincipalID:           "shared-slack-gateway",
+		HTTPTimeout:           5 * time.Second,
+		DedupeTTL:             time.Minute,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	form := url.Values{}
+	form.Set("teamId", "T_workspace_1")
+	form.Set("channelId", "C_workspace_1")
+	form.Set("prompt", "synthetic smoke")
+	form.Set("mode", "real")
+	req := httptest.NewRequest(http.MethodPost, "/slack/workspaces/test", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if slackPayload["channel"] != "C_workspace_1" {
+		t.Fatalf("expected slack post to target the requested channel, got %#v", slackPayload["channel"])
+	}
+	if !strings.Contains(fmt.Sprint(slackPayload["text"]), "Hello from concierge") {
+		t.Fatalf("expected concierge reply to be posted, got %#v", slackPayload["text"])
+	}
+	if !strings.Contains(rec.Body.String(), "Outcome: delivered") {
+		t.Fatalf("expected delivered outcome, got %q", rec.Body.String())
 	}
 }
 

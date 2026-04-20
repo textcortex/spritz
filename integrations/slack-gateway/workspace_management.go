@@ -19,9 +19,11 @@ type workspaceManagementRow struct {
 	CurrentTargetOwner string
 	TargetStatus       string
 	ChangeTargetHref   string
+	TestHref           string
 	ReconnectHref      string
 	ShowReconnect      bool
 	ShowDisconnect     bool
+	ShowTest           bool
 }
 
 type workspaceManagementPageData struct {
@@ -163,6 +165,9 @@ var workspaceManagementTemplate = template.Must(template.New("workspace-manageme
         </div>
         <div class="actions">
           <a class="primary" href="{{ .ChangeTargetHref }}">Change target</a>
+          {{ if .ShowTest }}
+          <a class="secondary" href="{{ .TestHref }}">Send test</a>
+          {{ end }}
           {{ if .ShowReconnect }}
           <a class="secondary" href="{{ .ReconnectHref }}">Reconnect</a>
           {{ end }}
@@ -194,6 +199,14 @@ func (g *slackGateway) workspaceTargetPath() string {
 
 func (g *slackGateway) workspaceDisconnectPath() string {
 	return g.publicPathPrefix() + "/slack/workspaces/disconnect"
+}
+
+func (g *slackGateway) buildWorkspaceTestHref(teamID string) string {
+	target := url.URL{Path: g.workspaceTestPath()}
+	query := target.Query()
+	query.Set("teamId", strings.TrimSpace(teamID))
+	target.RawQuery = query.Encode()
+	return target.String()
 }
 
 func workspaceNoticeFromRequest(r *http.Request) *workspaceManagementNotice {
@@ -281,9 +294,11 @@ func (g *slackGateway) renderWorkspaceManagementPage(w http.ResponseWriter, r *h
 			CurrentTargetOwner: currentTargetOwner,
 			TargetStatus:       workspaceTargetStatus(installation),
 			ChangeTargetHref:   g.buildWorkspaceTargetHref(installation.Route.ExternalTenantID),
+			TestHref:           g.buildWorkspaceTestHref(installation.Route.ExternalTenantID),
 			ReconnectHref:      g.installRedirectPath(),
 			ShowReconnect:      hasAllowedAction(installation, "reconnect"),
 			ShowDisconnect:     hasAllowedAction(installation, "disconnect"),
+			ShowTest:           !strings.EqualFold(strings.TrimSpace(installation.State), "disconnected"),
 		})
 	}
 
