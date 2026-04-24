@@ -222,6 +222,28 @@ func TestUpdateManagedInstallationConfigPostsExpectedPayload(t *testing.T) {
 	}
 }
 
+func TestManagedChannelRoutesDefaultMissingBooleansSafely(t *testing.T) {
+	var connection backendManagedConnection
+	if err := json.Unmarshal(
+		[]byte(`{"id":"cc_1","routes":[{"externalChannelId":"C_default"}]}`),
+		&connection,
+	); err != nil {
+		t.Fatalf("decode connection: %v", err)
+	}
+
+	policies := channelPoliciesFromConnection(connection)
+	if len(policies) != 1 {
+		t.Fatalf("expected route with omitted enabled flag to stay enabled, got %#v", policies)
+	}
+	if policies[0].RequireMention == nil || !*policies[0].RequireMention {
+		t.Fatalf("expected omitted requireMention to default to true, got %#v", policies[0])
+	}
+	rows := channelRouteSettingsRows(connection)
+	if len(rows) != 1 || rows[0].ModeLabel != "Mentions required" {
+		t.Fatalf("expected settings row to render as mention-required, got %#v", rows)
+	}
+}
+
 func TestChannelSessionUnavailablePolicySnapshotRequiresStructuredPayload(t *testing.T) {
 	snapshot, ok := channelSessionUnavailablePolicySnapshot(&channelSessionUnavailableError{
 		cause: &httpStatusError{

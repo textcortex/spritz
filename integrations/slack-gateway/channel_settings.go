@@ -563,10 +563,11 @@ func routesFromInstallationConfig(config installationConfig) []backendManagedCha
 		if policy.RequireMention != nil {
 			requireMention = *policy.RequireMention
 		}
+		enabled := true
 		routes = append(routes, backendManagedChannelRoute{
 			ExternalChannelID: strings.TrimSpace(policy.ExternalChannelID),
-			RequireMention:    requireMention,
-			Enabled:           true,
+			RequireMention:    &requireMention,
+			Enabled:           &enabled,
 		})
 	}
 	sort.Slice(routes, func(i, j int) bool {
@@ -575,17 +576,25 @@ func routesFromInstallationConfig(config installationConfig) []backendManagedCha
 	return routes
 }
 
+func managedRouteEnabled(route backendManagedChannelRoute) bool {
+	return route.Enabled == nil || *route.Enabled
+}
+
+func managedRouteRequireMention(route backendManagedChannelRoute) bool {
+	return route.RequireMention == nil || *route.RequireMention
+}
+
 func channelPoliciesFromConnection(connection backendManagedConnection) []installationChannelPolicy {
 	policies := make([]installationChannelPolicy, 0, len(connection.Routes))
 	for _, route := range connection.Routes {
-		if !route.Enabled {
+		if !managedRouteEnabled(route) {
 			continue
 		}
 		channelID := strings.TrimSpace(route.ExternalChannelID)
 		if channelID == "" {
 			continue
 		}
-		requireMention := route.RequireMention
+		requireMention := managedRouteRequireMention(route)
 		policies = append(policies, installationChannelPolicy{
 			ExternalChannelID: channelID,
 			RequireMention:    &requireMention,

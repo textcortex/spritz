@@ -89,8 +89,8 @@ type backendManagedInstallationRoute struct {
 type backendManagedChannelRoute struct {
 	ID                string `json:"id"`
 	ExternalChannelID string `json:"externalChannelId"`
-	RequireMention    bool   `json:"requireMention"`
-	Enabled           bool   `json:"enabled"`
+	RequireMention    *bool  `json:"requireMention"`
+	Enabled           *bool  `json:"enabled"`
 }
 
 type backendManagedConnection struct {
