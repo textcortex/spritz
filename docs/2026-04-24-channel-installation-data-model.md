@@ -10,6 +10,12 @@ tags: [spritz, channel-gateway, install, data-model, slack, discord, teams, arch
 This document defines the long-term data model for shared channel
 installations.
 
+This is a logical model and API contract, not a Spritz-owned database
+migration plan. Spritz should stay storage-agnostic. The deployment-owned
+backend that persists installation state is responsible for creating physical
+tables, documents, or any other storage shape through its own migration
+system.
+
 The immediate use case is Slack workspace installs where one workspace can
 have one or more Spritz-backed connections, and selected channels can be
 configured with `requireMention: false`.
@@ -17,7 +23,7 @@ configured with `requireMention: false`.
 The model is intentionally not Slack-specific or deployment-specific. Slack is
 the first provider. Discord, Microsoft Teams, and other channel
 providers should fit the same shape without adding provider-specific core
-tables.
+entities.
 
 Related docs:
 
@@ -71,8 +77,8 @@ contract do not keep growing one-off fields.
   connections.
 - Support one or more connections under one external workspace install.
 - Support per-channel routing and mention policy.
-- Keep the core tables provider-agnostic.
-- Keep Spritz runtime fields out of the generic channel-installation table.
+- Keep the core logical model provider-agnostic.
+- Keep Spritz runtime fields out of the generic channel-installation entity.
 - Keep the URL and API model stable by using internal installation and
   connection IDs.
 - Avoid deployment-specific names in the core channel schema.
@@ -85,6 +91,32 @@ contract do not keep growing one-off fields.
 - Making Spritz understand deployment-specific target types such as agents,
   teams, organizations, or accounts.
 - Supporting multiple active connections for the same external channel in v1.
+- Having Spritz core own the physical database schema or storage migrations
+  for deployment-owned installation state.
+
+## API And Storage Boundary
+
+Spritz should define the generic channel-installation contract.
+
+That includes:
+
+- provider route identity fields
+- stable installation, connection, and route IDs
+- management API shapes
+- UI routing and rendering expectations
+- gateway behavior for routing and mention policy
+
+Spritz should not require one specific storage implementation.
+
+The deployment-owned backend should define and create the physical storage.
+In the current production deployment, that means Platform creates the database
+tables through its normal backend migration system. Another deployment could
+store the same logical entities in a different database or service as long as
+it satisfies the same Spritz-facing contract.
+
+The entity names in this document are canonical logical names. The SQL below
+is an illustrative relational implementation shape, not a requirement that
+Spritz core ships or runs these migrations.
 
 ## Naming Decisions
 
@@ -124,7 +156,7 @@ the deployment or to a product-specific extension table.
 ### No core `preset` or `runtime`
 
 Do not put Spritz `preset` or `runtime` fields on the generic installation
-table.
+entity.
 
 Those are Spritz implementation details:
 
@@ -155,16 +187,21 @@ adapter can derive a different key without changing the core schema.
 The provider-specific facts can still be stored as metadata for display,
 debugging, and migration.
 
-## Core Data Model
+## Logical Data Model
+
+The sections below describe logical entities that a deployment must be able to
+read and write. A relational deployment can map them to tables with similar
+names. A non-relational deployment can use another storage layout as long as
+the behavior and uniqueness rules are preserved.
 
 ### `channel_installation`
 
-One row means one external messaging app installation.
+One logical record means one external messaging app installation.
 
 For Slack workspace mode, this is the workspace-level Slack app installation.
 It is not an agent and it is not a Spritz runtime.
 
-Recommended columns:
+A relational implementation might use this shape:
 
 ```sql
 CREATE TABLE channel_installation (
@@ -224,12 +261,13 @@ Example Slack row:
 
 ### `channel_connection`
 
-One row means one internal connection under an external installation.
+One logical record means one internal connection under an external
+installation.
 
 This is where "the Slack workspace is connected to this assistant" should
 start. A workspace can have more than one connection.
 
-Recommended columns:
+A relational implementation might use this shape:
 
 ```sql
 CREATE TABLE channel_connection (
@@ -257,12 +295,13 @@ channel route exists.
 
 ### `spritz_channel_connection`
 
-One row stores Spritz-specific backing data for a generic channel connection.
+One logical record stores Spritz-specific backing data for a generic channel
+connection.
 
-This table is allowed to contain Spritz words because it is no longer part of
-the provider-agnostic core.
+This entity is allowed to contain Spritz words because it is no longer part of
+the provider-agnostic core model.
 
-Recommended columns:
+A relational implementation might use this shape:
 
 ```sql
 CREATE TABLE spritz_channel_connection (
@@ -282,17 +321,18 @@ CREATE TABLE spritz_channel_connection (
 );
 ```
 
-This is the right home for the fields that currently describe Spritz
-provisioning and runtime binding.
+This is the right logical home for the fields that currently describe Spritz
+provisioning and runtime binding. A deployment can store those fields in a
+separate table, a nested document, or another equivalent persistence shape.
 
 ### `channel_route`
 
-One row means one external channel has explicit routing behavior.
+One logical record means one external channel has explicit routing behavior.
 
 For Slack, this maps a Slack channel ID to one connection and one mention
 policy.
 
-Recommended columns:
+A relational implementation might use this shape:
 
 ```sql
 CREATE TABLE channel_route (
@@ -416,8 +456,8 @@ The route upsert body can stay generic:
 ```
 
 Provider-specific validation should happen server-side. For example, Slack
-channel ID validation belongs to the Slack provider adapter or backend service,
-not to a generic UI component.
+channel ID validation belongs to the Slack provider adapter or deployment
+backend service, not to a generic UI component.
 
 ## Ownership And Authorization
 
@@ -433,13 +473,13 @@ Each deployment still needs to answer:
 Those checks should be enforced by the deployment's normal authorization
 system and surfaced to Spritz as server-driven action availability.
 
-The generic channel tables only need stable IDs and enough route state to
+The generic channel model only needs stable IDs and enough route state to
 resolve provider events.
 
 ## Migration From The Current Shape
 
-The existing combined installation row can migrate into the split model in
-four steps.
+The existing combined installation row can migrate into the split logical model
+in four steps.
 
 1. Create one `channel_installation` row for each existing external route.
    The current provider route fields map into `provider`, `principal_id`, and
@@ -453,9 +493,9 @@ four steps.
    Each current `channelPolicies[]` entry becomes a route row with
    `require_mention`.
 
-During the migration window, the backend can keep serving the old session
-exchange response shape by reading from the new tables and projecting the
-legacy response.
+During the migration window, the deployment backend can keep serving the old
+session exchange response shape by reading from the new storage and projecting
+the legacy response.
 
 ## Validation
 
@@ -471,8 +511,8 @@ Minimum validation for this model:
 - reconnect updates provider auth without rewriting Spritz runtime state
 - runtime replacement updates `spritz_channel_connection` without rewriting
   provider installation identity
-- Discord or Teams can add provider adapters without changing the core table
-  names
+- Discord or Teams can add provider adapters without changing the core logical
+  model
 
 ## Pinned Decisions
 
@@ -482,6 +522,8 @@ Minimum validation for this model:
   and channel routes as separate concepts.
 - Do not add core `targetType`, `preset`, or `runtime` fields.
 - Do not require `scopeType` in the core uniqueness key.
+- Keep Spritz storage-agnostic; deployment backends create and own the
+  physical storage.
 - Use one explicit channel route per external channel in v1.
 - Treat no-mention behavior as channel route policy, not as Slack install
   mode.
