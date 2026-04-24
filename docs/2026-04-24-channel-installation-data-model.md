@@ -90,6 +90,9 @@ contract do not keep growing one-off fields.
 - Moving all deployment-owned authorization into Spritz.
 - Making Spritz understand deployment-specific target types such as agents,
   teams, organizations, or accounts.
+- Making Spritz understand whether the installation is owned by an individual
+  user, an organization, a workspace, or any other deployment-specific owner
+  type.
 - Supporting multiple active connections for the same external channel in v1.
 - Having Spritz core own the physical database schema or storage migrations
   for deployment-owned installation state.
@@ -231,8 +234,9 @@ Field meanings:
 
 - `id` is the stable product/API ID, for example `ci_...`.
 - `provider` is the messaging provider, for example `slack`.
-- `principal_id` identifies which shared app or gateway principal owns this
-  install route.
+- `principal_id` identifies which shared app or gateway principal receives
+  events for this install route. It is not the product owner of the
+  installation.
 - `external_installation_key` is a deterministic provider-adapter key for the
   external install surface.
 - `external_tenant_id` is a searchable/displayable provider tenant ID when
@@ -463,6 +467,22 @@ backend service, not to a generic UI component.
 
 The channel schema should not encode a product-specific ownership taxonomy.
 
+Spritz should not know whether a channel installation is owned by an individual
+user, an organization, a team, an account, or another deployment-specific
+owner type.
+
+Do not add these fields to the Spritz-facing generic contract:
+
+- `ownerType`
+- `userId`
+- `orgId`
+- `tenantId`
+- `accountId`
+
+The deployment backend may store those fields, or any equivalent ownership
+reference, in its own persistence layer. Those values should stay opaque to
+Spritz.
+
 Each deployment still needs to answer:
 
 - who may see an installation
@@ -472,6 +492,10 @@ Each deployment still needs to answer:
 
 Those checks should be enforced by the deployment's normal authorization
 system and surfaced to Spritz as server-driven action availability.
+
+For UI purposes, the deployment may return display-only ownership fields such
+as `ownerLabel`. Spritz may render that label, but it must not infer
+authorization or routing behavior from it.
 
 The generic channel model only needs stable IDs and enough route state to
 resolve provider events.
@@ -521,6 +545,7 @@ Minimum validation for this model:
 - Model provider installation, internal connection, Spritz runtime backing,
   and channel routes as separate concepts.
 - Do not add core `targetType`, `preset`, or `runtime` fields.
+- Do not add core user-vs-organization ownership fields.
 - Do not require `scopeType` in the core uniqueness key.
 - Keep Spritz storage-agnostic; deployment backends create and own the
   physical storage.
