@@ -450,6 +450,60 @@ func TestChannelSettingsRendersManagedConnections(t *testing.T) {
 	}
 }
 
+func TestChannelSettingsListDoesNotInventLegacyConnectionIDs(t *testing.T) {
+	requireMention := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v2/spritz/channel-installations/list" {
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"installations": []map[string]any{
+				{
+					"id": "ci_1",
+					"route": map[string]any{
+						"principalId":       "shared-slack-gateway",
+						"provider":          "slack",
+						"externalScopeType": "workspace",
+						"externalTenantId":  "T_workspace_1",
+					},
+					"state": "ready",
+					"installationConfig": installationConfig{
+						ChannelPolicies: []installationChannelPolicy{
+							{ExternalChannelID: "C_channel_1", RequireMention: &requireMention},
+						},
+					},
+					"allowedActions": []string{"changeTarget", "disconnect"},
+				},
+			},
+		})
+	}))
+	defer backend.Close()
+
+	gateway := newSlackGateway(config{
+		BackendFastAPIBaseURL: backend.URL,
+		BackendInternalToken:  "backend-internal-token",
+		PrincipalID:           "shared-slack-gateway",
+		HTTPTimeout:           5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	req := httptest.NewRequest(http.MethodGet, "/settings/channels", nil)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "/connections/cc_1") || strings.Contains(body, "Open settings") {
+		t.Fatalf("expected legacy response without connection id to be read-only, got %q", body)
+	}
+	if !strings.Contains(body, "Settings unavailable") {
+		t.Fatalf("expected unavailable settings marker, got %q", body)
+	}
+}
+
 func TestChannelSettingsUpdatePostsRoutePolicies(t *testing.T) {
 	var updatePayload map[string]any
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -518,6 +572,10 @@ func TestChannelSettingsUpdatePostsRoutePolicies(t *testing.T) {
 		PrincipalID:           "shared-slack-gateway",
 		HTTPTimeout:           5 * time.Second,
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	gateway.policies.remember("T_workspace_1", installationPolicySnapshot{
+		config:    installationConfig{},
+		botUserID: "U_bot",
+	})
 
 	req := httptest.NewRequest(
 		http.MethodPost,
@@ -554,6 +612,9 @@ func TestChannelSettingsUpdatePostsRoutePolicies(t *testing.T) {
 	}
 	if newPolicy == nil || newPolicy["requireMention"] != false {
 		t.Fatalf("expected no-mention policy for C_new, got %#v", policies)
+	}
+	if _, ok := gateway.policies.lookup("T_workspace_1"); ok {
+		t.Fatalf("expected channel settings update to evict cached policy")
 	}
 }
 

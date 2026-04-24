@@ -145,7 +145,11 @@ var channelSettingsListTemplate = template.Must(template.New("channel-settings-l
           <span class="state">{{ .State }}</span>
         </div>
         <div>
+          {{ if .SettingsHref }}
           <a class="button" href="{{ .SettingsHref }}">Open settings</a>
+          {{ else }}
+          <span class="state">Settings unavailable</span>
+          {{ end }}
         </div>
       </section>
       {{ end }}
@@ -374,12 +378,8 @@ func primaryManagedConnection(installation backendManagedInstallation) backendMa
 	if len(installation.Connections) > 0 {
 		return installation.Connections[0]
 	}
-	connectionID := ""
-	if strings.HasPrefix(strings.TrimSpace(installation.ID), "ci_") {
-		connectionID = "cc_" + strings.TrimPrefix(strings.TrimSpace(installation.ID), "ci_")
-	}
 	return backendManagedConnection{
-		ID:        connectionID,
+		ID:        "",
 		IsDefault: true,
 		State:     installation.State,
 		Routes:    routesFromInstallationConfig(installation.InstallationConfig),
@@ -389,12 +389,6 @@ func primaryManagedConnection(installation backendManagedInstallation) backendMa
 func managedConnectionByID(installation backendManagedInstallation, connectionID string) (backendManagedConnection, bool) {
 	connectionID = strings.TrimSpace(connectionID)
 	for _, connection := range installation.Connections {
-		if strings.TrimSpace(connection.ID) == connectionID {
-			return connection, true
-		}
-	}
-	if len(installation.Connections) == 0 {
-		connection := primaryManagedConnection(installation)
 		if strings.TrimSpace(connection.ID) == connectionID {
 			return connection, true
 		}
@@ -500,6 +494,9 @@ func channelSettingsRows(installations []backendManagedInstallation) []channelSe
 func (g *slackGateway) renderChannelSettingsList(w http.ResponseWriter, r *http.Request, installations []backendManagedInstallation) {
 	rows := channelSettingsRows(installations)
 	for index := range rows {
+		if strings.TrimSpace(rows[index].InstallationID) == "" || strings.TrimSpace(rows[index].ConnectionID) == "" {
+			continue
+		}
 		rows[index].SettingsHref = g.channelSettingsConnectionPath(rows[index].InstallationID, rows[index].ConnectionID)
 	}
 	w.Header().Set("Cache-Control", "no-store")

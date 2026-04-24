@@ -81,6 +81,19 @@ func (cache *installationPolicyCache) lookup(teamID string) (installationPolicyS
 	return entry.snapshot, true
 }
 
+func (cache *installationPolicyCache) forget(teamID string) {
+	if cache == nil {
+		return
+	}
+	teamID = strings.TrimSpace(teamID)
+	if teamID == "" {
+		return
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	delete(cache.entries, teamID)
+}
+
 func (session channelSession) policySnapshot() installationPolicySnapshot {
 	return installationPolicySnapshot{
 		config:    session.InstallationConfig,

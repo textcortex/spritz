@@ -178,6 +178,7 @@ func (g *slackGateway) handleChannelSettingsUpdate(
 		)
 		return
 	}
+	g.policies.forget(installation.Route.ExternalTenantID)
 	http.Redirect(
 		w,
 		r,
