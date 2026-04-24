@@ -238,12 +238,15 @@ func isACPUnavailableError(err error) bool {
 	return strings.Contains(strings.ToLower(statusErr.body), "acp unavailable")
 }
 
-func (g *slackGateway) exchangeChannelSession(ctx context.Context, teamID string, forceRefresh bool) (channelSession, error) {
+func (g *slackGateway) exchangeChannelSession(ctx context.Context, teamID, channelID string, forceRefresh bool) (channelSession, error) {
 	body := map[string]any{
 		"principalId":       g.cfg.PrincipalID,
 		"provider":          slackProvider,
 		"externalScopeType": slackWorkspaceScope,
 		"externalTenantId":  strings.TrimSpace(teamID),
+	}
+	if strings.TrimSpace(channelID) != "" {
+		body["externalChannelId"] = strings.TrimSpace(channelID)
 	}
 	if forceRefresh {
 		body["forceRefresh"] = true

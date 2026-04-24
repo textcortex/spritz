@@ -859,6 +859,7 @@ func (g *slackGateway) awaitChannelSession(
 		session, err := g.exchangeChannelSession(
 			exchangeCtx,
 			envelope.TeamID,
+			event.Channel,
 			exchangeForceRefresh,
 		)
 		cancelExchange()

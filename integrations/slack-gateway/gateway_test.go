@@ -1893,10 +1893,14 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 
 func TestSlackEventIgnoresTopLevelChannelMessagesWithoutMention(t *testing.T) {
 	var backendCalls int
+	var exchangePayload map[string]any
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		backendCalls++
 		if r.URL.Path != "/internal/v1/spritz/channel-sessions/exchange" {
 			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&exchangePayload); err != nil {
+			t.Fatalf("decode session exchange body: %v", err)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status": "resolved",
@@ -1952,6 +1956,9 @@ func TestSlackEventIgnoresTopLevelChannelMessagesWithoutMention(t *testing.T) {
 	}
 	if backendCalls != 1 {
 		t.Fatalf("expected one backend policy lookup, got %d backend calls", backendCalls)
+	}
+	if exchangePayload["externalChannelId"] != "C_1" {
+		t.Fatalf("expected session exchange to include message channel id, got %#v", exchangePayload)
 	}
 }
 
