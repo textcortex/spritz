@@ -30,18 +30,20 @@ func applyChannelInstallationConfigProjection(spec *spritzv1.SpritzSpec, attribu
 		return nil
 	}
 	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+	if len(trimmed) == 0 {
 		return nil
 	}
 	var payload channelInstallationConfigPayload
-	decoder := json.NewDecoder(bytes.NewReader(trimmed))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&payload); err != nil {
-		return errors.New("installationConfig is invalid")
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return errors.New("installationConfig is invalid")
+	if !bytes.Equal(trimmed, []byte("null")) {
+		decoder := json.NewDecoder(bytes.NewReader(trimmed))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&payload); err != nil {
+			return errors.New("installationConfig is invalid")
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); err != io.EOF {
+			return errors.New("installationConfig is invalid")
+		}
 	}
 
 	provider := strings.TrimSpace(attributes["provider"])
@@ -61,15 +63,14 @@ func applyChannelInstallationConfigProjection(spec *spritzv1.SpritzSpec, attribu
 	}
 	providers := ensureObjectField(config, "providers")
 	providerConfig := ensureObjectField(providers, provider)
-	scopeConfig := ensureObjectField(providerConfig, openClawScopeConfigKey(externalScopeType))
-	tenantConfig := ensureObjectField(scopeConfig, externalTenantID)
 	channels := map[string]any{}
 	for _, policy := range channelPolicies {
 		channels[policy.ExternalChannelID] = map[string]any{
+			"allow":          true,
 			"requireMention": *policy.RequireMention,
 		}
 	}
-	tenantConfig["channels"] = channels
+	providerConfig["channels"] = channels
 
 	encoded, err := json.Marshal(config)
 	if err != nil {
@@ -99,15 +100,6 @@ func normalizeChannelInstallationPolicies(policies []channelInstallationChannelP
 		normalized = append(normalized, policy)
 	}
 	return normalized, nil
-}
-
-func openClawScopeConfigKey(externalScopeType string) string {
-	switch strings.TrimSpace(externalScopeType) {
-	case "workspace":
-		return "workspaces"
-	default:
-		return "tenants"
-	}
 }
 
 func readOpenClawConfigEnv(env []corev1.EnvVar) (map[string]any, error) {

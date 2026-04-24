@@ -222,6 +222,37 @@ func TestUpdateManagedInstallationConfigPostsExpectedPayload(t *testing.T) {
 	}
 }
 
+func TestChannelSessionUnavailablePolicySnapshotRequiresStructuredPayload(t *testing.T) {
+	snapshot, ok := channelSessionUnavailablePolicySnapshot(&channelSessionUnavailableError{
+		cause: &httpStatusError{
+			method:     http.MethodPost,
+			endpoint:   "/internal/v1/spritz/channel-sessions/exchange",
+			statusCode: http.StatusServiceUnavailable,
+			body:       "temporarily unavailable",
+		},
+	})
+	if ok {
+		t.Fatalf("expected unstructured 503 to have no policy snapshot, got %#v", snapshot)
+	}
+
+	requireMention := false
+	snapshot, ok = channelSessionUnavailablePolicySnapshot(&channelSessionUnavailableError{
+		providerAuth: slackInstallation{BotUserID: "U_bot"},
+		installationConfig: installationConfig{
+			ChannelPolicies: []installationChannelPolicy{
+				{ExternalChannelID: "C_channel_1", RequireMention: &requireMention},
+			},
+		},
+		hasPolicySnapshot: true,
+	})
+	if !ok {
+		t.Fatalf("expected structured unavailable response to have a policy snapshot")
+	}
+	if snapshot.botUserID != "U_bot" || len(snapshot.config.ChannelPolicies) != 1 {
+		t.Fatalf("unexpected policy snapshot: %#v", snapshot)
+	}
+}
+
 func TestDisconnectManagedInstallationPostsExpectedPayload(t *testing.T) {
 	var disconnectPayload map[string]any
 	fastapi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

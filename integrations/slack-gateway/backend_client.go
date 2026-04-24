@@ -153,6 +153,7 @@ type channelSession struct {
 type channelSessionUnavailableError struct {
 	providerAuth       slackInstallation
 	installationConfig installationConfig
+	hasPolicySnapshot  bool
 	cause              *httpStatusError
 }
 
@@ -187,6 +188,9 @@ func channelSessionUnavailableProviderAuth(err error) (slackInstallation, bool) 
 func channelSessionUnavailablePolicySnapshot(err error) (installationPolicySnapshot, bool) {
 	var unavailableErr *channelSessionUnavailableError
 	if !errors.As(err, &unavailableErr) {
+		return installationPolicySnapshot{}, false
+	}
+	if !unavailableErr.hasPolicySnapshot {
 		return installationPolicySnapshot{}, false
 	}
 	return installationPolicySnapshot{
@@ -236,6 +240,7 @@ func (g *slackGateway) exchangeChannelSession(ctx context.Context, teamID string
 				return channelSession{}, &channelSessionUnavailableError{
 					providerAuth:       unavailablePayload.ProviderAuth,
 					installationConfig: unavailablePayload.InstallationConfig,
+					hasPolicySnapshot:  true,
 					cause:              statusErr,
 				}
 			}

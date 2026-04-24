@@ -189,7 +189,10 @@ func TestInternalUpsertBindingPreservesNormalizedCreateAnnotations(t *testing.T)
 
 func TestInternalUpsertBindingProjectsInstallationConfigIntoOpenClawEnv(t *testing.T) {
 	s := newInternalSpritzesTestServer(t)
-	s.presets.byID[0].Env = []corev1.EnvVar{{Name: "OPENCLAW_CONFIG_JSON", Value: "{}"}}
+	s.presets.byID[0].Env = []corev1.EnvVar{{
+		Name:  "OPENCLAW_CONFIG_JSON",
+		Value: `{"providers":{"slack":{"channels":{"C_OLD":{"allow":true,"requireMention":false}}}}}`,
+	}}
 	e := echo.New()
 	s.registerRoutes(e)
 
@@ -243,8 +246,58 @@ func TestInternalUpsertBindingProjectsInstallationConfigIntoOpenClawEnv(t *testi
 			openClawConfig = item.Value
 		}
 	}
-	if !strings.Contains(openClawConfig, `"C0ANJGDB4Q5":{"requireMention":false}`) {
+	var projected map[string]any
+	if err := json.Unmarshal([]byte(openClawConfig), &projected); err != nil {
+		t.Fatalf("expected valid OpenClaw config JSON, got %s: %v", openClawConfig, err)
+	}
+	providers, _ := projected["providers"].(map[string]any)
+	slackConfig, _ := providers["slack"].(map[string]any)
+	channels, _ := slackConfig["channels"].(map[string]any)
+	channelConfig, _ := channels["C0ANJGDB4Q5"].(map[string]any)
+	if channelConfig["allow"] != true || channelConfig["requireMention"] != false {
 		t.Fatalf("expected OpenClaw channel policy in env, got %s", openClawConfig)
+	}
+	if _, exists := channels["C_OLD"]; exists {
+		t.Fatalf("expected stale OpenClaw channel policy to be removed, got %s", openClawConfig)
+	}
+}
+
+func TestInternalUpsertBindingProjectsNullInstallationConfigAsEmptyPolicy(t *testing.T) {
+	spec := spritzv1.SpritzSpec{
+		Env: []corev1.EnvVar{{
+			Name:  "OPENCLAW_CONFIG_JSON",
+			Value: `{"providers":{"slack":{"channels":{"C_OLD":{"allow":true,"requireMention":false}}}}}`,
+		}},
+	}
+
+	err := applyChannelInstallationConfigProjection(
+		&spec,
+		map[string]string{
+			"provider":          "slack",
+			"externalScopeType": "workspace",
+			"externalTenantId":  "T021GRS5F4P",
+		},
+		json.RawMessage(`null`),
+	)
+	if err != nil {
+		t.Fatalf("expected null installationConfig to clear policy projection, got %v", err)
+	}
+
+	var openClawConfig string
+	for _, item := range spec.Env {
+		if item.Name == "OPENCLAW_CONFIG_JSON" {
+			openClawConfig = item.Value
+		}
+	}
+	var projected map[string]any
+	if err := json.Unmarshal([]byte(openClawConfig), &projected); err != nil {
+		t.Fatalf("expected valid OpenClaw config JSON, got %s: %v", openClawConfig, err)
+	}
+	providers, _ := projected["providers"].(map[string]any)
+	slackConfig, _ := providers["slack"].(map[string]any)
+	channels, _ := slackConfig["channels"].(map[string]any)
+	if len(channels) != 0 {
+		t.Fatalf("expected null installationConfig to remove stale channels, got %s", openClawConfig)
 	}
 }
 

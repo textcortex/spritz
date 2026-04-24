@@ -18,7 +18,7 @@ The immediate use case is Slack:
 - other workspace channels continue to require a mention
 
 The design keeps Spritz generic. The setting is modeled as installation config,
-not as deployment-specific target selection and not as TextCortex-specific
+not as deployment-specific target selection and not as organization-specific
 state.
 
 Related docs:
@@ -120,9 +120,9 @@ Pinned split:
 - `presetInputs` determines the target behind that installation
 - installation config determines provider message behavior
 
-This keeps the design TextCortex-agnostic. Spritz only stores provider IDs and
-generic message policy. The deployment remains free to decide what the selected
-target means.
+This keeps the design organization-agnostic. Spritz only stores provider IDs
+and generic message policy. The deployment remains free to decide what the
+selected target means.
 
 ## Storage Ownership
 
@@ -251,13 +251,10 @@ Example projection:
 {
   "providers": {
     "slack": {
-      "workspaces": {
-        "T1234567890": {
-          "channels": {
-            "C1234567890": {
-              "requireMention": false
-            }
-          }
+      "channels": {
+        "C1234567890": {
+          "allow": true,
+          "requireMention": false
         }
       }
     }
