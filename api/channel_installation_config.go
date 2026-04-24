@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +14,11 @@ import (
 	spritzv1 "spritz.sh/operator/api/v1"
 )
 
-const openclawConfigEnvName = "OPENCLAW_CONFIG_JSON"
+const (
+	openclawConfigEnvName     = "OPENCLAW_CONFIG_JSON"
+	openclawConfigB64EnvName  = "OPENCLAW_CONFIG_B64"
+	openclawConfigFileEnvName = "OPENCLAW_CONFIG_FILE"
+)
 
 type channelInstallationConfigPayload struct {
 	ChannelPolicies []channelInstallationChannelPolicy `json:"channelPolicies,omitempty"`
@@ -103,19 +108,50 @@ func normalizeChannelInstallationPolicies(policies []channelInstallationChannelP
 }
 
 func readOpenClawConfigEnv(env []corev1.EnvVar) (map[string]any, error) {
+	var b64Env *corev1.EnvVar
+	var fileEnv *corev1.EnvVar
 	for _, item := range env {
-		if item.Name != openclawConfigEnvName {
-			continue
+		switch item.Name {
+		case openclawConfigEnvName:
+			if item.ValueFrom != nil {
+				return nil, errors.New("OPENCLAW_CONFIG_JSON cannot use valueFrom with installationConfig")
+			}
+			return parseOpenClawConfigJSON(item.Value, openclawConfigEnvName)
+		case openclawConfigB64EnvName:
+			copied := item
+			b64Env = &copied
+		case openclawConfigFileEnvName:
+			copied := item
+			fileEnv = &copied
 		}
-		if item.ValueFrom != nil {
-			return nil, errors.New("OPENCLAW_CONFIG_JSON cannot use valueFrom with installationConfig")
-		}
-		return parseOpenClawConfigJSON(item.Value)
 	}
-	return map[string]any{}, nil
+	if b64Env != nil {
+		if b64Env.ValueFrom != nil {
+			return nil, errors.New("OPENCLAW_CONFIG_B64 cannot use valueFrom with installationConfig")
+		}
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64Env.Value))
+		if err != nil {
+			return nil, errors.New("OPENCLAW_CONFIG_B64 is invalid")
+		}
+		return parseOpenClawConfigJSON(string(decoded), openclawConfigB64EnvName)
+	}
+	if fileEnv != nil {
+		return nil, errors.New("OPENCLAW_CONFIG_FILE cannot be merged with installationConfig")
+	}
+	return defaultOpenClawConfig(), nil
 }
 
-func parseOpenClawConfigJSON(value string) (map[string]any, error) {
+func defaultOpenClawConfig() map[string]any {
+	return map[string]any{
+		"browser": map[string]any{
+			"enabled":        true,
+			"headless":       true,
+			"executablePath": "/usr/bin/chromium",
+		},
+	}
+}
+
+func parseOpenClawConfigJSON(value string, source string) (map[string]any, error) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return map[string]any{}, nil
@@ -124,11 +160,11 @@ func parseOpenClawConfigJSON(value string) (map[string]any, error) {
 	decoder := json.NewDecoder(strings.NewReader(trimmed))
 	decoder.UseNumber()
 	if err := decoder.Decode(&payload); err != nil {
-		return nil, errors.New("OPENCLAW_CONFIG_JSON is invalid")
+		return nil, fmt.Errorf("%s is invalid", source)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
-		return nil, errors.New("OPENCLAW_CONFIG_JSON is invalid")
+		return nil, fmt.Errorf("%s is invalid", source)
 	}
 	if payload == nil {
 		payload = map[string]any{}
@@ -146,12 +182,23 @@ func ensureObjectField(parent map[string]any, key string) map[string]any {
 }
 
 func setOpenClawConfigEnv(env *[]corev1.EnvVar, value string) {
+	filtered := (*env)[:0]
+	jsonIndex := -1
 	for index := range *env {
-		if (*env)[index].Name == openclawConfigEnvName {
+		switch (*env)[index].Name {
+		case openclawConfigEnvName:
 			(*env)[index].Value = value
 			(*env)[index].ValueFrom = nil
-			return
+			jsonIndex = len(filtered)
+			filtered = append(filtered, (*env)[index])
+		case openclawConfigB64EnvName, openclawConfigFileEnvName:
+			continue
+		default:
+			filtered = append(filtered, (*env)[index])
 		}
 	}
-	*env = append(*env, corev1.EnvVar{Name: openclawConfigEnvName, Value: value})
+	if jsonIndex < 0 {
+		filtered = append(filtered, corev1.EnvVar{Name: openclawConfigEnvName, Value: value})
+	}
+	*env = filtered
 }

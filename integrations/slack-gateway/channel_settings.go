@@ -486,6 +486,7 @@ func (g *slackGateway) renderChannelSettingsList(w http.ResponseWriter, r *http.
 	for index := range rows {
 		rows[index].SettingsHref = g.channelSettingsConnectionPath(rows[index].InstallationID, rows[index].ConnectionID)
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = channelSettingsListTemplate.Execute(w, channelSettingsPageData{
 		Notice: channelSettingsNoticeFromRequest(r),
@@ -498,6 +499,7 @@ func (g *slackGateway) renderChannelConnectionSettings(w http.ResponseWriter, r 
 	if installation.CurrentTarget != nil {
 		targetName = strings.TrimSpace(installation.CurrentTarget.Profile.Name)
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = channelConnectionSettingsTemplate.Execute(w, channelConnectionSettingsPageData{
 		Notice:         channelSettingsNoticeFromRequest(r),
