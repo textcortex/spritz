@@ -433,6 +433,20 @@ func TestChannelSettingsRendersManagedConnections(t *testing.T) {
 		HTTPTimeout:           5 * time.Second,
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
+	installationReq := httptest.NewRequest(http.MethodGet, "/settings/channels/installations/ci_1", nil)
+	installationReq.Header.Set("X-Spritz-User-Id", "user-1")
+	installationRec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(installationRec, installationReq)
+
+	if installationRec.Code != http.StatusOK {
+		t.Fatalf("expected installation page 200, got %d: %s", installationRec.Code, installationRec.Body.String())
+	}
+	installationBody := installationRec.Body.String()
+	if !strings.Contains(installationBody, "/settings/channels/installations/ci_1/connections/cc_1") ||
+		!strings.Contains(installationBody, "/settings/channels/installations/ci_1/connections/cc_2") {
+		t.Fatalf("expected installation page to link every connection, got %q", installationBody)
+	}
+
 	req := httptest.NewRequest(http.MethodGet, "/settings/channels/installations/ci_1/connections/cc_2", nil)
 	req.Header.Set("X-Spritz-User-Id", "user-1")
 	rec := httptest.NewRecorder()

@@ -31,6 +31,21 @@ func (g *slackGateway) handleChannelSettings(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if installationID, ok := channelSettingsInstallationPathID(relativePath); ok {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		for _, installation := range installations {
+			if strings.TrimSpace(installation.ID) == installationID {
+				g.renderChannelInstallationSettings(w, r, installation)
+				return
+			}
+		}
+		http.NotFound(w, r)
+		return
+	}
+
 	installation, connection, ok := g.matchChannelSettingsConnectionPath(
 		w,
 		r,
@@ -50,6 +65,15 @@ func (g *slackGateway) handleChannelSettings(w http.ResponseWriter, r *http.Requ
 	}
 }
 
+func channelSettingsInstallationPathID(relativePath string) (string, bool) {
+	trimmed := strings.Trim(strings.TrimPrefix(relativePath, "/settings/channels/"), "/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) != 2 || parts[0] != "installations" {
+		return "", false
+	}
+	return strings.TrimSpace(parts[1]), true
+}
+
 func (g *slackGateway) matchChannelSettingsConnectionPath(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -58,24 +82,6 @@ func (g *slackGateway) matchChannelSettingsConnectionPath(
 ) (backendManagedInstallation, backendManagedConnection, bool) {
 	trimmed := strings.Trim(strings.TrimPrefix(relativePath, "/settings/channels/"), "/")
 	parts := strings.Split(trimmed, "/")
-	if len(parts) == 2 && parts[0] == "installations" {
-		installationID := strings.TrimSpace(parts[1])
-		for _, installation := range installations {
-			if strings.TrimSpace(installation.ID) != installationID {
-				continue
-			}
-			connection := primaryManagedConnection(installation)
-			http.Redirect(
-				w,
-				r,
-				g.channelSettingsConnectionPath(installation.ID, connection.ID),
-				http.StatusSeeOther,
-			)
-			return backendManagedInstallation{}, backendManagedConnection{}, false
-		}
-		http.NotFound(w, r)
-		return backendManagedInstallation{}, backendManagedConnection{}, false
-	}
 	if len(parts) != 4 || parts[0] != "installations" || parts[2] != "connections" {
 		http.NotFound(w, r)
 		return backendManagedInstallation{}, backendManagedConnection{}, false

@@ -17,6 +17,7 @@ type channelSettingsNotice struct {
 type channelSettingsListRow struct {
 	InstallationID string
 	ConnectionID   string
+	ConnectionName string
 	TeamID         string
 	State          string
 	TargetName     string
@@ -44,6 +45,16 @@ type channelConnectionSettingsPageData struct {
 	TargetName     string
 	Rows           []channelRouteSettingsRow
 	UpdateAction   string
+	BackHref       string
+}
+
+type channelInstallationSettingsPageData struct {
+	Notice         *channelSettingsNotice
+	InstallationID string
+	TeamID         string
+	State          string
+	TargetName     string
+	Rows           []channelSettingsListRow
 	BackHref       string
 }
 
@@ -140,6 +151,7 @@ var channelSettingsListTemplate = template.Must(template.New("channel-settings-l
           <div>
             <strong>{{ .TeamID }}</strong>
             <div class="meta">{{ .TargetName }}</div>
+            {{ if .ConnectionName }}<div class="meta">{{ .ConnectionName }}</div>{{ end }}
             <div class="meta">{{ .RouteSummary }}</div>
           </div>
           <span class="state">{{ .State }}</span>
@@ -155,6 +167,128 @@ var channelSettingsListTemplate = template.Must(template.New("channel-settings-l
       {{ end }}
       {{ else }}
       <section class="panel empty">No manageable channel installations are connected for this account.</section>
+      {{ end }}
+    </main>
+  </body>
+</html>`))
+
+var channelInstallationSettingsTemplate = template.Must(template.New("channel-installation-settings").Parse(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Channel settings</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f7f8fa;
+        --surface: #ffffff;
+        --border: #d7dce3;
+        --text: #17202a;
+        --muted: #627083;
+        --primary: #1f6feb;
+        --primary-text: #ffffff;
+        --secondary: #eef2f7;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        padding: 24px;
+      }
+      main {
+        width: min(960px, 100%);
+        margin: 0 auto;
+        display: grid;
+        gap: 16px;
+      }
+      header, .panel, .notice {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 20px;
+      }
+      h1, h2, p { margin: 0; }
+      h1 { font-size: 26px; line-height: 1.15; }
+      p, .meta { color: var(--muted); }
+      .topline, .row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .panel {
+        display: grid;
+        gap: 14px;
+      }
+      .state {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 6px;
+        padding: 5px 8px;
+        background: var(--secondary);
+        color: var(--muted);
+        font-size: 13px;
+      }
+      a.button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 6px;
+        padding: 9px 12px;
+        background: var(--primary);
+        color: var(--primary-text);
+        text-decoration: none;
+        font-weight: 650;
+      }
+      a.secondary {
+        background: var(--secondary);
+        color: var(--text);
+      }
+      .empty { color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="topline">
+          <div>
+            <h1>{{ .TeamID }}</h1>
+            <p>{{ .TargetName }}</p>
+          </div>
+          <a class="button secondary" href="{{ .BackHref }}">Back</a>
+        </div>
+      </header>
+      {{ if .Notice }}
+      <section class="notice">
+        <h2>{{ .Notice.Title }}</h2>
+        <p>{{ .Notice.Message }}</p>
+      </section>
+      {{ end }}
+      {{ if .Rows }}
+      {{ range .Rows }}
+      <section class="panel">
+        <div class="row">
+          <div>
+            <strong>{{ if .ConnectionName }}{{ .ConnectionName }}{{ else }}{{ .ConnectionID }}{{ end }}</strong>
+            <div class="meta">{{ .RouteSummary }}</div>
+          </div>
+          <span class="state">{{ .State }}</span>
+        </div>
+        <div>
+          {{ if .SettingsHref }}
+          <a class="button" href="{{ .SettingsHref }}">Open settings</a>
+          {{ else }}
+          <span class="state">Settings unavailable</span>
+          {{ end }}
+        </div>
+      </section>
+      {{ end }}
+      {{ else }}
+      <section class="panel empty">No manageable connections are connected for this installation.</section>
       {{ end }}
     </main>
   </body>
@@ -396,6 +530,32 @@ func managedConnectionByID(installation backendManagedInstallation, connectionID
 	return backendManagedConnection{}, false
 }
 
+func installationTargetName(installation backendManagedInstallation) string {
+	if installation.CurrentTarget != nil {
+		if name := strings.TrimSpace(installation.CurrentTarget.Profile.Name); name != "" {
+			return name
+		}
+	}
+	return "No target selected"
+}
+
+func managedConnectionName(connection backendManagedConnection) string {
+	if name := strings.TrimSpace(connection.DisplayName); name != "" {
+		return name
+	}
+	if id := strings.TrimSpace(connection.ID); id != "" {
+		return id
+	}
+	return "Connection"
+}
+
+func managedConnectionState(installation backendManagedInstallation, connection backendManagedConnection) string {
+	if state := strings.TrimSpace(connection.State); state != "" {
+		return state
+	}
+	return strings.TrimSpace(installation.State)
+}
+
 func routesFromInstallationConfig(config installationConfig) []backendManagedChannelRoute {
 	routes := make([]backendManagedChannelRoute, 0, len(config.ChannelPolicies))
 	for _, policy := range config.ChannelPolicies {
@@ -470,19 +630,20 @@ func routeSummary(connection backendManagedConnection) string {
 	}
 }
 
-func channelSettingsRows(installations []backendManagedInstallation) []channelSettingsListRow {
-	rows := make([]channelSettingsListRow, 0, len(installations))
-	for _, installation := range installations {
-		connection := primaryManagedConnection(installation)
-		targetName := "No target selected"
-		if installation.CurrentTarget != nil {
-			targetName = strings.TrimSpace(installation.CurrentTarget.Profile.Name)
-		}
+func channelSettingsRowsForInstallation(installation backendManagedInstallation) []channelSettingsListRow {
+	connections := installation.Connections
+	if len(connections) == 0 {
+		connections = []backendManagedConnection{primaryManagedConnection(installation)}
+	}
+	targetName := installationTargetName(installation)
+	rows := make([]channelSettingsListRow, 0, len(connections))
+	for _, connection := range connections {
 		rows = append(rows, channelSettingsListRow{
-			InstallationID: installation.ID,
-			ConnectionID:   connection.ID,
+			InstallationID: strings.TrimSpace(installation.ID),
+			ConnectionID:   strings.TrimSpace(connection.ID),
+			ConnectionName: managedConnectionName(connection),
 			TeamID:         strings.TrimSpace(installation.Route.ExternalTenantID),
-			State:          strings.TrimSpace(installation.State),
+			State:          managedConnectionState(installation, connection),
 			TargetName:     targetName,
 			RouteSummary:   routeSummary(connection),
 			SettingsHref:   "",
@@ -491,14 +652,26 @@ func channelSettingsRows(installations []backendManagedInstallation) []channelSe
 	return rows
 }
 
-func (g *slackGateway) renderChannelSettingsList(w http.ResponseWriter, r *http.Request, installations []backendManagedInstallation) {
-	rows := channelSettingsRows(installations)
+func channelSettingsRows(installations []backendManagedInstallation) []channelSettingsListRow {
+	rows := []channelSettingsListRow{}
+	for _, installation := range installations {
+		rows = append(rows, channelSettingsRowsForInstallation(installation)...)
+	}
+	return rows
+}
+
+func (g *slackGateway) applyChannelSettingsRowLinks(rows []channelSettingsListRow) {
 	for index := range rows {
 		if strings.TrimSpace(rows[index].InstallationID) == "" || strings.TrimSpace(rows[index].ConnectionID) == "" {
 			continue
 		}
 		rows[index].SettingsHref = g.channelSettingsConnectionPath(rows[index].InstallationID, rows[index].ConnectionID)
 	}
+}
+
+func (g *slackGateway) renderChannelSettingsList(w http.ResponseWriter, r *http.Request, installations []backendManagedInstallation) {
+	rows := channelSettingsRows(installations)
+	g.applyChannelSettingsRowLinks(rows)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = channelSettingsListTemplate.Execute(w, channelSettingsPageData{
@@ -507,11 +680,23 @@ func (g *slackGateway) renderChannelSettingsList(w http.ResponseWriter, r *http.
 	})
 }
 
+func (g *slackGateway) renderChannelInstallationSettings(w http.ResponseWriter, r *http.Request, installation backendManagedInstallation) {
+	rows := channelSettingsRowsForInstallation(installation)
+	g.applyChannelSettingsRowLinks(rows)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = channelInstallationSettingsTemplate.Execute(w, channelInstallationSettingsPageData{
+		Notice:         channelSettingsNoticeFromRequest(r),
+		InstallationID: strings.TrimSpace(installation.ID),
+		TeamID:         strings.TrimSpace(installation.Route.ExternalTenantID),
+		State:          strings.TrimSpace(installation.State),
+		TargetName:     installationTargetName(installation),
+		Rows:           rows,
+		BackHref:       g.channelSettingsPath(),
+	})
+}
+
 func (g *slackGateway) renderChannelConnectionSettings(w http.ResponseWriter, r *http.Request, installation backendManagedInstallation, connection backendManagedConnection) {
-	targetName := "No target selected"
-	if installation.CurrentTarget != nil {
-		targetName = strings.TrimSpace(installation.CurrentTarget.Profile.Name)
-	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = channelConnectionSettingsTemplate.Execute(w, channelConnectionSettingsPageData{
@@ -520,9 +705,9 @@ func (g *slackGateway) renderChannelConnectionSettings(w http.ResponseWriter, r 
 		ConnectionID:   connection.ID,
 		TeamID:         strings.TrimSpace(installation.Route.ExternalTenantID),
 		State:          strings.TrimSpace(installation.State),
-		TargetName:     targetName,
+		TargetName:     installationTargetName(installation),
 		Rows:           channelRouteSettingsRows(connection),
 		UpdateAction:   g.channelSettingsConnectionPath(installation.ID, connection.ID),
-		BackHref:       g.channelSettingsPath(),
+		BackHref:       g.channelSettingsInstallationPath(installation.ID),
 	})
 }
