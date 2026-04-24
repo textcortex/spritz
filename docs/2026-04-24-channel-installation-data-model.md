@@ -733,6 +733,34 @@ During the migration window, the deployment backend can keep serving the old
 session exchange response shape by reading from the new storage and projecting
 the legacy response.
 
+## Implementation Plan
+
+This design is ready to implement as a v1.
+
+The build should happen in this order:
+
+1. Add deployment-backend storage and migrations for the logical entities.
+   Spritz core should not create these tables.
+2. Add deployment-backend management APIs for installations, connections,
+   routes, and provider channel lookup.
+3. Add a compatibility projection for the current channel session exchange so
+   existing gateways can keep working during migration.
+4. Update provider gateways and runtime config generation to read channel
+   route policy from the new API shape.
+5. Add Spritz settings pages over the generic management APIs.
+6. Migrate existing `installation_config.channelPolicies[]` data into
+   `channel_route` records.
+
+The remaining choices are implementation details, not design blockers:
+
+- exact endpoint or resolver names for the management APIs
+- whether existing rows migrate in place or through a compatibility projection
+- the database-specific mechanism for enforcing one active default connection
+  per installation
+- whether `namespace` remains necessary once runtime references are resolved
+  consistently
+- the exact provider-channel-list pagination and search behavior
+
 ## Validation
 
 Minimum validation for this model:
