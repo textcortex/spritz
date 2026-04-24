@@ -33,18 +33,20 @@ func (err *httpStatusError) Error() string {
 type backendChannelSessionResponse struct {
 	Status  string `json:"status"`
 	Session struct {
-		AccessToken  string            `json:"accessToken"`
-		ExpiresAt    string            `json:"expiresAt"`
-		OwnerAuthID  string            `json:"ownerAuthId"`
-		Namespace    string            `json:"namespace"`
-		InstanceID   string            `json:"instanceId"`
-		ProviderAuth slackInstallation `json:"providerAuth"`
+		AccessToken        string             `json:"accessToken"`
+		ExpiresAt          string             `json:"expiresAt"`
+		OwnerAuthID        string             `json:"ownerAuthId"`
+		Namespace          string             `json:"namespace"`
+		InstanceID         string             `json:"instanceId"`
+		ProviderAuth       slackInstallation  `json:"providerAuth"`
+		InstallationConfig installationConfig `json:"installationConfig"`
 	} `json:"session"`
 }
 
 type backendChannelSessionUnavailableResponse struct {
-	Status       string            `json:"status"`
-	ProviderAuth slackInstallation `json:"providerAuth"`
+	Status             string             `json:"status"`
+	ProviderAuth       slackInstallation  `json:"providerAuth"`
+	InstallationConfig installationConfig `json:"installationConfig"`
 }
 
 type backendInstallationUpsertResponse struct {
@@ -85,12 +87,13 @@ type backendManagedInstallationRoute struct {
 }
 
 type backendManagedInstallation struct {
-	Route          backendManagedInstallationRoute   `json:"route"`
-	State          string                            `json:"state"`
-	CurrentTarget  *backendInstallationTargetSummary `json:"currentTarget,omitempty"`
-	AllowedActions []string                          `json:"allowedActions"`
-	ProblemCode    string                            `json:"problemCode,omitempty"`
-	DisconnectedAt string                            `json:"disconnectedAt,omitempty"`
+	Route              backendManagedInstallationRoute   `json:"route"`
+	State              string                            `json:"state"`
+	CurrentTarget      *backendInstallationTargetSummary `json:"currentTarget,omitempty"`
+	InstallationConfig installationConfig                `json:"installationConfig"`
+	AllowedActions     []string                          `json:"allowedActions"`
+	ProblemCode        string                            `json:"problemCode,omitempty"`
+	DisconnectedAt     string                            `json:"disconnectedAt,omitempty"`
 }
 
 type backendManagedInstallationListResponse struct {
@@ -139,16 +142,18 @@ type spritzBootstrapResponse struct {
 }
 
 type channelSession struct {
-	AccessToken  string
-	OwnerAuthID  string
-	Namespace    string
-	InstanceID   string
-	ProviderAuth slackInstallation
+	AccessToken        string
+	OwnerAuthID        string
+	Namespace          string
+	InstanceID         string
+	ProviderAuth       slackInstallation
+	InstallationConfig installationConfig
 }
 
 type channelSessionUnavailableError struct {
-	providerAuth slackInstallation
-	cause        *httpStatusError
+	providerAuth       slackInstallation
+	installationConfig installationConfig
+	cause              *httpStatusError
 }
 
 func (err *channelSessionUnavailableError) Error() string {
@@ -177,6 +182,17 @@ func channelSessionUnavailableProviderAuth(err error) (slackInstallation, bool) 
 		return slackInstallation{}, false
 	}
 	return unavailableErr.providerAuth, true
+}
+
+func channelSessionUnavailablePolicySnapshot(err error) (installationPolicySnapshot, bool) {
+	var unavailableErr *channelSessionUnavailableError
+	if !errors.As(err, &unavailableErr) {
+		return installationPolicySnapshot{}, false
+	}
+	return installationPolicySnapshot{
+		config:    unavailableErr.installationConfig,
+		botUserID: strings.TrimSpace(unavailableErr.providerAuth.BotUserID),
+	}, true
 }
 
 func isSpritzRuntimeMissingError(err error) bool {
@@ -218,8 +234,9 @@ func (g *slackGateway) exchangeChannelSession(ctx context.Context, teamID string
 			var unavailablePayload backendChannelSessionUnavailableResponse
 			if json.Unmarshal([]byte(statusErr.body), &unavailablePayload) == nil && strings.TrimSpace(unavailablePayload.Status) == "unavailable" {
 				return channelSession{}, &channelSessionUnavailableError{
-					providerAuth: unavailablePayload.ProviderAuth,
-					cause:        statusErr,
+					providerAuth:       unavailablePayload.ProviderAuth,
+					installationConfig: unavailablePayload.InstallationConfig,
+					cause:              statusErr,
 				}
 			}
 			return channelSession{}, &channelSessionUnavailableError{cause: statusErr}
@@ -230,11 +247,12 @@ func (g *slackGateway) exchangeChannelSession(ctx context.Context, teamID string
 		return channelSession{}, fmt.Errorf("channel session was not resolved")
 	}
 	return channelSession{
-		AccessToken:  payload.Session.AccessToken,
-		OwnerAuthID:  payload.Session.OwnerAuthID,
-		Namespace:    payload.Session.Namespace,
-		InstanceID:   payload.Session.InstanceID,
-		ProviderAuth: payload.Session.ProviderAuth,
+		AccessToken:        payload.Session.AccessToken,
+		OwnerAuthID:        payload.Session.OwnerAuthID,
+		Namespace:          payload.Session.Namespace,
+		InstanceID:         payload.Session.InstanceID,
+		ProviderAuth:       payload.Session.ProviderAuth,
+		InstallationConfig: payload.Session.InstallationConfig,
 	}, nil
 }
 
@@ -315,6 +333,26 @@ func (g *slackGateway) updateManagedInstallationTarget(ctx context.Context, call
 	}
 	if payload.Status != "resolved" {
 		return fmt.Errorf("channel installation target was not updated")
+	}
+	return nil
+}
+
+func (g *slackGateway) updateManagedInstallationConfig(ctx context.Context, callerAuthID, teamID, requestID string, installationConfig installationConfig) error {
+	body := map[string]any{
+		"callerAuthId":       strings.TrimSpace(callerAuthID),
+		"principalId":        g.cfg.PrincipalID,
+		"provider":           slackProvider,
+		"externalScopeType":  slackWorkspaceScope,
+		"externalTenantId":   strings.TrimSpace(teamID),
+		"installationConfig": installationConfig,
+		"requestId":          strings.TrimSpace(requestID),
+	}
+	var payload backendManagedInstallationUpdateResponse
+	if err := g.postBackendFastAPIJSON(ctx, "/internal/v2/spritz/channel-installations/config/update", body, &payload); err != nil {
+		return err
+	}
+	if payload.Status != "resolved" {
+		return fmt.Errorf("channel installation config was not updated")
 	}
 	return nil
 }

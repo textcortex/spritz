@@ -1632,7 +1632,22 @@ func TestSlackEventIgnoresTopLevelChannelMessagesWithoutMention(t *testing.T) {
 	var backendCalls int
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		backendCalls++
-		t.Fatalf("unexpected backend path %s", r.URL.Path)
+		if r.URL.Path != "/internal/v1/spritz/channel-sessions/exchange" {
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"session": map[string]any{
+				"accessToken":  "owner-token",
+				"ownerAuthId":  "owner-123",
+				"namespace":    "spritz-staging",
+				"instanceId":   "zeno-acme",
+				"providerAuth": map[string]any{"botUserId": "U_bot"},
+				"installationConfig": map[string]any{
+					"channelPolicies": []map[string]any{},
+				},
+			},
+		})
 	}))
 	defer backend.Close()
 
@@ -1672,8 +1687,8 @@ func TestSlackEventIgnoresTopLevelChannelMessagesWithoutMention(t *testing.T) {
 	if err := gateway.waitForWorkers(drainCtx); err != nil {
 		t.Fatalf("worker drain failed: %v", err)
 	}
-	if backendCalls != 0 {
-		t.Fatalf("expected plain channel chatter to be ignored, got %d backend calls", backendCalls)
+	if backendCalls != 1 {
+		t.Fatalf("expected one backend policy lookup, got %d backend calls", backendCalls)
 	}
 }
 
@@ -2458,8 +2473,8 @@ func TestShouldIgnoreSlackMessageEventRejectsSystemSubtypes(t *testing.T) {
 	}
 }
 
-func TestShouldProcessSlackMessageEventRequiresMentionOutsideDMs(t *testing.T) {
-	if shouldProcessSlackMessageEvent(
+func TestShouldProcessSlackMessageEventQueuesChannelMessagesForPolicyCheck(t *testing.T) {
+	if !shouldProcessSlackMessageEvent(
 		slackEventInner{
 			Type:        "message",
 			Channel:     "C_1",
@@ -2467,7 +2482,7 @@ func TestShouldProcessSlackMessageEventRequiresMentionOutsideDMs(t *testing.T) {
 			TS:          "1711387375.000100",
 		},
 	) {
-		t.Fatalf("expected top-level channel messages to be ignored")
+		t.Fatalf("expected top-level channel messages to be queued for policy check")
 	}
 	if !shouldProcessSlackMessageEvent(
 		slackEventInner{
@@ -2479,7 +2494,7 @@ func TestShouldProcessSlackMessageEventRequiresMentionOutsideDMs(t *testing.T) {
 	) {
 		t.Fatalf("expected channel app_mention events to be processed")
 	}
-	if shouldProcessSlackMessageEvent(
+	if !shouldProcessSlackMessageEvent(
 		slackEventInner{
 			Type:        "message",
 			Channel:     "C_1",
@@ -2488,7 +2503,7 @@ func TestShouldProcessSlackMessageEventRequiresMentionOutsideDMs(t *testing.T) {
 			TS:          "1711387376.000100",
 		},
 	) {
-		t.Fatalf("expected unmentioned channel thread replies to be ignored")
+		t.Fatalf("expected channel thread replies to be queued for policy check")
 	}
 	if !shouldProcessSlackMessageEvent(
 		slackEventInner{
@@ -2499,6 +2514,37 @@ func TestShouldProcessSlackMessageEventRequiresMentionOutsideDMs(t *testing.T) {
 		},
 	) {
 		t.Fatalf("expected DM messages to be processed")
+	}
+}
+
+func TestShouldRelaySlackMessageEventUsesInstallationPolicy(t *testing.T) {
+	requireMention := true
+	withoutMention := false
+	config := installationConfig{
+		ChannelPolicies: []installationChannelPolicy{
+			{ExternalChannelID: "C_requires", RequireMention: &requireMention},
+			{ExternalChannelID: "C_open", RequireMention: &withoutMention},
+		},
+	}
+	snapshot := installationPolicySnapshot{config: config, botUserID: "U_bot"}
+
+	if shouldRelaySlackMessageEvent(
+		slackEventInner{Type: "message", Channel: "C_requires", Text: "hello"},
+		snapshot,
+	) {
+		t.Fatalf("expected configured requireMention channel to require the bot mention")
+	}
+	if !shouldRelaySlackMessageEvent(
+		slackEventInner{Type: "message", Channel: "C_open", Text: "hello"},
+		snapshot,
+	) {
+		t.Fatalf("expected requireMention=false channel to relay without mention")
+	}
+	if !shouldRelaySlackMessageEvent(
+		slackEventInner{Type: "message", Channel: "C_requires", Text: "<@U_bot> hello"},
+		snapshot,
+	) {
+		t.Fatalf("expected explicit bot mention to relay even when requireMention is true")
 	}
 }
 
