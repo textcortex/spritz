@@ -148,6 +148,17 @@ Expected values:
 - `discord`
 - `msteams`
 
+### `app_principal_id`
+
+Use `app_principal_id`, not plain `principal_id`.
+
+This field identifies the shared app or gateway identity that receives events
+for the installation route. It does not identify the user, organization,
+account, team, agent, or workspace that owns the installation.
+
+The longer name is intentional because `principal` alone is overloaded in auth
+systems. In this model, the field is only part of provider event routing.
+
 ### No core `targetType`
 
 Do not add `targetType` to the core channel schema.
@@ -187,8 +198,9 @@ produce one stable `externalInstallationKey` for routing. For Slack workspace
 installs, that key can be derived from the Slack team ID. A future Teams
 adapter can derive a different key without changing the core schema.
 
-The provider-specific facts can still be stored as metadata for display,
-debugging, and migration.
+Provider-specific facts that are not part of routing should stay outside the
+core logical model. A deployment may store them in provider-specific storage,
+audit events, or adapter-owned caches.
 
 ## Logical Data Model
 
@@ -210,44 +222,45 @@ A relational implementation might use this shape:
 CREATE TABLE channel_installation (
     id                         VARCHAR(32) PRIMARY KEY,
     provider                   VARCHAR(32) NOT NULL,
-    principal_id               VARCHAR(128) NOT NULL,
+    app_principal_id           VARCHAR(128) NOT NULL,
     external_installation_key  VARCHAR(256) NOT NULL,
     external_tenant_id         VARCHAR(256) NULL,
     external_display_name      VARCHAR(512) NULL,
-    provider_auth_ref          VARCHAR(512) NULL,
+    credential_ref             VARCHAR(512) NULL,
     status                     VARCHAR(32) NOT NULL,
-    provider_metadata          JSON NULL,
-    installed_by_external_id   VARCHAR(256) NULL,
     created_at                 DATETIME NOT NULL,
     updated_at                 DATETIME NOT NULL,
     deleted_at                 DATETIME NULL,
 
     UNIQUE KEY uq_channel_installation_route (
         provider,
-        principal_id,
+        app_principal_id,
         external_installation_key
     )
 );
 ```
 
-Field meanings:
+Entity justification:
 
-- `id` is the stable product/API ID, for example `ci_...`.
-- `provider` is the messaging provider, for example `slack`.
-- `principal_id` identifies which shared app or gateway principal receives
-  events for this install route. It is not the product owner of the
-  installation.
-- `external_installation_key` is a deterministic provider-adapter key for the
-  external install surface.
-- `external_tenant_id` is a searchable/displayable provider tenant ID when
-  one exists, such as a Slack team ID.
-- `external_display_name` caches the workspace, guild, team, or tenant name.
-- `provider_auth_ref` points to provider OAuth credentials or another durable
-  auth reference.
-- `provider_metadata` stores provider-specific facts that should not become
-  core columns.
-- `installed_by_external_id` stores the provider user ID that performed the
-  latest install or reconnect when available.
+This entity separates the external provider install from any internal
+assistant or runtime. Without it, reconnects, disconnects, provider auth
+updates, and workspace-level settings get mixed into assistant/runtime state.
+
+Column justifications:
+
+| Column | Decision | Justification |
+|---|---|---|
+| `id` | keep | Stable internal ID for APIs and UI. External provider IDs should not be the primary product URL. |
+| `provider` | keep | Identifies the messaging provider, such as `slack`, `discord`, or `msteams`. Routing and provider adapters need this. |
+| `app_principal_id` | keep | Identifies which shared app or gateway identity receives events for this route. This is not the product owner. The old `principal_id` name is too vague. |
+| `external_installation_key` | keep | Provider-adapter-generated stable key for the external install surface. This avoids a core `scopeType` enum while still giving routing a deterministic key. |
+| `external_tenant_id` | optional | Useful for search, debugging, and display when the provider has a tenant/workspace ID. It should not replace `external_installation_key`. |
+| `external_display_name` | optional | Cached UI label for the workspace, guild, team, or tenant. It is non-authoritative and may lag provider state. |
+| `credential_ref` | optional | Pointer to OAuth or credential storage. Token material should not live on the installation entity. |
+| `status` | keep | Needed to fail routing closed for disconnected, broken, or reconnect-required installs. |
+| `created_at` | keep | Standard audit and lifecycle field. |
+| `updated_at` | keep | Standard lifecycle field for management and debugging. |
+| `deleted_at` | keep | Supports soft release and audit history without keeping the active route claim alive. |
 
 Example Slack row:
 
@@ -255,13 +268,23 @@ Example Slack row:
 {
   "id": "ci_01k...",
   "provider": "slack",
-  "principalId": "shared-slack-gateway",
+  "appPrincipalId": "shared-slack-gateway",
   "externalInstallationKey": "workspace:T021GRS5F4P",
   "externalTenantId": "T021GRS5F4P",
   "externalDisplayName": "Example Workspace",
   "status": "active"
 }
 ```
+
+Deliberately excluded:
+
+- `provider_metadata`: too easy to become a dumping ground. Provider-specific
+  facts should live in provider-specific storage or adapter caches.
+- `installed_by_external_id`: audit data, not installation identity. Store it
+  in installation events instead.
+- owner fields such as `ownerType`, `userId`, `orgId`, `tenantId`, and
+  `accountId`: deployment-owned authorization details, not Spritz-facing
+  routing state.
 
 ### `channel_connection`
 
@@ -288,6 +311,26 @@ CREATE TABLE channel_connection (
 );
 ```
 
+Entity justification:
+
+This entity separates "the provider app is installed" from "this install has
+an internal destination." A single workspace install can therefore host
+multiple internal connections, while reconnecting or disconnecting the provider
+install remains independent.
+
+Column justifications:
+
+| Column | Decision | Justification |
+|---|---|---|
+| `id` | keep | Stable internal connection ID for APIs and UI. |
+| `installation_id` | keep | Parent external installation. A connection cannot exist without an installed provider app. |
+| `display_name` | keep | Human-facing label in settings. The UI should not need Spritz runtime details to list connections. |
+| `is_default` | keep | Defines fallback routing when a channel has no explicit route. Without this, workspace-mode behavior is ambiguous. |
+| `status` | keep | Allows a connection to be disabled or broken without disconnecting the whole provider install. |
+| `created_at` | keep | Standard audit and lifecycle field. |
+| `updated_at` | keep | Standard lifecycle field for management and debugging. |
+| `deleted_at` | keep | Supports soft deletion and route repair without losing history. |
+
 Recommended constraints:
 
 - one active default connection per installation
@@ -312,7 +355,6 @@ CREATE TABLE spritz_channel_connection (
     connection_id              VARCHAR(32) PRIMARY KEY,
     preset_id                  VARCHAR(128) NOT NULL,
     preset_inputs              JSON NULL,
-    preset_inputs_hash         VARCHAR(128) NULL,
     spritz_binding_key         VARCHAR(256) NULL,
     spritz_instance_id         VARCHAR(256) NULL,
     namespace                  VARCHAR(256) NULL,
@@ -329,6 +371,32 @@ This is the right logical home for the fields that currently describe Spritz
 provisioning and runtime binding. A deployment can store those fields in a
 separate table, a nested document, or another equivalent persistence shape.
 
+Entity justification:
+
+This entity keeps Spritz-specific runtime concerns out of the provider-agnostic
+connection model. The generic connection can exist even if another deployment
+backs it with something other than Spritz.
+
+Column justifications:
+
+| Column | Decision | Justification |
+|---|---|---|
+| `connection_id` | keep | One-to-one link to the generic connection. |
+| `preset_id` | keep | Identifies the Spritz preset or class used to create or resolve the backing runtime. |
+| `preset_inputs` | keep | Opaque deployment-selected target inputs. Spritz should use or round-trip them without interpreting ownership. |
+| `spritz_binding_key` | keep | Stable logical binding separate from the current live runtime. Useful when runtimes are replaced. |
+| `spritz_instance_id` | keep | Current live runtime reference. It is only a cached binding and must be validated before routing. |
+| `namespace` | optional | Keep only when runtime lookup is namespace-scoped. If runtime references become globally unique, this can go away. |
+| `applied_revision` | keep | Lets controllers know whether runtime config has caught up with saved connection/route changes. |
+| `runtime_binding_assigned_at` | keep | Helps debug stale runtime bindings and recovery behavior. |
+| `created_at` | keep | Standard audit and lifecycle field. |
+| `updated_at` | keep | Standard lifecycle field for management and debugging. |
+
+Deliberately excluded:
+
+- `preset_inputs_hash`: do not add in v1 unless there is a real uniqueness or
+  idempotency query that needs it.
+
 ### `channel_route`
 
 One logical record means one external channel has explicit routing behavior.
@@ -344,7 +412,6 @@ CREATE TABLE channel_route (
     installation_id      VARCHAR(32) NOT NULL,
     connection_id        VARCHAR(32) NOT NULL,
     external_channel_id  VARCHAR(256) NOT NULL,
-    external_channel_name VARCHAR(512) NULL,
     require_mention      BOOLEAN NOT NULL DEFAULT TRUE,
     enabled              BOOLEAN NOT NULL DEFAULT TRUE,
     created_at           DATETIME NOT NULL,
@@ -360,6 +427,32 @@ CREATE TABLE channel_route (
     )
 );
 ```
+
+Entity justification:
+
+This entity is the rule for a specific external channel. It chooses the
+destination connection and stores the mention policy for that channel. This is
+where `require_mention = false` is saved.
+
+Column justifications:
+
+| Column | Decision | Justification |
+|---|---|---|
+| `id` | keep | Stable internal route ID for update, delete, and audit. |
+| `installation_id` | keep | Scopes the route to one external app installation. Provider channel IDs are not globally unique across installs. |
+| `connection_id` | keep | Destination for messages from this external channel. |
+| `external_channel_id` | keep | Provider channel ID from incoming events. This is the actual routing selector. |
+| `require_mention` | keep | Saves the required setting. `false` means messages in this channel can relay without tagging the bot. |
+| `enabled` | keep | Lets users disable a route without deleting the saved configuration. |
+| `created_at` | keep | Standard audit and lifecycle field. |
+| `updated_at` | keep | Standard lifecycle field for management and debugging. |
+| `deleted_at` | keep | Supports soft deletion and route history. |
+
+Deliberately excluded:
+
+- `external_channel_name`: channel names are mutable display cache. Routing
+  should use `external_channel_id`; names can come from provider lookup or UI
+  cache.
 
 The unique route constraint is intentional. In v1, one external channel should
 route to one active connection for a given provider installation. That avoids
@@ -379,7 +472,7 @@ Incoming provider events should resolve in this order:
 
 1. The provider gateway computes the provider route:
    - `provider`
-   - `principal_id`
+   - `app_principal_id`
    - `external_installation_key`
 2. The backend resolves the matching `channel_installation`.
 3. If the event has an external channel ID, the backend looks for an enabled
@@ -453,7 +546,6 @@ The route upsert body can stay generic:
 ```json
 {
   "externalChannelId": "C0ANJGDB4Q5",
-  "externalChannelName": "support-triage",
   "requireMention": false,
   "enabled": true
 }
@@ -506,8 +598,8 @@ The existing combined installation row can migrate into the split logical model
 in four steps.
 
 1. Create one `channel_installation` row for each existing external route.
-   The current provider route fields map into `provider`, `principal_id`, and
-   `external_installation_key`.
+   The current provider route fields map into `provider`,
+   `app_principal_id`, and `external_installation_key`.
 2. Create one `channel_connection` row for each existing backing concierge.
    Existing single-connection installs should mark that row as default.
 3. Move Spritz-specific fields into `spritz_channel_connection`.
@@ -532,7 +624,7 @@ Minimum validation for this model:
 - a channel route with `require_mention = false` relays unmentioned messages
   for that channel
 - channels without an explicit route keep requiring a bot mention
-- reconnect updates provider auth without rewriting Spritz runtime state
+- reconnect updates credentials without rewriting Spritz runtime state
 - runtime replacement updates `spritz_channel_connection` without rewriting
   provider installation identity
 - Discord or Teams can add provider adapters without changing the core logical
