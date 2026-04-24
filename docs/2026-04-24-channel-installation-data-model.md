@@ -495,22 +495,65 @@ That keeps channel-level behavior separate from Slack installation mode.
 
 ## UI Model
 
+The settings UI should be a Spritz-owned generic management surface over
+deployment-owned channel-installation APIs.
+
+Spritz owns:
+
+- routes and page structure
+- generic list/detail forms
+- provider-aware labels and pickers
+- rendering server-provided action availability
+
+The deployment backend owns:
+
+- storage
+- authorization
+- provider credential use
+- provider channel lookup
+- mutations to installations, connections, and routes
+
+Spritz should never infer ownership or permissions locally.
+
 The UI should be installation-scoped first, then connection-scoped.
 
 Recommended routes:
 
 ```text
+/settings/channels
 /settings/channels/installations/:installationId
 /settings/channels/installations/:installationId/connections/:connectionId
 ```
+
+### `/settings/channels`
+
+This page lists channel installations the current viewer may manage.
+
+It should render only rows returned by the deployment backend. If an
+installation is not returned, Spritz should treat it as not manageable by the
+viewer.
+
+The page should show:
+
+- provider
+- external workspace, guild, team, or tenant display name
+- install status
+- display-only owner label when the deployment returns one
+- available actions from `allowedActions`
+
+### `/settings/channels/installations/:installationId`
 
 The installation page should show:
 
 - provider
 - external workspace, guild, team, or tenant name
 - install status
+- display-only owner label when available
 - reconnect or disconnect actions
 - all connections under the installation
+- which connection is the default
+
+### `/settings/channels/installations/:installationId/connections/:connectionId`
 
 The connection page should show:
 
@@ -523,6 +566,45 @@ The connection page should show:
 Slack-specific labels are fine in the UI when the provider is Slack. The route
 shape should still use stable internal IDs instead of Slack team IDs or agent
 IDs.
+
+### Channel Picker
+
+Provider channel lookup should be a backend operation, not a Spritz storage
+query.
+
+For Slack, the backend can use the saved credential reference and Slack adapter
+to list channels. Spritz should only render returned options.
+
+Example operation:
+
+```text
+channel.provider.channels.list
+```
+
+Example request:
+
+```json
+{
+  "installationId": "ci_123",
+  "query": "support"
+}
+```
+
+Example response:
+
+```json
+{
+  "channels": [
+    {
+      "externalChannelId": "C0ANJGDB4Q5",
+      "displayName": "support-triage"
+    }
+  ]
+}
+```
+
+The display name is allowed in the picker response because it is UI data. It
+should not become core route storage.
 
 ## API Shape
 
@@ -541,6 +623,26 @@ PUT /channel/connections/cc_456/routes/C0ANJGDB4Q5
 DELETE /channel/routes/cr_789
 ```
 
+The list and detail responses should be server-driven. Spritz should use
+`allowedActions` to decide which buttons and form controls are enabled.
+
+Example installation list response:
+
+```json
+{
+  "installations": [
+    {
+      "id": "ci_123",
+      "provider": "slack",
+      "displayName": "Example Workspace",
+      "status": "active",
+      "ownerLabel": "Example Team",
+      "allowedActions": ["view", "reconnect", "disconnect"]
+    }
+  ]
+}
+```
+
 The route upsert body can stay generic:
 
 ```json
@@ -554,6 +656,24 @@ The route upsert body can stay generic:
 Provider-specific validation should happen server-side. For example, Slack
 channel ID validation belongs to the Slack provider adapter or deployment
 backend service, not to a generic UI component.
+
+The generic settings UI should not know:
+
+- user-vs-organization ownership
+- provider token storage
+- database tables
+- deployment-specific target IDs
+- whether the backing thing is an agent, workflow, or another product concept
+
+The generic settings UI may know:
+
+- `installationId`
+- `connectionId`
+- `routeId`
+- `provider`
+- display labels
+- `allowedActions`
+- route config such as `requireMention`
 
 ## Ownership And Authorization
 
