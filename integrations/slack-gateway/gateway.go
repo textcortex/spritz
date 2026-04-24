@@ -23,6 +23,7 @@ type slackGateway struct {
 	httpClient *http.Client
 	state      *oauthStateManager
 	dedupe     *dedupeStore
+	policies   *installationPolicyCache
 	logger     *slog.Logger
 	workers    sync.WaitGroup
 }
@@ -66,11 +67,15 @@ func newSlackGateway(cfg config, logger *slog.Logger) *slackGateway {
 	if cfg.PromptRetryTimeout <= 0 {
 		cfg.PromptRetryTimeout = 8 * time.Second
 	}
+	if cfg.InstallationPolicyCacheTTL <= 0 {
+		cfg.InstallationPolicyCacheTTL = 10 * time.Second
+	}
 	return &slackGateway{
 		cfg:        cfg,
 		httpClient: &http.Client{},
 		state:      newOAuthStateManager(cfg.OAuthStateSecret, 15*time.Minute),
 		dedupe:     newDedupeStore(cfg.DedupeTTL),
+		policies:   newInstallationPolicyCache(cfg.InstallationPolicyCacheTTL),
 		logger:     logger,
 	}
 }
@@ -85,6 +90,8 @@ func (g *slackGateway) routes() http.Handler {
 	g.registerRoute(mux, "/slack/workspaces/target", g.handleWorkspaceTarget)
 	g.registerRoute(mux, "/slack/workspaces/test", g.handleWorkspaceTest)
 	g.registerRoute(mux, "/slack/workspaces/disconnect", g.handleWorkspaceDisconnect)
+	g.registerRoute(mux, "/settings/channels", g.handleChannelSettings)
+	g.registerRoute(mux, "/settings/channels/", g.handleChannelSettings)
 	g.registerRoute(mux, "/slack/oauth/callback", g.handleOAuthCallback)
 	g.registerRoute(mux, "/slack/events", g.handleSlackEvents)
 	return mux

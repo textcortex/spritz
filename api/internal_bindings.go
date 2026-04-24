@@ -20,13 +20,14 @@ import (
 )
 
 type internalBindingRequest struct {
-	DesiredRevision string                      `json:"desiredRevision,omitempty"`
-	Disconnected    bool                        `json:"disconnected,omitempty"`
-	Attributes      map[string]string           `json:"attributes,omitempty"`
-	Principal       internalCreatePrincipal     `json:"principal"`
-	Request         json.RawMessage             `json:"request"`
-	AdoptActive     *internalBindingInstanceRef `json:"adoptActive,omitempty"`
-	AdoptedRevision string                      `json:"adoptedRevision,omitempty"`
+	DesiredRevision    string                      `json:"desiredRevision,omitempty"`
+	Disconnected       bool                        `json:"disconnected,omitempty"`
+	Attributes         map[string]string           `json:"attributes,omitempty"`
+	InstallationConfig json.RawMessage             `json:"installationConfig,omitempty"`
+	Principal          internalCreatePrincipal     `json:"principal"`
+	Request            json.RawMessage             `json:"request"`
+	AdoptActive        *internalBindingInstanceRef `json:"adoptActive,omitempty"`
+	AdoptedRevision    string                      `json:"adoptedRevision,omitempty"`
 }
 
 type internalBindingInstanceRef struct {
@@ -173,6 +174,9 @@ func (s *server) upsertInternalBinding(c echo.Context) error {
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
 	if err := resolveCreateLifetimes(&requestBody.Spec, s.provisioners, true); err != nil {
+		return writeError(c, http.StatusBadRequest, err.Error())
+	}
+	if err := applyChannelInstallationConfigProjection(&requestBody.Spec, body.Attributes, body.InstallationConfig); err != nil {
 		return writeError(c, http.StatusBadRequest, err.Error())
 	}
 

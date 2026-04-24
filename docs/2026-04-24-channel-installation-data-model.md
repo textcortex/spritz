@@ -358,7 +358,7 @@ CREATE TABLE spritz_channel_connection (
     spritz_binding_key         VARCHAR(256) NULL,
     spritz_instance_id         VARCHAR(256) NULL,
     namespace                  VARCHAR(256) NULL,
-    applied_revision           BIGINT NOT NULL DEFAULT 0,
+    applied_revision           VARCHAR(255) NULL,
     runtime_binding_assigned_at DATETIME NULL,
     created_at                 DATETIME NOT NULL,
     updated_at                 DATETIME NOT NULL,
@@ -387,7 +387,7 @@ Column justifications:
 | `spritz_binding_key` | keep | Stable logical binding separate from the current live runtime. Useful when runtimes are replaced. |
 | `spritz_instance_id` | keep | Current live runtime reference. It is only a cached binding and must be validated before routing. |
 | `namespace` | optional | Keep only when runtime lookup is namespace-scoped. If runtime references become globally unique, this can go away. |
-| `applied_revision` | keep | Lets controllers know whether runtime config has caught up with saved connection/route changes. |
+| `applied_revision` | keep | Stores the runtime/controller revision string that is live for the connection, when one has been observed. |
 | `runtime_binding_assigned_at` | keep | Helps debug stale runtime bindings and recovery behavior. |
 | `created_at` | keep | Standard audit and lifecycle field. |
 | `updated_at` | keep | Standard lifecycle field for management and debugging. |
@@ -656,6 +656,32 @@ The route upsert body can stay generic:
 Provider-specific validation should happen server-side. For example, Slack
 channel ID validation belongs to the Slack provider adapter or deployment
 backend service, not to a generic UI component.
+
+The current v1 compatibility API can expose the same data through the existing
+internal channel-gateway surface while the product API settles:
+
+```text
+POST /internal/v2/spritz/channel-installations/list
+POST /internal/v2/spritz/channel-installations/routes/update
+```
+
+The list response should include `installation.id`, `connections[].id`, and
+`connections[].routes[]` while preserving the legacy `installationConfig`
+projection for older gateways. The route update request replaces the route
+set for one connection:
+
+```json
+{
+  "installationId": "ci_123",
+  "connectionId": "cc_456",
+  "channelPolicies": [
+    {
+      "externalChannelId": "C0ANJGDB4Q5",
+      "requireMention": false
+    }
+  ]
+}
+```
 
 The generic settings UI should not know:
 

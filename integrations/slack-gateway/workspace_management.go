@@ -13,17 +13,18 @@ type workspaceManagementNotice struct {
 }
 
 type workspaceManagementRow struct {
-	TeamID             string
-	State              string
-	CurrentTargetName  string
-	CurrentTargetOwner string
-	TargetStatus       string
-	ChangeTargetHref   string
-	TestHref           string
-	ReconnectHref      string
-	ShowReconnect      bool
-	ShowDisconnect     bool
-	ShowTest           bool
+	TeamID              string
+	State               string
+	CurrentTargetName   string
+	CurrentTargetOwner  string
+	TargetStatus        string
+	ChangeTargetHref    string
+	ChannelSettingsHref string
+	TestHref            string
+	ReconnectHref       string
+	ShowReconnect       bool
+	ShowDisconnect      bool
+	ShowTest            bool
 }
 
 type workspaceManagementPageData struct {
@@ -165,6 +166,9 @@ var workspaceManagementTemplate = template.Must(template.New("workspace-manageme
         </div>
         <div class="actions">
           <a class="primary" href="{{ .ChangeTargetHref }}">Change target</a>
+          {{ if .ChannelSettingsHref }}
+          <a class="secondary" href="{{ .ChannelSettingsHref }}">Channel settings</a>
+          {{ end }}
           {{ if .ShowTest }}
           <a class="secondary" href="{{ .TestHref }}">Send test</a>
           {{ end }}
@@ -287,18 +291,24 @@ func (g *slackGateway) renderWorkspaceManagementPage(w http.ResponseWriter, r *h
 			currentTargetName = strings.TrimSpace(installation.CurrentTarget.Profile.Name)
 			currentTargetOwner = strings.TrimSpace(installation.CurrentTarget.OwnerLabel)
 		}
+		settingsHref := ""
+		connection := primaryManagedConnection(installation)
+		if strings.TrimSpace(installation.ID) != "" && strings.TrimSpace(connection.ID) != "" {
+			settingsHref = g.channelSettingsConnectionPath(installation.ID, connection.ID)
+		}
 		rows = append(rows, workspaceManagementRow{
-			TeamID:             strings.TrimSpace(installation.Route.ExternalTenantID),
-			State:              strings.TrimSpace(installation.State),
-			CurrentTargetName:  currentTargetName,
-			CurrentTargetOwner: currentTargetOwner,
-			TargetStatus:       workspaceTargetStatus(installation),
-			ChangeTargetHref:   g.buildWorkspaceTargetHref(installation.Route.ExternalTenantID),
-			TestHref:           g.buildWorkspaceTestHref(installation.Route.ExternalTenantID),
-			ReconnectHref:      g.installRedirectPath(),
-			ShowReconnect:      hasAllowedAction(installation, "reconnect"),
-			ShowDisconnect:     hasAllowedAction(installation, "disconnect"),
-			ShowTest:           !strings.EqualFold(strings.TrimSpace(installation.State), "disconnected"),
+			TeamID:              strings.TrimSpace(installation.Route.ExternalTenantID),
+			State:               strings.TrimSpace(installation.State),
+			CurrentTargetName:   currentTargetName,
+			CurrentTargetOwner:  currentTargetOwner,
+			TargetStatus:        workspaceTargetStatus(installation),
+			ChangeTargetHref:    g.buildWorkspaceTargetHref(installation.Route.ExternalTenantID),
+			ChannelSettingsHref: settingsHref,
+			TestHref:            g.buildWorkspaceTestHref(installation.Route.ExternalTenantID),
+			ReconnectHref:       g.installRedirectPath(),
+			ShowReconnect:       hasAllowedAction(installation, "reconnect"),
+			ShowDisconnect:      hasAllowedAction(installation, "disconnect"),
+			ShowTest:            !strings.EqualFold(strings.TrimSpace(installation.State), "disconnected"),
 		})
 	}
 
