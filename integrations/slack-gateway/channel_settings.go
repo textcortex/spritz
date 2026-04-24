@@ -386,6 +386,22 @@ func primaryManagedConnection(installation backendManagedInstallation) backendMa
 	}
 }
 
+func managedConnectionByID(installation backendManagedInstallation, connectionID string) (backendManagedConnection, bool) {
+	connectionID = strings.TrimSpace(connectionID)
+	for _, connection := range installation.Connections {
+		if strings.TrimSpace(connection.ID) == connectionID {
+			return connection, true
+		}
+	}
+	if len(installation.Connections) == 0 {
+		connection := primaryManagedConnection(installation)
+		if strings.TrimSpace(connection.ID) == connectionID {
+			return connection, true
+		}
+	}
+	return backendManagedConnection{}, false
+}
+
 func routesFromInstallationConfig(config installationConfig) []backendManagedChannelRoute {
 	routes := make([]backendManagedChannelRoute, 0, len(config.ChannelPolicies))
 	for _, policy := range config.ChannelPolicies {

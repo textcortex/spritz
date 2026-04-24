@@ -406,6 +406,18 @@ func TestChannelSettingsRendersManagedConnections(t *testing.T) {
 								},
 							},
 						},
+						{
+							"id":    "cc_2",
+							"state": "ready",
+							"routes": []map[string]any{
+								{
+									"id":                "cr_2",
+									"externalChannelId": "C_channel_2",
+									"requireMention":    true,
+									"enabled":           true,
+								},
+							},
+						},
 					},
 					"allowedActions": []string{"changeTarget", "disconnect"},
 				},
@@ -421,7 +433,7 @@ func TestChannelSettingsRendersManagedConnections(t *testing.T) {
 		HTTPTimeout:           5 * time.Second,
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	req := httptest.NewRequest(http.MethodGet, "/settings/channels/installations/ci_1/connections/cc_1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/settings/channels/installations/ci_1/connections/cc_2", nil)
 	req.Header.Set("X-Spritz-User-Id", "user-1")
 	rec := httptest.NewRecorder()
 	gateway.routes().ServeHTTP(rec, req)
@@ -433,7 +445,7 @@ func TestChannelSettingsRendersManagedConnections(t *testing.T) {
 	if !strings.Contains(body, "T_workspace_1") || !strings.Contains(body, "Workspace Helper") {
 		t.Fatalf("expected channel settings context on page, got %q", body)
 	}
-	if !strings.Contains(body, "C_channel_1") || !strings.Contains(body, "Relays without mention") {
+	if !strings.Contains(body, "C_channel_2") || !strings.Contains(body, "Mentions required") {
 		t.Fatalf("expected configured channel route on page, got %q", body)
 	}
 }
@@ -464,6 +476,18 @@ func TestChannelSettingsUpdatePostsRoutePolicies(t *testing.T) {
 									{
 										"id":                "cr_1",
 										"externalChannelId": "C_existing",
+										"requireMention":    true,
+										"enabled":           true,
+									},
+								},
+							},
+							{
+								"id":    "cc_2",
+								"state": "ready",
+								"routes": []map[string]any{
+									{
+										"id":                "cr_2",
+										"externalChannelId": "C_channel_2",
 										"requireMention":    true,
 										"enabled":           true,
 									},

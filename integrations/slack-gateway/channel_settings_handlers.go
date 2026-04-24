@@ -86,8 +86,8 @@ func (g *slackGateway) matchChannelSettingsConnectionPath(
 		if strings.TrimSpace(installation.ID) != installationID {
 			continue
 		}
-		connection := primaryManagedConnection(installation)
-		if strings.TrimSpace(connection.ID) != connectionID {
+		connection, found := managedConnectionByID(installation, connectionID)
+		if !found {
 			http.NotFound(w, r)
 			return backendManagedInstallation{}, backendManagedConnection{}, false
 		}
