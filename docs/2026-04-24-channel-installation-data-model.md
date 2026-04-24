@@ -108,11 +108,11 @@ That includes:
 
 Spritz should not require one specific storage implementation.
 
-The deployment-owned backend should define and create the physical storage.
-In the current production deployment, that means Platform creates the database
-tables through its normal backend migration system. Another deployment could
-store the same logical entities in a different database or service as long as
-it satisfies the same Spritz-facing contract.
+The deployment-owned backend should define and create the physical storage
+through its normal migration or provisioning system. One deployment may create
+relational database tables. Another deployment could store the same logical
+entities in a different database or service as long as it satisfies the same
+Spritz-facing contract.
 
 The entity names in this document are canonical logical names. The SQL below
 is an illustrative relational implementation shape, not a requirement that
@@ -251,7 +251,7 @@ Example Slack row:
 {
   "id": "ci_01k...",
   "provider": "slack",
-  "principalId": "slack-gateway-staging",
+  "principalId": "shared-slack-gateway",
   "externalInstallationKey": "workspace:T021GRS5F4P",
   "externalTenantId": "T021GRS5F4P",
   "externalDisplayName": "Example Workspace",
@@ -449,7 +449,7 @@ The route upsert body can stay generic:
 ```json
 {
   "externalChannelId": "C0ANJGDB4Q5",
-  "externalChannelName": "zeno-staging",
+  "externalChannelName": "support-triage",
   "requireMention": false,
   "enabled": true
 }
