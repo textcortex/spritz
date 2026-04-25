@@ -104,7 +104,7 @@ Spritz should define the generic channel-installation contract.
 That includes:
 
 - provider route identity fields
-- stable installation, connection, and route IDs
+- stable opaque installation, connection, and route IDs
 - management API shapes
 - UI routing and rendering expectations
 - gateway behavior for routing and mention policy
@@ -120,6 +120,33 @@ Spritz-facing contract.
 The entity names in this document are canonical logical names. The SQL below
 is an illustrative relational implementation shape, not a requirement that
 Spritz core ships or runs these migrations.
+
+## ID Ownership And Opaqueness
+
+The deployment-owned backend assigns channel-installation IDs.
+
+Spritz must treat these IDs as opaque strings. Spritz should list them, render
+them into URLs, and send the same values back on management requests. Spritz
+must not generate them, parse them, derive meaning from prefixes, or assume
+that they encode database rows, Slack workspace IDs, Slack channel IDs, agent
+IDs, users, organizations, or runtime instances.
+
+The required ID properties are:
+
+- stable for the lifetime of the logical record
+- unique within the deployment-owned backend
+- safe to use in URLs and logs
+- non-sequential from Spritz's perspective
+- not derived from external provider IDs or internal database row numbers
+
+The Spritz contract intentionally does not require TypeID, UUID, ULID, or any
+specific prefix format. A deployment may use typed IDs internally, but that is
+an implementation detail of the backend that owns the storage and uniqueness
+constraints.
+
+Examples in this document use placeholder IDs such as
+`opaque-installation-id`, `opaque-connection-id`, and `opaque-route-id`. They
+are placeholders, not required literal formats.
 
 ## Naming Decisions
 
@@ -220,7 +247,7 @@ A relational implementation might use this shape:
 
 ```sql
 CREATE TABLE channel_installation (
-    id                         VARCHAR(32) PRIMARY KEY,
+    id                         VARCHAR(64) PRIMARY KEY,
     provider                   VARCHAR(32) NOT NULL,
     app_principal_id           VARCHAR(128) NOT NULL,
     external_installation_key  VARCHAR(256) NOT NULL,
@@ -250,7 +277,7 @@ Column justifications:
 
 | Column | Decision | Justification |
 |---|---|---|
-| `id` | keep | Stable internal ID for APIs and UI. External provider IDs should not be the primary product URL. |
+| `id` | keep | Stable opaque backend-assigned ID for APIs and UI. External provider IDs and database row numbers should not be the primary product URL. |
 | `provider` | keep | Identifies the messaging provider, such as `slack`, `discord`, or `msteams`. Routing and provider adapters need this. |
 | `app_principal_id` | keep | Identifies which shared app or gateway identity receives events for this route. This is not the product owner. The old `principal_id` name is too vague. |
 | `external_installation_key` | keep | Provider-adapter-generated stable key for the external install surface. This avoids a core `scopeType` enum while still giving routing a deterministic key. |
@@ -266,7 +293,7 @@ Example Slack row:
 
 ```json
 {
-  "id": "ci_01k...",
+  "id": "opaque-installation-id",
   "provider": "slack",
   "appPrincipalId": "shared-slack-gateway",
   "externalInstallationKey": "workspace:T021GRS5F4P",
@@ -298,8 +325,8 @@ A relational implementation might use this shape:
 
 ```sql
 CREATE TABLE channel_connection (
-    id                  VARCHAR(32) PRIMARY KEY,
-    installation_id     VARCHAR(32) NOT NULL,
+    id                  VARCHAR(64) PRIMARY KEY,
+    installation_id     VARCHAR(64) NOT NULL,
     display_name        VARCHAR(512) NULL,
     is_default          BOOLEAN NOT NULL DEFAULT FALSE,
     status              VARCHAR(32) NOT NULL,
@@ -322,7 +349,7 @@ Column justifications:
 
 | Column | Decision | Justification |
 |---|---|---|
-| `id` | keep | Stable internal connection ID for APIs and UI. |
+| `id` | keep | Stable opaque backend-assigned connection ID for APIs and UI. |
 | `installation_id` | keep | Parent external installation. A connection cannot exist without an installed provider app. |
 | `display_name` | keep | Human-facing label in settings. The UI should not need Spritz runtime details to list connections. |
 | `is_default` | keep | Defines fallback routing when a channel has no explicit route. Without this, workspace-mode behavior is ambiguous. |
@@ -352,7 +379,7 @@ A relational implementation might use this shape:
 
 ```sql
 CREATE TABLE spritz_channel_connection (
-    connection_id              VARCHAR(32) PRIMARY KEY,
+    connection_id              VARCHAR(64) PRIMARY KEY,
     preset_id                  VARCHAR(128) NOT NULL,
     preset_inputs              JSON NULL,
     spritz_binding_key         VARCHAR(256) NULL,
@@ -408,9 +435,9 @@ A relational implementation might use this shape:
 
 ```sql
 CREATE TABLE channel_route (
-    id                   VARCHAR(32) PRIMARY KEY,
-    installation_id      VARCHAR(32) NOT NULL,
-    connection_id        VARCHAR(32) NOT NULL,
+    id                   VARCHAR(64) PRIMARY KEY,
+    installation_id      VARCHAR(64) NOT NULL,
+    connection_id        VARCHAR(64) NOT NULL,
     external_channel_id  VARCHAR(256) NOT NULL,
     require_mention      BOOLEAN NOT NULL DEFAULT TRUE,
     enabled              BOOLEAN NOT NULL DEFAULT TRUE,
@@ -438,7 +465,7 @@ Column justifications:
 
 | Column | Decision | Justification |
 |---|---|---|
-| `id` | keep | Stable internal route ID for update, delete, and audit. |
+| `id` | keep | Stable opaque backend-assigned route ID for update, delete, and audit. |
 | `installation_id` | keep | Scopes the route to one external app installation. Provider channel IDs are not globally unique across installs. |
 | `connection_id` | keep | Destination for messages from this external channel. |
 | `external_channel_id` | keep | Provider channel ID from incoming events. This is the actual routing selector. |
@@ -585,7 +612,7 @@ Example request:
 
 ```json
 {
-  "installationId": "ci_123",
+  "installationId": "opaque-installation-id",
   "query": "support"
 }
 ```
@@ -614,13 +641,13 @@ Examples:
 
 ```http
 GET /channel/installations
-GET /channel/installations/ci_123
-GET /channel/installations/ci_123/connections
-POST /channel/installations/ci_123/connections
-PATCH /channel/connections/cc_456
-GET /channel/connections/cc_456/routes
-PUT /channel/connections/cc_456/routes/C0ANJGDB4Q5
-DELETE /channel/routes/cr_789
+GET /channel/installations/{installationId}
+GET /channel/installations/{installationId}/connections
+POST /channel/installations/{installationId}/connections
+PATCH /channel/connections/{connectionId}
+GET /channel/connections/{connectionId}/routes
+PUT /channel/connections/{connectionId}/routes/C0ANJGDB4Q5
+DELETE /channel/routes/{routeId}
 ```
 
 The list and detail responses should be server-driven. Spritz should use
@@ -632,7 +659,7 @@ Example installation list response:
 {
   "installations": [
     {
-      "id": "ci_123",
+      "id": "opaque-installation-id",
       "provider": "slack",
       "displayName": "Example Workspace",
       "status": "active",
@@ -672,8 +699,8 @@ set for one connection:
 
 ```json
 {
-  "installationId": "ci_123",
-  "connectionId": "cc_456",
+  "installationId": "opaque-installation-id",
+  "connectionId": "opaque-connection-id",
   "channelPolicies": [
     {
       "externalChannelId": "C0ANJGDB4Q5",
@@ -808,6 +835,8 @@ Minimum validation for this model:
 
 - Keep `provider`; for Slack the value is `slack`.
 - Use internal IDs for URLs and management APIs.
+- The deployment-owned backend assigns stable opaque IDs. Spritz only
+  round-trips them and must not generate or parse them.
 - Model provider installation, internal connection, Spritz runtime backing,
   and channel routes as separate concepts.
 - Do not add core `targetType`, `preset`, or `runtime` fields.

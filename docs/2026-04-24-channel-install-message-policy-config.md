@@ -150,11 +150,16 @@ Recommended operation:
 
 - `channel.installation.config.update`
 
+`installationId` is a deployment-backend-assigned opaque ID. Spritz should
+receive it from the installation-management API, render it in UI URLs when
+needed, and send it back unchanged. Spritz must not generate it, parse it, or
+assume any specific prefix or ID-generation scheme.
+
 Recommended request shape:
 
 ```json
 {
-  "installationId": "inst_123",
+  "installationId": "opaque-installation-id",
   "installationConfig": {
     "channelPolicies": [
       {
@@ -171,7 +176,7 @@ Recommended response shape:
 ```json
 {
   "installation": {
-    "id": "inst_123",
+    "id": "opaque-installation-id",
     "provider": "slack",
     "externalScopeType": "workspace",
     "externalTenantId": "T1234567890",
