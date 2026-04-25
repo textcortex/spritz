@@ -140,7 +140,8 @@ API rules:
 
 ## OAuth Flow
 
-The OAuth entry and callback remain gateway-owned.
+The OAuth entry, callback, and cross-origin protocol fallbacks remain
+gateway-owned.
 
 Target flow:
 
@@ -167,8 +168,9 @@ or encrypted OAuth state in the URL.
 Exception: when the gateway public URL and the Spritz React URL are different
 origins and there is no same-origin `/slack-gateway` proxy, that HTTP-only
 gateway cookie cannot be sent by browser calls from the React origin. In that
-case the gateway must keep the target picker on the gateway origin as a minimal
-protocol fallback. Same-origin/proxied deployments should use the React picker.
+case the gateway must keep the target picker and legacy management pages on the
+gateway origin as a minimal protocol fallback. Same-origin/proxied deployments
+should use the React pages.
 
 ## Migration Phases
 

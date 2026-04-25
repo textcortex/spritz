@@ -11,7 +11,7 @@ func (g *slackGateway) handleChannelSettings(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	if r.Method == http.MethodGet {
+	if r.Method == http.MethodGet && g.reactRoutesShareGatewayOrigin() {
 		g.redirectToReactRoute(
 			w,
 			r,

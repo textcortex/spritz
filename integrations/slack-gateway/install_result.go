@@ -435,6 +435,10 @@ func classifyInstallUpsertError(err error) installResultCode {
 }
 
 func (g *slackGateway) handleInstallResult(w http.ResponseWriter, r *http.Request) {
+	if !g.reactRoutesShareGatewayOrigin() {
+		g.renderInstallResultPage(w, r)
+		return
+	}
 	target := url.URL{Path: reactSlackInstallResultPath(), RawQuery: r.URL.RawQuery}
 	g.redirectToReactRoute(w, r, target.String())
 }
