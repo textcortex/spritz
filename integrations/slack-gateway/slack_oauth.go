@@ -215,12 +215,12 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 			})
 			return
 		}
-		if !g.reactRoutesShareGatewayOrigin() {
-			g.renderInstallTargetPicker(w, pendingState, requestID, targets)
+		if g.reactRoutesShareGatewayOrigin() {
+			g.setPendingInstallCookie(w, r, requestID, pendingState)
+			g.redirectToReactRoute(w, r, reactSlackInstallSelectPath(requestID, ""))
 			return
 		}
-		g.setPendingInstallCookie(w, r, requestID, pendingState)
-		g.redirectToReactRoute(w, r, reactSlackInstallSelectPath(requestID))
+		g.redirectToReactRoute(w, r, reactSlackInstallSelectPath(requestID, pendingState))
 		return
 	}
 	if err := g.upsertInstallation(r.Context(), &installation, requestID, targets[0].PresetInputs); err != nil {
@@ -268,10 +268,6 @@ func (g *slackGateway) oauthCallbackURL() string {
 	return g.cfg.PublicURL + "/slack/oauth/callback"
 }
 
-func (g *slackGateway) selectInstallTargetPath() string {
-	return g.publicPathPrefix() + "/slack/install/select"
-}
-
 func (g *slackGateway) exchangeSlackOAuthCode(ctx context.Context, code string) (slackInstallation, error) {
 	form := url.Values{}
 	form.Set("client_id", g.cfg.SlackClientID)
@@ -316,72 +312,15 @@ func (g *slackGateway) exchangeSlackOAuthCode(ctx context.Context, code string) 
 }
 
 func (g *slackGateway) handleInstallTargetSelection(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		g.redirectToInstallResult(w, r, installResult{
-			Status:    installResultStatusError,
-			Code:      installResultCodeTargetInvalid,
-			Operation: installResultOperationChannelInstall,
-			Provider:  slackProvider,
-		})
+	if r.Method == http.MethodGet {
+		g.redirectToReactRoute(w, r, reactSlackInstallSelectPath(r.URL.Query().Get("requestId"), r.URL.Query().Get("state")))
 		return
 	}
-
-	pendingInstall, err := g.state.parsePendingInstall(strings.TrimSpace(r.FormValue("state")))
-	if err != nil {
-		g.redirectToInstallResult(w, r, installResult{
-			Status:    installResultStatusError,
-			Code:      classifyInstallStateError(err),
-			Operation: installResultOperationChannelInstall,
-			Provider:  slackProvider,
-		})
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	selectedPresetInputs, err := decodeInstallTargetSelection(strings.TrimSpace(r.FormValue("target")))
-	if err != nil {
-		g.redirectToInstallResult(w, r, installResult{
-			Status:    installResultStatusError,
-			Code:      installResultCodeTargetInvalid,
-			Operation: installResultOperationChannelInstall,
-			Provider:  slackProvider,
-			RequestID: pendingInstall.RequestID,
-			TeamID:    pendingInstall.Installation.TeamID,
-		})
-		return
-	}
-
-	requestID := firstNonEmpty(strings.TrimSpace(r.FormValue("requestId")), pendingInstall.RequestID)
-	installation := pendingInstall.Installation
-	if err := g.upsertInstallation(r.Context(), &installation, requestID, selectedPresetInputs); err != nil {
-		g.logger.ErrorContext(
-			r.Context(),
-			"slack install target selection upsert failed",
-			"err",
-			err,
-			"team_id",
-			installation.TeamID,
-			"request_id",
-			requestID,
-		)
-		g.redirectToInstallResult(w, r, installResult{
-			Status:    installResultStatusError,
-			Code:      classifyInstallUpsertError(err),
-			Operation: installResultOperationChannelInstall,
-			Provider:  slackProvider,
-			RequestID: requestID,
-			TeamID:    installation.TeamID,
-		})
-		return
-	}
-
-	g.redirectToInstallResult(w, r, installResult{
-		Status:    installResultStatusSuccess,
-		Code:      installResultCodeInstalled,
-		Operation: installResultOperationChannelInstall,
-		Provider:  slackProvider,
-		RequestID: requestID,
-		TeamID:    installation.TeamID,
-	})
+	http.Error(w, "legacy install selection form removed; use /api/slack/install/selection", http.StatusGone)
 }
 
 func (g *slackGateway) upsertInstallation(ctx context.Context, installation *slackInstallation, requestID string, presetInputs map[string]any) error {

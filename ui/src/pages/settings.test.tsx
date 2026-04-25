@@ -578,7 +578,7 @@ describe('SettingsPage', () => {
       actionHref: '/slack-gateway/slack/install',
     };
     requestMock.mockImplementation((path: string, options?: RequestInit) => {
-      if (path === '/api/slack/install/selection?requestId=install-request-1' && options?.method !== 'POST') {
+      if (path === '/api/slack/install/selection?requestId=install-request-1&state=pending-state-1' && options?.method !== 'POST') {
         return Promise.resolve({
           status: 'resolved',
           requestId: 'install-request-1',
@@ -602,7 +602,7 @@ describe('SettingsPage', () => {
     });
 
     render(
-      <MemoryRouter initialEntries={['/settings/slack/install/select?requestId=install-request-1']}>
+      <MemoryRouter initialEntries={['/settings/slack/install/select?requestId=install-request-1&state=pending-state-1']}>
         <Routes>
           <Route path="settings/*" element={<SettingsPage />} />
         </Routes>
@@ -615,6 +615,14 @@ describe('SettingsPage', () => {
     expect(await screen.findByText('Install could not be linked')).toBeTruthy();
     expect(await screen.findByText('identity.unresolved')).toBeTruthy();
     expect(await screen.findByText('Request ID: install-request-1')).toBeTruthy();
+    const postCall = requestMock.mock.calls.find(
+      ([path, options]) => path === '/api/slack/install/selection' && (options as RequestInit | undefined)?.method === 'POST',
+    );
+    expect(JSON.parse(String((postCall?.[1] as RequestInit).body))).toMatchObject({
+      requestId: 'install-request-1',
+      state: 'pending-state-1',
+      presetInputs: { agentId: 'ag_workspace' },
+    });
   });
 
   it('routes typed install picker load failures to the install result page', async () => {

@@ -10,11 +10,16 @@ func reactSlackInstallResultPath() string {
 	return "/settings/slack/install/result"
 }
 
-func reactSlackInstallSelectPath(requestID string) string {
+func reactSlackInstallSelectPath(requestID string, pendingState string) string {
 	target := url.URL{Path: "/settings/slack/install/select"}
+	query := target.Query()
 	if requestID := strings.TrimSpace(requestID); requestID != "" {
-		query := target.Query()
 		query.Set("requestId", requestID)
+	}
+	if pendingState := strings.TrimSpace(pendingState); pendingState != "" {
+		query.Set("state", pendingState)
+	}
+	if len(query) > 0 {
 		target.RawQuery = query.Encode()
 	}
 	return target.String()
