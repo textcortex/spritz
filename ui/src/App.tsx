@@ -7,7 +7,7 @@ import { ChatPage } from '@/pages/chat';
 import { CreatePage } from '@/pages/create';
 import { SettingsPage } from '@/pages/settings';
 import { TerminalPage } from '@/pages/terminal';
-import { chatCatchAllRoutePath } from '@/lib/urls';
+import { chatCatchAllRoutePath, normalizeChatPathPrefix } from '@/lib/urls';
 import { slackGatewayBasePath } from '@/lib/slack-management';
 
 /**
@@ -37,6 +37,42 @@ export const browserLocation = {
   },
 };
 
+function routeMarkerIndex(pathname: string, marker: string): number {
+  const index = pathname.indexOf(marker);
+  if (index < 0) return -1;
+  const markerEnd = index + marker.length;
+  if (pathname.length === markerEnd || pathname[markerEnd] === '/') return index;
+  return -1;
+}
+
+/**
+ * Infers the path prefix used by the host page before the SPA route segment.
+ *
+ * The Slack gateway can redirect to a React app hosted under a non-root
+ * SpritzBaseURL such as /spritz/settings/slack/workspaces. BrowserRouter needs
+ * that /spritz basename to make the normal settings route tree match.
+ */
+export function inferBrowserRouterBasename(
+  pathname = typeof window !== 'undefined' ? window.location.pathname : '/',
+  chatPathPrefix = config.chatPathPrefix,
+): string | undefined {
+  const normalizedPath = `/${String(pathname || '/').replace(/^\/+/, '')}`;
+  const markers = Array.from(new Set([
+    '/settings',
+    normalizeChatPathPrefix(chatPathPrefix),
+    '/create',
+    '/terminal',
+    '/spritz/slack-gateway',
+  ].filter((marker) => marker && marker !== '/')));
+
+  for (const marker of markers) {
+    const index = routeMarkerIndex(normalizedPath, marker);
+    if (index === 0) return undefined;
+    if (index > 0) return normalizedPath.slice(0, index);
+  }
+  return undefined;
+}
+
 function LegacySlackGatewayRedirectPage() {
   const location = useLocation();
 
@@ -51,7 +87,7 @@ function LegacySlackGatewayRedirectPage() {
 
 export function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={inferBrowserRouterBasename()}>
       <ConfigProvider value={config}>
         <BrandingEffects />
         <NoticeProvider>

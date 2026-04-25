@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { SettingsPage } from './settings';
 
 const requestMock = vi.hoisted(() => vi.fn());
@@ -296,6 +296,113 @@ describe('SettingsPage', () => {
     expect(
       await screen.findByText('No channel connections are available for these Slack workspace installs.'),
     ).toBeTruthy();
+  });
+
+  it('clears previous channel settings when a later route load fails', async () => {
+    const user = userEvent.setup();
+    requestMock.mockImplementation((path: string, options?: RequestInit) => {
+      if (options?.method === 'PUT') {
+        return Promise.resolve({ status: 'ok' });
+      }
+      if (path.includes('/connections/chconn_test')) {
+        return Promise.resolve({
+          status: 'ok',
+          installation: {
+            id: 'chinst_test',
+            state: 'ready',
+            route: {
+              provider: 'slack',
+              principalId: 'shared-slack-app',
+              externalScopeType: 'workspace',
+              externalTenantId: 'T_workspace',
+            },
+            allowedActions: ['manage_channels'],
+            connections: [
+              {
+                id: 'chconn_test',
+                displayName: 'zeno',
+                isDefault: true,
+                status: 'ready',
+                routes: [
+                  {
+                    id: 'chroute_existing',
+                    externalChannelId: 'C_EXISTING',
+                    externalChannelType: 'channel',
+                    requireMention: false,
+                    enabled: true,
+                  },
+                ],
+              },
+            ],
+          },
+          connection: {
+            id: 'chconn_test',
+            displayName: 'zeno',
+            isDefault: true,
+            status: 'ready',
+            routes: [
+              {
+                id: 'chroute_existing',
+                externalChannelId: 'C_EXISTING',
+                externalChannelType: 'channel',
+                requireMention: false,
+                enabled: true,
+              },
+            ],
+          },
+          path,
+        });
+      }
+      if (path.includes('/connections/missing')) {
+        return Promise.reject(new Error('connection missing'));
+      }
+      return Promise.reject(new Error(`unexpected request: ${path}`));
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/slack/channels/installations/chinst_test/connections/chconn_test']}>
+        <Link to="/slack/channels/installations/chinst_test/connections/missing">Broken route</Link>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('C_EXISTING');
+    await user.click(screen.getByRole('link', { name: 'Broken route' }));
+
+    expect(await screen.findByText('connection missing')).toBeTruthy();
+    expect(await screen.findByText('Channel connection was not found.')).toBeTruthy();
+    expect(screen.queryByText('C_EXISTING')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
+  });
+
+  it('renders a reconnect action for disconnected workspace installs when allowed', async () => {
+    requestMock.mockResolvedValue({
+      status: 'ok',
+      installations: [
+        {
+          id: 'chinst_disconnected',
+          state: 'disconnected',
+          route: {
+            provider: 'slack',
+            principalId: 'shared-slack-app',
+            externalScopeType: 'workspace',
+            externalTenantId: 'T_workspace',
+          },
+          allowedActions: ['reconnect'],
+          connections: [],
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/slack/workspaces']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    const reconnect = await screen.findByRole('link', { name: /Reconnect/i });
+    expect(reconnect.getAttribute('href')).toBe('/slack-gateway/slack/install');
+    expect(screen.queryByRole('link', { name: /Test/i })).toBeNull();
   });
 
   it('redirects the Slack settings landing page to workspace settings', async () => {

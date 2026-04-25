@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangleIcon,
@@ -55,16 +55,26 @@ function useAsyncValue<T>(load: () => Promise<T>, deps: unknown[]) {
   const [value, setValue] = useState<T | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const requestIDRef = useRef(0);
 
   const reload = useCallback(async () => {
+    const requestID = requestIDRef.current + 1;
+    requestIDRef.current = requestID;
     setLoading(true);
     setError('');
+    setValue(null);
     try {
-      setValue(await load());
+      const nextValue = await load();
+      if (requestID !== requestIDRef.current) return;
+      setValue(nextValue);
     } catch (err) {
+      if (requestID !== requestIDRef.current) return;
+      setValue(null);
       setError(err instanceof Error ? err.message : 'Request failed.');
     } finally {
-      setLoading(false);
+      if (requestID === requestIDRef.current) {
+        setLoading(false);
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
@@ -84,8 +94,8 @@ function SettingsShell() {
   ];
 
   return (
-    <div className="flex min-h-dvh flex-col bg-background md:grid md:grid-cols-[240px_minmax(0,1fr)]">
-      <aside className="border-b border-border bg-sidebar px-4 py-4 md:border-b-0 md:border-r">
+    <div className="flex min-h-dvh w-full min-w-0 flex-col overflow-x-hidden bg-background md:grid md:grid-cols-[240px_minmax(0,1fr)]">
+      <aside className="min-w-0 border-b border-border bg-sidebar px-4 py-4 md:border-b-0 md:border-r">
         <div className="mb-5">
           <BrandHeader />
         </div>
@@ -111,7 +121,7 @@ function SettingsShell() {
           })}
         </nav>
       </aside>
-      <section className="min-w-0">
+      <section className="min-w-0 w-full">
         <Outlet />
       </section>
     </div>
@@ -234,27 +244,28 @@ function WorkspaceListPage() {
           {installations.map((installation) => {
             const connection = primaryConnection(installation);
             const canDisconnect = hasAllowedAction(installation, 'disconnect');
+            const canReconnect = hasAllowedAction(installation, 'reconnect');
             const canTest = !installationIsDisconnected(installation);
             return (
               <div
                 key={installation.id || teamID(installation)}
-                className="grid gap-3 border-b border-border px-4 py-3 last:border-b-0 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center"
+                className="grid min-w-0 gap-3 overflow-hidden border-b border-border px-4 py-3 last:border-b-0 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center"
               >
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className="m-0 truncate text-sm font-semibold">{teamID(installation)}</h2>
                     <StatusBadge value={installation.state} />
                   </div>
-                  <p className="m-0 mt-1 text-sm text-muted-foreground">
+                  <p className="m-0 mt-1 truncate text-sm text-muted-foreground">
                     Target: {targetName(installation)}
                     {installation.currentTarget?.ownerLabel ? ` · ${installation.currentTarget.ownerLabel}` : ''}
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="grid min-w-0 grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                   {connection && (
                     <Link
                       to={connectionRoutePath(installation.id, connection.id)}
-                      className={buttonVariants({ variant: 'outline' })}
+                      className={cn(buttonVariants({ variant: 'outline' }), 'w-full sm:w-auto')}
                     >
                       <SettingsIcon aria-hidden="true" />
                       Channels
@@ -262,21 +273,34 @@ function WorkspaceListPage() {
                   )}
                   <Link
                     to={`/settings/slack/workspaces/target?teamId=${encodeURIComponent(teamID(installation))}`}
-                    className={buttonVariants({ variant: 'outline' })}
+                    className={cn(buttonVariants({ variant: 'outline' }), 'w-full sm:w-auto')}
                   >
                     Target
                   </Link>
+                  {canReconnect && (
+                    <a
+                      href={slackGatewayPath('/slack/install')}
+                      className={cn(buttonVariants({ variant: 'outline' }), 'w-full sm:w-auto')}
+                    >
+                      <PlugIcon aria-hidden="true" />
+                      Reconnect
+                    </a>
+                  )}
                   {canTest && (
                     <Link
                       to={`/settings/slack/workspaces/test?teamId=${encodeURIComponent(teamID(installation))}`}
-                      className={buttonVariants({ variant: 'outline' })}
+                      className={cn(buttonVariants({ variant: 'outline' }), 'w-full sm:w-auto')}
                     >
                       <SendIcon aria-hidden="true" />
                       Test
                     </Link>
                   )}
                   {canDisconnect && (
-                    <Button variant="destructive" onClick={() => disconnect(installation)}>
+                    <Button
+                      variant="destructive"
+                      className="w-full sm:w-auto"
+                      onClick={() => disconnect(installation)}
+                    >
                       <Trash2Icon aria-hidden="true" />
                       Disconnect
                     </Button>

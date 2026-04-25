@@ -4,7 +4,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { ConfigProvider, config } from '@/lib/config';
 import { NoticeProvider } from '@/components/notice-banner';
 import * as AppModule from '@/App';
-import { buildLegacySlackGatewayRedirectURL } from '@/App';
+import { buildLegacySlackGatewayRedirectURL, inferBrowserRouterBasename } from '@/App';
 
 // Mock the page components to keep tests simple
 vi.mock('@/pages/chat', () => ({
@@ -15,6 +15,9 @@ vi.mock('@/pages/create', () => ({
 }));
 vi.mock('@/pages/terminal', () => ({
   TerminalPage: () => <div data-testid="terminal-page">Terminal Page</div>,
+}));
+vi.mock('@/pages/settings', () => ({
+  SettingsPage: () => <div data-testid="settings-page">Settings Page</div>,
 }));
 vi.mock('@/components/layout', () => ({
   Layout: () => {
@@ -82,6 +85,23 @@ describe('App routing', () => {
     render(<App />);
 
     expect(screen.getByTestId('chat-page')).toBeDefined();
+  });
+
+  it('infers a router basename for prefixed app routes', () => {
+    expect(inferBrowserRouterBasename('/app/settings/slack/workspaces')).toBe('/app');
+    expect(inferBrowserRouterBasename('/settings/slack/workspaces')).toBeUndefined();
+    expect(inferBrowserRouterBasename('/app/c/some-name')).toBe('/app');
+    expect(inferBrowserRouterBasename('/app/chat/some-name', '/chat')).toBe('/app');
+  });
+
+  it('renders settings routes below an inferred basename', async () => {
+    vi.resetModules();
+    window.history.pushState({}, '', '/app/settings/slack/workspaces');
+
+    const { App } = await import('@/App');
+    render(<App />);
+
+    expect(screen.getByTestId('settings-page')).toBeDefined();
   });
 
   it('maps legacy Slack gateway SPA paths to the real gateway URL', () => {
