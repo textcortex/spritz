@@ -57,10 +57,15 @@ type channelRoutesUpdateRequest struct {
 }
 
 func writeAPIError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, slackGatewayErrorResponse{
+	writeAPIJSON(w, status, slackGatewayErrorResponse{
 		Status:  "error",
 		Message: strings.TrimSpace(message),
 	})
+}
+
+func writeAPIJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, status, payload)
 }
 
 func decodeJSONRequest(r *http.Request, target any) error {
@@ -100,7 +105,7 @@ func (g *slackGateway) handleInstallTargetSelectionAPIGet(w http.ResponseWriter,
 		writeAPIError(w, http.StatusBadGateway, "install targets unavailable")
 		return
 	}
-	writeJSON(w, http.StatusOK, installSelectionResponse{
+	writeAPIJSON(w, http.StatusOK, installSelectionResponse{
 		Status:    "resolved",
 		RequestID: pendingInstall.RequestID,
 		TeamID:    pendingInstall.Installation.TeamID,
@@ -152,7 +157,7 @@ func (g *slackGateway) handleInstallTargetSelectionAPIPost(w http.ResponseWriter
 		return
 	}
 	g.clearPendingInstallCookie(w, r)
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeAPIJSON(w, http.StatusOK, map[string]any{
 		"status":    "installed",
 		"requestId": requestID,
 		"teamId":    installation.TeamID,
@@ -177,7 +182,7 @@ func (g *slackGateway) writeInstallResultAPI(w http.ResponseWriter, status int, 
 	if result.Status == installResultStatusSuccess && result.Code == installResultCodeInternalError {
 		descriptor = installResultDescriptorFor(installResultCodeInstalled, g.installRedirectPath())
 	}
-	writeJSON(w, status, map[string]any{
+	writeAPIJSON(w, status, map[string]any{
 		"status":      result.Status,
 		"code":        result.Code,
 		"operation":   result.Operation,
@@ -212,7 +217,7 @@ func (g *slackGateway) handleWorkspaceManagementAPI(w http.ResponseWriter, r *ht
 		writeAPIError(w, http.StatusBadGateway, "workspace list unavailable")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeAPIJSON(w, http.StatusOK, map[string]any{
 		"status":        "resolved",
 		"installations": installations,
 	})
@@ -253,7 +258,7 @@ func (g *slackGateway) handleWorkspaceTargetAPIGet(w http.ResponseWriter, r *htt
 		writeAPIError(w, http.StatusBadGateway, "workspace targets unavailable")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeAPIJSON(w, http.StatusOK, map[string]any{
 		"status":    "resolved",
 		"teamId":    teamID,
 		"requestId": requestID,
@@ -293,7 +298,7 @@ func (g *slackGateway) handleWorkspaceTargetAPIPost(w http.ResponseWriter, r *ht
 		writeAPIError(w, http.StatusBadGateway, "workspace target update failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeAPIJSON(w, http.StatusOK, map[string]any{
 		"status":    "updated",
 		"teamId":    teamID,
 		"requestId": requestID,
@@ -330,7 +335,7 @@ func (g *slackGateway) handleWorkspaceDisconnectAPI(w http.ResponseWriter, r *ht
 		writeAPIError(w, http.StatusBadGateway, "workspace disconnect failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeAPIJSON(w, http.StatusOK, map[string]any{
 		"status": "disconnected",
 		"teamId": teamID,
 	})
@@ -383,7 +388,7 @@ func (g *slackGateway) handleWorkspaceTestAPI(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if !process {
-		writeJSON(w, http.StatusOK, workspaceTestResponse{
+		writeAPIJSON(w, http.StatusOK, workspaceTestResponse{
 			Status:  "resolved",
 			Outcome: messageEventOutcomeIgnored,
 		})
@@ -406,7 +411,7 @@ func (g *slackGateway) handleWorkspaceTestAPI(w http.ResponseWriter, r *http.Req
 		writeAPIError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, workspaceTestResponse{
+	writeAPIJSON(w, http.StatusOK, workspaceTestResponse{
 		Status:          "resolved",
 		Outcome:         result.Outcome,
 		Reply:           result.Reply,
@@ -439,7 +444,7 @@ func (g *slackGateway) handleChannelSettingsAPI(w http.ResponseWriter, r *http.R
 			writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		writeAPIJSON(w, http.StatusOK, map[string]any{
 			"status":        "resolved",
 			"installations": installations,
 		})
@@ -453,7 +458,7 @@ func (g *slackGateway) handleChannelSettingsAPI(w http.ResponseWriter, r *http.R
 		}
 		for _, installation := range installations {
 			if strings.TrimSpace(installation.ID) == installationID {
-				writeJSON(w, http.StatusOK, map[string]any{
+				writeAPIJSON(w, http.StatusOK, map[string]any{
 					"status":       "resolved",
 					"installation": installation,
 				})
@@ -475,7 +480,7 @@ func (g *slackGateway) handleChannelSettingsAPI(w http.ResponseWriter, r *http.R
 	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, map[string]any{
+		writeAPIJSON(w, http.StatusOK, map[string]any{
 			"status":       "resolved",
 			"installation": installation,
 			"connection":   connection,
@@ -544,7 +549,7 @@ func (g *slackGateway) handleChannelSettingsAPIUpdate(
 		return
 	}
 	g.policies.forget(installation.Route.ExternalTenantID)
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeAPIJSON(w, http.StatusOK, map[string]any{
 		"status":       "updated",
 		"installation": installation.ID,
 		"connection":   connection.ID,
