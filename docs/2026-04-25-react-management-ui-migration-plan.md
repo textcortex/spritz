@@ -37,6 +37,19 @@ Gateway and integration services should not own product settings pages,
 admin pages, channel settings pages, install result pages, or test-message
 forms.
 
+## Existing Chat UI Boundary
+
+The existing chat view should change as little as possible.
+
+The migration should add only one settings entry point to the existing chat UI,
+such as a settings button or link in the current header or navigation area.
+That entry point should navigate to the new `/settings/*` route group.
+
+The settings experience should be its own React view. It should not redesign
+the chat page, add a settings sidebar inside the chat surface, or make Slack
+management part of the active chat layout. Chat remains focused on agent
+conversation. Settings owns integration management.
+
 ## Current Server-Rendered Surfaces
 
 The current Slack gateway owns these rendered pages:
@@ -174,6 +187,7 @@ Add the shared settings routes and layout in `ui/`.
 Required work:
 
 - Add `/settings` route group.
+- Add one minimal settings button or link to the existing chat view.
 - Add a settings sidebar with integration navigation.
 - Add Slack integration landing and workspace list pages.
 - Add API client helpers under `ui/src/lib`.
@@ -182,6 +196,7 @@ Required work:
 
 Exit criteria:
 
+- The chat view has no layout redesign beyond the settings entry point.
 - React can show the Slack workspace list using JSON endpoints.
 - The page uses the shared Spritz UI components and design tokens.
 - `pnpm build`, `pnpm typecheck`, and UI tests pass.
@@ -243,6 +258,7 @@ Exit criteria:
 
 - All user-facing Slack management UI is implemented in `ui/`.
 - Slack gateway no longer owns product settings pages.
+- Existing chat UI changes are limited to a settings entry point.
 - React pages share a settings sidebar and common layout.
 - Browser auth behavior stays the same or becomes stricter.
 - Existing OAuth, event, and routing behavior remains unchanged.
@@ -255,6 +271,7 @@ Exit criteria:
 - Rewriting Slack event handling.
 - Moving Slack OAuth code into React.
 - Making React handle Slack signed events.
+- Redesigning the existing chat UI.
 - Changing the provider-agnostic channel installation data model.
 - Changing how deployment backends assign opaque installation IDs.
 - Removing gateway JSON endpoints before a stable backend product API exists.
