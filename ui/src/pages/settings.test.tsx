@@ -185,6 +185,89 @@ describe('SettingsPage', () => {
     });
   });
 
+  it('asks for confirmation before removing a channel route', async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    requestMock.mockImplementation((path: string, options?: RequestInit) => {
+      if (options?.method === 'PUT') {
+        return Promise.resolve({ status: 'ok' });
+      }
+      return Promise.resolve({
+        status: 'ok',
+        installation: {
+          id: 'chinst_test',
+          state: 'ready',
+          route: {
+            provider: 'slack',
+            principalId: 'shared-slack-app',
+            externalScopeType: 'workspace',
+            externalTenantId: 'T_workspace',
+          },
+          allowedActions: ['manage_channels'],
+          connections: [
+            {
+              id: 'chconn_test',
+              displayName: 'zeno',
+              isDefault: true,
+              status: 'ready',
+              routes: [
+                {
+                  id: 'chroute_existing',
+                  externalChannelId: 'C_EXISTING',
+                  externalChannelType: 'channel',
+                  requireMention: false,
+                  enabled: true,
+                },
+              ],
+            },
+          ],
+        },
+        connection: {
+          id: 'chconn_test',
+          displayName: 'zeno',
+          isDefault: true,
+          status: 'ready',
+          routes: [
+            {
+              id: 'chroute_existing',
+              externalChannelId: 'C_EXISTING',
+              externalChannelType: 'channel',
+              requireMention: false,
+              enabled: true,
+            },
+          ],
+        },
+        path,
+      });
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/slack/channels/installations/chinst_test/connections/chconn_test']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('C_EXISTING');
+    await user.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(confirmSpy).toHaveBeenCalledWith('Remove channel route C_EXISTING?');
+    expect(
+      requestMock.mock.calls.some(([, options]) => (options as RequestInit | undefined)?.method === 'PUT'),
+    ).toBe(false);
+
+    confirmSpy.mockReturnValue(true);
+    await user.click(screen.getByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => {
+      const putCall = requestMock.mock.calls.find(
+        ([, options]) => (options as RequestInit | undefined)?.method === 'PUT',
+      );
+      expect(putCall).toBeDefined();
+      const payload = JSON.parse(String((putCall?.[1] as RequestInit).body));
+      expect(payload).toEqual({ channelPolicies: [] });
+    });
+    confirmSpy.mockRestore();
+  });
+
   it('shows an empty state when installs have no channel connections', async () => {
     requestMock.mockResolvedValue({
       status: 'ok',

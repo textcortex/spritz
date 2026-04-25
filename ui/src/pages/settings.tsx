@@ -482,6 +482,7 @@ function ConnectionSettingsPage() {
   };
 
   const deleteRoute = async (externalChannelId: string) => {
+    if (!window.confirm(`Remove channel route ${externalChannelId}?`)) return;
     await saveRoutes(routes.filter((route) => route.externalChannelId !== externalChannelId));
   };
 
