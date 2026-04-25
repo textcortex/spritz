@@ -59,8 +59,8 @@ The current Slack gateway owns these rendered pages:
 | `/slack-gateway/slack/install/select` | Select install target after Slack OAuth | `/settings/slack/install/select` |
 | `/slack-gateway/slack/install/result` | Show install success or failure | `/settings/slack/install/result` |
 | `/slack-gateway/slack/workspaces` | List manageable Slack workspaces | `/settings/slack/workspaces` |
-| `/slack-gateway/slack/workspaces/target` | Change a workspace target | `/settings/slack/workspaces/:externalTenantId/target` |
-| `/slack-gateway/slack/workspaces/test` | Send a test message | `/settings/slack/workspaces/:externalTenantId/test` |
+| `/slack-gateway/slack/workspaces/target` | Change a workspace target | `/settings/slack/workspaces/target?teamId=...` |
+| `/slack-gateway/slack/workspaces/test` | Send a test message | `/settings/slack/workspaces/test?teamId=...` |
 | `/slack-gateway/settings/channels` | List channel-installation settings | `/settings/slack/channels` |
 | `/slack-gateway/settings/channels/installations/:installationId` | List connections for one installation | `/settings/slack/channels/installations/:installationId` |
 | `/slack-gateway/settings/channels/installations/:installationId/connections/:connectionId` | Edit channel route policies | `/settings/slack/channels/installations/:installationId/connections/:connectionId` |
@@ -84,8 +84,8 @@ Add a settings section to the React app:
 /settings/slack/install/select
 /settings/slack/install/result
 /settings/slack/workspaces
-/settings/slack/workspaces/:externalTenantId/target
-/settings/slack/workspaces/:externalTenantId/test
+/settings/slack/workspaces/target?teamId=...
+/settings/slack/workspaces/test?teamId=...
 /settings/slack/channels
 /settings/slack/channels/installations/:installationId
 /settings/slack/channels/installations/:installationId/connections/:connectionId
@@ -117,14 +117,15 @@ POST /slack-gateway/api/slack/install/selection
 GET  /slack-gateway/api/slack/install/result?...
 
 GET  /slack-gateway/api/slack/workspaces
-PATCH /slack-gateway/api/slack/workspaces/:externalTenantId/target
-POST /slack-gateway/api/slack/workspaces/:externalTenantId/test-message
-POST /slack-gateway/api/slack/workspaces/:externalTenantId/disconnect
+GET  /slack-gateway/api/slack/workspaces/target?teamId=...
+POST /slack-gateway/api/slack/workspaces/target
+POST /slack-gateway/api/slack/workspaces/test
+POST /slack-gateway/api/slack/workspaces/disconnect
 
-GET  /slack-gateway/api/channel-installations
-GET  /slack-gateway/api/channel-installations/:installationId
-GET  /slack-gateway/api/channel-installations/:installationId/connections/:connectionId/routes
-PUT  /slack-gateway/api/channel-installations/:installationId/connections/:connectionId/routes
+GET  /slack-gateway/api/settings/channels
+GET  /slack-gateway/api/settings/channels/installations/:installationId
+GET  /slack-gateway/api/settings/channels/installations/:installationId/connections/:connectionId
+PUT  /slack-gateway/api/settings/channels/installations/:installationId/connections/:connectionId
 ```
 
 API rules:
