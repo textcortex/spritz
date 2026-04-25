@@ -10,6 +10,15 @@ func (g *slackGateway) handleWorkspaceManagement(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
+	redirectToReactRoute(w, r, reactSlackWorkspacesPath(r.URL.Query()))
+	_ = principal
+}
+
+func (g *slackGateway) renderLegacyWorkspaceManagement(w http.ResponseWriter, r *http.Request) {
+	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
+	if !ok {
+		return
+	}
 	installations, err := g.listManagedInstallations(r.Context(), principal.ID)
 	if err != nil {
 		g.logger.ErrorContext(
@@ -38,6 +47,15 @@ func (g *slackGateway) handleWorkspaceTarget(w http.ResponseWriter, r *http.Requ
 }
 
 func (g *slackGateway) handleWorkspaceTargetPicker(w http.ResponseWriter, r *http.Request) {
+	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
+	if !ok {
+		return
+	}
+	redirectToReactRoute(w, r, reactSlackWorkspaceTargetPath(r.URL.Query()))
+	_ = principal
+}
+
+func (g *slackGateway) renderLegacyWorkspaceTargetPicker(w http.ResponseWriter, r *http.Request) {
 	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
 	if !ok {
 		return

@@ -215,7 +215,7 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 			})
 			return
 		}
-		g.renderInstallTargetPicker(w, pendingState, requestID, targets)
+		redirectToReactRoute(w, r, reactSlackInstallSelectPath(pendingState))
 		return
 	}
 	if err := g.upsertInstallation(r.Context(), &installation, requestID, targets[0].PresetInputs); err != nil {

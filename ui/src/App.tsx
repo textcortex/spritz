@@ -5,6 +5,7 @@ import { NoticeProvider } from '@/components/notice-banner';
 import { Layout } from '@/components/layout';
 import { ChatPage } from '@/pages/chat';
 import { CreatePage } from '@/pages/create';
+import { SettingsPage } from '@/pages/settings';
 import { TerminalPage } from '@/pages/terminal';
 import { chatCatchAllRoutePath } from '@/lib/urls';
 
@@ -56,6 +57,7 @@ export function App() {
             <Route element={<Layout />}>
               <Route index element={<ChatPage />} />
               <Route path="create" element={<CreatePage />} />
+              <Route path="settings/*" element={<SettingsPage />} />
               <Route path="terminal/:name" element={<TerminalPage />} />
               <Route path={chatCatchAllRoutePath()} element={<ChatPage />} />
             </Route>

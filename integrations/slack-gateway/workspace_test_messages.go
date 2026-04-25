@@ -291,6 +291,15 @@ func (g *slackGateway) handleWorkspaceTestForm(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
+	redirectToReactRoute(w, r, reactSlackWorkspaceTestPath(r.URL.Query()))
+	_ = principal
+}
+
+func (g *slackGateway) renderLegacyWorkspaceTestForm(w http.ResponseWriter, r *http.Request) {
+	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
+	if !ok {
+		return
+	}
 	teamID := strings.TrimSpace(r.URL.Query().Get("teamId"))
 	if teamID == "" {
 		http.Error(w, "teamId is required", http.StatusBadRequest)

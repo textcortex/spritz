@@ -11,6 +11,14 @@ func (g *slackGateway) handleChannelSettings(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	if r.Method == http.MethodGet {
+		redirectToReactRoute(
+			w,
+			r,
+			reactSlackChannelSettingsPath(g.relativeGatewayPath(r.URL.Path), r.URL.Query()),
+		)
+		return
+	}
 	installations, err := g.listManagedInstallations(r.Context(), principal.ID)
 	if err != nil {
 		g.logger.ErrorContext(

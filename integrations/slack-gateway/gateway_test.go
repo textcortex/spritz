@@ -184,18 +184,18 @@ func TestOAuthCallbackAutoSelectsSingleInstallTargetAndUpsertsRegistry(t *testin
 	resultRec := httptest.NewRecorder()
 	gateway.routes().ServeHTTP(resultRec, resultReq)
 
-	if resultRec.Code != http.StatusOK {
-		t.Fatalf("expected result page 200, got %d: %s", resultRec.Code, resultRec.Body.String())
+	if resultRec.Code != http.StatusSeeOther {
+		t.Fatalf("expected result redirect, got %d: %s", resultRec.Code, resultRec.Body.String())
 	}
-	if contentType := resultRec.Header().Get("Content-Type"); !strings.Contains(contentType, "text/html") {
-		t.Fatalf("expected html content type, got %q", contentType)
+	resultLocation, err := url.Parse(resultRec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse result redirect: %v", err)
 	}
-	body := resultRec.Body.String()
-	if !strings.Contains(body, "Slack workspace connected") {
-		t.Fatalf("expected success title in result page, got %q", body)
+	if resultLocation.Path != "/settings/slack/install/result" {
+		t.Fatalf("expected React result route, got %q", resultLocation.Path)
 	}
-	if !strings.Contains(body, requestID) {
-		t.Fatalf("expected request id in result page, got %q", body)
+	if resultLocation.Query().Get("requestId") != requestID {
+		t.Fatalf("expected request id in result redirect, got %q", resultLocation.RawQuery)
 	}
 }
 
@@ -274,21 +274,21 @@ func TestOAuthCallbackRendersInstallTargetPickerWhenMultipleTargetsAvailable(t *
 	rec := httptest.NewRecorder()
 	gateway.handleOAuthCallback(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected picker page 200, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected picker redirect, got %d: %s", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "Choose an install target") {
-		t.Fatalf("expected picker title, got %q", body)
+	redirectURL, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse picker redirect: %v", err)
 	}
-	if !strings.Contains(body, "Personal Helper") || !strings.Contains(body, "Org Helper") {
-		t.Fatalf("expected picker targets, got %q", body)
+	if redirectURL.Path != "/settings/slack/install/select" {
+		t.Fatalf("expected React picker route, got %q", redirectURL.Path)
 	}
-	if !strings.Contains(body, `/slack/install/select`) {
-		t.Fatalf("expected picker form action, got %q", body)
+	if redirectURL.Query().Get("state") == "" {
+		t.Fatalf("expected pending install state in redirect, got %q", redirectURL.RawQuery)
 	}
-	if strings.Contains(body, "xoxb-installed") {
-		t.Fatalf("expected picker state to keep bot token encrypted, got %q", body)
+	if strings.Contains(rec.Body.String(), "xoxb-installed") {
+		t.Fatalf("expected picker redirect to keep bot token encrypted, got %q", rec.Body.String())
 	}
 }
 
@@ -351,21 +351,11 @@ func TestWorkspaceManagementRendersManagedInstallations(t *testing.T) {
 	rec := httptest.NewRecorder()
 	gateway.routes().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected React redirect, got %d: %s", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "Slack workspaces") {
-		t.Fatalf("expected workspace page title, got %q", body)
-	}
-	if !strings.Contains(body, "T_workspace_1") {
-		t.Fatalf("expected workspace id on page, got %q", body)
-	}
-	if !strings.Contains(body, "Workspace Helper") {
-		t.Fatalf("expected current target on page, got %q", body)
-	}
-	if !strings.Contains(body, "Send test") {
-		t.Fatalf("expected workspace test action on page, got %q", body)
+	if location := rec.Header().Get("Location"); location != "/settings/slack/workspaces" {
+		t.Fatalf("expected workspace React route, got %q", location)
 	}
 }
 
@@ -438,13 +428,11 @@ func TestChannelSettingsRendersManagedConnections(t *testing.T) {
 	installationRec := httptest.NewRecorder()
 	gateway.routes().ServeHTTP(installationRec, installationReq)
 
-	if installationRec.Code != http.StatusOK {
-		t.Fatalf("expected installation page 200, got %d: %s", installationRec.Code, installationRec.Body.String())
+	if installationRec.Code != http.StatusSeeOther {
+		t.Fatalf("expected installation redirect, got %d: %s", installationRec.Code, installationRec.Body.String())
 	}
-	installationBody := installationRec.Body.String()
-	if !strings.Contains(installationBody, "/settings/channels/installations/ci_1/connections/cc_1") ||
-		!strings.Contains(installationBody, "/settings/channels/installations/ci_1/connections/cc_2") {
-		t.Fatalf("expected installation page to link every connection, got %q", installationBody)
+	if location := installationRec.Header().Get("Location"); location != "/settings/slack/channels/installations/ci_1" {
+		t.Fatalf("expected installation React route, got %q", location)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/settings/channels/installations/ci_1/connections/cc_2", nil)
@@ -452,15 +440,11 @@ func TestChannelSettingsRendersManagedConnections(t *testing.T) {
 	rec := httptest.NewRecorder()
 	gateway.routes().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected connection redirect, got %d: %s", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "T_workspace_1") || !strings.Contains(body, "Workspace Helper") {
-		t.Fatalf("expected channel settings context on page, got %q", body)
-	}
-	if !strings.Contains(body, "C_channel_2") || !strings.Contains(body, "Mentions required") {
-		t.Fatalf("expected configured channel route on page, got %q", body)
+	if location := rec.Header().Get("Location"); location != "/settings/slack/channels/installations/ci_1/connections/cc_2" {
+		t.Fatalf("expected connection React route, got %q", location)
 	}
 }
 
@@ -506,15 +490,11 @@ func TestChannelSettingsListDoesNotInventLegacyConnectionIDs(t *testing.T) {
 	rec := httptest.NewRecorder()
 	gateway.routes().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected React redirect, got %d: %s", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.String()
-	if strings.Contains(body, "/connections/cc_1") || strings.Contains(body, "Open settings") {
-		t.Fatalf("expected legacy response without connection id to be read-only, got %q", body)
-	}
-	if !strings.Contains(body, "Settings unavailable") {
-		t.Fatalf("expected unavailable settings marker, got %q", body)
+	if location := rec.Header().Get("Location"); location != "/settings/slack/channels" {
+		t.Fatalf("expected channel settings React route, got %q", location)
 	}
 }
 
@@ -632,6 +612,102 @@ func TestChannelSettingsUpdatePostsRoutePolicies(t *testing.T) {
 	}
 }
 
+func TestChannelSettingsAPIUpdatePostsRoutePolicies(t *testing.T) {
+	var updatePayload map[string]any
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/internal/v2/spritz/channel-installations/list":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "resolved",
+				"installations": []map[string]any{
+					{
+						"id": "chinst_example",
+						"route": map[string]any{
+							"principalId":       "shared-slack-gateway",
+							"provider":          "slack",
+							"externalScopeType": "workspace",
+							"externalTenantId":  "T_workspace_1",
+						},
+						"state": "ready",
+						"connections": []map[string]any{
+							{
+								"id":        "chconn_example",
+								"isDefault": true,
+								"state":     "ready",
+								"routes": []map[string]any{
+									{
+										"id":                "chroute_existing",
+										"externalChannelId": "C_existing",
+										"requireMention":    true,
+										"enabled":           true,
+									},
+								},
+							},
+						},
+						"allowedActions": []string{"changeTarget", "disconnect"},
+					},
+				},
+			})
+		case "/internal/v2/spritz/channel-installations/routes/update":
+			if err := json.NewDecoder(r.Body).Decode(&updatePayload); err != nil {
+				t.Fatalf("decode update payload: %v", err)
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status":            "resolved",
+				"needsProvisioning": false,
+			})
+		default:
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+	}))
+	defer backend.Close()
+
+	gateway := newSlackGateway(config{
+		BackendFastAPIBaseURL: backend.URL,
+		BackendInternalToken:  "backend-internal-token",
+		PrincipalID:           "shared-slack-gateway",
+		HTTPTimeout:           5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	gateway.policies.remember("T_workspace_1", installationPolicySnapshot{
+		config:    installationConfig{},
+		botUserID: "U_bot",
+	})
+
+	req := httptest.NewRequest(
+		http.MethodPut,
+		"/api/settings/channels/installations/chinst_example/connections/chconn_example",
+		strings.NewReader(`{"channelPolicies":[{"externalChannelId":"C_new","externalChannelType":"channel","requireMention":false}]}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if updatePayload["callerAuthId"] != "user-1" {
+		t.Fatalf("expected caller auth id, got %#v", updatePayload["callerAuthId"])
+	}
+	if updatePayload["installationId"] != "chinst_example" || updatePayload["connectionId"] != "chconn_example" {
+		t.Fatalf("expected opaque installation and connection ids, got %#v", updatePayload)
+	}
+	policies, ok := updatePayload["channelPolicies"].([]any)
+	if !ok || len(policies) != 1 {
+		t.Fatalf("expected one channel policy, got %#v", updatePayload["channelPolicies"])
+	}
+	policy, ok := policies[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected policy object, got %#v", policies[0])
+	}
+	if policy["externalChannelId"] != "C_new" || policy["requireMention"] != false {
+		t.Fatalf("expected no-mention policy for C_new, got %#v", policy)
+	}
+	if _, ok := gateway.policies.lookup("T_workspace_1"); ok {
+		t.Fatalf("expected channel settings update to evict cached policy")
+	}
+}
+
 func TestWorkspaceManagementAcceptsConfiguredBrowserAuthHeaders(t *testing.T) {
 	t.Setenv("SPRITZ_AUTH_HEADER_ID", "X-Forwarded-User")
 	t.Setenv("SPRITZ_AUTH_HEADER_EMAIL", "X-Forwarded-Email")
@@ -678,8 +754,11 @@ func TestWorkspaceManagementAcceptsConfiguredBrowserAuthHeaders(t *testing.T) {
 	rec := httptest.NewRecorder()
 	gateway.routes().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected React redirect, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if location := rec.Header().Get("Location"); location != "/settings/slack/workspaces" {
+		t.Fatalf("expected workspace React route, got %q", location)
 	}
 }
 
@@ -717,7 +796,7 @@ func TestWorkspaceTargetPickerUsesCurrentBrowserPrincipal(t *testing.T) {
 		HTTPTimeout:           5 * time.Second,
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	req := httptest.NewRequest(http.MethodGet, "/slack/workspaces/target?teamId=T_workspace_1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/slack/workspaces/target?teamId=T_workspace_1", nil)
 	req.Header.Set("X-Spritz-User-Id", "user-1")
 	rec := httptest.NewRecorder()
 	gateway.routes().ServeHTTP(rec, req)
@@ -728,8 +807,8 @@ func TestWorkspaceTargetPickerUsesCurrentBrowserPrincipal(t *testing.T) {
 	if listPayload["ownerAuthId"] != "user-1" {
 		t.Fatalf("expected ownerAuthId to come from browser principal, got %#v", listPayload["ownerAuthId"])
 	}
-	if !strings.Contains(rec.Body.String(), "Change workspace target") {
-		t.Fatalf("expected target picker title, got %q", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "Workspace Helper") {
+		t.Fatalf("expected target payload, got %q", rec.Body.String())
 	}
 }
 
@@ -878,15 +957,11 @@ func TestWorkspaceTestFormRendersForManageableWorkspace(t *testing.T) {
 	rec := httptest.NewRecorder()
 	gateway.routes().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected React redirect, got %d: %s", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "Send a synthetic Slack test message") {
-		t.Fatalf("expected synthetic test title, got %q", body)
-	}
-	if !strings.Contains(body, "Workspace Helper") {
-		t.Fatalf("expected current target name on form, got %q", body)
+	if location := rec.Header().Get("Location"); location != "/settings/slack/workspaces/test?teamId=T_workspace_1" {
+		t.Fatalf("expected workspace test React route, got %q", location)
 	}
 }
 
@@ -1473,11 +1548,11 @@ func TestOAuthCallbackRedirectsToControlledRetryableErrorWhenBackendUpsertFails(
 	resultRec := httptest.NewRecorder()
 	gateway.routes().ServeHTTP(resultRec, resultReq)
 
-	if resultRec.Code != http.StatusOK {
-		t.Fatalf("expected result page 200, got %d: %s", resultRec.Code, resultRec.Body.String())
+	if resultRec.Code != http.StatusSeeOther {
+		t.Fatalf("expected result redirect, got %d: %s", resultRec.Code, resultRec.Body.String())
 	}
-	if strings.Contains(resultRec.Body.String(), "backend unavailable") {
-		t.Fatalf("expected retryable result page to hide backend body, got %q", resultRec.Body.String())
+	if strings.Contains(resultRec.Header().Get("Location"), "backend unavailable") {
+		t.Fatalf("expected retryable result redirect to hide backend body, got %q", resultRec.Header().Get("Location"))
 	}
 	logOutput := logBuffer.String()
 	if !strings.Contains(logOutput, "slack oauth callback installation upsert failed") {
@@ -1573,15 +1648,15 @@ func TestOAuthCallbackRedirectsToControlledOwnerResolutionError(t *testing.T) {
 	resultRec := httptest.NewRecorder()
 	gateway.routes().ServeHTTP(resultRec, resultReq)
 
-	if resultRec.Code != http.StatusOK {
-		t.Fatalf("expected result page 200, got %d: %s", resultRec.Code, resultRec.Body.String())
+	if resultRec.Code != http.StatusSeeOther {
+		t.Fatalf("expected result redirect, got %d: %s", resultRec.Code, resultRec.Body.String())
 	}
-	body := resultRec.Body.String()
-	if !strings.Contains(body, "could not be linked") {
-		t.Fatalf("expected owner resolution guidance in result page, got %q", body)
+	location := resultRec.Header().Get("Location")
+	if !strings.Contains(location, "identity.unresolved") {
+		t.Fatalf("expected owner resolution code in result redirect, got %q", location)
 	}
-	if strings.Contains(body, "ownerRef") {
-		t.Fatalf("expected result page to avoid leaking backend field names, got %q", body)
+	if strings.Contains(location, "ownerRef") {
+		t.Fatalf("expected result redirect to avoid leaking backend field names, got %q", location)
 	}
 }
 
