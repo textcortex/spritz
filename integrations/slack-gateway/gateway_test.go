@@ -284,12 +284,16 @@ func TestOAuthCallbackRendersInstallTargetPickerWhenMultipleTargetsAvailable(t *
 	if redirectURL.Path != "/settings/slack/install/select" {
 		t.Fatalf("expected React picker route, got %q", redirectURL.Path)
 	}
-	if redirectURL.RawQuery != "" {
+	requestID := redirectURL.Query().Get("requestId")
+	if requestID == "" {
+		t.Fatalf("expected picker redirect to include requestId, got %q", redirectURL.RawQuery)
+	}
+	if strings.Contains(redirectURL.RawQuery, "state=") {
 		t.Fatalf("expected picker redirect without pending state query, got %q", redirectURL.RawQuery)
 	}
 	var pendingCookie *http.Cookie
 	for _, cookie := range rec.Result().Cookies() {
-		if cookie.Name == pendingInstallCookieName {
+		if cookie.Name == pendingInstallCookieNameForRequest(requestID) {
 			pendingCookie = cookie
 			break
 		}
@@ -309,7 +313,7 @@ func TestOAuthCallbackRendersInstallTargetPickerWhenMultipleTargetsAvailable(t *
 
 	selectionReq := httptest.NewRequest(
 		http.MethodGet,
-		"/api/slack/install/selection",
+		"/api/slack/install/selection?requestId="+url.QueryEscape(requestID),
 		nil,
 	)
 	selectionReq.AddCookie(pendingCookie)
@@ -328,6 +332,90 @@ func TestOAuthCallbackRendersInstallTargetPickerWhenMultipleTargetsAvailable(t *
 	}
 	if _, ok := selectionPayload["installation"]; ok {
 		t.Fatalf("selection API should not expose pending installation payload: %#v", selectionPayload["installation"])
+	}
+}
+
+func TestInstallTargetSelectionAPIUsesRequestScopedPendingCookie(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v2/spritz/channel-install-targets/list" {
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"targets": []map[string]any{
+				{
+					"id": "ag_workspace",
+					"profile": map[string]any{
+						"name": "Workspace Helper",
+					},
+					"presetInputs": map[string]any{
+						"agentId": "ag_workspace",
+					},
+				},
+			},
+		})
+	}))
+	defer backend.Close()
+
+	gateway := newSlackGateway(config{
+		BackendBaseURL:        backend.URL,
+		BackendFastAPIBaseURL: backend.URL,
+		BackendInternalToken:  "backend-internal-token",
+		OAuthStateSecret:      "oauth-state-secret",
+		PrincipalID:           "shared-slack-gateway",
+		HTTPTimeout:           5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	pendingStateA, err := gateway.state.generatePendingInstall(pendingInstallState{
+		RequestID: "install-request-a",
+		Installation: slackInstallation{
+			TeamID:           "T_workspace_a",
+			InstallingUserID: "U_installer",
+			BotAccessToken:   "xoxb-installed-a",
+			BotUserID:        "U_bot",
+			APIAppID:         "A_app_1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("generate first pending install state failed: %v", err)
+	}
+	pendingStateB, err := gateway.state.generatePendingInstall(pendingInstallState{
+		RequestID: "install-request-b",
+		Installation: slackInstallation{
+			TeamID:           "T_workspace_b",
+			InstallingUserID: "U_installer",
+			BotAccessToken:   "xoxb-installed-b",
+			BotUserID:        "U_bot",
+			APIAppID:         "A_app_1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("generate second pending install state failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/slack/install/selection?requestId=install-request-a", nil)
+	req.AddCookie(&http.Cookie{
+		Name:  pendingInstallCookieNameForRequest("install-request-a"),
+		Value: pendingStateA,
+		Path:  "/api/slack/install/selection",
+	})
+	req.AddCookie(&http.Cookie{
+		Name:  pendingInstallCookieNameForRequest("install-request-b"),
+		Value: pendingStateB,
+		Path:  "/api/slack/install/selection",
+	})
+	rec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode selection payload: %v", err)
+	}
+	if payload["requestId"] != "install-request-a" || payload["teamId"] != "T_workspace_a" {
+		t.Fatalf("expected first pending install, got %#v", payload)
 	}
 }
 
@@ -776,6 +864,67 @@ func TestChannelSettingsAPIUpdatePostsRoutePolicies(t *testing.T) {
 	}
 	if _, ok := gateway.policies.lookup("T_workspace_1"); ok {
 		t.Fatalf("expected channel settings update to evict cached policy")
+	}
+}
+
+func TestChannelSettingsAPIMissingConnectionReturnsJSON(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v2/spritz/channel-installations/list" {
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"installations": []map[string]any{
+				{
+					"id": "chinst_example",
+					"route": map[string]any{
+						"principalId":       "shared-slack-gateway",
+						"provider":          "slack",
+						"externalScopeType": "workspace",
+						"externalTenantId":  "T_workspace_1",
+					},
+					"state": "ready",
+					"connections": []map[string]any{
+						{
+							"id":        "chconn_example",
+							"isDefault": true,
+							"state":     "ready",
+						},
+					},
+				},
+			},
+		})
+	}))
+	defer backend.Close()
+
+	gateway := newSlackGateway(config{
+		BackendFastAPIBaseURL: backend.URL,
+		BackendInternalToken:  "backend-internal-token",
+		PrincipalID:           "shared-slack-gateway",
+		HTTPTimeout:           5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/settings/channels/installations/chinst_example/connections/missing",
+		nil,
+	)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if contentType := rec.Header().Get("Content-Type"); !strings.Contains(contentType, "application/json") {
+		t.Fatalf("expected JSON content type, got %q", contentType)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode error payload: %v", err)
+	}
+	if payload["status"] != "error" || payload["message"] != "connection not found" {
+		t.Fatalf("expected structured missing connection error, got %#v", payload)
 	}
 }
 
@@ -1512,7 +1661,7 @@ func TestInstallTargetSelectionAPIPreservesClassifiedUpsertFailure(t *testing.T)
 	req := httptest.NewRequest(http.MethodPost, "/api/slack/install/selection", bytes.NewReader(requestBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{
-		Name:  pendingInstallCookieName,
+		Name:  pendingInstallCookieNameForRequest("install-request-1"),
 		Value: pendingState,
 		Path:  "/api/slack/install/selection",
 	})
@@ -1597,7 +1746,7 @@ func TestInstallTargetSelectionAPIRejectsStaleRequestID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/slack/install/selection", bytes.NewReader(requestBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{
-		Name:  pendingInstallCookieName,
+		Name:  pendingInstallCookieNameForRequest("install-request-current"),
 		Value: pendingState,
 		Path:  "/api/slack/install/selection",
 	})

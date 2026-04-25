@@ -8,6 +8,26 @@ import (
 
 const pendingInstallCookieName = "spritz_slack_pending_install"
 
+func pendingInstallCookieNameForRequest(requestID string) string {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return pendingInstallCookieName
+	}
+	var suffix strings.Builder
+	for _, char := range requestID {
+		if char >= 'a' && char <= 'z' ||
+			char >= 'A' && char <= 'Z' ||
+			char >= '0' && char <= '9' ||
+			char == '-' || char == '_' {
+			suffix.WriteRune(char)
+		}
+	}
+	if suffix.Len() == 0 {
+		return pendingInstallCookieName
+	}
+	return pendingInstallCookieName + "_" + suffix.String()
+}
+
 func (g *slackGateway) pendingInstallCookiePath() string {
 	return g.publicPathPrefix() + "/api/slack/install/selection"
 }
@@ -24,9 +44,9 @@ func (g *slackGateway) pendingInstallCookieSecure(r *http.Request) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(g.cfg.PublicURL)), "https://")
 }
 
-func (g *slackGateway) setPendingInstallCookie(w http.ResponseWriter, r *http.Request, state string) {
+func (g *slackGateway) setPendingInstallCookie(w http.ResponseWriter, r *http.Request, requestID, state string) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     pendingInstallCookieName,
+		Name:     pendingInstallCookieNameForRequest(requestID),
 		Value:    strings.TrimSpace(state),
 		Path:     g.pendingInstallCookiePath(),
 		Expires:  time.Now().UTC().Add(g.state.ttl),
@@ -37,9 +57,9 @@ func (g *slackGateway) setPendingInstallCookie(w http.ResponseWriter, r *http.Re
 	})
 }
 
-func (g *slackGateway) clearPendingInstallCookie(w http.ResponseWriter, r *http.Request) {
+func (g *slackGateway) clearPendingInstallCookie(w http.ResponseWriter, r *http.Request, requestID string) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     pendingInstallCookieName,
+		Name:     pendingInstallCookieNameForRequest(requestID),
 		Value:    "",
 		Path:     g.pendingInstallCookiePath(),
 		Expires:  time.Unix(0, 0).UTC(),
@@ -50,14 +70,14 @@ func (g *slackGateway) clearPendingInstallCookie(w http.ResponseWriter, r *http.
 	})
 }
 
-func (g *slackGateway) pendingInstallStateFromRequest(r *http.Request, explicitState string) string {
+func (g *slackGateway) pendingInstallStateFromRequest(r *http.Request, requestID, explicitState string) string {
 	if state := strings.TrimSpace(explicitState); state != "" {
 		return state
 	}
 	if r == nil {
 		return ""
 	}
-	cookie, err := r.Cookie(pendingInstallCookieName)
+	cookie, err := r.Cookie(pendingInstallCookieNameForRequest(requestID))
 	if err != nil {
 		return ""
 	}

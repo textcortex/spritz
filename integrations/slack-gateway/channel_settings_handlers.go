@@ -88,10 +88,24 @@ func (g *slackGateway) matchChannelSettingsConnectionPath(
 	installations []backendManagedInstallation,
 	relativePath string,
 ) (backendManagedInstallation, backendManagedConnection, bool) {
+	installation, connection, ok := matchManagedChannelSettingsConnection(
+		installations,
+		relativePath,
+	)
+	if !ok {
+		http.NotFound(w, r)
+		return backendManagedInstallation{}, backendManagedConnection{}, false
+	}
+	return installation, connection, true
+}
+
+func matchManagedChannelSettingsConnection(
+	installations []backendManagedInstallation,
+	relativePath string,
+) (backendManagedInstallation, backendManagedConnection, bool) {
 	trimmed := strings.Trim(strings.TrimPrefix(relativePath, "/settings/channels/"), "/")
 	parts := strings.Split(trimmed, "/")
 	if len(parts) != 4 || parts[0] != "installations" || parts[2] != "connections" {
-		http.NotFound(w, r)
 		return backendManagedInstallation{}, backendManagedConnection{}, false
 	}
 	installationID := strings.TrimSpace(parts[1])
@@ -102,12 +116,10 @@ func (g *slackGateway) matchChannelSettingsConnectionPath(
 		}
 		connection, found := managedConnectionByID(installation, connectionID)
 		if !found {
-			http.NotFound(w, r)
 			return backendManagedInstallation{}, backendManagedConnection{}, false
 		}
 		return installation, connection, true
 	}
-	http.NotFound(w, r)
 	return backendManagedInstallation{}, backendManagedConnection{}, false
 }
 

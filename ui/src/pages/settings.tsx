@@ -765,9 +765,14 @@ function WorkspaceTestPage() {
 
 function InstallSelectPage() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const requestId = (params.get('requestId') || '').trim();
+  const selectionPath = requestId
+    ? `/api/slack/install/selection?requestId=${encodeURIComponent(requestId)}`
+    : '/api/slack/install/selection';
   const { value, error, loading } = useAsyncValue(
-    () => slackGatewayRequest<SlackInstallSelection>('/api/slack/install/selection'),
-    [],
+    () => slackGatewayRequest<SlackInstallSelection>(selectionPath),
+    [selectionPath],
   );
   const [selected, setSelected] = useState('');
   const [saving, setSaving] = useState(false);

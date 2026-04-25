@@ -244,7 +244,7 @@ describe('SettingsPage', () => {
       actionHref: '/slack-gateway/slack/install',
     };
     requestMock.mockImplementation((path: string, options?: RequestInit) => {
-      if (path === '/api/slack/install/selection' && options?.method !== 'POST') {
+      if (path === '/api/slack/install/selection?requestId=install-request-1' && options?.method !== 'POST') {
         return Promise.resolve({
           status: 'resolved',
           requestId: 'install-request-1',
@@ -268,7 +268,7 @@ describe('SettingsPage', () => {
     });
 
     render(
-      <MemoryRouter initialEntries={['/settings/slack/install/select']}>
+      <MemoryRouter initialEntries={['/settings/slack/install/select?requestId=install-request-1']}>
         <Routes>
           <Route path="settings/*" element={<SettingsPage />} />
         </Routes>

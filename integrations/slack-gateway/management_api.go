@@ -86,10 +86,11 @@ func (g *slackGateway) handleInstallTargetSelectionAPI(w http.ResponseWriter, r 
 }
 
 func (g *slackGateway) handleInstallTargetSelectionAPIGet(w http.ResponseWriter, r *http.Request) {
-	state := g.pendingInstallStateFromRequest(r, "")
+	requestID := strings.TrimSpace(r.URL.Query().Get("requestId"))
+	state := g.pendingInstallStateFromRequest(r, requestID, "")
 	pendingInstall, err := g.state.parsePendingInstall(state)
 	if err != nil {
-		g.clearPendingInstallCookie(w, r)
+		g.clearPendingInstallCookie(w, r, requestID)
 		writeAPIError(w, http.StatusBadRequest, "install state is invalid or expired")
 		return
 	}
@@ -119,14 +120,14 @@ func (g *slackGateway) handleInstallTargetSelectionAPIPost(w http.ResponseWriter
 		writeAPIError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	state := g.pendingInstallStateFromRequest(r, body.State)
+	bodyRequestID := strings.TrimSpace(body.RequestID)
+	state := g.pendingInstallStateFromRequest(r, bodyRequestID, body.State)
 	pendingInstall, err := g.state.parsePendingInstall(state)
 	if err != nil {
-		g.clearPendingInstallCookie(w, r)
+		g.clearPendingInstallCookie(w, r, bodyRequestID)
 		writeAPIError(w, http.StatusBadRequest, "install state is invalid or expired")
 		return
 	}
-	bodyRequestID := strings.TrimSpace(body.RequestID)
 	if bodyRequestID != "" && bodyRequestID != pendingInstall.RequestID {
 		writeAPIError(w, http.StatusBadRequest, "install request is stale")
 		return
@@ -145,7 +146,7 @@ func (g *slackGateway) handleInstallTargetSelectionAPIPost(w http.ResponseWriter
 			"team_id", installation.TeamID,
 			"request_id", requestID,
 		)
-		g.clearPendingInstallCookie(w, r)
+		g.clearPendingInstallCookie(w, r, requestID)
 		g.writeInstallResultAPI(w, http.StatusOK, installResult{
 			Status:    installResultStatusError,
 			Code:      classifyInstallUpsertError(err),
@@ -156,7 +157,7 @@ func (g *slackGateway) handleInstallTargetSelectionAPIPost(w http.ResponseWriter
 		})
 		return
 	}
-	g.clearPendingInstallCookie(w, r)
+	g.clearPendingInstallCookie(w, r, requestID)
 	writeAPIJSON(w, http.StatusOK, map[string]any{
 		"status":    "installed",
 		"requestId": requestID,
@@ -469,13 +470,12 @@ func (g *slackGateway) handleChannelSettingsAPI(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	installation, connection, found := g.matchChannelSettingsConnectionPath(
-		w,
-		r,
+	installation, connection, found := matchManagedChannelSettingsConnection(
 		installations,
 		relativePath,
 	)
 	if !found {
+		writeAPIError(w, http.StatusNotFound, "connection not found")
 		return
 	}
 	switch r.Method {

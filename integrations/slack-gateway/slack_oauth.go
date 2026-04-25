@@ -215,8 +215,8 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 			})
 			return
 		}
-		g.setPendingInstallCookie(w, r, pendingState)
-		redirectToReactRoute(w, r, reactSlackInstallSelectPath())
+		g.setPendingInstallCookie(w, r, requestID, pendingState)
+		redirectToReactRoute(w, r, reactSlackInstallSelectPath(requestID))
 		return
 	}
 	if err := g.upsertInstallation(r.Context(), &installation, requestID, targets[0].PresetInputs); err != nil {
