@@ -931,6 +931,7 @@ export function SettingsPage() {
     <Routes>
       <Route element={<SettingsShell />}>
         <Route index element={<Navigate to="slack/workspaces" replace />} />
+        <Route path="slack" element={<Navigate to="workspaces" replace />} />
         <Route path="slack/workspaces" element={<WorkspaceListPage />} />
         <Route path="slack/workspaces/target" element={<WorkspaceTargetPage />} />
         <Route path="slack/workspaces/test" element={<WorkspaceTestPage />} />

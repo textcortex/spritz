@@ -1514,6 +1514,72 @@ func TestInstallTargetSelectionAPIPreservesClassifiedUpsertFailure(t *testing.T)
 	}
 }
 
+func TestInstallTargetSelectionAPIRejectsStaleRequestID(t *testing.T) {
+	backendCalled := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalled = true
+		t.Fatalf("backend should not be called for stale install selection")
+	}))
+	defer backend.Close()
+
+	gateway := newSlackGateway(config{
+		PublicURL:            "https://gateway.example.test",
+		SlackClientID:        "client-id",
+		SlackClientSecret:    "client-secret",
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      "https://slack.example.test/api",
+		SlackBotScopes:       []string{"chat:write"},
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        "https://spritz.example.test",
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	pendingState, err := gateway.state.generatePendingInstall(pendingInstallState{
+		RequestID: "install-request-current",
+		Installation: slackInstallation{
+			TeamID:           "T_workspace_current",
+			InstallingUserID: "U_installer",
+			BotAccessToken:   "xoxb-installed",
+			BotUserID:        "U_bot",
+			APIAppID:         "A_app_1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("generate pending install state failed: %v", err)
+	}
+	requestBody, err := json.Marshal(map[string]any{
+		"requestId": "install-request-stale",
+		"presetInputs": map[string]any{
+			"agentId": "ag_456",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal request body: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/slack/install/selection", bytes.NewReader(requestBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{
+		Name:  pendingInstallCookieName,
+		Value: pendingState,
+		Path:  "/api/slack/install/selection",
+	})
+	rec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for stale request id, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if backendCalled {
+		t.Fatalf("backend was called for stale install selection")
+	}
+}
+
 func TestInstallRedirectUsesConfiguredSlackHost(t *testing.T) {
 	cfg := config{
 		PublicURL:          "https://gateway.example.test",

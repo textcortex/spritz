@@ -215,6 +215,19 @@ describe('SettingsPage', () => {
     ).toBeTruthy();
   });
 
+  it('redirects the Slack settings landing page to workspace settings', async () => {
+    render(
+      <MemoryRouter initialEntries={['/settings/slack']}>
+        <Routes>
+          <Route path="settings/*" element={<SettingsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Slack Workspaces' })).toBeTruthy();
+    expect(await screen.findByText('No Slack workspaces are installed.')).toBeTruthy();
+  });
+
   it('routes typed install picker failures to the install result page', async () => {
     const user = userEvent.setup();
     const installResult = {

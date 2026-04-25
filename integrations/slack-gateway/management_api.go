@@ -121,7 +121,12 @@ func (g *slackGateway) handleInstallTargetSelectionAPIPost(w http.ResponseWriter
 		writeAPIError(w, http.StatusBadRequest, "install state is invalid or expired")
 		return
 	}
-	requestID := firstNonEmpty(strings.TrimSpace(body.RequestID), pendingInstall.RequestID)
+	bodyRequestID := strings.TrimSpace(body.RequestID)
+	if bodyRequestID != "" && bodyRequestID != pendingInstall.RequestID {
+		writeAPIError(w, http.StatusBadRequest, "install request is stale")
+		return
+	}
+	requestID := pendingInstall.RequestID
 	if len(body.PresetInputs) == 0 {
 		writeAPIError(w, http.StatusBadRequest, "presetInputs is required")
 		return
