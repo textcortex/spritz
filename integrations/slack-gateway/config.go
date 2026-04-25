@@ -24,6 +24,7 @@ type config struct {
 	BackendFastAPIBaseURL      string
 	BackendInternalToken       string
 	SpritzBaseURL              string
+	ReactBaseURL               string
 	SpritzServiceToken         string
 	PrincipalID                string
 	HTTPTimeout                time.Duration
@@ -55,6 +56,7 @@ func loadConfig() (config, error) {
 		BackendFastAPIBaseURL:      strings.TrimRight(strings.TrimSpace(os.Getenv("SPRITZ_SLACK_BACKEND_FASTAPI_BASE_URL")), "/"),
 		BackendInternalToken:       strings.TrimSpace(os.Getenv("SPRITZ_SLACK_BACKEND_INTERNAL_TOKEN")),
 		SpritzBaseURL:              strings.TrimRight(strings.TrimSpace(os.Getenv("SPRITZ_SLACK_SPRITZ_BASE_URL")), "/"),
+		ReactBaseURL:               strings.TrimRight(strings.TrimSpace(os.Getenv("SPRITZ_SLACK_REACT_BASE_URL")), "/"),
 		SpritzServiceToken:         strings.TrimSpace(os.Getenv("SPRITZ_SLACK_SPRITZ_SERVICE_TOKEN")),
 		PrincipalID:                strings.TrimSpace(os.Getenv("SPRITZ_SLACK_PRINCIPAL_ID")),
 		HTTPTimeout:                parseDurationEnv("SPRITZ_SLACK_HTTP_TIMEOUT", 15*time.Second),
@@ -103,6 +105,16 @@ func loadConfig() (config, error) {
 	if cfg.SpritzBaseURL == "" {
 		return config{}, fmt.Errorf("SPRITZ_SLACK_SPRITZ_BASE_URL is required")
 	}
+	if cfg.ReactBaseURL == "" {
+		cfg.ReactBaseURL = defaultReactBaseURL(cfg.PublicURL, cfg.SpritzBaseURL)
+	}
+	reactURL, err := url.Parse(cfg.ReactBaseURL)
+	if err != nil {
+		return config{}, fmt.Errorf("SPRITZ_SLACK_REACT_BASE_URL is invalid: %w", err)
+	}
+	if strings.TrimSpace(reactURL.Scheme) == "" || strings.TrimSpace(reactURL.Host) == "" {
+		return config{}, fmt.Errorf("SPRITZ_SLACK_REACT_BASE_URL must be an absolute URL")
+	}
 	if cfg.SpritzServiceToken == "" {
 		return config{}, fmt.Errorf("SPRITZ_SLACK_SPRITZ_SERVICE_TOKEN is required")
 	}
@@ -110,6 +122,46 @@ func loadConfig() (config, error) {
 		return config{}, fmt.Errorf("SPRITZ_SLACK_PRINCIPAL_ID is required")
 	}
 	return cfg, nil
+}
+
+func defaultReactBaseURL(publicURL string, spritzBaseURL string) string {
+	spritzBaseURL = strings.TrimRight(strings.TrimSpace(spritzBaseURL), "/")
+	if !isPrivateServiceBaseURL(spritzBaseURL) {
+		return spritzBaseURL
+	}
+	if publicReactURL := reactBaseURLFromGatewayPublicURL(publicURL); publicReactURL != "" {
+		return publicReactURL
+	}
+	return spritzBaseURL
+}
+
+func reactBaseURLFromGatewayPublicURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(raw), "/"))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	path := strings.TrimRight(parsed.Path, "/")
+	if strings.HasSuffix(path, "/slack-gateway") {
+		path = strings.TrimSuffix(path, "/slack-gateway")
+	} else {
+		path = ""
+	}
+	parsed.RawPath = ""
+	parsed.Path = path
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/")
+}
+
+func isPrivateServiceBaseURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	return strings.HasSuffix(host, ".svc") ||
+		strings.Contains(host, ".svc.") ||
+		strings.HasSuffix(host, ".cluster.local")
 }
 
 func envOrDefault(key, fallback string) string {

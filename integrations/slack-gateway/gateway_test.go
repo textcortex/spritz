@@ -7990,6 +7990,52 @@ func TestLoadConfigDefaultsBackendFastAPIBaseURLToBackendBaseURL(t *testing.T) {
 	}
 }
 
+func TestLoadConfigDefaultsReactBaseURLToPublicOriginWhenSpritzBaseURLIsClusterInternal(t *testing.T) {
+	t.Setenv("SPRITZ_SLACK_GATEWAY_PUBLIC_URL", "https://staging.spritz.textcortex.com/slack-gateway")
+	t.Setenv("SPRITZ_SLACK_CLIENT_ID", "client-id")
+	t.Setenv("SPRITZ_SLACK_CLIENT_SECRET", "client-secret")
+	t.Setenv("SPRITZ_SLACK_SIGNING_SECRET", "signing-secret")
+	t.Setenv("SPRITZ_SLACK_OAUTH_STATE_SECRET", "oauth-state-secret")
+	t.Setenv("SPRITZ_SLACK_BACKEND_BASE_URL", "https://backend.example.test")
+	t.Setenv("SPRITZ_SLACK_BACKEND_INTERNAL_TOKEN", "backend-internal-token")
+	t.Setenv("SPRITZ_SLACK_SPRITZ_BASE_URL", "http://spritz-api.spritz-system-staging.svc.cluster.local:8080")
+	t.Setenv("SPRITZ_SLACK_SPRITZ_SERVICE_TOKEN", "spritz-service-token")
+	t.Setenv("SPRITZ_SLACK_PRINCIPAL_ID", "shared-slack-gateway")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	if cfg.ReactBaseURL != "https://staging.spritz.textcortex.com" {
+		t.Fatalf("expected public React base URL, got %q", cfg.ReactBaseURL)
+	}
+	if cfg.SpritzBaseURL != "http://spritz-api.spritz-system-staging.svc.cluster.local:8080" {
+		t.Fatalf("expected internal Spritz base URL to stay unchanged, got %q", cfg.SpritzBaseURL)
+	}
+}
+
+func TestLoadConfigUsesExplicitReactBaseURL(t *testing.T) {
+	t.Setenv("SPRITZ_SLACK_GATEWAY_PUBLIC_URL", "https://gateway.example.test/slack-gateway")
+	t.Setenv("SPRITZ_SLACK_CLIENT_ID", "client-id")
+	t.Setenv("SPRITZ_SLACK_CLIENT_SECRET", "client-secret")
+	t.Setenv("SPRITZ_SLACK_SIGNING_SECRET", "signing-secret")
+	t.Setenv("SPRITZ_SLACK_OAUTH_STATE_SECRET", "oauth-state-secret")
+	t.Setenv("SPRITZ_SLACK_BACKEND_BASE_URL", "https://backend.example.test")
+	t.Setenv("SPRITZ_SLACK_BACKEND_INTERNAL_TOKEN", "backend-internal-token")
+	t.Setenv("SPRITZ_SLACK_SPRITZ_BASE_URL", "http://spritz-api.spritz-system-staging.svc.cluster.local:8080")
+	t.Setenv("SPRITZ_SLACK_REACT_BASE_URL", "https://spritz.example.test/app")
+	t.Setenv("SPRITZ_SLACK_SPRITZ_SERVICE_TOKEN", "spritz-service-token")
+	t.Setenv("SPRITZ_SLACK_PRINCIPAL_ID", "shared-slack-gateway")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	if cfg.ReactBaseURL != "https://spritz.example.test/app" {
+		t.Fatalf("expected explicit React base URL, got %q", cfg.ReactBaseURL)
+	}
+}
+
 func TestSpritzWebSocketURLPreservesBasePath(t *testing.T) {
 	gateway := newSlackGateway(
 		config{SpritzBaseURL: "https://spritz.example.test/prefix"},
@@ -8034,6 +8080,21 @@ func TestReactRouteURLUsesSpritzBaseURL(t *testing.T) {
 	}
 	if parsed.Query().Get("teamId") != "T_workspace_1" {
 		t.Fatalf("expected query to be preserved, got %q", parsed.RawQuery)
+	}
+}
+
+func TestReactRouteURLUsesReactBaseURL(t *testing.T) {
+	gateway := newSlackGateway(
+		config{
+			SpritzBaseURL: "http://spritz-api.spritz-system-staging.svc.cluster.local:8080",
+			ReactBaseURL:  "https://staging.spritz.textcortex.com",
+		},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	target := gateway.reactRouteURL("/settings/slack/workspaces")
+	if target != "https://staging.spritz.textcortex.com/settings/slack/workspaces" {
+		t.Fatalf("expected public React redirect URL, got %q", target)
 	}
 }
 
