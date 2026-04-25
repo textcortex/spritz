@@ -148,18 +148,27 @@ Target flow:
 2. React links to gateway: `/slack-gateway/slack/install`.
 3. Gateway redirects to Slack OAuth.
 4. Slack calls gateway callback: `/slack-gateway/slack/oauth/callback`.
-5. If target selection is needed, gateway redirects to React:
-   `/settings/slack/install/select`.
+5. If target selection is needed and gateway APIs are same-origin/proxied with
+   React, gateway redirects to React: `/settings/slack/install/select`.
 6. React fetches selection data from gateway JSON and submits the selected
    opaque target payload back to gateway JSON.
-7. Gateway upserts the install and redirects to React result:
+7. If target selection is needed but the gateway and React are different
+   origins, gateway renders the minimal target picker itself so its HTTP-only
+   pending-state cookie remains readable by the gateway.
+8. Gateway upserts the install and redirects to React result:
    `/settings/slack/install/result?...`.
-8. React renders the result page.
+9. React renders the result page.
 
 The opaque OAuth state stays gateway-owned. The callback stores pending
 selection state in a short-lived, HTTP-only gateway cookie scoped to the
 selection API. React must not receive, parse, or forward Slack token material
 or encrypted OAuth state in the URL.
+
+Exception: when the gateway public URL and the Spritz React URL are different
+origins and there is no same-origin `/slack-gateway` proxy, that HTTP-only
+gateway cookie cannot be sent by browser calls from the React origin. In that
+case the gateway must keep the target picker on the gateway origin as a minimal
+protocol fallback. Same-origin/proxied deployments should use the React picker.
 
 ## Migration Phases
 

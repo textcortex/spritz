@@ -215,6 +215,10 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 			})
 			return
 		}
+		if !g.reactRoutesShareGatewayOrigin() {
+			g.renderInstallTargetPicker(w, pendingState, requestID, targets)
+			return
+		}
 		g.setPendingInstallCookie(w, r, requestID, pendingState)
 		g.redirectToReactRoute(w, r, reactSlackInstallSelectPath(requestID))
 		return

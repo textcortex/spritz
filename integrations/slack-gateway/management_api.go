@@ -179,9 +179,9 @@ func (g *slackGateway) handleInstallResultAPI(w http.ResponseWriter, r *http.Req
 }
 
 func (g *slackGateway) writeInstallResultAPI(w http.ResponseWriter, status int, result installResult) {
-	descriptor := installResultDescriptorFor(result.Code, g.installRedirectPath())
+	descriptor := installResultDescriptorFor(result.Code, g.installRedirectURL())
 	if result.Status == installResultStatusSuccess && result.Code == installResultCodeInternalError {
-		descriptor = installResultDescriptorFor(installResultCodeInstalled, g.installRedirectPath())
+		descriptor = installResultDescriptorFor(installResultCodeInstalled, g.installRedirectURL())
 	}
 	writeAPIJSON(w, status, map[string]any{
 		"status":      result.Status,

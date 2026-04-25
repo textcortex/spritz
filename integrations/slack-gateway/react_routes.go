@@ -67,6 +67,19 @@ func (g *slackGateway) reactRouteURL(target string) string {
 	return base.String()
 }
 
+func (g *slackGateway) reactRoutesShareGatewayOrigin() bool {
+	gatewayURL, err := url.Parse(strings.TrimSpace(g.cfg.PublicURL))
+	if err != nil || gatewayURL.Scheme == "" || gatewayURL.Host == "" {
+		return false
+	}
+	reactURL, err := url.Parse(strings.TrimSpace(g.cfg.SpritzBaseURL))
+	if err != nil || reactURL.Scheme == "" || reactURL.Host == "" {
+		return false
+	}
+	return strings.EqualFold(gatewayURL.Scheme, reactURL.Scheme) &&
+		strings.EqualFold(gatewayURL.Host, reactURL.Host)
+}
+
 func (g *slackGateway) redirectToReactRoute(w http.ResponseWriter, r *http.Request, target string) {
 	http.Redirect(w, r, g.reactRouteURL(target), http.StatusSeeOther)
 }

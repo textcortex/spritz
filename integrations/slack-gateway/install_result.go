@@ -173,6 +173,20 @@ func (g *slackGateway) installRedirectPath() string {
 	return g.publicPathPrefix() + "/slack/install"
 }
 
+func (g *slackGateway) installRedirectURL() string {
+	base, err := url.Parse(strings.TrimRight(strings.TrimSpace(g.cfg.PublicURL), "/"))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return g.installRedirectPath()
+	}
+	basePath := strings.TrimRight(base.Path, "/")
+	routePath := "/slack/install"
+	base.RawPath = ""
+	base.Path = basePath + routePath
+	base.RawQuery = ""
+	base.Fragment = ""
+	return base.String()
+}
+
 func (g *slackGateway) redirectToInstallResult(w http.ResponseWriter, r *http.Request, result installResult) {
 	target := url.URL{Path: g.installResultPath()}
 	query := target.Query()

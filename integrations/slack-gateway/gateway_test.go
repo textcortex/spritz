@@ -202,7 +202,7 @@ func TestOAuthCallbackAutoSelectsSingleInstallTargetAndUpsertsRegistry(t *testin
 	}
 }
 
-func TestOAuthCallbackRendersInstallTargetPickerWhenMultipleTargetsAvailable(t *testing.T) {
+func TestOAuthCallbackRedirectsToReactInstallTargetPickerWhenSameOrigin(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/internal/v2/spritz/channel-install-targets/list":
@@ -262,7 +262,7 @@ func TestOAuthCallbackRendersInstallTargetPickerWhenMultipleTargetsAvailable(t *
 		SlackBotScopes:       []string{"chat:write"},
 		BackendBaseURL:       backend.URL,
 		BackendInternalToken: "backend-internal-token",
-		SpritzBaseURL:        "https://spritz.example.test",
+		SpritzBaseURL:        "https://gateway.example.test",
 		SpritzServiceToken:   "spritz-service-token",
 		PrincipalID:          "shared-slack-gateway",
 		HTTPTimeout:          5 * time.Second,
@@ -284,7 +284,7 @@ func TestOAuthCallbackRendersInstallTargetPickerWhenMultipleTargetsAvailable(t *
 	if err != nil {
 		t.Fatalf("parse picker redirect: %v", err)
 	}
-	if redirectURL.Scheme != "https" || redirectURL.Host != "spritz.example.test" {
+	if redirectURL.Scheme != "https" || redirectURL.Host != "gateway.example.test" {
 		t.Fatalf("expected picker redirect to use Spritz host, got %s", redirectURL.String())
 	}
 	if redirectURL.Path != "/settings/slack/install/select" {
@@ -338,6 +338,104 @@ func TestOAuthCallbackRendersInstallTargetPickerWhenMultipleTargetsAvailable(t *
 	}
 	if _, ok := selectionPayload["installation"]; ok {
 		t.Fatalf("selection API should not expose pending installation payload: %#v", selectionPayload["installation"])
+	}
+}
+
+func TestOAuthCallbackRendersGatewayInstallTargetPickerWhenCrossOrigin(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/internal/v2/spritz/channel-install-targets/list":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "resolved",
+				"targets": []map[string]any{
+					{
+						"id": "ag_123",
+						"profile": map[string]any{
+							"name": "Personal Helper",
+						},
+						"ownerLabel": "Personal",
+						"presetInputs": map[string]any{
+							"agentId": "ag_123",
+						},
+					},
+					{
+						"id": "ag_456",
+						"profile": map[string]any{
+							"name": "Workspace Helper",
+						},
+						"ownerLabel": "Workspace",
+						"presetInputs": map[string]any{
+							"agentId": "ag_456",
+						},
+					},
+				},
+			})
+		case "/internal/v1/spritz/channel-installations/upsert":
+			t.Fatal("upsert should not happen before the picker selection")
+		default:
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+	}))
+	defer backend.Close()
+
+	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":           true,
+			"app_id":       "A_app_1",
+			"scope":        "chat:write",
+			"access_token": "xoxb-installed",
+			"bot_user_id":  "U_bot",
+			"team":         map[string]any{"id": "T_workspace_1"},
+			"authed_user":  map[string]any{"id": "U_installer"},
+		})
+	}))
+	defer slackAPI.Close()
+
+	gateway := newSlackGateway(config{
+		PublicURL:            "https://gateway.example.test",
+		SlackClientID:        "client-id",
+		SlackClientSecret:    "client-secret",
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      slackAPI.URL,
+		SlackBotScopes:       []string{"chat:write"},
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        "https://spritz.example.test",
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	state, err := gateway.state.generate()
+	if err != nil {
+		t.Fatalf("state generate failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/slack/oauth/callback?code=test-code&state="+url.QueryEscape(state), nil)
+	rec := httptest.NewRecorder()
+	gateway.handleOAuthCallback(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected gateway picker page, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Choose an install target") {
+		t.Fatalf("expected picker title, got %q", body)
+	}
+	if !strings.Contains(body, "Personal Helper") || !strings.Contains(body, "Workspace Helper") {
+		t.Fatalf("expected picker targets, got %q", body)
+	}
+	if !strings.Contains(body, `/slack/install/select`) {
+		t.Fatalf("expected picker form action, got %q", body)
+	}
+	if strings.Contains(body, "xoxb-installed") {
+		t.Fatalf("expected picker state to keep bot token encrypted, got %q", body)
+	}
+	for _, cookie := range rec.Result().Cookies() {
+		if strings.HasPrefix(cookie.Name, pendingInstallCookieName) {
+			t.Fatalf("expected cross-origin picker to avoid pending install cookie, got %#v", cookie)
+		}
 	}
 }
 
@@ -7625,6 +7723,30 @@ func TestReactRouteURLUsesSpritzBaseURL(t *testing.T) {
 	}
 	if parsed.Query().Get("teamId") != "T_workspace_1" {
 		t.Fatalf("expected query to be preserved, got %q", parsed.RawQuery)
+	}
+}
+
+func TestReactRoutesShareGatewayOrigin(t *testing.T) {
+	sameOrigin := newSlackGateway(
+		config{
+			PublicURL:     "https://spritz.example.test/slack-gateway",
+			SpritzBaseURL: "https://spritz.example.test",
+		},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	if !sameOrigin.reactRoutesShareGatewayOrigin() {
+		t.Fatal("expected same host and scheme to share gateway origin")
+	}
+
+	crossOrigin := newSlackGateway(
+		config{
+			PublicURL:     "https://gateway.example.test",
+			SpritzBaseURL: "https://spritz.example.test",
+		},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	if crossOrigin.reactRoutesShareGatewayOrigin() {
+		t.Fatal("expected different hosts not to share gateway origin")
 	}
 }
 
