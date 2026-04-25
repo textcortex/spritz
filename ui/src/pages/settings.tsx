@@ -181,6 +181,16 @@ function teamID(installation: SlackManagedInstallation): string {
   return installation.route.externalTenantId;
 }
 
+function hasAllowedAction(installation: SlackManagedInstallation, action: string): boolean {
+  return (installation.allowedActions || []).some(
+    (candidate) => candidate.trim().toLowerCase() === action.trim().toLowerCase(),
+  );
+}
+
+function installationIsDisconnected(installation: SlackManagedInstallation): boolean {
+  return installation.state.trim().toLowerCase() === 'disconnected';
+}
+
 function WorkspaceListPage() {
   const { value, error, loading, reload } = useAsyncValue(
     () => slackGatewayRequest<InstallationListResponse>('/api/slack/workspaces'),
@@ -218,6 +228,8 @@ function WorkspaceListPage() {
         <div className="overflow-hidden rounded-[var(--radius-lg)] border border-border">
           {installations.map((installation) => {
             const connection = primaryConnection(installation);
+            const canDisconnect = hasAllowedAction(installation, 'disconnect');
+            const canTest = !installationIsDisconnected(installation);
             return (
               <div
                 key={installation.id || teamID(installation)}
@@ -249,17 +261,21 @@ function WorkspaceListPage() {
                   >
                     Target
                   </Link>
-                  <Link
-                    to={`/settings/slack/workspaces/test?teamId=${encodeURIComponent(teamID(installation))}`}
-                    className={buttonVariants({ variant: 'outline' })}
-                  >
-                    <SendIcon aria-hidden="true" />
-                    Test
-                  </Link>
-                  <Button variant="destructive" onClick={() => disconnect(installation)}>
-                    <Trash2Icon aria-hidden="true" />
-                    Disconnect
-                  </Button>
+                  {canTest && (
+                    <Link
+                      to={`/settings/slack/workspaces/test?teamId=${encodeURIComponent(teamID(installation))}`}
+                      className={buttonVariants({ variant: 'outline' })}
+                    >
+                      <SendIcon aria-hidden="true" />
+                      Test
+                    </Link>
+                  )}
+                  {canDisconnect && (
+                    <Button variant="destructive" onClick={() => disconnect(installation)}>
+                      <Trash2Icon aria-hidden="true" />
+                      Disconnect
+                    </Button>
+                  )}
                 </div>
               </div>
             );
@@ -368,6 +384,10 @@ function routeRequireMention(route: SlackManagedChannelRoute): boolean {
   return route.requireMention !== false;
 }
 
+function routeEnabled(route: SlackManagedChannelRoute): boolean {
+  return route.enabled !== false;
+}
+
 function ConnectionSettingsPage() {
   const { installationId = '', connectionId = '' } = useParams();
   const loadPath = `/api/settings/channels/installations/${encodeURIComponent(
@@ -385,7 +405,7 @@ function ConnectionSettingsPage() {
 
   useEffect(() => {
     if (value?.connection) {
-      setRoutes([...(value.connection.routes || [])]);
+      setRoutes([...(value.connection.routes || [])].filter(routeEnabled));
     }
   }, [value?.connection]);
 

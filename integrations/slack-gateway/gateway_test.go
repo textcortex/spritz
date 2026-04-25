@@ -290,6 +290,28 @@ func TestOAuthCallbackRendersInstallTargetPickerWhenMultipleTargetsAvailable(t *
 	if strings.Contains(rec.Body.String(), "xoxb-installed") {
 		t.Fatalf("expected picker redirect to keep bot token encrypted, got %q", rec.Body.String())
 	}
+
+	selectionReq := httptest.NewRequest(
+		http.MethodGet,
+		"/api/slack/install/selection?state="+url.QueryEscape(redirectURL.Query().Get("state")),
+		nil,
+	)
+	selectionRec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(selectionRec, selectionReq)
+
+	if selectionRec.Code != http.StatusOK {
+		t.Fatalf("expected selection API response, got %d: %s", selectionRec.Code, selectionRec.Body.String())
+	}
+	if strings.Contains(selectionRec.Body.String(), "xoxb-installed") || strings.Contains(selectionRec.Body.String(), "botAccessToken") {
+		t.Fatalf("selection API leaked bot token material: %s", selectionRec.Body.String())
+	}
+	var selectionPayload map[string]any
+	if err := json.NewDecoder(selectionRec.Body).Decode(&selectionPayload); err != nil {
+		t.Fatalf("decode selection API payload: %v", err)
+	}
+	if _, ok := selectionPayload["installation"]; ok {
+		t.Fatalf("selection API should not expose pending installation payload: %#v", selectionPayload["installation"])
+	}
 }
 
 func TestWorkspaceManagementRequiresBrowserPrincipal(t *testing.T) {

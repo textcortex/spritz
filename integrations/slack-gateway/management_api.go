@@ -13,12 +13,11 @@ type slackGatewayErrorResponse struct {
 }
 
 type installSelectionResponse struct {
-	Status       string                 `json:"status"`
-	State        string                 `json:"state"`
-	RequestID    string                 `json:"requestId"`
-	TeamID       string                 `json:"teamId"`
-	Installation slackInstallation      `json:"installation"`
-	Targets      []backendInstallTarget `json:"targets"`
+	Status    string                 `json:"status"`
+	State     string                 `json:"state"`
+	RequestID string                 `json:"requestId"`
+	TeamID    string                 `json:"teamId"`
+	Targets   []backendInstallTarget `json:"targets"`
 }
 
 type installSelectionRequest struct {
@@ -102,12 +101,11 @@ func (g *slackGateway) handleInstallTargetSelectionAPIGet(w http.ResponseWriter,
 		return
 	}
 	writeJSON(w, http.StatusOK, installSelectionResponse{
-		Status:       "resolved",
-		State:        state,
-		RequestID:    pendingInstall.RequestID,
-		TeamID:       pendingInstall.Installation.TeamID,
-		Installation: pendingInstall.Installation,
-		Targets:      targets,
+		Status:    "resolved",
+		State:     state,
+		RequestID: pendingInstall.RequestID,
+		TeamID:    pendingInstall.Installation.TeamID,
+		Targets:   targets,
 	})
 }
 
