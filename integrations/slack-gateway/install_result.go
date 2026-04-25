@@ -76,6 +76,13 @@ type backendInstallErrorPayload struct {
 	RequestID string `json:"requestId,omitempty"`
 }
 
+func classifyInstallStateError(err error) installResultCode {
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "expired") {
+		return installResultCodeStateExpired
+	}
+	return installResultCodeStateInvalid
+}
+
 var installResultPageTemplate = template.Must(template.New("install-result").Parse(`<!doctype html>
 <html lang="en">
   <head>

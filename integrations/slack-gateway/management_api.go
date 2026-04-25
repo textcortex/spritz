@@ -74,6 +74,16 @@ func decodeJSONRequest(r *http.Request, target any) error {
 	return decoder.Decode(target)
 }
 
+func (g *slackGateway) writeInstallStateErrorAPI(w http.ResponseWriter, status int, err error, requestID string) {
+	g.writeInstallResultAPI(w, status, installResult{
+		Status:    installResultStatusError,
+		Code:      classifyInstallStateError(err),
+		Operation: installResultOperationChannelInstall,
+		Provider:  slackProvider,
+		RequestID: strings.TrimSpace(requestID),
+	})
+}
+
 func requireAPIBrowserPrincipal(cfg config, w http.ResponseWriter, r *http.Request) (browserPrincipal, bool) {
 	id := strings.TrimSpace(r.Header.Get(cfg.BrowserAuthHeaderID))
 	if id == "" {
@@ -103,7 +113,7 @@ func (g *slackGateway) handleInstallTargetSelectionAPIGet(w http.ResponseWriter,
 	pendingInstall, err := g.state.parsePendingInstall(state)
 	if err != nil {
 		g.clearPendingInstallCookie(w, r, requestID)
-		writeAPIError(w, http.StatusBadRequest, "install state is invalid or expired")
+		g.writeInstallStateErrorAPI(w, http.StatusOK, err, requestID)
 		return
 	}
 	targets, err := g.listInstallTargets(r.Context(), &pendingInstall.Installation, pendingInstall.RequestID)
@@ -137,7 +147,7 @@ func (g *slackGateway) handleInstallTargetSelectionAPIPost(w http.ResponseWriter
 	pendingInstall, err := g.state.parsePendingInstall(state)
 	if err != nil {
 		g.clearPendingInstallCookie(w, r, bodyRequestID)
-		writeAPIError(w, http.StatusBadRequest, "install state is invalid or expired")
+		g.writeInstallStateErrorAPI(w, http.StatusOK, err, bodyRequestID)
 		return
 	}
 	if bodyRequestID != "" && bodyRequestID != pendingInstall.RequestID {

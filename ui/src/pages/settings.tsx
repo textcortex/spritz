@@ -804,12 +804,19 @@ function InstallSelectPage() {
     ? `/api/slack/install/selection?requestId=${encodeURIComponent(requestId)}`
     : '/api/slack/install/selection';
   const { value, error, loading } = useAsyncValue(
-    () => slackGatewayRequest<SlackInstallSelection>(selectionPath),
+    () => slackGatewayRequest<SlackInstallSelection | SlackInstallResult>(selectionPath),
     [selectionPath],
   );
   const [selected, setSelected] = useState('');
   const [saving, setSaving] = useState(false);
-  const targets = value?.targets || [];
+  const loadResult = isSlackInstallResult(value) ? value : null;
+  const selection = value && !isSlackInstallResult(value) ? value : null;
+  const targets = selection?.targets || [];
+
+  useEffect(() => {
+    if (!loadResult) return;
+    navigate(`/settings/slack/install/result?${installResultQueryString(loadResult)}`, { replace: true });
+  }, [loadResult, navigate]);
 
   useEffect(() => {
     if (!selected && targets[0]) setSelected(targets[0].id);
@@ -821,7 +828,7 @@ function InstallSelectPage() {
   );
 
   const submit = async () => {
-    if (!value || !selectedTarget) return;
+    if (!selection || !selectedTarget) return;
     setSaving(true);
     try {
       const result = await slackGatewayRequest<
@@ -829,7 +836,7 @@ function InstallSelectPage() {
       >('/api/slack/install/selection', {
         method: 'POST',
         body: JSON.stringify({
-          requestId: value.requestId,
+          requestId: selection.requestId,
           presetInputs: selectedTarget.presetInputs,
         }),
       });
@@ -848,7 +855,7 @@ function InstallSelectPage() {
   };
 
   return (
-    <PageFrame title="Choose Install Target" description={value?.teamId}>
+    <PageFrame title="Choose Install Target" description={selection?.teamId || loadResult?.teamId}>
       <ErrorBanner message={error} />
       {loading ? (
         <LoadingRows />

@@ -548,6 +548,42 @@ describe('SettingsPage', () => {
     expect(await screen.findByText('Request ID: install-request-1')).toBeTruthy();
   });
 
+  it('routes typed install picker load failures to the install result page', async () => {
+    const installResult = {
+      status: 'error',
+      code: 'state.expired',
+      operation: 'channel.install',
+      provider: 'slack',
+      requestId: 'install-request-1',
+      title: 'Install link expired',
+      message: 'This install link expired before it completed. Start the install again.',
+      retryable: true,
+      actionLabel: 'Start install again',
+      actionHref: '/slack-gateway/slack/install',
+    };
+    requestMock.mockImplementation((path: string) => {
+      if (path === '/api/slack/install/selection?requestId=install-request-1') {
+        return Promise.resolve(installResult);
+      }
+      if (path.startsWith('/api/slack/install/result?')) {
+        return Promise.resolve(installResult);
+      }
+      return Promise.reject(new Error(`unexpected request: ${path}`));
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/settings/slack/install/select?requestId=install-request-1']}>
+        <Routes>
+          <Route path="settings/*" element={<SettingsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('Install link expired')).toBeTruthy();
+    expect(await screen.findByText('state.expired')).toBeTruthy();
+    expect(await screen.findByRole('link', { name: 'Start install again' })).toBeTruthy();
+  });
+
   it('does not render query-provided install result action links', async () => {
     requestMock.mockImplementation((path: string) => {
       if (path.startsWith('/api/slack/install/result?')) {

@@ -2012,6 +2012,108 @@ func TestInstallTargetSelectionAPIPreservesClassifiedUpsertFailure(t *testing.T)
 	}
 }
 
+func TestInstallTargetSelectionAPIReturnsTypedStateFailures(t *testing.T) {
+	backendCalled := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalled = true
+		t.Fatalf("backend should not be called for invalid install selection state")
+	}))
+	defer backend.Close()
+
+	gateway := newSlackGateway(config{
+		PublicURL:            "https://gateway.example.test",
+		SlackClientID:        "client-id",
+		SlackClientSecret:    "client-secret",
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      "https://slack.example.test/api",
+		SlackBotScopes:       []string{"chat:write"},
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        "https://gateway.example.test",
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	issuedAt := time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC)
+	gateway.state.now = func() time.Time { return issuedAt }
+	pendingState, err := gateway.state.generatePendingInstall(pendingInstallState{
+		RequestID: "install-request-expired",
+		Installation: slackInstallation{
+			TeamID:           "T_workspace_1",
+			InstallingUserID: "U_installer",
+			BotAccessToken:   "xoxb-installed",
+			BotUserID:        "U_bot",
+			APIAppID:         "A_app_1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("generate pending install state failed: %v", err)
+	}
+	gateway.state.now = func() time.Time { return issuedAt.Add(16 * time.Minute) }
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/slack/install/selection?requestId=install-request-expired", nil)
+	getReq.AddCookie(&http.Cookie{
+		Name:  pendingInstallCookieNameForRequest("install-request-expired"),
+		Value: pendingState,
+		Path:  "/api/slack/install/selection",
+	})
+	getRec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(getRec, getReq)
+
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("expected typed expired state response, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+	var getPayload map[string]any
+	if err := json.NewDecoder(getRec.Body).Decode(&getPayload); err != nil {
+		t.Fatalf("decode expired state payload: %v", err)
+	}
+	if getPayload["status"] != "error" || getPayload["code"] != "state.expired" {
+		t.Fatalf("expected state.expired install result, got %#v", getPayload)
+	}
+	if getPayload["requestId"] != "install-request-expired" {
+		t.Fatalf("expected request id to round-trip, got %#v", getPayload["requestId"])
+	}
+	if getPayload["actionHref"] == "" || getPayload["actionLabel"] == "" {
+		t.Fatalf("expected retry action in expired state payload, got %#v", getPayload)
+	}
+	if strings.Contains(getRec.Body.String(), "xoxb-installed") {
+		t.Fatalf("expected expired state payload to hide bot token material, got %q", getRec.Body.String())
+	}
+
+	postBody, err := json.Marshal(map[string]any{
+		"requestId":    "install-request-invalid",
+		"state":        "not-a-state-token",
+		"presetInputs": map[string]any{"agentId": "ag_456"},
+	})
+	if err != nil {
+		t.Fatalf("marshal post body: %v", err)
+	}
+	postReq := httptest.NewRequest(http.MethodPost, "/api/slack/install/selection", bytes.NewReader(postBody))
+	postReq.Header.Set("Content-Type", "application/json")
+	postRec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(postRec, postReq)
+
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("expected typed invalid state response, got %d: %s", postRec.Code, postRec.Body.String())
+	}
+	var postPayload map[string]any
+	if err := json.NewDecoder(postRec.Body).Decode(&postPayload); err != nil {
+		t.Fatalf("decode invalid state payload: %v", err)
+	}
+	if postPayload["status"] != "error" || postPayload["code"] != "state.invalid" {
+		t.Fatalf("expected state.invalid install result, got %#v", postPayload)
+	}
+	if postPayload["requestId"] != "install-request-invalid" {
+		t.Fatalf("expected request id to round-trip, got %#v", postPayload["requestId"])
+	}
+	if backendCalled {
+		t.Fatalf("backend was called for invalid install selection state")
+	}
+}
+
 func TestInstallTargetSelectionAPIRejectsStaleRequestID(t *testing.T) {
 	backendCalled := false
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2052,6 +2154,7 @@ func TestInstallTargetSelectionAPIRejectsStaleRequestID(t *testing.T) {
 	}
 	requestBody, err := json.Marshal(map[string]any{
 		"requestId": "install-request-stale",
+		"state":     pendingState,
 		"presetInputs": map[string]any{
 			"agentId": "ag_456",
 		},
@@ -2062,11 +2165,6 @@ func TestInstallTargetSelectionAPIRejectsStaleRequestID(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/slack/install/selection", bytes.NewReader(requestBody))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{
-		Name:  pendingInstallCookieNameForRequest("install-request-current"),
-		Value: pendingState,
-		Path:  "/api/slack/install/selection",
-	})
 	rec := httptest.NewRecorder()
 	gateway.routes().ServeHTTP(rec, req)
 

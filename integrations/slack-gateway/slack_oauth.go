@@ -328,13 +328,9 @@ func (g *slackGateway) handleInstallTargetSelection(w http.ResponseWriter, r *ht
 
 	pendingInstall, err := g.state.parsePendingInstall(strings.TrimSpace(r.FormValue("state")))
 	if err != nil {
-		resultCode := installResultCodeStateInvalid
-		if strings.Contains(strings.ToLower(err.Error()), "expired") {
-			resultCode = installResultCodeStateExpired
-		}
 		g.redirectToInstallResult(w, r, installResult{
 			Status:    installResultStatusError,
-			Code:      resultCode,
+			Code:      classifyInstallStateError(err),
 			Operation: installResultOperationChannelInstall,
 			Provider:  slackProvider,
 		})
