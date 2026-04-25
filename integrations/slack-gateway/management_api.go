@@ -14,7 +14,6 @@ type slackGatewayErrorResponse struct {
 
 type installSelectionResponse struct {
 	Status    string                 `json:"status"`
-	State     string                 `json:"state"`
 	RequestID string                 `json:"requestId"`
 	TeamID    string                 `json:"teamId"`
 	Targets   []backendInstallTarget `json:"targets"`
@@ -82,9 +81,10 @@ func (g *slackGateway) handleInstallTargetSelectionAPI(w http.ResponseWriter, r 
 }
 
 func (g *slackGateway) handleInstallTargetSelectionAPIGet(w http.ResponseWriter, r *http.Request) {
-	state := strings.TrimSpace(r.URL.Query().Get("state"))
+	state := g.pendingInstallStateFromRequest(r, "")
 	pendingInstall, err := g.state.parsePendingInstall(state)
 	if err != nil {
+		g.clearPendingInstallCookie(w, r)
 		writeAPIError(w, http.StatusBadRequest, "install state is invalid or expired")
 		return
 	}
@@ -102,7 +102,6 @@ func (g *slackGateway) handleInstallTargetSelectionAPIGet(w http.ResponseWriter,
 	}
 	writeJSON(w, http.StatusOK, installSelectionResponse{
 		Status:    "resolved",
-		State:     state,
 		RequestID: pendingInstall.RequestID,
 		TeamID:    pendingInstall.Installation.TeamID,
 		Targets:   targets,
@@ -115,8 +114,10 @@ func (g *slackGateway) handleInstallTargetSelectionAPIPost(w http.ResponseWriter
 		writeAPIError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	pendingInstall, err := g.state.parsePendingInstall(strings.TrimSpace(body.State))
+	state := g.pendingInstallStateFromRequest(r, body.State)
+	pendingInstall, err := g.state.parsePendingInstall(state)
 	if err != nil {
+		g.clearPendingInstallCookie(w, r)
 		writeAPIError(w, http.StatusBadRequest, "install state is invalid or expired")
 		return
 	}
@@ -134,6 +135,7 @@ func (g *slackGateway) handleInstallTargetSelectionAPIPost(w http.ResponseWriter
 			"team_id", installation.TeamID,
 			"request_id", requestID,
 		)
+		g.clearPendingInstallCookie(w, r)
 		g.writeInstallResultAPI(w, http.StatusOK, installResult{
 			Status:    installResultStatusError,
 			Code:      classifyInstallUpsertError(err),
@@ -144,6 +146,7 @@ func (g *slackGateway) handleInstallTargetSelectionAPIPost(w http.ResponseWriter
 		})
 		return
 	}
+	g.clearPendingInstallCookie(w, r)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":    "installed",
 		"requestId": requestID,

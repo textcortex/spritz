@@ -10,12 +10,8 @@ func reactSlackInstallResultPath() string {
 	return "/settings/slack/install/result"
 }
 
-func reactSlackInstallSelectPath(state string) string {
-	target := url.URL{Path: "/settings/slack/install/select"}
-	query := target.Query()
-	query.Set("state", strings.TrimSpace(state))
-	target.RawQuery = query.Encode()
-	return target.String()
+func reactSlackInstallSelectPath() string {
+	return "/settings/slack/install/select"
 }
 
 func reactSlackWorkspacesPath(query url.Values) string {

@@ -284,8 +284,24 @@ func TestOAuthCallbackRendersInstallTargetPickerWhenMultipleTargetsAvailable(t *
 	if redirectURL.Path != "/settings/slack/install/select" {
 		t.Fatalf("expected React picker route, got %q", redirectURL.Path)
 	}
-	if redirectURL.Query().Get("state") == "" {
-		t.Fatalf("expected pending install state in redirect, got %q", redirectURL.RawQuery)
+	if redirectURL.RawQuery != "" {
+		t.Fatalf("expected picker redirect without pending state query, got %q", redirectURL.RawQuery)
+	}
+	var pendingCookie *http.Cookie
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == pendingInstallCookieName {
+			pendingCookie = cookie
+			break
+		}
+	}
+	if pendingCookie == nil || pendingCookie.Value == "" {
+		t.Fatalf("expected pending install state cookie")
+	}
+	if !pendingCookie.HttpOnly || !pendingCookie.Secure {
+		t.Fatalf("expected secure http-only pending install cookie, got %#v", pendingCookie)
+	}
+	if strings.Contains(pendingCookie.Value, "xoxb-installed") {
+		t.Fatalf("expected pending install cookie to keep bot token encrypted")
 	}
 	if strings.Contains(rec.Body.String(), "xoxb-installed") {
 		t.Fatalf("expected picker redirect to keep bot token encrypted, got %q", rec.Body.String())
@@ -293,9 +309,10 @@ func TestOAuthCallbackRendersInstallTargetPickerWhenMultipleTargetsAvailable(t *
 
 	selectionReq := httptest.NewRequest(
 		http.MethodGet,
-		"/api/slack/install/selection?state="+url.QueryEscape(redirectURL.Query().Get("state")),
+		"/api/slack/install/selection",
 		nil,
 	)
+	selectionReq.AddCookie(pendingCookie)
 	selectionRec := httptest.NewRecorder()
 	gateway.routes().ServeHTTP(selectionRec, selectionReq)
 
@@ -1451,7 +1468,6 @@ func TestInstallTargetSelectionAPIPreservesClassifiedUpsertFailure(t *testing.T)
 		t.Fatalf("generate pending install state failed: %v", err)
 	}
 	requestBody, err := json.Marshal(map[string]any{
-		"state":     pendingState,
 		"requestId": "install-request-1",
 		"presetInputs": map[string]any{
 			"agentId": "ag_456",
@@ -1463,6 +1479,11 @@ func TestInstallTargetSelectionAPIPreservesClassifiedUpsertFailure(t *testing.T)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/slack/install/selection", bytes.NewReader(requestBody))
 	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{
+		Name:  pendingInstallCookieName,
+		Value: pendingState,
+		Path:  "/api/slack/install/selection",
+	})
 	rec := httptest.NewRecorder()
 	gateway.routes().ServeHTTP(rec, req)
 

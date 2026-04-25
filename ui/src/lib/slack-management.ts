@@ -55,7 +55,6 @@ export interface SlackManagedInstallation {
 
 export interface SlackInstallSelection {
   status: string;
-  state: string;
   requestId: string;
   teamId: string;
   targets: SlackInstallTarget[];

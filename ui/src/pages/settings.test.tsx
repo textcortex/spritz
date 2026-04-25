@@ -231,10 +231,9 @@ describe('SettingsPage', () => {
       actionHref: '/slack-gateway/slack/install',
     };
     requestMock.mockImplementation((path: string, options?: RequestInit) => {
-      if (path.startsWith('/api/slack/install/selection?')) {
+      if (path === '/api/slack/install/selection' && options?.method !== 'POST') {
         return Promise.resolve({
           status: 'resolved',
-          state: 'pending-state',
           requestId: 'install-request-1',
           teamId: 'T_workspace',
           targets: [
@@ -256,7 +255,7 @@ describe('SettingsPage', () => {
     });
 
     render(
-      <MemoryRouter initialEntries={['/settings/slack/install/select?state=pending-state']}>
+      <MemoryRouter initialEntries={['/settings/slack/install/select']}>
         <Routes>
           <Route path="settings/*" element={<SettingsPage />} />
         </Routes>
