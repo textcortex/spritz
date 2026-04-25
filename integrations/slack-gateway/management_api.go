@@ -74,6 +74,18 @@ func decodeJSONRequest(r *http.Request, target any) error {
 	return decoder.Decode(target)
 }
 
+func requireAPIBrowserPrincipal(cfg config, w http.ResponseWriter, r *http.Request) (browserPrincipal, bool) {
+	id := strings.TrimSpace(r.Header.Get(cfg.BrowserAuthHeaderID))
+	if id == "" {
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized")
+		return browserPrincipal{}, false
+	}
+	return browserPrincipal{
+		ID:    id,
+		Email: strings.TrimSpace(r.Header.Get(cfg.BrowserAuthHeaderEmail)),
+	}, true
+}
+
 func (g *slackGateway) handleInstallTargetSelectionAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -203,7 +215,7 @@ func (g *slackGateway) handleWorkspaceManagementAPI(w http.ResponseWriter, r *ht
 		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
+	principal, ok := requireAPIBrowserPrincipal(g.cfg, w, r)
 	if !ok {
 		return
 	}
@@ -236,7 +248,7 @@ func (g *slackGateway) handleWorkspaceTargetAPI(w http.ResponseWriter, r *http.R
 }
 
 func (g *slackGateway) handleWorkspaceTargetAPIGet(w http.ResponseWriter, r *http.Request) {
-	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
+	principal, ok := requireAPIBrowserPrincipal(g.cfg, w, r)
 	if !ok {
 		return
 	}
@@ -268,7 +280,7 @@ func (g *slackGateway) handleWorkspaceTargetAPIGet(w http.ResponseWriter, r *htt
 }
 
 func (g *slackGateway) handleWorkspaceTargetAPIPost(w http.ResponseWriter, r *http.Request) {
-	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
+	principal, ok := requireAPIBrowserPrincipal(g.cfg, w, r)
 	if !ok {
 		return
 	}
@@ -311,7 +323,7 @@ func (g *slackGateway) handleWorkspaceDisconnectAPI(w http.ResponseWriter, r *ht
 		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
+	principal, ok := requireAPIBrowserPrincipal(g.cfg, w, r)
 	if !ok {
 		return
 	}
@@ -347,7 +359,7 @@ func (g *slackGateway) handleWorkspaceTestAPI(w http.ResponseWriter, r *http.Req
 		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
+	principal, ok := requireAPIBrowserPrincipal(g.cfg, w, r)
 	if !ok {
 		return
 	}
@@ -422,7 +434,7 @@ func (g *slackGateway) handleWorkspaceTestAPI(w http.ResponseWriter, r *http.Req
 }
 
 func (g *slackGateway) handleChannelSettingsAPI(w http.ResponseWriter, r *http.Request) {
-	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
+	principal, ok := requireAPIBrowserPrincipal(g.cfg, w, r)
 	if !ok {
 		return
 	}

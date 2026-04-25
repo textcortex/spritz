@@ -447,7 +447,37 @@ describe('SettingsPage', () => {
 
     const reconnect = await screen.findByRole('link', { name: /Reconnect/i });
     expect(reconnect.getAttribute('href')).toBe('/slack-gateway/slack/install');
+    expect(screen.queryByRole('link', { name: 'Target' })).toBeNull();
     expect(screen.queryByRole('link', { name: /Test/i })).toBeNull();
+  });
+
+  it('renders the target action only when allowed', async () => {
+    requestMock.mockResolvedValue({
+      status: 'ok',
+      installations: [
+        {
+          id: 'chinst_ready',
+          state: 'ready',
+          route: {
+            provider: 'slack',
+            principalId: 'shared-slack-app',
+            externalScopeType: 'workspace',
+            externalTenantId: 'T_workspace',
+          },
+          allowedActions: ['changeTarget'],
+          connections: [],
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/slack/workspaces']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    const target = await screen.findByRole('link', { name: 'Target' });
+    expect(target.getAttribute('href')).toBe('/settings/slack/workspaces/target?teamId=T_workspace');
   });
 
   it('redirects the Slack settings landing page to workspace settings', async () => {

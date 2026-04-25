@@ -247,6 +247,7 @@ function WorkspaceListPage() {
         <div className="overflow-hidden rounded-[var(--radius-lg)] border border-border">
           {installations.map((installation) => {
             const connection = primaryConnection(installation);
+            const canChangeTarget = hasAllowedAction(installation, 'changeTarget');
             const canDisconnect = hasAllowedAction(installation, 'disconnect');
             const canReconnect = hasAllowedAction(installation, 'reconnect');
             const canTest = !installationIsDisconnected(installation);
@@ -275,12 +276,14 @@ function WorkspaceListPage() {
                       Channels
                     </Link>
                   )}
-                  <Link
-                    to={`/settings/slack/workspaces/target?teamId=${encodeURIComponent(teamID(installation))}`}
-                    className={cn(buttonVariants({ variant: 'outline' }), 'w-full sm:w-auto')}
-                  >
-                    Target
-                  </Link>
+                  {canChangeTarget && (
+                    <Link
+                      to={`/settings/slack/workspaces/target?teamId=${encodeURIComponent(teamID(installation))}`}
+                      className={cn(buttonVariants({ variant: 'outline' }), 'w-full sm:w-auto')}
+                    >
+                      Target
+                    </Link>
+                  )}
                   {canReconnect && (
                     <a
                       href={slackGatewayPath('/slack/install')}

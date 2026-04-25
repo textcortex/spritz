@@ -1210,6 +1210,31 @@ func TestChannelSettingsAPIMissingConnectionReturnsJSON(t *testing.T) {
 	}
 }
 
+func TestManagementAPIReturnsJSONAuthErrors(t *testing.T) {
+	gateway := newSlackGateway(config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/slack/workspaces", nil)
+	rec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if contentType := rec.Header().Get("Content-Type"); !strings.Contains(contentType, "application/json") {
+		t.Fatalf("expected JSON content type, got %q", contentType)
+	}
+	if cacheControl := rec.Header().Get("Cache-Control"); cacheControl != "no-store" {
+		t.Fatalf("expected no-store cache control, got %q", cacheControl)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode auth error payload: %v", err)
+	}
+	if payload["status"] != "error" || payload["message"] != "unauthorized" {
+		t.Fatalf("expected structured unauthorized error, got %#v", payload)
+	}
+}
+
 func TestWorkspaceManagementAcceptsConfiguredBrowserAuthHeaders(t *testing.T) {
 	t.Setenv("SPRITZ_AUTH_HEADER_ID", "X-Forwarded-User")
 	t.Setenv("SPRITZ_AUTH_HEADER_EMAIL", "X-Forwarded-Email")
