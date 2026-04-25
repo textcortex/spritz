@@ -43,10 +43,14 @@ type internalBindingMetadata struct {
 }
 
 type internalBindingTemplateSummary struct {
-	PresetID  string `json:"presetId,omitempty"`
-	Source    string `json:"source,omitempty"`
-	RequestID string `json:"requestId,omitempty"`
-	OwnerID   string `json:"ownerId,omitempty"`
+	PresetID    string              `json:"presetId,omitempty"`
+	NamePrefix  string              `json:"namePrefix,omitempty"`
+	Source      string              `json:"source,omitempty"`
+	RequestID   string              `json:"requestId,omitempty"`
+	OwnerID     string              `json:"ownerId,omitempty"`
+	Spec        spritzv1.SpritzSpec `json:"spec"`
+	Labels      map[string]string   `json:"labels,omitempty"`
+	Annotations map[string]string   `json:"annotations,omitempty"`
 }
 
 type internalBindingSpecSummary struct {
@@ -78,6 +82,8 @@ func bindingResourceNameForKey(bindingKey string) string {
 }
 
 func summarizeInternalBinding(binding *spritzv1.SpritzBinding) internalBindingSummary {
+	templateSpec := spritzv1.SpritzSpec{}
+	binding.Spec.Template.Spec.DeepCopyInto(&templateSpec)
 	return internalBindingSummary{
 		Metadata: internalBindingMetadata{
 			Name:              binding.Name,
@@ -90,10 +96,14 @@ func summarizeInternalBinding(binding *spritzv1.SpritzBinding) internalBindingSu
 			Disconnected:    binding.Spec.Disconnected,
 			Attributes:      cloneStringMap(binding.Spec.Attributes),
 			Template: internalBindingTemplateSummary{
-				PresetID:  strings.TrimSpace(binding.Spec.Template.PresetID),
-				Source:    strings.TrimSpace(binding.Spec.Template.Source),
-				RequestID: strings.TrimSpace(binding.Spec.Template.RequestID),
-				OwnerID:   strings.TrimSpace(binding.Spec.Template.Spec.Owner.ID),
+				PresetID:    strings.TrimSpace(binding.Spec.Template.PresetID),
+				NamePrefix:  strings.TrimSpace(binding.Spec.Template.NamePrefix),
+				Source:      strings.TrimSpace(binding.Spec.Template.Source),
+				RequestID:   strings.TrimSpace(binding.Spec.Template.RequestID),
+				OwnerID:     strings.TrimSpace(binding.Spec.Template.Spec.Owner.ID),
+				Spec:        templateSpec,
+				Labels:      cloneStringMap(binding.Spec.Template.Labels),
+				Annotations: cloneStringMap(binding.Spec.Template.Annotations),
 			},
 		},
 		Status: binding.Status,
