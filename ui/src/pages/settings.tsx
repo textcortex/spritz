@@ -202,6 +202,10 @@ function installationIsDisconnected(installation: SlackManagedInstallation): boo
   return installation.state.trim().toLowerCase() === 'disconnected';
 }
 
+function connectionName(connection: SlackManagedConnection): string {
+  return connection.displayName?.trim() || connection.id || 'Default connection';
+}
+
 function WorkspaceListPage() {
   const { value, error, loading, reload } = useAsyncValue(
     () => slackGatewayRequest<InstallationListResponse>('/api/slack/workspaces'),
@@ -354,6 +358,7 @@ function ChannelListPage() {
               className="grid gap-1 border-b border-border px-4 py-3 text-sm transition-colors last:border-b-0 hover:bg-muted/60"
             >
               <span className="font-medium">{teamID(installation)}</span>
+              <span className="text-muted-foreground">{connectionName(connection)}</span>
               <span className="text-muted-foreground">
                 {connection.routes?.length || 0} configured channel{(connection.routes?.length || 0) === 1 ? '' : 's'}
               </span>
@@ -402,7 +407,7 @@ function InstallationPage() {
               className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 text-sm last:border-b-0 hover:bg-muted/60"
             >
               <span>
-                <span className="block font-medium">{connection.displayName || 'Default connection'}</span>
+                <span className="block font-medium">{connectionName(connection)}</span>
                 <span className="text-muted-foreground">{connection.id}</span>
               </span>
               <StatusBadge value={connection.state} />

@@ -58,11 +58,11 @@ export function inferBrowserRouterBasename(
 ): string | undefined {
   const normalizedPath = `/${String(pathname || '/').replace(/^\/+/, '')}`;
   const markers = Array.from(new Set([
+    '/spritz/slack-gateway',
     '/settings',
     normalizeChatPathPrefix(chatPathPrefix),
     '/create',
     '/terminal',
-    '/spritz/slack-gateway',
   ].filter((marker) => marker && marker !== '/')));
 
   for (const marker of markers) {

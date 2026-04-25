@@ -92,6 +92,8 @@ describe('App routing', () => {
     expect(inferBrowserRouterBasename('/settings/slack/workspaces')).toBeUndefined();
     expect(inferBrowserRouterBasename('/app/c/some-name')).toBe('/app');
     expect(inferBrowserRouterBasename('/app/chat/some-name', '/chat')).toBe('/app');
+    expect(inferBrowserRouterBasename('/spritz/slack-gateway/settings/channels')).toBeUndefined();
+    expect(inferBrowserRouterBasename('/app/spritz/slack-gateway/settings/channels')).toBe('/app');
   });
 
   it('renders settings routes below an inferred basename', async () => {
@@ -118,11 +120,11 @@ describe('App routing', () => {
     const replaceSpy = vi
       .spyOn(AppModule.browserLocation, 'replace')
       .mockImplementation(() => undefined);
-    window.history.pushState({}, '', '/spritz/slack-gateway/slack/workspaces');
+    window.history.pushState({}, '', '/spritz/slack-gateway/settings/channels');
 
     render(<AppModule.App />);
 
-    expect(replaceSpy).toHaveBeenCalledWith('/slack-gateway/slack/workspaces');
+    expect(replaceSpy).toHaveBeenCalledWith('/slack-gateway/settings/channels');
     replaceSpy.mockRestore();
   });
 

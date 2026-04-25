@@ -298,6 +298,51 @@ describe('SettingsPage', () => {
     ).toBeTruthy();
   });
 
+  it('shows connection identity in channel routing rows', async () => {
+    requestMock.mockResolvedValue({
+      status: 'ok',
+      installations: [
+        {
+          id: 'chinst_multi',
+          state: 'ready',
+          route: {
+            provider: 'slack',
+            principalId: 'shared-slack-app',
+            externalScopeType: 'workspace',
+            externalTenantId: 'T_workspace',
+          },
+          allowedActions: ['manage_channels'],
+          connections: [
+            {
+              id: 'chconn_default',
+              displayName: 'Default connection',
+              isDefault: true,
+              state: 'ready',
+              routes: [],
+            },
+            {
+              id: 'chconn_zeno',
+              displayName: 'Zeno',
+              isDefault: false,
+              state: 'ready',
+              routes: [{ externalChannelId: 'C123', requireMention: false }],
+            },
+          ],
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/slack/channels']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('Default connection')).toBeTruthy();
+    expect(await screen.findByText('Zeno')).toBeTruthy();
+    expect(await screen.findByText('1 configured channel')).toBeTruthy();
+  });
+
   it('clears previous channel settings when a later route load fails', async () => {
     const user = userEvent.setup();
     requestMock.mockImplementation((path: string, options?: RequestInit) => {
