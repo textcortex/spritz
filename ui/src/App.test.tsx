@@ -96,6 +96,12 @@ describe('App routing', () => {
     expect(inferBrowserRouterBasename('/app/spritz/slack-gateway/settings/channels')).toBe('/app');
   });
 
+  it('infers a router basename at a configured prefixed app root', () => {
+    expect(inferBrowserRouterBasename('/spritz/', '/c', '/spritz/slack-gateway')).toBe('/spritz');
+    expect(inferBrowserRouterBasename('/spritz', '/c', 'https://spritz.example.test/spritz/slack-gateway')).toBe('/spritz');
+    expect(inferBrowserRouterBasename('/spritz/', '/c', '/slack-gateway', '/spritz/api')).toBe('/spritz');
+  });
+
   it('renders settings routes below an inferred basename', async () => {
     vi.resetModules();
     window.history.pushState({}, '', '/app/settings/slack/workspaces');

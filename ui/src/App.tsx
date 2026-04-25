@@ -45,6 +45,35 @@ function routeMarkerIndex(pathname: string, marker: string): number {
   return -1;
 }
 
+function normalizedPathname(raw: string): string {
+  const pathname = `/${String(raw || '/').replace(/^\/+/, '')}`;
+  return pathname.length > 1 ? pathname.replace(/\/+$/, '') : '/';
+}
+
+function configuredPathname(raw: string): string {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return '';
+  try {
+    return normalizedPathname(new URL(trimmed, 'http://spritz.local').pathname);
+  } catch {
+    return '';
+  }
+}
+
+function pathBeforeSuffix(pathname: string, suffix: string): string {
+  if (!pathname.endsWith(suffix)) return '';
+  const prefix = pathname.slice(0, -suffix.length);
+  return prefix || '/';
+}
+
+function inferredConfiguredBasenames(slackGatewayBase: string, apiBase: string): string[] {
+  const candidates = [
+    pathBeforeSuffix(configuredPathname(slackGatewayBase), '/slack-gateway'),
+    pathBeforeSuffix(configuredPathname(apiBase), '/api'),
+  ];
+  return Array.from(new Set(candidates.filter((candidate) => candidate && candidate !== '/')));
+}
+
 /**
  * Infers the path prefix used by the host page before the SPA route segment.
  *
@@ -55,8 +84,10 @@ function routeMarkerIndex(pathname: string, marker: string): number {
 export function inferBrowserRouterBasename(
   pathname = typeof window !== 'undefined' ? window.location.pathname : '/',
   chatPathPrefix = config.chatPathPrefix,
+  slackGatewayBase = config.slackGatewayBasePath,
+  apiBase = config.apiBaseUrl,
 ): string | undefined {
-  const normalizedPath = `/${String(pathname || '/').replace(/^\/+/, '')}`;
+  const normalizedPath = normalizedPathname(pathname);
   const markers = Array.from(new Set([
     '/spritz/slack-gateway',
     '/settings',
@@ -69,6 +100,11 @@ export function inferBrowserRouterBasename(
     const index = routeMarkerIndex(normalizedPath, marker);
     if (index === 0) return undefined;
     if (index > 0) return normalizedPath.slice(0, index);
+  }
+  for (const basename of inferredConfiguredBasenames(slackGatewayBase, apiBase)) {
+    if (normalizedPath === basename || normalizedPath.startsWith(`${basename}/`)) {
+      return basename;
+    }
   }
   return undefined;
 }
