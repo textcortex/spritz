@@ -28,4 +28,15 @@ describe('slack gateway path helpers', () => {
     expect(slackGatewayPath('/api/settings/channels')).toBe('/api/settings/channels');
     expect(slackGatewayPath('/slack/install')).toBe('/slack/install');
   });
+
+  it('preserves an absolute Slack gateway base URL', async () => {
+    const { slackGatewayBasePath, slackGatewayPath } = await loadSlackManagement({
+      slackGatewayBasePath: 'https://gateway.example.test/slack-gateway/',
+    });
+
+    expect(slackGatewayBasePath()).toBe('https://gateway.example.test/slack-gateway');
+    expect(slackGatewayPath('/slack/workspaces')).toBe(
+      'https://gateway.example.test/slack-gateway/slack/workspaces',
+    );
+  });
 });

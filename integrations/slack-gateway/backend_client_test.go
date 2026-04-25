@@ -225,7 +225,7 @@ func TestUpdateManagedInstallationConfigPostsExpectedPayload(t *testing.T) {
 func TestManagedChannelRoutesDefaultMissingBooleansSafely(t *testing.T) {
 	var connection backendManagedConnection
 	if err := json.Unmarshal(
-		[]byte(`{"id":"cc_1","routes":[{"externalChannelId":"D_default","externalChannelType":"im"}]}`),
+		[]byte(`{"id":"chconn_default","routes":[{"externalChannelId":"D_default","externalChannelType":"im"}]}`),
 		&connection,
 	); err != nil {
 		t.Fatalf("decode connection: %v", err)

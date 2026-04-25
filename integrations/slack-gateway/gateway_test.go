@@ -724,7 +724,7 @@ func TestChannelSettingsRendersManagedConnections(t *testing.T) {
 			"status": "resolved",
 			"installations": []map[string]any{
 				{
-					"id": "ci_1",
+					"id": "chinst_workspace_1",
 					"route": map[string]any{
 						"principalId":       "shared-slack-gateway",
 						"provider":          "slack",
@@ -740,12 +740,12 @@ func TestChannelSettingsRendersManagedConnections(t *testing.T) {
 					},
 					"connections": []map[string]any{
 						{
-							"id":        "cc_1",
+							"id":        "chconn_default",
 							"isDefault": true,
 							"state":     "ready",
 							"routes": []map[string]any{
 								{
-									"id":                "cr_1",
+									"id":                "chroute_channel_1",
 									"externalChannelId": "C_channel_1",
 									"requireMention":    false,
 									"enabled":           true,
@@ -753,11 +753,11 @@ func TestChannelSettingsRendersManagedConnections(t *testing.T) {
 							},
 						},
 						{
-							"id":    "cc_2",
+							"id":    "chconn_secondary",
 							"state": "ready",
 							"routes": []map[string]any{
 								{
-									"id":                "cr_2",
+									"id":                "chroute_channel_2",
 									"externalChannelId": "C_channel_2",
 									"requireMention":    true,
 									"enabled":           true,
@@ -781,7 +781,7 @@ func TestChannelSettingsRendersManagedConnections(t *testing.T) {
 		HTTPTimeout:           5 * time.Second,
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	installationReq := httptest.NewRequest(http.MethodGet, "/settings/channels/installations/ci_1", nil)
+	installationReq := httptest.NewRequest(http.MethodGet, "/settings/channels/installations/chinst_workspace_1", nil)
 	installationReq.Header.Set("X-Spritz-User-Id", "user-1")
 	installationRec := httptest.NewRecorder()
 	gateway.routes().ServeHTTP(installationRec, installationReq)
@@ -789,11 +789,11 @@ func TestChannelSettingsRendersManagedConnections(t *testing.T) {
 	if installationRec.Code != http.StatusSeeOther {
 		t.Fatalf("expected installation redirect, got %d: %s", installationRec.Code, installationRec.Body.String())
 	}
-	if location := installationRec.Header().Get("Location"); location != "https://gateway.example.test/settings/slack/channels/installations/ci_1" {
+	if location := installationRec.Header().Get("Location"); location != "https://gateway.example.test/settings/slack/channels/installations/chinst_workspace_1" {
 		t.Fatalf("expected installation React route, got %q", location)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/settings/channels/installations/ci_1/connections/cc_2", nil)
+	req := httptest.NewRequest(http.MethodGet, "/settings/channels/installations/chinst_workspace_1/connections/chconn_secondary", nil)
 	req.Header.Set("X-Spritz-User-Id", "user-1")
 	rec := httptest.NewRecorder()
 	gateway.routes().ServeHTTP(rec, req)
@@ -801,7 +801,7 @@ func TestChannelSettingsRendersManagedConnections(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("expected connection redirect, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if location := rec.Header().Get("Location"); location != "https://gateway.example.test/settings/slack/channels/installations/ci_1/connections/cc_2" {
+	if location := rec.Header().Get("Location"); location != "https://gateway.example.test/settings/slack/channels/installations/chinst_workspace_1/connections/chconn_secondary" {
 		t.Fatalf("expected connection React route, got %q", location)
 	}
 }
@@ -891,7 +891,7 @@ func TestChannelSettingsListDoesNotInventLegacyConnectionIDs(t *testing.T) {
 			"status": "resolved",
 			"installations": []map[string]any{
 				{
-					"id": "ci_1",
+					"id": "chinst_workspace_1",
 					"route": map[string]any{
 						"principalId":       "shared-slack-gateway",
 						"provider":          "slack",
@@ -942,7 +942,7 @@ func TestChannelSettingsUpdatePostsRoutePolicies(t *testing.T) {
 				"status": "resolved",
 				"installations": []map[string]any{
 					{
-						"id": "ci_1",
+						"id": "chinst_workspace_1",
 						"route": map[string]any{
 							"principalId":       "shared-slack-gateway",
 							"provider":          "slack",
@@ -952,12 +952,12 @@ func TestChannelSettingsUpdatePostsRoutePolicies(t *testing.T) {
 						"state": "ready",
 						"connections": []map[string]any{
 							{
-								"id":        "cc_1",
+								"id":        "chconn_default",
 								"isDefault": true,
 								"state":     "ready",
 								"routes": []map[string]any{
 									{
-										"id":                "cr_1",
+										"id":                "chroute_existing",
 										"externalChannelId": "C_existing",
 										"requireMention":    true,
 										"enabled":           true,
@@ -965,11 +965,11 @@ func TestChannelSettingsUpdatePostsRoutePolicies(t *testing.T) {
 								},
 							},
 							{
-								"id":    "cc_2",
+								"id":    "chconn_secondary",
 								"state": "ready",
 								"routes": []map[string]any{
 									{
-										"id":                "cr_2",
+										"id":                "chroute_channel_2",
 										"externalChannelId": "C_channel_2",
 										"requireMention":    true,
 										"enabled":           true,
@@ -1010,7 +1010,7 @@ func TestChannelSettingsUpdatePostsRoutePolicies(t *testing.T) {
 
 	req := httptest.NewRequest(
 		http.MethodPost,
-		"/settings/channels/installations/ci_1/connections/cc_1",
+		"/settings/channels/installations/chinst_workspace_1/connections/chconn_default",
 		strings.NewReader("action=upsert&externalChannelId=C_new"),
 	)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1024,7 +1024,7 @@ func TestChannelSettingsUpdatePostsRoutePolicies(t *testing.T) {
 	if updatePayload["callerAuthId"] != "user-1" {
 		t.Fatalf("expected caller auth id, got %#v", updatePayload["callerAuthId"])
 	}
-	if updatePayload["installationId"] != "ci_1" || updatePayload["connectionId"] != "cc_1" {
+	if updatePayload["installationId"] != "chinst_workspace_1" || updatePayload["connectionId"] != "chconn_default" {
 		t.Fatalf("expected installation and connection ids, got %#v", updatePayload)
 	}
 	policies, ok := updatePayload["channelPolicies"].([]any)

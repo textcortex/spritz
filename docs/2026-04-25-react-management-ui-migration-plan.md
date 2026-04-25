@@ -1,6 +1,6 @@
 ---
 date: 2026-04-25
-author: Onur Solmaz <onur@textcortex.com>
+author: Onur Solmaz
 title: React Management UI Migration Plan
 tags: [spritz, ui, react, slack-gateway, settings, migration]
 ---
@@ -43,7 +43,12 @@ The existing chat view should change as little as possible.
 
 The migration should add only one settings entry point to the existing chat UI,
 such as a settings button or link in the current header or navigation area.
-That entry point should navigate to the new `/settings/*` route group.
+That entry point should go through the gateway management URL
+(`/slack-gateway/slack/workspaces`, or the configured absolute gateway URL).
+Same-origin/proxied deployments will redirect into the new `/settings/*` route
+group. Cross-origin deployments without a same-origin gateway proxy will remain
+on the gateway fallback pages instead of opening a React page that cannot reach
+the gateway APIs.
 
 The settings experience should be its own React view. It should not redesign
 the chat page, add a settings sidebar inside the chat surface, or make Slack

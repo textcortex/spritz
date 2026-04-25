@@ -509,6 +509,13 @@ describe('ChatPage draft persistence', () => {
     });
   });
 
+  it('routes the settings entrypoint through the Slack gateway', async () => {
+    await renderChat('/c/covo/conv-1');
+
+    const settingsLink = screen.getByLabelText('Open settings') as HTMLAnchorElement;
+    expect(settingsLink.getAttribute('href')).toBe('/slack-gateway/slack/workspaces');
+  });
+
   it('retries ACP connect-ticket failures automatically', async () => {
     setAuthToken('external-ui-token');
     let ticketAttempts = 0;
