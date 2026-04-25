@@ -41,14 +41,9 @@ function LegacySlackGatewayRedirectPage() {
   const location = useLocation();
 
   if (typeof window !== 'undefined') {
-    const redirectURL = buildLegacySlackGatewayRedirectURL(
-      location.pathname,
-      location.search,
-      location.hash,
+    browserLocation.replace(
+      buildLegacySlackGatewayRedirectURL(location.pathname, location.search, location.hash),
     );
-    if (redirectURL !== `${location.pathname}${location.search}${location.hash}`) {
-      browserLocation.replace(redirectURL);
-    }
   }
 
   return null;

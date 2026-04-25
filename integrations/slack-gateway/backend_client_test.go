@@ -225,7 +225,7 @@ func TestUpdateManagedInstallationConfigPostsExpectedPayload(t *testing.T) {
 func TestManagedChannelRoutesDefaultMissingBooleansSafely(t *testing.T) {
 	var connection backendManagedConnection
 	if err := json.Unmarshal(
-		[]byte(`{"id":"cc_1","routes":[{"externalChannelId":"C_default"}]}`),
+		[]byte(`{"id":"cc_1","routes":[{"externalChannelId":"D_default","externalChannelType":"im"}]}`),
 		&connection,
 	); err != nil {
 		t.Fatalf("decode connection: %v", err)
@@ -237,6 +237,9 @@ func TestManagedChannelRoutesDefaultMissingBooleansSafely(t *testing.T) {
 	}
 	if policies[0].RequireMention == nil || !*policies[0].RequireMention {
 		t.Fatalf("expected omitted requireMention to default to true, got %#v", policies[0])
+	}
+	if policies[0].ExternalChannelType != "im" {
+		t.Fatalf("expected channel type to be preserved, got %#v", policies[0])
 	}
 	rows := channelRouteSettingsRows(connection)
 	if len(rows) != 1 || rows[0].ModeLabel != "Mentions required" {

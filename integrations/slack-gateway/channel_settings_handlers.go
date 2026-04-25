@@ -138,16 +138,16 @@ func (g *slackGateway) handleChannelSettingsUpdate(
 		delete(policiesByChannel, channelID)
 	case "toggle":
 		requireMention := strings.EqualFold(strings.TrimSpace(r.FormValue("requireMention")), "true")
-		policiesByChannel[channelID] = installationChannelPolicy{
-			ExternalChannelID: channelID,
-			RequireMention:    &requireMention,
-		}
+		policy := policiesByChannel[channelID]
+		policy.ExternalChannelID = channelID
+		policy.RequireMention = &requireMention
+		policiesByChannel[channelID] = policy
 	default:
 		requireMention := r.FormValue("requireMention") == "on"
-		policiesByChannel[channelID] = installationChannelPolicy{
-			ExternalChannelID: channelID,
-			RequireMention:    &requireMention,
-		}
+		policy := policiesByChannel[channelID]
+		policy.ExternalChannelID = channelID
+		policy.RequireMention = &requireMention
+		policiesByChannel[channelID] = policy
 	}
 
 	policies := make([]installationChannelPolicy, 0, len(policiesByChannel))

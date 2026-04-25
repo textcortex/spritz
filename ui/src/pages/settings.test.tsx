@@ -72,22 +72,147 @@ describe('SettingsPage', () => {
     await user.click(screen.getByRole('button', { name: /Save/i }));
 
     await waitFor(() => {
-      expect(requestMock).toHaveBeenCalledWith(
-        '/api/settings/channels/installations/chinst_test/connections/chconn_test',
-        expect.objectContaining({
-          method: 'PUT',
-          body: JSON.stringify({
-            channelPolicies: [
-              {
-                externalChannelId: 'C1234567890',
-                externalChannelType: 'channel',
-                requireMention: true,
-              },
-            ],
-          }),
-        }),
+      const putCall = requestMock.mock.calls.find(
+        ([, options]) => (options as RequestInit | undefined)?.method === 'PUT',
       );
+      expect(putCall?.[0]).toBe('/api/settings/channels/installations/chinst_test/connections/chconn_test');
+      const payload = JSON.parse(String((putCall?.[1] as RequestInit).body));
+      expect(payload).toEqual({
+        channelPolicies: [
+          {
+            externalChannelId: 'C1234567890',
+            externalChannelType: 'channel',
+            requireMention: true,
+          },
+        ],
+      });
     });
+  });
+
+  it('preserves existing route channel types when saving', async () => {
+    const user = userEvent.setup();
+    requestMock.mockImplementation((path: string, options?: RequestInit) => {
+      if (options?.method === 'PUT') {
+        return Promise.resolve({ status: 'ok' });
+      }
+      return Promise.resolve({
+        status: 'ok',
+        installation: {
+          id: 'chinst_test',
+          state: 'ready',
+          route: {
+            provider: 'slack',
+            principalId: 'shared-slack-app',
+            externalScopeType: 'workspace',
+            externalTenantId: 'T_workspace',
+          },
+          allowedActions: ['manage_channels'],
+          connections: [
+            {
+              id: 'chconn_test',
+              displayName: 'zeno',
+              isDefault: true,
+              status: 'ready',
+              routes: [
+                {
+                  id: 'route_dm',
+                  externalChannelId: 'D12345678',
+                  externalChannelType: 'im',
+                  requireMention: true,
+                  enabled: true,
+                },
+                {
+                  id: 'route_legacy',
+                  externalChannelId: 'C_LEGACY',
+                  requireMention: false,
+                  enabled: true,
+                },
+              ],
+            },
+          ],
+        },
+        connection: {
+          id: 'chconn_test',
+          displayName: 'zeno',
+          isDefault: true,
+          status: 'ready',
+          routes: [
+            {
+              id: 'route_dm',
+              externalChannelId: 'D12345678',
+              externalChannelType: 'im',
+              requireMention: true,
+              enabled: true,
+            },
+            {
+              id: 'route_legacy',
+              externalChannelId: 'C_LEGACY',
+              requireMention: false,
+              enabled: true,
+            },
+          ],
+        },
+        path,
+      });
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/slack/channels/installations/chinst_test/connections/chconn_test']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('D12345678');
+    await user.click(screen.getByRole('button', { name: 'Disable mention' }));
+
+    await waitFor(() => {
+      const putCall = requestMock.mock.calls.find(
+        ([, options]) => (options as RequestInit | undefined)?.method === 'PUT',
+      );
+      expect(putCall).toBeDefined();
+      const payload = JSON.parse(String((putCall?.[1] as RequestInit).body));
+      expect(payload.channelPolicies).toEqual([
+        {
+          externalChannelId: 'D12345678',
+          externalChannelType: 'im',
+          requireMention: false,
+        },
+        {
+          externalChannelId: 'C_LEGACY',
+          requireMention: false,
+        },
+      ]);
+    });
+  });
+
+  it('shows an empty state when installs have no channel connections', async () => {
+    requestMock.mockResolvedValue({
+      status: 'ok',
+      installations: [
+        {
+          id: 'chinst_without_connections',
+          state: 'ready',
+          route: {
+            provider: 'slack',
+            principalId: 'shared-slack-app',
+            externalScopeType: 'workspace',
+            externalTenantId: 'T_workspace',
+          },
+          allowedActions: ['manage_channels'],
+          connections: [],
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/slack/channels']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    expect(
+      await screen.findByText('No channel connections are available for these Slack workspace installs.'),
+    ).toBeTruthy();
   });
 
   it('routes typed install picker failures to the install result page', async () => {

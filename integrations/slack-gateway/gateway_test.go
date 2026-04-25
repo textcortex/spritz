@@ -722,7 +722,7 @@ func TestChannelSettingsAPIUpdatePostsRoutePolicies(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected policy object, got %#v", policies[0])
 	}
-	if policy["externalChannelId"] != "C_new" || policy["requireMention"] != false {
+	if policy["externalChannelId"] != "C_new" || policy["requireMention"] != false || policy["externalChannelType"] != "channel" {
 		t.Fatalf("expected no-mention policy for C_new, got %#v", policy)
 	}
 	if _, ok := gateway.policies.lookup("T_workspace_1"); ok {

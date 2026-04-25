@@ -84,9 +84,9 @@ export interface SlackWorkspaceTestResult {
 }
 
 export function slackGatewayBasePath(): string {
-  const normalized = String(config.slackGatewayBasePath || '/slack-gateway')
-    .trim()
-    .replace(/\/+$/g, '');
+  const configured = String(config.slackGatewayBasePath || '').trim();
+  if (/^\/+$/.test(configured)) return '';
+  const normalized = (configured || '/slack-gateway').replace(/\/+$/g, '');
   if (!normalized) return '/slack-gateway';
   return normalized.startsWith('/') ? normalized : `/${normalized}`;
 }

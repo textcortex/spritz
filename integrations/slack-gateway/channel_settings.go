@@ -565,9 +565,10 @@ func routesFromInstallationConfig(config installationConfig) []backendManagedCha
 		}
 		enabled := true
 		routes = append(routes, backendManagedChannelRoute{
-			ExternalChannelID: strings.TrimSpace(policy.ExternalChannelID),
-			RequireMention:    &requireMention,
-			Enabled:           &enabled,
+			ExternalChannelID:   strings.TrimSpace(policy.ExternalChannelID),
+			ExternalChannelType: strings.TrimSpace(policy.ExternalChannelType),
+			RequireMention:      &requireMention,
+			Enabled:             &enabled,
 		})
 	}
 	sort.Slice(routes, func(i, j int) bool {
@@ -596,8 +597,9 @@ func channelPoliciesFromConnection(connection backendManagedConnection) []instal
 		}
 		requireMention := managedRouteRequireMention(route)
 		policies = append(policies, installationChannelPolicy{
-			ExternalChannelID: channelID,
-			RequireMention:    &requireMention,
+			ExternalChannelID:   channelID,
+			ExternalChannelType: strings.TrimSpace(route.ExternalChannelType),
+			RequireMention:      &requireMention,
 		})
 	}
 	sort.Slice(policies, func(i, j int) bool {

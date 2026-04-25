@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vite-plus/test';
+import { afterEach, describe, it, expect, vi } from 'vite-plus/test';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { ConfigProvider, config } from '@/lib/config';
@@ -22,6 +22,11 @@ vi.mock('@/components/layout', () => ({
     return <Outlet />;
   },
 }));
+
+afterEach(() => {
+  delete window.SPRITZ_CONFIG;
+  vi.restoreAllMocks();
+});
 
 function renderAtRoute(path: string) {
   return render(
@@ -99,5 +104,21 @@ describe('App routing', () => {
 
     expect(replaceSpy).toHaveBeenCalledWith('/slack-gateway/slack/workspaces');
     replaceSpy.mockRestore();
+  });
+
+  it('forces document navigation when the gateway path matches the legacy SPA path', async () => {
+    vi.resetModules();
+    window.SPRITZ_CONFIG = {
+      slackGatewayBasePath: '/spritz/slack-gateway',
+    };
+    const runtimeAppModule = await import('@/App');
+    const replaceSpy = vi
+      .spyOn(runtimeAppModule.browserLocation, 'replace')
+      .mockImplementation(() => undefined);
+    window.history.pushState({}, '', '/spritz/slack-gateway/slack/workspaces');
+
+    render(<runtimeAppModule.App />);
+
+    expect(replaceSpy).toHaveBeenCalledWith('/spritz/slack-gateway/slack/workspaces');
   });
 });

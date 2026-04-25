@@ -305,6 +305,9 @@ function ChannelListPage() {
     [],
   );
   const installations = value?.installations || [];
+  const connectionRows = installations.flatMap((installation) =>
+    (installation.connections || []).map((connection) => ({ installation, connection })),
+  );
 
   return (
     <PageFrame
@@ -316,23 +319,22 @@ function ChannelListPage() {
         <LoadingRows />
       ) : installations.length === 0 ? (
         <EmptyState text="No channel-capable Slack workspace installs were found." />
+      ) : connectionRows.length === 0 ? (
+        <EmptyState text="No channel connections are available for these Slack workspace installs." />
       ) : (
         <div className="overflow-hidden rounded-[var(--radius-lg)] border border-border">
-          {installations.map((installation) => {
-            const connections = installation.connections || [];
-            return connections.map((connection) => (
-              <Link
-                key={`${installation.id}:${connection.id}`}
-                to={connectionRoutePath(installation.id, connection.id)}
-                className="grid gap-1 border-b border-border px-4 py-3 text-sm transition-colors last:border-b-0 hover:bg-muted/60"
-              >
-                <span className="font-medium">{teamID(installation)}</span>
-                <span className="text-muted-foreground">
-                  {connection.routes?.length || 0} configured channel{(connection.routes?.length || 0) === 1 ? '' : 's'}
-                </span>
-              </Link>
-            ));
-          })}
+          {connectionRows.map(({ installation, connection }) => (
+            <Link
+              key={`${installation.id}:${connection.id}`}
+              to={connectionRoutePath(installation.id, connection.id)}
+              className="grid gap-1 border-b border-border px-4 py-3 text-sm transition-colors last:border-b-0 hover:bg-muted/60"
+            >
+              <span className="font-medium">{teamID(installation)}</span>
+              <span className="text-muted-foreground">
+                {connection.routes?.length || 0} configured channel{(connection.routes?.length || 0) === 1 ? '' : 's'}
+              </span>
+            </Link>
+          ))}
         </div>
       )}
     </PageFrame>
@@ -348,6 +350,7 @@ function InstallationPage() {
     [installationId],
   );
   const installation = value?.installation;
+  const connections = installation?.connections || [];
 
   return (
     <PageFrame
@@ -364,9 +367,11 @@ function InstallationPage() {
         <LoadingRows />
       ) : !installation ? (
         <EmptyState text="Workspace installation was not found." />
+      ) : connections.length === 0 ? (
+        <EmptyState text="No channel connections are available for this Slack workspace install." />
       ) : (
         <div className="overflow-hidden rounded-[var(--radius-lg)] border border-border">
-          {(installation.connections || []).map((connection) => (
+          {connections.map((connection) => (
             <Link
               key={connection.id}
               to={connectionRoutePath(installation.id, connection.id)}
@@ -391,6 +396,22 @@ function routeRequireMention(route: SlackManagedChannelRoute): boolean {
 
 function routeEnabled(route: SlackManagedChannelRoute): boolean {
   return route.enabled !== false;
+}
+
+function routePolicyPayload(route: SlackManagedChannelRoute) {
+  const policy: {
+    externalChannelId: string;
+    externalChannelType?: string;
+    requireMention: boolean;
+  } = {
+    externalChannelId: route.externalChannelId,
+    requireMention: routeRequireMention(route),
+  };
+  const channelType = String(route.externalChannelType || '').trim();
+  if (channelType) {
+    policy.externalChannelType = channelType;
+  }
+  return policy;
 }
 
 function ConnectionSettingsPage() {
@@ -420,11 +441,7 @@ function ConnectionSettingsPage() {
       await slackGatewayRequest(loadPath, {
         method: 'PUT',
         body: JSON.stringify({
-          channelPolicies: nextRoutes.map((route) => ({
-            externalChannelId: route.externalChannelId,
-            externalChannelType: route.externalChannelType || 'channel',
-            requireMention: routeRequireMention(route),
-          })),
+          channelPolicies: nextRoutes.map(routePolicyPayload),
         }),
       });
       toast.success('Channel settings saved.');
