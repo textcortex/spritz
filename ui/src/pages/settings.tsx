@@ -23,6 +23,7 @@ import {
   installationRoutePath,
   primaryConnection,
   slackGatewayRequest,
+  slackGatewayPath,
   type SlackInstallResult,
   type SlackInstallSelection,
   type SlackInstallTarget,
@@ -213,7 +214,7 @@ function WorkspaceListPage() {
       title="Slack Workspaces"
       description="Manage workspace-level Slack app installations and their selected targets."
       action={
-        <a href="/slack-gateway/slack/install" className={buttonVariants({ size: 'lg' })}>
+        <a href={slackGatewayPath('/slack/install')} className={buttonVariants({ size: 'lg' })}>
           <PlugIcon aria-hidden="true" />
           Install
         </a>

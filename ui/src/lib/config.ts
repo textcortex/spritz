@@ -84,6 +84,7 @@ export interface SpritzConfig {
   apiBaseUrl: string;
   websocketBaseUrl: string;
   chatPathPrefix: string;
+  slackGatewayBasePath: string;
   ownerId: string;
   presets: Preset[] | string;
   repoDefaults: RepoDefaults;
@@ -105,6 +106,7 @@ export function resolveConfig(raw: RawSpritzConfig = {}): SpritzConfig {
     apiBaseUrl: raw.apiBaseUrl || '',
     websocketBaseUrl: raw.websocketBaseUrl || '',
     chatPathPrefix: raw.chatPathPrefix || '/c',
+    slackGatewayBasePath: raw.slackGatewayBasePath || '/slack-gateway',
     ownerId: raw.ownerId || '',
     presets: raw.presets || [],
     repoDefaults: {

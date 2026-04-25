@@ -8,6 +8,7 @@ import { CreatePage } from '@/pages/create';
 import { SettingsPage } from '@/pages/settings';
 import { TerminalPage } from '@/pages/terminal';
 import { chatCatchAllRoutePath } from '@/lib/urls';
+import { slackGatewayBasePath } from '@/lib/slack-management';
 
 /**
  * Maps legacy SPA-mounted Slack gateway paths to the real server-rendered
@@ -18,7 +19,12 @@ export function buildLegacySlackGatewayRedirectURL(
   search: string,
   hash: string,
 ): string {
-  const nextPath = pathname.startsWith('/spritz/') ? pathname.slice('/spritz'.length) : pathname;
+  const legacyPrefix = '/spritz/slack-gateway';
+  const nextPath = pathname.startsWith(legacyPrefix)
+    ? `${slackGatewayBasePath()}${pathname.slice(legacyPrefix.length)}`
+    : pathname.startsWith('/spritz/')
+      ? pathname.slice('/spritz'.length)
+      : pathname;
   return `${nextPath}${search}${hash}`;
 }
 
@@ -35,9 +41,14 @@ function LegacySlackGatewayRedirectPage() {
   const location = useLocation();
 
   if (typeof window !== 'undefined') {
-    browserLocation.replace(
-      buildLegacySlackGatewayRedirectURL(location.pathname, location.search, location.hash),
+    const redirectURL = buildLegacySlackGatewayRedirectURL(
+      location.pathname,
+      location.search,
+      location.hash,
     );
+    if (redirectURL !== `${location.pathname}${location.search}${location.hash}`) {
+      browserLocation.replace(redirectURL);
+    }
   }
 
   return null;

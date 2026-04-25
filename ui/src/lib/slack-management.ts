@@ -1,3 +1,5 @@
+import { config } from './config';
+
 export interface SlackInstallTargetProfile {
   name: string;
   imageUrl?: string;
@@ -81,7 +83,18 @@ export interface SlackWorkspaceTestResult {
   postedMessageTs?: string;
 }
 
-const SLACK_GATEWAY_BASE_PATH = '/slack-gateway';
+export function slackGatewayBasePath(): string {
+  const normalized = String(config.slackGatewayBasePath || '/slack-gateway')
+    .trim()
+    .replace(/\/+$/g, '');
+  if (!normalized) return '/slack-gateway';
+  return normalized.startsWith('/') ? normalized : `/${normalized}`;
+}
+
+export function slackGatewayPath(path: string): string {
+  const normalizedPath = `/${String(path || '').replace(/^\/+/g, '')}`;
+  return `${slackGatewayBasePath()}${normalizedPath}`;
+}
 
 async function parseGatewayResponse(res: Response): Promise<unknown> {
   const text = await res.text();
@@ -110,7 +123,7 @@ export async function slackGatewayRequest<T>(
   if (options.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  const res = await fetch(`${SLACK_GATEWAY_BASE_PATH}${path}`, {
+  const res = await fetch(slackGatewayPath(path), {
     credentials: 'include',
     ...options,
     headers,
