@@ -401,7 +401,7 @@ function ConnectionSettingsPage() {
   const [routes, setRoutes] = useState<SlackManagedChannelRoute[]>([]);
   const [channelId, setChannelId] = useState('');
   const [channelType, setChannelType] = useState('channel');
-  const [requireMention, setRequireMention] = useState(false);
+  const [requireMention, setRequireMention] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -446,6 +446,7 @@ function ConnectionSettingsPage() {
       },
     ].sort((left, right) => left.externalChannelId.localeCompare(right.externalChannelId));
     setChannelId('');
+    setRequireMention(true);
     await saveRoutes(nextRoutes);
   };
 
