@@ -109,6 +109,19 @@ func TestInternalUpsertBindingCreatesAndFetchesBinding(t *testing.T) {
 	if !strings.Contains(getRec.Body.String(), `"presetId":"zeno"`) {
 		t.Fatalf("expected fetched preset id in response, got %s", getRec.Body.String())
 	}
+	var getPayload map[string]any
+	if err := json.Unmarshal(getRec.Body.Bytes(), &getPayload); err != nil {
+		t.Fatalf("failed to decode fetched binding response: %v", err)
+	}
+	template := requireJSONPathObject(t, getPayload, "data", "spec", "template")
+	renderedSpec := requireJSONPathObject(t, template, "spec")
+	if renderedSpec["serviceAccountName"] != "zeno-agent-user-123" {
+		t.Fatalf("expected rendered service account in fetched binding response, got %#v", renderedSpec)
+	}
+	agentRef := requireJSONPathObject(t, renderedSpec, "agentRef")
+	if agentRef["id"] != "ag-123" {
+		t.Fatalf("expected rendered agent ref in fetched binding response, got %#v", agentRef)
+	}
 
 	var stored spritzv1.SpritzBinding
 	if err := s.client.Get(
@@ -130,6 +143,19 @@ func TestInternalUpsertBindingCreatesAndFetchesBinding(t *testing.T) {
 	if resolverHits != 1 {
 		t.Fatalf("expected resolver to be called once, got %d", resolverHits)
 	}
+}
+
+func requireJSONPathObject(t *testing.T, root map[string]any, path ...string) map[string]any {
+	t.Helper()
+	current := root
+	for _, key := range path {
+		next, ok := current[key].(map[string]any)
+		if !ok {
+			t.Fatalf("expected object at JSON path %s, got %#v", strings.Join(path, "."), current[key])
+		}
+		current = next
+	}
+	return current
 }
 
 func TestInternalUpsertBindingPreservesNormalizedCreateAnnotations(t *testing.T) {
