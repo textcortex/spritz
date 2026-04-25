@@ -134,7 +134,14 @@ func (g *slackGateway) handleInstallTargetSelectionAPIPost(w http.ResponseWriter
 			"team_id", installation.TeamID,
 			"request_id", requestID,
 		)
-		writeAPIError(w, http.StatusBadGateway, "workspace install failed")
+		g.writeInstallResultAPI(w, http.StatusOK, installResult{
+			Status:    installResultStatusError,
+			Code:      classifyInstallUpsertError(err),
+			Operation: installResultOperationChannelInstall,
+			Provider:  slackProvider,
+			RequestID: requestID,
+			TeamID:    installation.TeamID,
+		})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -154,11 +161,15 @@ func (g *slackGateway) handleInstallResultAPI(w http.ResponseWriter, r *http.Req
 		RequestID: strings.TrimSpace(r.URL.Query().Get("requestId")),
 		TeamID:    strings.TrimSpace(r.URL.Query().Get("teamId")),
 	}
+	g.writeInstallResultAPI(w, http.StatusOK, result)
+}
+
+func (g *slackGateway) writeInstallResultAPI(w http.ResponseWriter, status int, result installResult) {
 	descriptor := installResultDescriptorFor(result.Code, g.installRedirectPath())
 	if result.Status == installResultStatusSuccess && result.Code == installResultCodeInternalError {
 		descriptor = installResultDescriptorFor(installResultCodeInstalled, g.installRedirectPath())
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeJSON(w, status, map[string]any{
 		"status":      result.Status,
 		"code":        result.Code,
 		"operation":   result.Operation,

@@ -201,12 +201,16 @@ function WorkspaceListPage() {
 
   const disconnect = async (installation: SlackManagedInstallation) => {
     if (!window.confirm(`Disconnect ${teamID(installation)}?`)) return;
-    await slackGatewayRequest('/api/slack/workspaces/disconnect', {
-      method: 'POST',
-      body: JSON.stringify({ teamId: teamID(installation) }),
-    });
-    toast.success('Workspace disconnected.');
-    reload();
+    try {
+      await slackGatewayRequest('/api/slack/workspaces/disconnect', {
+        method: 'POST',
+        body: JSON.stringify({ teamId: teamID(installation) }),
+      });
+      toast.success('Workspace disconnected.');
+      reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to disconnect workspace.');
+    }
   };
 
   return (
@@ -767,18 +771,23 @@ function InstallSelectPage() {
     if (!value || !selectedTarget) return;
     setSaving(true);
     try {
-      const result = await slackGatewayRequest<{ requestId: string; teamId: string }>(
-        '/api/slack/install/selection',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            state: value.state,
-            requestId: value.requestId,
-            presetInputs: selectedTarget.presetInputs,
-          }),
-        },
+      const result = await slackGatewayRequest<
+        SlackInstallResult | { requestId: string; teamId: string }
+      >('/api/slack/install/selection', {
+        method: 'POST',
+        body: JSON.stringify({
+          state: value.state,
+          requestId: value.requestId,
+          presetInputs: selectedTarget.presetInputs,
+        }),
+      });
+      if (isSlackInstallResult(result)) {
+        navigate(`/settings/slack/install/result?${installResultQueryString(result)}`);
+        return;
+      }
+      navigate(
+        `/settings/slack/install/result?status=success&code=installed&provider=slack&operation=channel.install&requestId=${encodeURIComponent(result.requestId)}&teamId=${encodeURIComponent(result.teamId)}`,
       );
-      navigate(`/settings/slack/install/result?status=success&code=installed&provider=slack&operation=channel.install&requestId=${encodeURIComponent(result.requestId)}&teamId=${encodeURIComponent(result.teamId)}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to complete install.');
     } finally {
@@ -838,6 +847,24 @@ function isSlackInstallResult(value: unknown): value is SlackInstallResult {
     typeof (value as SlackInstallResult).title === 'string' &&
     typeof (value as SlackInstallResult).message === 'string'
   );
+}
+
+function installResultQueryString(result: SlackInstallResult): string {
+  const params = new URLSearchParams();
+  params.set('status', result.status);
+  params.set('code', result.code);
+  if (result.operation) params.set('operation', result.operation);
+  if (result.provider) params.set('provider', result.provider);
+  if (result.requestId) params.set('requestId', result.requestId);
+  if (result.teamId) params.set('teamId', result.teamId);
+  if (result.title) params.set('title', result.title);
+  if (result.message) params.set('message', result.message);
+  if (typeof result.retryable === 'boolean') {
+    params.set('retryable', String(result.retryable));
+  }
+  if (result.actionLabel) params.set('actionLabel', result.actionLabel);
+  if (result.actionHref) params.set('actionHref', result.actionHref);
+  return params.toString();
 }
 
 function InstallResultPage() {

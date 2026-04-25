@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { SettingsPage } from './settings';
 
 const requestMock = vi.hoisted(() => vi.fn());
@@ -88,5 +88,61 @@ describe('SettingsPage', () => {
         }),
       );
     });
+  });
+
+  it('routes typed install picker failures to the install result page', async () => {
+    const user = userEvent.setup();
+    const installResult = {
+      status: 'error',
+      code: 'identity.unresolved',
+      operation: 'channel.install',
+      provider: 'slack',
+      requestId: 'install-request-1',
+      teamId: 'T_workspace',
+      title: 'Install could not be linked',
+      message: 'Link the expected account, then start the install again.',
+      retryable: true,
+      actionLabel: 'Start install again',
+      actionHref: '/slack-gateway/slack/install',
+    };
+    requestMock.mockImplementation((path: string, options?: RequestInit) => {
+      if (path.startsWith('/api/slack/install/selection?')) {
+        return Promise.resolve({
+          status: 'resolved',
+          state: 'pending-state',
+          requestId: 'install-request-1',
+          teamId: 'T_workspace',
+          targets: [
+            {
+              id: 'ag_workspace',
+              profile: { name: 'Workspace Helper' },
+              presetInputs: { agentId: 'ag_workspace' },
+            },
+          ],
+        });
+      }
+      if (path === '/api/slack/install/selection' && options?.method === 'POST') {
+        return Promise.resolve(installResult);
+      }
+      if (path.startsWith('/api/slack/install/result?')) {
+        return Promise.resolve(installResult);
+      }
+      return Promise.reject(new Error(`unexpected request: ${path}`));
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/settings/slack/install/select?state=pending-state']}>
+        <Routes>
+          <Route path="settings/*" element={<SettingsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('Workspace Helper');
+    await user.click(screen.getByRole('button', { name: /Continue/i }));
+
+    expect(await screen.findByText('Install could not be linked')).toBeTruthy();
+    expect(await screen.findByText('identity.unresolved')).toBeTruthy();
+    expect(await screen.findByText('Request ID: install-request-1')).toBeTruthy();
   });
 });

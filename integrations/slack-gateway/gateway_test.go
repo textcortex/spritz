@@ -1409,6 +1409,90 @@ func TestInstallTargetSelectionUsesSelectedPresetInputs(t *testing.T) {
 	}
 }
 
+func TestInstallTargetSelectionAPIPreservesClassifiedUpsertFailure(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v1/spritz/channel-installations/upsert" {
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"status":"unresolved","field":"ownerRef","error":"external_identity_unresolved"}`))
+	}))
+	defer backend.Close()
+
+	gateway := newSlackGateway(config{
+		PublicURL:            "https://gateway.example.test",
+		SlackClientID:        "client-id",
+		SlackClientSecret:    "client-secret",
+		SlackSigningSecret:   "signing-secret",
+		OAuthStateSecret:     "oauth-state-secret",
+		SlackAPIBaseURL:      "https://slack.example.test/api",
+		SlackBotScopes:       []string{"chat:write"},
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		SpritzBaseURL:        "https://spritz.example.test",
+		SpritzServiceToken:   "spritz-service-token",
+		PrincipalID:          "shared-slack-gateway",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	pendingState, err := gateway.state.generatePendingInstall(pendingInstallState{
+		RequestID: "install-request-1",
+		Installation: slackInstallation{
+			TeamID:           "T_workspace_1",
+			InstallingUserID: "U_installer",
+			BotAccessToken:   "xoxb-installed",
+			BotUserID:        "U_bot",
+			APIAppID:         "A_app_1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("generate pending install state failed: %v", err)
+	}
+	requestBody, err := json.Marshal(map[string]any{
+		"state":     pendingState,
+		"requestId": "install-request-1",
+		"presetInputs": map[string]any{
+			"agentId": "ag_456",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal request body: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/slack/install/selection", bytes.NewReader(requestBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected typed install result response, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode API payload: %v", err)
+	}
+	if payload["status"] != "error" {
+		t.Fatalf("expected error status, got %#v", payload["status"])
+	}
+	if payload["code"] != "identity.unresolved" {
+		t.Fatalf("expected identity.unresolved code, got %#v", payload["code"])
+	}
+	if payload["requestId"] != "install-request-1" {
+		t.Fatalf("expected request id to round-trip, got %#v", payload["requestId"])
+	}
+	if payload["teamId"] != "T_workspace_1" {
+		t.Fatalf("expected team id to round-trip, got %#v", payload["teamId"])
+	}
+	if strings.Contains(rec.Body.String(), "ownerRef") {
+		t.Fatalf("expected API payload to hide backend field names, got %q", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "xoxb-installed") {
+		t.Fatalf("expected API payload to hide bot token material, got %q", rec.Body.String())
+	}
+}
+
 func TestInstallRedirectUsesConfiguredSlackHost(t *testing.T) {
 	cfg := config{
 		PublicURL:          "https://gateway.example.test",
