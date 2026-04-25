@@ -287,6 +287,19 @@ func (g *slackGateway) handleWorkspaceTest(w http.ResponseWriter, r *http.Reques
 }
 
 func (g *slackGateway) handleWorkspaceTestForm(w http.ResponseWriter, r *http.Request) {
+	if !g.reactRoutesShareGatewayOrigin() {
+		g.renderLegacyWorkspaceTestForm(w, r)
+		return
+	}
+	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
+	if !ok {
+		return
+	}
+	g.redirectToReactRoute(w, r, reactSlackWorkspaceTestPath(r.URL.Query()))
+	_ = principal
+}
+
+func (g *slackGateway) renderLegacyWorkspaceTestForm(w http.ResponseWriter, r *http.Request) {
 	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
 	if !ok {
 		return

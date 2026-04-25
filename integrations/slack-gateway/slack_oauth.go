@@ -215,7 +215,12 @@ func (g *slackGateway) handleOAuthCallback(w http.ResponseWriter, r *http.Reques
 			})
 			return
 		}
-		g.renderInstallTargetPicker(w, pendingState, requestID, targets)
+		if !g.reactRoutesShareGatewayOrigin() {
+			g.renderInstallTargetPicker(w, pendingState, requestID, targets)
+			return
+		}
+		g.setPendingInstallCookie(w, r, requestID, pendingState)
+		g.redirectToReactRoute(w, r, reactSlackInstallSelectPath(requestID))
 		return
 	}
 	if err := g.upsertInstallation(r.Context(), &installation, requestID, targets[0].PresetInputs); err != nil {
@@ -323,13 +328,9 @@ func (g *slackGateway) handleInstallTargetSelection(w http.ResponseWriter, r *ht
 
 	pendingInstall, err := g.state.parsePendingInstall(strings.TrimSpace(r.FormValue("state")))
 	if err != nil {
-		resultCode := installResultCodeStateInvalid
-		if strings.Contains(strings.ToLower(err.Error()), "expired") {
-			resultCode = installResultCodeStateExpired
-		}
 		g.redirectToInstallResult(w, r, installResult{
 			Status:    installResultStatusError,
-			Code:      resultCode,
+			Code:      classifyInstallStateError(err),
 			Operation: installResultOperationChannelInstall,
 			Provider:  slackProvider,
 		})

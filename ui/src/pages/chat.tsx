@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { MenuIcon, RotateCwIcon, ExternalLinkIcon } from 'lucide-react';
+import { MenuIcon, RotateCwIcon, ExternalLinkIcon, SettingsIcon } from 'lucide-react';
 import { request } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useConfig } from '@/lib/config';
@@ -18,6 +18,7 @@ import {
   getConversationAgentName,
 } from '@/lib/spritz-profile';
 import { chatConversationPath } from '@/lib/urls';
+import { slackGatewayPath } from '@/lib/slack-management';
 import { AgentAvatar } from '@/components/agent-avatar';
 import { useNotice } from '@/components/notice-banner';
 import { Sidebar } from '@/components/acp/sidebar';
@@ -27,7 +28,6 @@ import { Composer } from '@/components/acp/composer';
 import type { ComposerHandle } from '@/components/acp/composer';
 import { PermissionDialog } from '@/components/acp/permission-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import type { ConversationInfo } from '@/types/acp';
 import type { Spritz } from '@/types/spritz';
@@ -571,6 +571,20 @@ export function ChatPage() {
               )}
             </div>
             <div className="flex shrink-0 gap-2">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <a
+                      href={slackGatewayPath('/slack/workspaces')}
+                      aria-label="Open settings"
+                      className="inline-flex size-9 items-center justify-center rounded-[var(--radius-md)] border border-border bg-background text-foreground transition-colors hover:bg-muted"
+                    />
+                  }
+                >
+                  <SettingsIcon aria-hidden="true" className="size-4" />
+                </TooltipTrigger>
+                <TooltipContent>Settings</TooltipContent>
+              </Tooltip>
               <Tooltip>
                 <TooltipTrigger
                   render={

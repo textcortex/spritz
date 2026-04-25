@@ -11,6 +11,14 @@ func (g *slackGateway) handleChannelSettings(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	if r.Method == http.MethodGet && g.reactRoutesShareGatewayOrigin() {
+		g.redirectToReactRoute(
+			w,
+			r,
+			reactSlackChannelSettingsPath(g.relativeGatewayPath(r.URL.Path), r.URL.Query()),
+		)
+		return
+	}
 	installations, err := g.listManagedInstallations(r.Context(), principal.ID)
 	if err != nil {
 		g.logger.ErrorContext(
@@ -80,10 +88,24 @@ func (g *slackGateway) matchChannelSettingsConnectionPath(
 	installations []backendManagedInstallation,
 	relativePath string,
 ) (backendManagedInstallation, backendManagedConnection, bool) {
+	installation, connection, ok := matchManagedChannelSettingsConnection(
+		installations,
+		relativePath,
+	)
+	if !ok {
+		http.NotFound(w, r)
+		return backendManagedInstallation{}, backendManagedConnection{}, false
+	}
+	return installation, connection, true
+}
+
+func matchManagedChannelSettingsConnection(
+	installations []backendManagedInstallation,
+	relativePath string,
+) (backendManagedInstallation, backendManagedConnection, bool) {
 	trimmed := strings.Trim(strings.TrimPrefix(relativePath, "/settings/channels/"), "/")
 	parts := strings.Split(trimmed, "/")
 	if len(parts) != 4 || parts[0] != "installations" || parts[2] != "connections" {
-		http.NotFound(w, r)
 		return backendManagedInstallation{}, backendManagedConnection{}, false
 	}
 	installationID := strings.TrimSpace(parts[1])
@@ -94,12 +116,10 @@ func (g *slackGateway) matchChannelSettingsConnectionPath(
 		}
 		connection, found := managedConnectionByID(installation, connectionID)
 		if !found {
-			http.NotFound(w, r)
 			return backendManagedInstallation{}, backendManagedConnection{}, false
 		}
 		return installation, connection, true
 	}
-	http.NotFound(w, r)
 	return backendManagedInstallation{}, backendManagedConnection{}, false
 }
 
@@ -130,16 +150,16 @@ func (g *slackGateway) handleChannelSettingsUpdate(
 		delete(policiesByChannel, channelID)
 	case "toggle":
 		requireMention := strings.EqualFold(strings.TrimSpace(r.FormValue("requireMention")), "true")
-		policiesByChannel[channelID] = installationChannelPolicy{
-			ExternalChannelID: channelID,
-			RequireMention:    &requireMention,
-		}
+		policy := policiesByChannel[channelID]
+		policy.ExternalChannelID = channelID
+		policy.RequireMention = &requireMention
+		policiesByChannel[channelID] = policy
 	default:
 		requireMention := r.FormValue("requireMention") == "on"
-		policiesByChannel[channelID] = installationChannelPolicy{
-			ExternalChannelID: channelID,
-			RequireMention:    &requireMention,
-		}
+		policy := policiesByChannel[channelID]
+		policy.ExternalChannelID = channelID
+		policy.RequireMention = &requireMention
+		policiesByChannel[channelID] = policy
 	}
 
 	policies := make([]installationChannelPolicy, 0, len(policiesByChannel))

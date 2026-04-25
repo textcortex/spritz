@@ -6,6 +6,19 @@ import (
 )
 
 func (g *slackGateway) handleWorkspaceManagement(w http.ResponseWriter, r *http.Request) {
+	if !g.reactRoutesShareGatewayOrigin() {
+		g.renderLegacyWorkspaceManagement(w, r)
+		return
+	}
+	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
+	if !ok {
+		return
+	}
+	g.redirectToReactRoute(w, r, reactSlackWorkspacesPath(r.URL.Query()))
+	_ = principal
+}
+
+func (g *slackGateway) renderLegacyWorkspaceManagement(w http.ResponseWriter, r *http.Request) {
 	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
 	if !ok {
 		return
@@ -38,6 +51,19 @@ func (g *slackGateway) handleWorkspaceTarget(w http.ResponseWriter, r *http.Requ
 }
 
 func (g *slackGateway) handleWorkspaceTargetPicker(w http.ResponseWriter, r *http.Request) {
+	if !g.reactRoutesShareGatewayOrigin() {
+		g.renderLegacyWorkspaceTargetPicker(w, r)
+		return
+	}
+	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
+	if !ok {
+		return
+	}
+	g.redirectToReactRoute(w, r, reactSlackWorkspaceTargetPath(r.URL.Query()))
+	_ = principal
+}
+
+func (g *slackGateway) renderLegacyWorkspaceTargetPicker(w http.ResponseWriter, r *http.Request) {
 	principal, ok := requireBrowserPrincipal(g.cfg, w, r)
 	if !ok {
 		return

@@ -76,6 +76,13 @@ type backendInstallErrorPayload struct {
 	RequestID string `json:"requestId,omitempty"`
 }
 
+func classifyInstallStateError(err error) installResultCode {
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "expired") {
+		return installResultCodeStateExpired
+	}
+	return installResultCodeStateInvalid
+}
+
 var installResultPageTemplate = template.Must(template.New("install-result").Parse(`<!doctype html>
 <html lang="en">
   <head>
@@ -171,6 +178,20 @@ func (g *slackGateway) installResultPath() string {
 
 func (g *slackGateway) installRedirectPath() string {
 	return g.publicPathPrefix() + "/slack/install"
+}
+
+func (g *slackGateway) installRedirectURL() string {
+	base, err := url.Parse(strings.TrimRight(strings.TrimSpace(g.cfg.PublicURL), "/"))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return g.installRedirectPath()
+	}
+	basePath := strings.TrimRight(base.Path, "/")
+	routePath := "/slack/install"
+	base.RawPath = ""
+	base.Path = basePath + routePath
+	base.RawQuery = ""
+	base.Fragment = ""
+	return base.String()
 }
 
 func (g *slackGateway) redirectToInstallResult(w http.ResponseWriter, r *http.Request, result installResult) {
@@ -421,6 +442,15 @@ func classifyInstallUpsertError(err error) installResultCode {
 }
 
 func (g *slackGateway) handleInstallResult(w http.ResponseWriter, r *http.Request) {
+	if !g.reactRoutesShareGatewayOrigin() {
+		g.renderInstallResultPage(w, r)
+		return
+	}
+	target := url.URL{Path: reactSlackInstallResultPath(), RawQuery: r.URL.RawQuery}
+	g.redirectToReactRoute(w, r, target.String())
+}
+
+func (g *slackGateway) renderInstallResultPage(w http.ResponseWriter, r *http.Request) {
 	result := installResult{
 		Status:    installResultStatus(firstNonEmpty(r.URL.Query().Get("status"), string(installResultStatusError))),
 		Code:      normalizeInstallResultCode(firstNonEmpty(r.URL.Query().Get("code"), string(installResultCodeInternalError))),
