@@ -298,6 +298,75 @@ describe('SettingsPage', () => {
     ).toBeTruthy();
   });
 
+  it('shows legacy channel policies as read-only when installs have no connections', async () => {
+    requestMock.mockResolvedValue({
+      status: 'ok',
+      installations: [
+        {
+          id: 'chinst_legacy',
+          state: 'ready',
+          route: {
+            provider: 'slack',
+            principalId: 'shared-slack-app',
+            externalScopeType: 'workspace',
+            externalTenantId: 'T_workspace',
+          },
+          installationConfig: {
+            channelPolicies: [
+              { externalChannelId: 'C_LEGACY', externalChannelType: 'channel', requireMention: false },
+            ],
+          },
+          allowedActions: ['manage_channels'],
+          connections: [],
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/slack/channels']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('Legacy channel policies')).toBeTruthy();
+    expect(await screen.findByText('C_LEGACY')).toBeTruthy();
+    expect(await screen.findByText('Settings unavailable')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: /Legacy channel policies/i })).toBeNull();
+  });
+
+  it('shows legacy channel policies on an installation detail page', async () => {
+    requestMock.mockResolvedValue({
+      status: 'ok',
+      installation: {
+        id: 'chinst_legacy',
+        state: 'ready',
+        route: {
+          provider: 'slack',
+          principalId: 'shared-slack-app',
+          externalScopeType: 'workspace',
+          externalTenantId: 'T_workspace',
+        },
+        installationConfig: {
+          channelPolicies: [
+            { externalChannelId: 'C_LEGACY', externalChannelType: 'channel', requireMention: false },
+          ],
+        },
+        allowedActions: ['manage_channels'],
+        connections: [],
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/slack/channels/installations/chinst_legacy']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('Legacy channel policies')).toBeTruthy();
+    expect(await screen.findByText('C_LEGACY')).toBeTruthy();
+    expect(await screen.findByText('Settings unavailable')).toBeTruthy();
+  });
+
   it('shows connection identity in channel routing rows', async () => {
     requestMock.mockResolvedValue({
       status: 'ok',

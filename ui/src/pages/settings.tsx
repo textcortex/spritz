@@ -336,9 +336,7 @@ function ChannelListPage() {
     [],
   );
   const installations = value?.installations || [];
-  const connectionRows = installations.flatMap((installation) =>
-    (installation.connections || []).map((connection) => ({ installation, connection })),
-  );
+  const connectionRows = installations.flatMap(channelConnectionRows);
 
   return (
     <PageFrame
@@ -354,19 +352,25 @@ function ChannelListPage() {
         <EmptyState text="No channel connections are available for these Slack workspace installs." />
       ) : (
         <div className="overflow-hidden rounded-[var(--radius-lg)] border border-border">
-          {connectionRows.map(({ installation, connection }) => (
-            <Link
-              key={`${installation.id}:${connection.id}`}
-              to={connectionRoutePath(installation.id, connection.id)}
-              className="grid gap-1 border-b border-border px-4 py-3 text-sm transition-colors last:border-b-0 hover:bg-muted/60"
-            >
-              <span className="font-medium">{teamID(installation)}</span>
-              <span className="text-muted-foreground">{connectionName(connection)}</span>
-              <span className="text-muted-foreground">
-                {connection.routes?.length || 0} configured channel{(connection.routes?.length || 0) === 1 ? '' : 's'}
-              </span>
-            </Link>
-          ))}
+          {connectionRows.map((row) =>
+            row.connection ? (
+              <Link
+                key={`${row.installation.id}:${row.connection.id}`}
+                to={connectionRoutePath(row.installation.id, row.connection.id)}
+                className="grid gap-1 border-b border-border px-4 py-3 text-sm transition-colors last:border-b-0 hover:bg-muted/60"
+              >
+                <span className="font-medium">{teamID(row.installation)}</span>
+                <span className="text-muted-foreground">{connectionName(row.connection)}</span>
+                <span className="text-muted-foreground">{channelRouteCountLabel(row.connection.routes || [])}</span>
+              </Link>
+            ) : (
+              <LegacyPolicyRow
+                key={`${row.installation.id}:legacy`}
+                installation={row.installation}
+                routes={row.legacyRoutes}
+              />
+            ),
+          )}
         </div>
       )}
     </PageFrame>
@@ -383,6 +387,7 @@ function InstallationPage() {
   );
   const installation = value?.installation;
   const connections = installation?.connections || [];
+  const legacyRoutes = installation ? legacyChannelPolicyRoutes(installation) : [];
 
   return (
     <PageFrame
@@ -399,7 +404,7 @@ function InstallationPage() {
         <LoadingRows />
       ) : !installation ? (
         <EmptyState text="Workspace installation was not found." />
-      ) : connections.length === 0 ? (
+      ) : connections.length === 0 && legacyRoutes.length === 0 ? (
         <EmptyState text="No channel connections are available for this Slack workspace install." />
       ) : (
         <div className="overflow-hidden rounded-[var(--radius-lg)] border border-border">
@@ -416,9 +421,77 @@ function InstallationPage() {
               <StatusBadge value={connection.state} />
             </Link>
           ))}
+          {connections.length === 0 && legacyRoutes.length > 0 && (
+            <div className="grid gap-2 border-b border-border px-4 py-3 text-sm last:border-b-0">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span>
+                  <span className="block font-medium">Legacy channel policies</span>
+                  <span className="text-muted-foreground">{channelRouteCountLabel(legacyRoutes)}</span>
+                </span>
+                <Badge variant="outline">Settings unavailable</Badge>
+              </div>
+              <span className="text-muted-foreground">{channelRouteSummary(legacyRoutes)}</span>
+            </div>
+          )}
         </div>
       )}
     </PageFrame>
+  );
+}
+
+type ChannelConnectionRow =
+  | { installation: SlackManagedInstallation; connection: SlackManagedConnection; legacyRoutes?: never }
+  | { installation: SlackManagedInstallation; connection?: never; legacyRoutes: SlackManagedChannelRoute[] };
+
+function channelConnectionRows(installation: SlackManagedInstallation): ChannelConnectionRow[] {
+  const connections = installation.connections || [];
+  if (connections.length > 0) {
+    return connections.map((connection) => ({ installation, connection }));
+  }
+  const legacyRoutes = legacyChannelPolicyRoutes(installation);
+  if (legacyRoutes.length === 0) return [];
+  return [{ installation, legacyRoutes }];
+}
+
+function legacyChannelPolicyRoutes(installation: SlackManagedInstallation): SlackManagedChannelRoute[] {
+  return (installation.installationConfig?.channelPolicies || [])
+    .filter(routeEnabled)
+    .filter((route) => String(route.externalChannelId || '').trim())
+    .map((route, index) => ({
+      ...route,
+      id: route.id || route.externalChannelId || `legacy-${index}`,
+    }));
+}
+
+function channelRouteCountLabel(routes: SlackManagedChannelRoute[]): string {
+  const count = routes.length;
+  return `${count} configured channel${count === 1 ? '' : 's'}`;
+}
+
+function channelRouteSummary(routes: SlackManagedChannelRoute[]): string {
+  const channels = routes
+    .map((route) => String(route.externalChannelId || '').trim())
+    .filter(Boolean);
+  return channels.length > 0 ? channels.join(', ') : 'No channel IDs';
+}
+
+function LegacyPolicyRow({
+  installation,
+  routes,
+}: {
+  installation: SlackManagedInstallation;
+  routes: SlackManagedChannelRoute[];
+}) {
+  return (
+    <div className="grid gap-1 border-b border-border px-4 py-3 text-sm last:border-b-0">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="font-medium">{teamID(installation)}</span>
+        <Badge variant="outline">Settings unavailable</Badge>
+      </div>
+      <span className="text-muted-foreground">Legacy channel policies</span>
+      <span className="text-muted-foreground">{channelRouteCountLabel(routes)}</span>
+      <span className="text-muted-foreground">{channelRouteSummary(routes)}</span>
+    </div>
   );
 }
 
