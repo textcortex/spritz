@@ -84,7 +84,7 @@ function SettingsShell() {
   ];
 
   return (
-    <div className="grid min-h-dvh bg-background md:grid-cols-[240px_minmax(0,1fr)]">
+    <div className="flex min-h-dvh flex-col bg-background md:grid md:grid-cols-[240px_minmax(0,1fr)]">
       <aside className="border-b border-border bg-sidebar px-4 py-4 md:border-b-0 md:border-r">
         <div className="mb-5">
           <BrandHeader />
