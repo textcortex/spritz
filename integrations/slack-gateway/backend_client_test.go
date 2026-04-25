@@ -165,6 +165,116 @@ func TestUpdateManagedInstallationTargetPostsExpectedPayload(t *testing.T) {
 	}
 }
 
+func TestUpdateManagedInstallationConfigPostsExpectedPayload(t *testing.T) {
+	var updatePayload map[string]any
+	fastapi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v2/spritz/channel-installations/config/update" {
+			t.Fatalf("unexpected fastapi path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&updatePayload); err != nil {
+			t.Fatalf("decode update payload: %v", err)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":            "resolved",
+			"needsProvisioning": true,
+		})
+	}))
+	defer fastapi.Close()
+
+	gateway := newSlackGateway(config{
+		BackendFastAPIBaseURL: fastapi.URL,
+		BackendInternalToken:  "backend-internal-token",
+		PrincipalID:           "shared-slack-gateway",
+		HTTPTimeout:           5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	requireMention := false
+	if err := gateway.updateManagedInstallationConfig(
+		context.Background(),
+		"user-1",
+		"T_workspace_1",
+		"req-manage-config-1",
+		installationConfig{
+			ChannelPolicies: []installationChannelPolicy{
+				{ExternalChannelID: "C_channel_1", RequireMention: &requireMention},
+			},
+		},
+	); err != nil {
+		t.Fatalf("update managed installation config: %v", err)
+	}
+	if updatePayload["callerAuthId"] != "user-1" {
+		t.Fatalf("expected caller auth id to be forwarded, got %#v", updatePayload["callerAuthId"])
+	}
+	if updatePayload["externalTenantId"] != "T_workspace_1" {
+		t.Fatalf("expected team id to be forwarded, got %#v", updatePayload["externalTenantId"])
+	}
+	configPayload, ok := updatePayload["installationConfig"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected installationConfig payload, got %#v", updatePayload["installationConfig"])
+	}
+	policies, ok := configPayload["channelPolicies"].([]any)
+	if !ok || len(policies) != 1 {
+		t.Fatalf("expected one channel policy, got %#v", configPayload["channelPolicies"])
+	}
+	policy, ok := policies[0].(map[string]any)
+	if !ok || policy["externalChannelId"] != "C_channel_1" || policy["requireMention"] != false {
+		t.Fatalf("unexpected channel policy: %#v", policies[0])
+	}
+}
+
+func TestManagedChannelRoutesDefaultMissingBooleansSafely(t *testing.T) {
+	var connection backendManagedConnection
+	if err := json.Unmarshal(
+		[]byte(`{"id":"cc_1","routes":[{"externalChannelId":"C_default"}]}`),
+		&connection,
+	); err != nil {
+		t.Fatalf("decode connection: %v", err)
+	}
+
+	policies := channelPoliciesFromConnection(connection)
+	if len(policies) != 1 {
+		t.Fatalf("expected route with omitted enabled flag to stay enabled, got %#v", policies)
+	}
+	if policies[0].RequireMention == nil || !*policies[0].RequireMention {
+		t.Fatalf("expected omitted requireMention to default to true, got %#v", policies[0])
+	}
+	rows := channelRouteSettingsRows(connection)
+	if len(rows) != 1 || rows[0].ModeLabel != "Mentions required" {
+		t.Fatalf("expected settings row to render as mention-required, got %#v", rows)
+	}
+}
+
+func TestChannelSessionUnavailablePolicySnapshotRequiresStructuredPayload(t *testing.T) {
+	snapshot, ok := channelSessionUnavailablePolicySnapshot(&channelSessionUnavailableError{
+		cause: &httpStatusError{
+			method:     http.MethodPost,
+			endpoint:   "/internal/v1/spritz/channel-sessions/exchange",
+			statusCode: http.StatusServiceUnavailable,
+			body:       "temporarily unavailable",
+		},
+	})
+	if ok {
+		t.Fatalf("expected unstructured 503 to have no policy snapshot, got %#v", snapshot)
+	}
+
+	requireMention := false
+	snapshot, ok = channelSessionUnavailablePolicySnapshot(&channelSessionUnavailableError{
+		providerAuth: slackInstallation{BotUserID: "U_bot"},
+		installationConfig: installationConfig{
+			ChannelPolicies: []installationChannelPolicy{
+				{ExternalChannelID: "C_channel_1", RequireMention: &requireMention},
+			},
+		},
+		hasPolicySnapshot: true,
+	})
+	if !ok {
+		t.Fatalf("expected structured unavailable response to have a policy snapshot")
+	}
+	if snapshot.botUserID != "U_bot" || len(snapshot.config.ChannelPolicies) != 1 {
+		t.Fatalf("unexpected policy snapshot: %#v", snapshot)
+	}
+}
+
 func TestDisconnectManagedInstallationPostsExpectedPayload(t *testing.T) {
 	var disconnectPayload map[string]any
 	fastapi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

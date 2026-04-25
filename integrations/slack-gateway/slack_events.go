@@ -574,7 +574,11 @@ func (g *slackGateway) processMessageEventWithDeliveryOptions(
 	}
 
 	recoveryState := newChannelSessionRecoveryState()
-	session, terminalHandled, err := g.awaitChannelSession(
+	if snapshot, ok := g.policies.lookup(envelope.TeamID); ok && !shouldRelaySlackMessageEvent(event, snapshot) {
+		success = true
+		return messageEventProcessResult{Outcome: messageEventOutcomeIgnored}, nil
+	}
+	session, ignoredByPolicy, terminalHandled, err := g.awaitChannelSession(
 		ctx,
 		envelope,
 		event,
@@ -583,6 +587,10 @@ func (g *slackGateway) processMessageEventWithDeliveryOptions(
 	)
 	if err != nil {
 		return messageEventProcessResult{}, err
+	}
+	if ignoredByPolicy {
+		success = true
+		return messageEventProcessResult{Outcome: messageEventOutcomeIgnored}, nil
 	}
 	if terminalHandled {
 		success = true
@@ -652,7 +660,7 @@ func (g *slackGateway) processMessageEventWithDeliveryOptions(
 			}
 		} else {
 			recoveryState.resetPromptRetry()
-			recoveredSession, recoveredTerminalHandled, recoveryErr := g.awaitChannelSession(
+			recoveredSession, recoveredIgnoredByPolicy, recoveredTerminalHandled, recoveryErr := g.awaitChannelSession(
 				ctx,
 				envelope,
 				event,
@@ -661,6 +669,10 @@ func (g *slackGateway) processMessageEventWithDeliveryOptions(
 			)
 			if recoveryErr != nil {
 				return messageEventProcessResult{}, recoveryErr
+			}
+			if recoveredIgnoredByPolicy {
+				success = true
+				return messageEventProcessResult{Outcome: messageEventOutcomeIgnored}, nil
 			}
 			if recoveredTerminalHandled {
 				success = true
@@ -807,7 +819,7 @@ func (g *slackGateway) awaitChannelSession(
 	event slackEventInner,
 	recoveryState *channelSessionRecoveryState,
 	forceRefresh bool,
-) (channelSession, bool, error) {
+) (channelSession, bool, bool, error) {
 	if recoveryState == nil {
 		recoveryState = newChannelSessionRecoveryState()
 	}
@@ -831,11 +843,11 @@ func (g *slackGateway) awaitChannelSession(
 					"channel_id", strings.TrimSpace(event.Channel),
 					"message_ts", strings.TrimSpace(event.TS),
 				)
-				return channelSession{}, false, postErr
+				return channelSession{}, false, false, postErr
 			} else if terminalHandled {
-				return channelSession{}, true, nil
+				return channelSession{}, false, true, nil
 			}
-			return channelSession{}, false, context.DeadlineExceeded
+			return channelSession{}, false, false, context.DeadlineExceeded
 		}
 
 		exchangeCtx := ctx
@@ -847,12 +859,23 @@ func (g *slackGateway) awaitChannelSession(
 		session, err := g.exchangeChannelSession(
 			exchangeCtx,
 			envelope.TeamID,
+			event.Channel,
 			exchangeForceRefresh,
 		)
 		cancelExchange()
 		if err == nil {
 			recoveryState.rememberProviderAuth(session.ProviderAuth)
-			return session, false, nil
+			g.policies.remember(envelope.TeamID, session.policySnapshot())
+			if !shouldRelaySlackMessageEvent(event, session.policySnapshot()) {
+				return channelSession{}, true, false, nil
+			}
+			return session, false, false, nil
+		}
+		if snapshot, ok := channelSessionUnavailablePolicySnapshot(err); ok {
+			g.policies.remember(envelope.TeamID, snapshot)
+			if !shouldRelaySlackMessageEvent(event, snapshot) {
+				return channelSession{}, true, false, nil
+			}
 		}
 
 		providerAuth, recoverable := channelSessionUnavailableProviderAuth(err)
@@ -874,11 +897,11 @@ func (g *slackGateway) awaitChannelSession(
 						"channel_id", strings.TrimSpace(event.Channel),
 						"message_ts", strings.TrimSpace(event.TS),
 					)
-					return channelSession{}, false, postErr
+					return channelSession{}, false, false, postErr
 				} else if terminalHandled {
-					return channelSession{}, true, nil
+					return channelSession{}, false, true, nil
 				}
-				return channelSession{}, false, err
+				return channelSession{}, false, false, err
 			}
 		} else {
 			recoveryState.rememberProviderAuth(providerAuth)
@@ -912,11 +935,11 @@ func (g *slackGateway) awaitChannelSession(
 					"channel_id", strings.TrimSpace(event.Channel),
 					"message_ts", strings.TrimSpace(event.TS),
 				)
-				return channelSession{}, false, postErr
+				return channelSession{}, false, false, postErr
 			} else if terminalHandled {
-				return channelSession{}, true, nil
+				return channelSession{}, false, true, nil
 			}
-			return channelSession{}, false, err
+			return channelSession{}, false, false, err
 		}
 	}
 }
@@ -931,7 +954,7 @@ func shouldProcessSlackMessageEvent(event slackEventInner) bool {
 	if isSlackDirectMessageEvent(event) {
 		return eventType == "message"
 	}
-	return eventType == "app_mention"
+	return eventType == "app_mention" || eventType == "message"
 }
 
 func isSlackDirectMessageEvent(event slackEventInner) bool {
@@ -944,18 +967,16 @@ func isSlackDirectMessageEvent(event slackEventInner) bool {
 
 func normalizeSlackPromptText(eventType, text, botUserID string) string {
 	normalized := strings.TrimSpace(text)
-	if strings.TrimSpace(eventType) == "app_mention" {
-		botUserID = strings.TrimSpace(botUserID)
-		if botUserID != "" {
-			mentionToken := "<@" + botUserID + ">"
-			if index := strings.Index(normalized, mentionToken); index >= 0 {
-				normalized = strings.TrimSpace(
-					normalized[:index] + normalized[index+len(mentionToken):],
-				)
-			}
-		} else {
-			normalized = slackMentionTokenPattern.ReplaceAllString(normalized, " ")
+	botUserID = strings.TrimSpace(botUserID)
+	if botUserID != "" {
+		mentionToken := "<@" + botUserID + ">"
+		if index := strings.Index(normalized, mentionToken); index >= 0 {
+			normalized = strings.TrimSpace(
+				normalized[:index] + normalized[index+len(mentionToken):],
+			)
 		}
+	} else if strings.TrimSpace(eventType) == "app_mention" {
+		normalized = slackMentionTokenPattern.ReplaceAllString(normalized, " ")
 	}
 	return strings.TrimSpace(normalized)
 }

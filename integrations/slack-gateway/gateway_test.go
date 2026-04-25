@@ -369,6 +369,269 @@ func TestWorkspaceManagementRendersManagedInstallations(t *testing.T) {
 	}
 }
 
+func TestChannelSettingsRendersManagedConnections(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v2/spritz/channel-installations/list" {
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"installations": []map[string]any{
+				{
+					"id": "ci_1",
+					"route": map[string]any{
+						"principalId":       "shared-slack-gateway",
+						"provider":          "slack",
+						"externalScopeType": "workspace",
+						"externalTenantId":  "T_workspace_1",
+					},
+					"state": "ready",
+					"currentTarget": map[string]any{
+						"id": "ag_workspace",
+						"profile": map[string]any{
+							"name": "Workspace Helper",
+						},
+					},
+					"connections": []map[string]any{
+						{
+							"id":        "cc_1",
+							"isDefault": true,
+							"state":     "ready",
+							"routes": []map[string]any{
+								{
+									"id":                "cr_1",
+									"externalChannelId": "C_channel_1",
+									"requireMention":    false,
+									"enabled":           true,
+								},
+							},
+						},
+						{
+							"id":    "cc_2",
+							"state": "ready",
+							"routes": []map[string]any{
+								{
+									"id":                "cr_2",
+									"externalChannelId": "C_channel_2",
+									"requireMention":    true,
+									"enabled":           true,
+								},
+							},
+						},
+					},
+					"allowedActions": []string{"changeTarget", "disconnect"},
+				},
+			},
+		})
+	}))
+	defer backend.Close()
+
+	gateway := newSlackGateway(config{
+		BackendFastAPIBaseURL: backend.URL,
+		BackendInternalToken:  "backend-internal-token",
+		PrincipalID:           "shared-slack-gateway",
+		HTTPTimeout:           5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	installationReq := httptest.NewRequest(http.MethodGet, "/settings/channels/installations/ci_1", nil)
+	installationReq.Header.Set("X-Spritz-User-Id", "user-1")
+	installationRec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(installationRec, installationReq)
+
+	if installationRec.Code != http.StatusOK {
+		t.Fatalf("expected installation page 200, got %d: %s", installationRec.Code, installationRec.Body.String())
+	}
+	installationBody := installationRec.Body.String()
+	if !strings.Contains(installationBody, "/settings/channels/installations/ci_1/connections/cc_1") ||
+		!strings.Contains(installationBody, "/settings/channels/installations/ci_1/connections/cc_2") {
+		t.Fatalf("expected installation page to link every connection, got %q", installationBody)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/settings/channels/installations/ci_1/connections/cc_2", nil)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "T_workspace_1") || !strings.Contains(body, "Workspace Helper") {
+		t.Fatalf("expected channel settings context on page, got %q", body)
+	}
+	if !strings.Contains(body, "C_channel_2") || !strings.Contains(body, "Mentions required") {
+		t.Fatalf("expected configured channel route on page, got %q", body)
+	}
+}
+
+func TestChannelSettingsListDoesNotInventLegacyConnectionIDs(t *testing.T) {
+	requireMention := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v2/spritz/channel-installations/list" {
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"installations": []map[string]any{
+				{
+					"id": "ci_1",
+					"route": map[string]any{
+						"principalId":       "shared-slack-gateway",
+						"provider":          "slack",
+						"externalScopeType": "workspace",
+						"externalTenantId":  "T_workspace_1",
+					},
+					"state": "ready",
+					"installationConfig": installationConfig{
+						ChannelPolicies: []installationChannelPolicy{
+							{ExternalChannelID: "C_channel_1", RequireMention: &requireMention},
+						},
+					},
+					"allowedActions": []string{"changeTarget", "disconnect"},
+				},
+			},
+		})
+	}))
+	defer backend.Close()
+
+	gateway := newSlackGateway(config{
+		BackendFastAPIBaseURL: backend.URL,
+		BackendInternalToken:  "backend-internal-token",
+		PrincipalID:           "shared-slack-gateway",
+		HTTPTimeout:           5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	req := httptest.NewRequest(http.MethodGet, "/settings/channels", nil)
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "/connections/cc_1") || strings.Contains(body, "Open settings") {
+		t.Fatalf("expected legacy response without connection id to be read-only, got %q", body)
+	}
+	if !strings.Contains(body, "Settings unavailable") {
+		t.Fatalf("expected unavailable settings marker, got %q", body)
+	}
+}
+
+func TestChannelSettingsUpdatePostsRoutePolicies(t *testing.T) {
+	var updatePayload map[string]any
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/internal/v2/spritz/channel-installations/list":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "resolved",
+				"installations": []map[string]any{
+					{
+						"id": "ci_1",
+						"route": map[string]any{
+							"principalId":       "shared-slack-gateway",
+							"provider":          "slack",
+							"externalScopeType": "workspace",
+							"externalTenantId":  "T_workspace_1",
+						},
+						"state": "ready",
+						"connections": []map[string]any{
+							{
+								"id":        "cc_1",
+								"isDefault": true,
+								"state":     "ready",
+								"routes": []map[string]any{
+									{
+										"id":                "cr_1",
+										"externalChannelId": "C_existing",
+										"requireMention":    true,
+										"enabled":           true,
+									},
+								},
+							},
+							{
+								"id":    "cc_2",
+								"state": "ready",
+								"routes": []map[string]any{
+									{
+										"id":                "cr_2",
+										"externalChannelId": "C_channel_2",
+										"requireMention":    true,
+										"enabled":           true,
+									},
+								},
+							},
+						},
+						"allowedActions": []string{"changeTarget", "disconnect"},
+					},
+				},
+			})
+		case "/internal/v2/spritz/channel-installations/routes/update":
+			if err := json.NewDecoder(r.Body).Decode(&updatePayload); err != nil {
+				t.Fatalf("decode update payload: %v", err)
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status":            "resolved",
+				"needsProvisioning": false,
+			})
+		default:
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+	}))
+	defer backend.Close()
+
+	gateway := newSlackGateway(config{
+		BackendFastAPIBaseURL: backend.URL,
+		BackendInternalToken:  "backend-internal-token",
+		PrincipalID:           "shared-slack-gateway",
+		HTTPTimeout:           5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	gateway.policies.remember("T_workspace_1", installationPolicySnapshot{
+		config:    installationConfig{},
+		botUserID: "U_bot",
+	})
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/settings/channels/installations/ci_1/connections/cc_1",
+		strings.NewReader("action=upsert&externalChannelId=C_new"),
+	)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Spritz-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if updatePayload["callerAuthId"] != "user-1" {
+		t.Fatalf("expected caller auth id, got %#v", updatePayload["callerAuthId"])
+	}
+	if updatePayload["installationId"] != "ci_1" || updatePayload["connectionId"] != "cc_1" {
+		t.Fatalf("expected installation and connection ids, got %#v", updatePayload)
+	}
+	policies, ok := updatePayload["channelPolicies"].([]any)
+	if !ok || len(policies) != 2 {
+		t.Fatalf("expected two channel policies, got %#v", updatePayload["channelPolicies"])
+	}
+	var newPolicy map[string]any
+	for _, rawPolicy := range policies {
+		policy, ok := rawPolicy.(map[string]any)
+		if !ok {
+			t.Fatalf("expected policy object, got %#v", rawPolicy)
+		}
+		if policy["externalChannelId"] == "C_new" {
+			newPolicy = policy
+		}
+	}
+	if newPolicy == nil || newPolicy["requireMention"] != false {
+		t.Fatalf("expected no-mention policy for C_new, got %#v", policies)
+	}
+	if _, ok := gateway.policies.lookup("T_workspace_1"); ok {
+		t.Fatalf("expected channel settings update to evict cached policy")
+	}
+}
+
 func TestWorkspaceManagementAcceptsConfiguredBrowserAuthHeaders(t *testing.T) {
 	t.Setenv("SPRITZ_AUTH_HEADER_ID", "X-Forwarded-User")
 	t.Setenv("SPRITZ_AUTH_HEADER_EMAIL", "X-Forwarded-Email")
@@ -1630,9 +1893,28 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 
 func TestSlackEventIgnoresTopLevelChannelMessagesWithoutMention(t *testing.T) {
 	var backendCalls int
+	var exchangePayload map[string]any
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		backendCalls++
-		t.Fatalf("unexpected backend path %s", r.URL.Path)
+		if r.URL.Path != "/internal/v1/spritz/channel-sessions/exchange" {
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&exchangePayload); err != nil {
+			t.Fatalf("decode session exchange body: %v", err)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"session": map[string]any{
+				"accessToken":  "owner-token",
+				"ownerAuthId":  "owner-123",
+				"namespace":    "spritz-staging",
+				"instanceId":   "zeno-acme",
+				"providerAuth": map[string]any{"botUserId": "U_bot"},
+				"installationConfig": map[string]any{
+					"channelPolicies": []map[string]any{},
+				},
+			},
+		})
 	}))
 	defer backend.Close()
 
@@ -1672,8 +1954,11 @@ func TestSlackEventIgnoresTopLevelChannelMessagesWithoutMention(t *testing.T) {
 	if err := gateway.waitForWorkers(drainCtx); err != nil {
 		t.Fatalf("worker drain failed: %v", err)
 	}
-	if backendCalls != 0 {
-		t.Fatalf("expected plain channel chatter to be ignored, got %d backend calls", backendCalls)
+	if backendCalls != 1 {
+		t.Fatalf("expected one backend policy lookup, got %d backend calls", backendCalls)
+	}
+	if exchangePayload["externalChannelId"] != "C_1" {
+		t.Fatalf("expected session exchange to include message channel id, got %#v", exchangePayload)
 	}
 }
 
@@ -2458,8 +2743,8 @@ func TestShouldIgnoreSlackMessageEventRejectsSystemSubtypes(t *testing.T) {
 	}
 }
 
-func TestShouldProcessSlackMessageEventRequiresMentionOutsideDMs(t *testing.T) {
-	if shouldProcessSlackMessageEvent(
+func TestShouldProcessSlackMessageEventQueuesChannelMessagesForPolicyCheck(t *testing.T) {
+	if !shouldProcessSlackMessageEvent(
 		slackEventInner{
 			Type:        "message",
 			Channel:     "C_1",
@@ -2467,7 +2752,7 @@ func TestShouldProcessSlackMessageEventRequiresMentionOutsideDMs(t *testing.T) {
 			TS:          "1711387375.000100",
 		},
 	) {
-		t.Fatalf("expected top-level channel messages to be ignored")
+		t.Fatalf("expected top-level channel messages to be queued for policy check")
 	}
 	if !shouldProcessSlackMessageEvent(
 		slackEventInner{
@@ -2479,7 +2764,7 @@ func TestShouldProcessSlackMessageEventRequiresMentionOutsideDMs(t *testing.T) {
 	) {
 		t.Fatalf("expected channel app_mention events to be processed")
 	}
-	if shouldProcessSlackMessageEvent(
+	if !shouldProcessSlackMessageEvent(
 		slackEventInner{
 			Type:        "message",
 			Channel:     "C_1",
@@ -2488,7 +2773,7 @@ func TestShouldProcessSlackMessageEventRequiresMentionOutsideDMs(t *testing.T) {
 			TS:          "1711387376.000100",
 		},
 	) {
-		t.Fatalf("expected unmentioned channel thread replies to be ignored")
+		t.Fatalf("expected channel thread replies to be queued for policy check")
 	}
 	if !shouldProcessSlackMessageEvent(
 		slackEventInner{
@@ -2499,6 +2784,37 @@ func TestShouldProcessSlackMessageEventRequiresMentionOutsideDMs(t *testing.T) {
 		},
 	) {
 		t.Fatalf("expected DM messages to be processed")
+	}
+}
+
+func TestShouldRelaySlackMessageEventUsesInstallationPolicy(t *testing.T) {
+	requireMention := true
+	withoutMention := false
+	config := installationConfig{
+		ChannelPolicies: []installationChannelPolicy{
+			{ExternalChannelID: "C_requires", RequireMention: &requireMention},
+			{ExternalChannelID: "C_open", RequireMention: &withoutMention},
+		},
+	}
+	snapshot := installationPolicySnapshot{config: config, botUserID: "U_bot"}
+
+	if shouldRelaySlackMessageEvent(
+		slackEventInner{Type: "message", Channel: "C_requires", Text: "hello"},
+		snapshot,
+	) {
+		t.Fatalf("expected configured requireMention channel to require the bot mention")
+	}
+	if !shouldRelaySlackMessageEvent(
+		slackEventInner{Type: "message", Channel: "C_open", Text: "hello"},
+		snapshot,
+	) {
+		t.Fatalf("expected requireMention=false channel to relay without mention")
+	}
+	if !shouldRelaySlackMessageEvent(
+		slackEventInner{Type: "message", Channel: "C_requires", Text: "<@U_bot> hello"},
+		snapshot,
+	) {
+		t.Fatalf("expected explicit bot mention to relay even when requireMention is true")
 	}
 }
 
