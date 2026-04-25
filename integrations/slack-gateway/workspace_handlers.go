@@ -10,7 +10,7 @@ func (g *slackGateway) handleWorkspaceManagement(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	redirectToReactRoute(w, r, reactSlackWorkspacesPath(r.URL.Query()))
+	g.redirectToReactRoute(w, r, reactSlackWorkspacesPath(r.URL.Query()))
 	_ = principal
 }
 
@@ -51,7 +51,7 @@ func (g *slackGateway) handleWorkspaceTargetPicker(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	redirectToReactRoute(w, r, reactSlackWorkspaceTargetPath(r.URL.Query()))
+	g.redirectToReactRoute(w, r, reactSlackWorkspaceTargetPath(r.URL.Query()))
 	_ = principal
 }
 

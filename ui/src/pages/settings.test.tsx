@@ -282,4 +282,28 @@ describe('SettingsPage', () => {
     expect(await screen.findByText('identity.unresolved')).toBeTruthy();
     expect(await screen.findByText('Request ID: install-request-1')).toBeTruthy();
   });
+
+  it('does not render query-provided install result action links', async () => {
+    requestMock.mockImplementation((path: string) => {
+      if (path.startsWith('/api/slack/install/result?')) {
+        return Promise.reject(new Error('gateway unavailable'));
+      }
+      return Promise.reject(new Error(`unexpected request: ${path}`));
+    });
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          '/settings/slack/install/result?status=error&code=internal.error&actionLabel=Continue&actionHref=javascript:alert(1)',
+        ]}
+      >
+        <Routes>
+          <Route path="settings/*" element={<SettingsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('Slack install needs attention')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Continue' })).toBeNull();
+  });
 });

@@ -422,7 +422,7 @@ func classifyInstallUpsertError(err error) installResultCode {
 
 func (g *slackGateway) handleInstallResult(w http.ResponseWriter, r *http.Request) {
 	target := url.URL{Path: reactSlackInstallResultPath(), RawQuery: r.URL.RawQuery}
-	redirectToReactRoute(w, r, target.String())
+	g.redirectToReactRoute(w, r, target.String())
 }
 
 func (g *slackGateway) renderInstallResultPage(w http.ResponseWriter, r *http.Request) {

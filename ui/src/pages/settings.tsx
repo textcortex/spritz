@@ -852,8 +852,8 @@ function installResultFromQuery(params: URLSearchParams): SlackInstallResult | n
         ? 'The Slack workspace is connected.'
         : 'The Slack install flow finished without a detailed result message.'
     ),
-    actionLabel: params.get('actionLabel') || undefined,
-    actionHref: params.get('actionHref') || undefined,
+    actionLabel: undefined,
+    actionHref: undefined,
   };
 }
 

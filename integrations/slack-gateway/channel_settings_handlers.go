@@ -12,7 +12,7 @@ func (g *slackGateway) handleChannelSettings(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if r.Method == http.MethodGet {
-		redirectToReactRoute(
+		g.redirectToReactRoute(
 			w,
 			r,
 			reactSlackChannelSettingsPath(g.relativeGatewayPath(r.URL.Path), r.URL.Query()),

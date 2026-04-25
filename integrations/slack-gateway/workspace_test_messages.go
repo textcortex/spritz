@@ -291,7 +291,7 @@ func (g *slackGateway) handleWorkspaceTestForm(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	redirectToReactRoute(w, r, reactSlackWorkspaceTestPath(r.URL.Query()))
+	g.redirectToReactRoute(w, r, reactSlackWorkspaceTestPath(r.URL.Query()))
 	_ = principal
 }
 

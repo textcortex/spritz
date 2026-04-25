@@ -191,6 +191,9 @@ func TestOAuthCallbackAutoSelectsSingleInstallTargetAndUpsertsRegistry(t *testin
 	if err != nil {
 		t.Fatalf("parse result redirect: %v", err)
 	}
+	if resultLocation.Scheme != "https" || resultLocation.Host != "spritz.example.test" {
+		t.Fatalf("expected result redirect to use Spritz host, got %s", resultLocation.String())
+	}
 	if resultLocation.Path != "/settings/slack/install/result" {
 		t.Fatalf("expected React result route, got %q", resultLocation.Path)
 	}
@@ -280,6 +283,9 @@ func TestOAuthCallbackRendersInstallTargetPickerWhenMultipleTargetsAvailable(t *
 	redirectURL, err := url.Parse(rec.Header().Get("Location"))
 	if err != nil {
 		t.Fatalf("parse picker redirect: %v", err)
+	}
+	if redirectURL.Scheme != "https" || redirectURL.Host != "spritz.example.test" {
+		t.Fatalf("expected picker redirect to use Spritz host, got %s", redirectURL.String())
 	}
 	if redirectURL.Path != "/settings/slack/install/select" {
 		t.Fatalf("expected React picker route, got %q", redirectURL.Path)
@@ -7597,6 +7603,28 @@ func TestSpritzWebSocketURLPreservesBasePath(t *testing.T) {
 	}
 	if parsed.Query().Get("namespace") != "spritz-staging" {
 		t.Fatalf("expected namespace query, got %q", parsed.RawQuery)
+	}
+}
+
+func TestReactRouteURLUsesSpritzBaseURL(t *testing.T) {
+	gateway := newSlackGateway(
+		config{SpritzBaseURL: "https://spritz.example.test/app"},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	target := gateway.reactRouteURL("/settings/slack/workspaces/test?teamId=T_workspace_1")
+	parsed, err := url.Parse(target)
+	if err != nil {
+		t.Fatalf("parse react route url: %v", err)
+	}
+	if parsed.Scheme != "https" || parsed.Host != "spritz.example.test" {
+		t.Fatalf("expected Spritz host, got %s", target)
+	}
+	if parsed.Path != "/app/settings/slack/workspaces/test" {
+		t.Fatalf("expected Spritz base path to be preserved, got %q", parsed.Path)
+	}
+	if parsed.Query().Get("teamId") != "T_workspace_1" {
+		t.Fatalf("expected query to be preserved, got %q", parsed.RawQuery)
 	}
 }
 

@@ -45,6 +45,28 @@ func reactSlackChannelSettingsPath(relativeGatewayPath string, query url.Values)
 	return target.String()
 }
 
-func redirectToReactRoute(w http.ResponseWriter, r *http.Request, target string) {
-	http.Redirect(w, r, target, http.StatusSeeOther)
+func (g *slackGateway) reactRouteURL(target string) string {
+	route, err := url.Parse(strings.TrimSpace(target))
+	if err != nil {
+		return target
+	}
+	if route.IsAbs() {
+		return route.String()
+	}
+
+	base, err := url.Parse(strings.TrimRight(strings.TrimSpace(g.cfg.SpritzBaseURL), "/"))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return route.String()
+	}
+	basePath := strings.TrimRight(base.Path, "/")
+	routePath := "/" + strings.TrimLeft(route.Path, "/")
+	base.RawPath = ""
+	base.Path = basePath + routePath
+	base.RawQuery = route.RawQuery
+	base.Fragment = route.Fragment
+	return base.String()
+}
+
+func (g *slackGateway) redirectToReactRoute(w http.ResponseWriter, r *http.Request, target string) {
+	http.Redirect(w, r, g.reactRouteURL(target), http.StatusSeeOther)
 }
