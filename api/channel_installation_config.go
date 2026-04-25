@@ -66,16 +66,16 @@ func applyChannelInstallationConfigProjection(spec *spritzv1.SpritzSpec, attribu
 	if err != nil {
 		return err
 	}
-	providers := ensureObjectField(config, "providers")
-	providerConfig := ensureObjectField(providers, provider)
-	channels := map[string]any{}
+	channelsConfig := ensureObjectField(config, "channels")
+	providerConfig := ensureObjectField(channelsConfig, provider)
+	providerChannels := map[string]any{}
 	for _, policy := range channelPolicies {
-		channels[policy.ExternalChannelID] = map[string]any{
+		providerChannels[policy.ExternalChannelID] = map[string]any{
 			"allow":          true,
 			"requireMention": *policy.RequireMention,
 		}
 	}
-	providerConfig["channels"] = channels
+	providerConfig["channels"] = providerChannels
 
 	encoded, err := json.Marshal(config)
 	if err != nil {

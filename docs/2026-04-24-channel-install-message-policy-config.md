@@ -249,7 +249,7 @@ Example projection:
 
 ```json
 {
-  "providers": {
+  "channels": {
     "slack": {
       "channels": {
         "C1234567890": {
