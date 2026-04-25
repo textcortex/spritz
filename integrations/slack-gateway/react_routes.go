@@ -59,7 +59,7 @@ func (g *slackGateway) reactRouteURL(target string) string {
 		return route.String()
 	}
 
-	base, err := url.Parse(strings.TrimRight(strings.TrimSpace(g.cfg.SpritzBaseURL), "/"))
+	base, err := url.Parse(strings.TrimRight(strings.TrimSpace(g.reactBaseURL()), "/"))
 	if err != nil || base.Scheme == "" || base.Host == "" {
 		return route.String()
 	}
@@ -72,12 +72,19 @@ func (g *slackGateway) reactRouteURL(target string) string {
 	return base.String()
 }
 
+func (g *slackGateway) reactBaseURL() string {
+	if baseURL := strings.TrimSpace(g.cfg.ReactBaseURL); baseURL != "" {
+		return baseURL
+	}
+	return g.cfg.SpritzBaseURL
+}
+
 func (g *slackGateway) reactRoutesShareGatewayOrigin() bool {
 	gatewayURL, err := url.Parse(strings.TrimSpace(g.cfg.PublicURL))
 	if err != nil || gatewayURL.Scheme == "" || gatewayURL.Host == "" {
 		return false
 	}
-	reactURL, err := url.Parse(strings.TrimSpace(g.cfg.SpritzBaseURL))
+	reactURL, err := url.Parse(strings.TrimSpace(g.reactBaseURL()))
 	if err != nil || reactURL.Scheme == "" || reactURL.Host == "" {
 		return false
 	}
