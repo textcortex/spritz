@@ -109,7 +109,7 @@ func (g *slackGateway) handleInstallTargetSelectionAPI(w http.ResponseWriter, r 
 
 func (g *slackGateway) handleInstallTargetSelectionAPIGet(w http.ResponseWriter, r *http.Request) {
 	requestID := strings.TrimSpace(r.URL.Query().Get("requestId"))
-	state := g.pendingInstallStateFromRequest(r, requestID, "")
+	state := g.pendingInstallStateFromRequest(r, requestID, strings.TrimSpace(r.URL.Query().Get("state")))
 	pendingInstall, err := g.state.parsePendingInstall(state)
 	if err != nil {
 		g.clearPendingInstallCookie(w, r, requestID)

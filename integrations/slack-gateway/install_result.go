@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"html/template"
 	"net/http"
 	"net/url"
 	"strings"
@@ -60,14 +59,6 @@ type installResultDescriptor struct {
 	ActionHref  string
 }
 
-type installResultPageData struct {
-	Title       string
-	Message     string
-	RequestID   string
-	ActionLabel string
-	ActionHref  string
-}
-
 type backendInstallErrorPayload struct {
 	Status    string `json:"status"`
 	Field     string `json:"field,omitempty"`
@@ -82,87 +73,6 @@ func classifyInstallStateError(err error) installResultCode {
 	}
 	return installResultCodeStateInvalid
 }
-
-var installResultPageTemplate = template.Must(template.New("install-result").Parse(`<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ .Title }}</title>
-    <style>
-      :root {
-        color-scheme: light;
-        --bg: #f6f4ee;
-        --surface: #fffdf8;
-        --border: #d9d2c4;
-        --text: #1f1b16;
-        --muted: #62584b;
-        --accent: #0f766e;
-        --danger: #9a3412;
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        min-height: 100vh;
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        background: linear-gradient(180deg, var(--bg), #efe9dd);
-        color: var(--text);
-        display: grid;
-        place-items: center;
-        padding: 24px;
-      }
-      main {
-        width: min(560px, 100%);
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: 20px;
-        padding: 28px;
-        box-shadow: 0 24px 80px rgba(31, 27, 22, 0.08);
-      }
-      h1 {
-        margin: 0 0 12px;
-        font-size: 30px;
-        line-height: 1.1;
-      }
-      p {
-        margin: 0;
-        font-size: 16px;
-        line-height: 1.6;
-        color: var(--muted);
-      }
-      .meta {
-        margin-top: 18px;
-        padding-top: 18px;
-        border-top: 1px solid var(--border);
-        font-size: 13px;
-        color: var(--muted);
-      }
-      .action {
-        display: inline-flex;
-        align-items: center;
-        margin-top: 22px;
-        padding: 11px 16px;
-        border-radius: 999px;
-        background: var(--text);
-        color: #fff;
-        text-decoration: none;
-        font-weight: 600;
-      }
-    </style>
-  </head>
-  <body>
-    <main>
-      <h1>{{ .Title }}</h1>
-      <p>{{ .Message }}</p>
-      {{ if .ActionHref }}
-      <a class="action" href="{{ .ActionHref }}">{{ .ActionLabel }}</a>
-      {{ end }}
-      {{ if .RequestID }}
-      <div class="meta">Request ID: <code>{{ .RequestID }}</code></div>
-      {{ end }}
-    </main>
-  </body>
-</html>`))
 
 func newInstallRequestID() string {
 	var bytes [8]byte
@@ -442,37 +352,6 @@ func classifyInstallUpsertError(err error) installResultCode {
 }
 
 func (g *slackGateway) handleInstallResult(w http.ResponseWriter, r *http.Request) {
-	if !g.reactRoutesShareGatewayOrigin() {
-		g.renderInstallResultPage(w, r)
-		return
-	}
 	target := url.URL{Path: reactSlackInstallResultPath(), RawQuery: r.URL.RawQuery}
 	g.redirectToReactRoute(w, r, target.String())
-}
-
-func (g *slackGateway) renderInstallResultPage(w http.ResponseWriter, r *http.Request) {
-	result := installResult{
-		Status:    installResultStatus(firstNonEmpty(r.URL.Query().Get("status"), string(installResultStatusError))),
-		Code:      normalizeInstallResultCode(firstNonEmpty(r.URL.Query().Get("code"), string(installResultCodeInternalError))),
-		Operation: strings.TrimSpace(r.URL.Query().Get("operation")),
-		Retryable: strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("retryable")), "true"),
-		Provider:  firstNonEmpty(r.URL.Query().Get("provider"), slackProvider),
-		RequestID: strings.TrimSpace(r.URL.Query().Get("requestId")),
-		TeamID:    strings.TrimSpace(r.URL.Query().Get("teamId")),
-	}
-	descriptor := installResultDescriptorFor(result.Code, g.installRedirectPath())
-	if result.Status == installResultStatusSuccess && result.Code == installResultCodeInternalError {
-		descriptor = installResultDescriptorFor(installResultCodeInstalled, g.installRedirectPath())
-	}
-	page := installResultPageData{
-		Title:       descriptor.Title,
-		Message:     descriptor.Message,
-		RequestID:   result.RequestID,
-		ActionLabel: descriptor.ActionLabel,
-		ActionHref:  descriptor.ActionHref,
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_ = installResultPageTemplate.Execute(w, page)
 }

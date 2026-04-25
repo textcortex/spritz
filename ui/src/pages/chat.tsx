@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { MenuIcon, RotateCwIcon, ExternalLinkIcon, SettingsIcon } from 'lucide-react';
 import { request } from '@/lib/api';
@@ -18,7 +18,6 @@ import {
   getConversationAgentName,
 } from '@/lib/spritz-profile';
 import { chatConversationPath } from '@/lib/urls';
-import { slackGatewayPath } from '@/lib/slack-management';
 import { AgentAvatar } from '@/components/agent-avatar';
 import { useNotice } from '@/components/notice-banner';
 import { Sidebar } from '@/components/acp/sidebar';
@@ -574,8 +573,8 @@ export function ChatPage() {
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <a
-                      href={slackGatewayPath('/slack/workspaces')}
+                    <Link
+                      to="/settings/slack/workspaces"
                       aria-label="Open settings"
                       className="inline-flex size-9 items-center justify-center rounded-[var(--radius-md)] border border-border bg-background text-foreground transition-colors hover:bg-muted"
                     />

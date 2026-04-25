@@ -241,10 +241,6 @@ func TestManagedChannelRoutesDefaultMissingBooleansSafely(t *testing.T) {
 	if policies[0].ExternalChannelType != "im" {
 		t.Fatalf("expected channel type to be preserved, got %#v", policies[0])
 	}
-	rows := channelRouteSettingsRows(connection)
-	if len(rows) != 1 || rows[0].ModeLabel != "Mentions required" {
-		t.Fatalf("expected settings row to render as mention-required, got %#v", rows)
-	}
 }
 
 func TestChannelSessionUnavailablePolicySnapshotRequiresStructuredPayload(t *testing.T) {

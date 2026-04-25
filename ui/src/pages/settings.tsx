@@ -873,9 +873,14 @@ function InstallSelectPage() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const requestId = (params.get('requestId') || '').trim();
-  const selectionPath = requestId
-    ? `/api/slack/install/selection?requestId=${encodeURIComponent(requestId)}`
-    : '/api/slack/install/selection';
+  const state = (params.get('state') || '').trim();
+  const selectionPath = useMemo(() => {
+    const query = new URLSearchParams();
+    if (requestId) query.set('requestId', requestId);
+    if (state) query.set('state', state);
+    const encoded = query.toString();
+    return encoded ? `/api/slack/install/selection?${encoded}` : '/api/slack/install/selection';
+  }, [requestId, state]);
   const { value, error, loading } = useAsyncValue(
     () => slackGatewayRequest<SlackInstallSelection | SlackInstallResult>(selectionPath),
     [selectionPath],
@@ -910,6 +915,7 @@ function InstallSelectPage() {
         method: 'POST',
         body: JSON.stringify({
           requestId: selection.requestId,
+          state: state || undefined,
           presetInputs: selectedTarget.presetInputs,
         }),
       });
