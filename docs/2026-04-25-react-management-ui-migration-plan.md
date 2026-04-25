@@ -56,14 +56,14 @@ The current Slack gateway owns these rendered pages:
 
 | Current gateway route | Current purpose | React destination |
 |---|---|---|
-| `/slack-gateway/slack/install/select` | Select install target after Slack OAuth | `/settings/integrations/slack/install/select` |
-| `/slack-gateway/slack/install/result` | Show install success or failure | `/settings/integrations/slack/install/result` |
-| `/slack-gateway/slack/workspaces` | List manageable Slack workspaces | `/settings/integrations/slack/workspaces` |
-| `/slack-gateway/slack/workspaces/target` | Change a workspace target | `/settings/integrations/slack/workspaces/:externalTenantId/target` |
-| `/slack-gateway/slack/workspaces/test` | Send a test message | `/settings/integrations/slack/workspaces/:externalTenantId/test` |
-| `/slack-gateway/settings/channels` | List channel-installation settings | `/settings/integrations/slack/channels` |
-| `/slack-gateway/settings/channels/installations/:installationId` | List connections for one installation | `/settings/integrations/slack/installations/:installationId` |
-| `/slack-gateway/settings/channels/installations/:installationId/connections/:connectionId` | Edit channel route policies | `/settings/integrations/slack/installations/:installationId/connections/:connectionId/channels` |
+| `/slack-gateway/slack/install/select` | Select install target after Slack OAuth | `/settings/slack/install/select` |
+| `/slack-gateway/slack/install/result` | Show install success or failure | `/settings/slack/install/result` |
+| `/slack-gateway/slack/workspaces` | List manageable Slack workspaces | `/settings/slack/workspaces` |
+| `/slack-gateway/slack/workspaces/target` | Change a workspace target | `/settings/slack/workspaces/:externalTenantId/target` |
+| `/slack-gateway/slack/workspaces/test` | Send a test message | `/settings/slack/workspaces/:externalTenantId/test` |
+| `/slack-gateway/settings/channels` | List channel-installation settings | `/settings/slack/channels` |
+| `/slack-gateway/settings/channels/installations/:installationId` | List connections for one installation | `/settings/slack/channels/installations/:installationId` |
+| `/slack-gateway/settings/channels/installations/:installationId/connections/:connectionId` | Edit channel route policies | `/settings/slack/channels/installations/:installationId/connections/:connectionId` |
 
 The gateway should keep these non-UI protocol routes:
 
@@ -80,16 +80,15 @@ Add a settings section to the React app:
 
 ```text
 /settings
-/settings/integrations
-/settings/integrations/slack
-/settings/integrations/slack/install/select
-/settings/integrations/slack/install/result
-/settings/integrations/slack/workspaces
-/settings/integrations/slack/workspaces/:externalTenantId/target
-/settings/integrations/slack/workspaces/:externalTenantId/test
-/settings/integrations/slack/channels
-/settings/integrations/slack/installations/:installationId
-/settings/integrations/slack/installations/:installationId/connections/:connectionId/channels
+/settings/slack
+/settings/slack/install/select
+/settings/slack/install/result
+/settings/slack/workspaces
+/settings/slack/workspaces/:externalTenantId/target
+/settings/slack/workspaces/:externalTenantId/test
+/settings/slack/channels
+/settings/slack/channels/installations/:installationId
+/settings/slack/channels/installations/:installationId/connections/:connectionId
 ```
 
 The settings section should use shared React layout components:
@@ -113,7 +112,7 @@ while the backend contract settles.
 Recommended gateway JSON endpoints:
 
 ```text
-GET  /slack-gateway/api/slack/install/selection?state=...
+GET  /slack-gateway/api/slack/install/selection
 POST /slack-gateway/api/slack/install/selection
 GET  /slack-gateway/api/slack/install/result?...
 
@@ -144,20 +143,22 @@ The OAuth entry and callback remain gateway-owned.
 
 Target flow:
 
-1. User starts at React: `/settings/integrations/slack`.
+1. User starts at React: `/settings/slack`.
 2. React links to gateway: `/slack-gateway/slack/install`.
 3. Gateway redirects to Slack OAuth.
 4. Slack calls gateway callback: `/slack-gateway/slack/oauth/callback`.
 5. If target selection is needed, gateway redirects to React:
-   `/settings/integrations/slack/install/select?state=...`.
+   `/settings/slack/install/select`.
 6. React fetches selection data from gateway JSON and submits the selected
    opaque target payload back to gateway JSON.
 7. Gateway upserts the install and redirects to React result:
-   `/settings/integrations/slack/install/result?...`.
+   `/settings/slack/install/result?...`.
 8. React renders the result page.
 
-The opaque OAuth state should stay gateway-owned. React may carry it in the
-URL long enough to fetch or submit target selection, but it must not parse it.
+The opaque OAuth state stays gateway-owned. The callback stores pending
+selection state in a short-lived, HTTP-only gateway cookie scoped to the
+selection API. React must not receive, parse, or forward Slack token material
+or encrypted OAuth state in the URL.
 
 ## Migration Phases
 
