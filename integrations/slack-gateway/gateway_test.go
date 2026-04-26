@@ -1962,9 +1962,17 @@ func TestWorkspaceTestSubmitRealModePostsSlackReply(t *testing.T) {
 	if !strings.Contains(fmt.Sprint(slackPayload["text"]), "Hello from concierge") {
 		t.Fatalf("expected concierge reply to be posted, got %#v", slackPayload["text"])
 	}
-	slackCallsMu.Lock()
-	calls := append([]string(nil), slackCalls...)
-	slackCallsMu.Unlock()
+	var calls []string
+	deadline := time.Now().Add(time.Second)
+	for {
+		slackCallsMu.Lock()
+		calls = append([]string(nil), slackCalls...)
+		slackCallsMu.Unlock()
+		if len(calls) >= 3 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	expectedCalls := []string{"/reactions.add", "/chat.postMessage", "/reactions.remove"}
 	if fmt.Sprint(calls) != fmt.Sprint(expectedCalls) {
 		t.Fatalf("expected slack calls %v, got %v", expectedCalls, calls)
@@ -2364,15 +2372,16 @@ func TestInstallRedirectUsesConfiguredSlackHost(t *testing.T) {
 
 func TestRoutesServeSlackEndpointsUnderConfiguredPublicURLPathPrefix(t *testing.T) {
 	cfg := config{
-		PublicURL:          "https://gateway.example.test/spritz/slack-gateway",
-		SlackClientID:      "client-id",
-		SlackAPIBaseURL:    "https://slack.example.test/api",
-		SlackBotScopes:     []string{"chat:write"},
-		OAuthStateSecret:   "oauth-state-secret",
-		BackendBaseURL:     "https://backend.example.test",
-		SpritzBaseURL:      "https://spritz.example.test",
-		SpritzServiceToken: "spritz-service-token",
-		PrincipalID:        "shared-slack-gateway",
+		PublicURL:           "https://gateway.example.test/spritz/slack-gateway",
+		SlackClientID:       "client-id",
+		SlackAPIBaseURL:     "https://slack.example.test/api",
+		SlackBotScopes:      []string{"chat:write"},
+		ChannelActionsToken: "action-token",
+		OAuthStateSecret:    "oauth-state-secret",
+		BackendBaseURL:      "https://backend.example.test",
+		SpritzBaseURL:       "https://spritz.example.test",
+		SpritzServiceToken:  "spritz-service-token",
+		PrincipalID:         "shared-slack-gateway",
 	}
 	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
@@ -2390,6 +2399,14 @@ func TestRoutesServeSlackEndpointsUnderConfiguredPublicURLPathPrefix(t *testing.
 	}
 	if got := redirectURL.Query().Get("redirect_uri"); got != "https://gateway.example.test/spritz/slack-gateway/slack/oauth/callback" {
 		t.Fatalf("expected redirect_uri to keep the public path prefix, got %q", got)
+	}
+
+	actionReq := httptest.NewRequest(http.MethodPost, "/spritz/slack-gateway/internal/channel-actions/slack/reactions", nil)
+	actionRec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(actionRec, actionReq)
+
+	if actionRec.Code == http.StatusNotFound {
+		t.Fatalf("expected prefixed channel action route to resolve")
 	}
 }
 
@@ -8148,6 +8165,60 @@ func TestSlackReactionActionAddsReactionWithProviderAuth(t *testing.T) {
 	}
 	if reactionPayload["channel"] != "C_workspace_1" || reactionPayload["timestamp"] != "1711387375.000100" || reactionPayload["name"] != "eyes" {
 		t.Fatalf("unexpected reaction payload %#v", reactionPayload)
+	}
+}
+
+func TestSlackAckReactionDoesNotBlockWhileSlackReactionIsSlow(t *testing.T) {
+	addStarted := make(chan struct{})
+	releaseAdd := make(chan struct{})
+	removeCalled := make(chan struct{})
+	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/reactions.add":
+			close(addStarted)
+			<-releaseAdd
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		case "/reactions.remove":
+			close(removeCalled)
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		default:
+			t.Fatalf("unexpected slack path %s", r.URL.Path)
+		}
+	}))
+	defer slackAPI.Close()
+
+	gateway := newSlackGateway(config{
+		SlackAPIBaseURL:     slackAPI.URL,
+		AckReaction:         "eyes",
+		RemoveAckAfterReply: true,
+		HTTPTimeout:         5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	envelope := slackEnvelope{TeamID: "T_workspace_1"}
+	event := slackEventInner{Channel: "C_workspace_1", TS: "1711387375.000100"}
+	startedAt := time.Now()
+	stop := gateway.startSlackAckReaction(context.Background(), "xoxb-installed", envelope, event)
+	if elapsed := time.Since(startedAt); elapsed > 100*time.Millisecond {
+		t.Fatalf("expected ack reaction start to return quickly, took %s", elapsed)
+	}
+
+	select {
+	case <-addStarted:
+	case <-time.After(time.Second):
+		t.Fatalf("expected async reaction add to start")
+	}
+
+	stoppedAt := time.Now()
+	stop()
+	if elapsed := time.Since(stoppedAt); elapsed > 100*time.Millisecond {
+		t.Fatalf("expected ack reaction stop to return quickly while add is blocked, took %s", elapsed)
+	}
+	close(releaseAdd)
+
+	select {
+	case <-removeCalled:
+	case <-time.After(time.Second):
+		t.Fatalf("expected ack reaction to be removed after add finishes and stop is requested")
 	}
 }
 

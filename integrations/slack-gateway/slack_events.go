@@ -20,6 +20,7 @@ import (
 const (
 	slackRecoveryStatusText  = "Still waking up. I will continue here shortly."
 	slackRecoveryFailureText = "I could not recover the channel runtime. Please try again."
+	slackAckReactionTimeout  = 2 * time.Second
 )
 
 var slackMentionTokenPattern = regexp.MustCompile(`<@[^>]+>`)
@@ -772,30 +773,36 @@ func (g *slackGateway) startSlackAckReaction(ctx context.Context, token string, 
 	if reaction == "" || strings.TrimSpace(token) == "" || channelID == "" || messageTS == "" {
 		return func() {}
 	}
-	addCtx, cancelAdd := context.WithTimeout(context.WithoutCancel(ctx), g.cfg.HTTPTimeout)
-	err := g.addSlackReaction(addCtx, token, channelID, messageTS, reaction)
-	cancelAdd()
-	if code := slackAPIErrorCode(err); code == "already_reacted" {
-		err = nil
-	}
-	if err != nil {
-		g.logger.Warn(
-			"slack ack reaction add failed",
-			"error", err,
-			"team_id", strings.TrimSpace(envelope.TeamID),
-			"channel_id", channelID,
-			"message_ts", messageTS,
-			"reaction", reaction,
-		)
-		return func() {}
-	}
-	if !g.cfg.RemoveAckAfterReply {
-		return func() {}
-	}
-	return func() {
-		removeCtx, cancelRemove := context.WithTimeout(context.WithoutCancel(context.Background()), g.cfg.HTTPTimeout)
+	done := make(chan struct{})
+	var stopOnce sync.Once
+	go func() {
+		addCtx, cancelAdd := context.WithTimeout(context.WithoutCancel(ctx), slackAckRequestTimeout(g.cfg.HTTPTimeout))
+		err := g.addSlackReaction(addCtx, token, channelID, messageTS, reaction)
+		cancelAdd()
+		if code := slackAPIErrorCode(err); code == "already_reacted" {
+			err = nil
+		}
+		if err != nil {
+			g.logger.Warn(
+				"slack ack reaction add failed",
+				"error", err,
+				"team_id", strings.TrimSpace(envelope.TeamID),
+				"channel_id", channelID,
+				"message_ts", messageTS,
+				"reaction", reaction,
+			)
+			return
+		}
+		select {
+		case <-done:
+		case <-ctx.Done():
+		}
+		if !g.cfg.RemoveAckAfterReply {
+			return
+		}
+		removeCtx, cancelRemove := context.WithTimeout(context.WithoutCancel(context.Background()), slackAckRequestTimeout(g.cfg.HTTPTimeout))
 		defer cancelRemove()
-		err := g.removeSlackReaction(removeCtx, token, channelID, messageTS, reaction)
+		err = g.removeSlackReaction(removeCtx, token, channelID, messageTS, reaction)
 		if code := slackAPIErrorCode(err); code == "no_reaction" {
 			err = nil
 		}
@@ -809,7 +816,19 @@ func (g *slackGateway) startSlackAckReaction(ctx context.Context, token string, 
 				"reaction", reaction,
 			)
 		}
+	}()
+	return func() {
+		stopOnce.Do(func() {
+			close(done)
+		})
 	}
+}
+
+func slackAckRequestTimeout(configured time.Duration) time.Duration {
+	if configured <= 0 || configured > slackAckReactionTimeout {
+		return slackAckReactionTimeout
+	}
+	return configured
 }
 
 type conversationPromptResult struct {
