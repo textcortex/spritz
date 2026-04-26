@@ -108,19 +108,15 @@ acknowledgement UX:
 - `messages.removeAckAfterReply`: `true`
 - `messages.statusReactions.enabled`: `true`
 - all default status-reaction states use the same eye reaction
-- `mcp.servers.spritz-channel-actions`: a bundled provider-action MCP server
-  for explicit actions such as adding or removing Slack reactions
 
 These defaults are provider-neutral OpenClaw settings. Provider credentials and
 provider-specific channel IDs are still supplied by deployment or installation
 configuration.
 
-The channel-action MCP server expects `SPRITZ_CHANNEL_ACTIONS_BASE_URL` and
-`SPRITZ_CHANNEL_ACTIONS_TOKEN` when provider actions should be enabled. It calls
-the Spritz channel gateway action API, so provider tokens remain outside the
-runtime. The gateway side must bind that action token to the provider targets it
-may mutate, for example with `SPRITZ_SLACK_CHANNEL_ACTIONS_TARGETS` in the Slack
-gateway.
+When this image is used behind a Spritz shared channel gateway, do not enable
+OpenClaw's direct Slack, Discord, Teams, or similar provider-channel tools. The
+runtime should return text over ACP, and the Spritz gateway should own provider
+delivery and automatic acknowledgement reactions.
 
 ## Spritz Open Integration
 

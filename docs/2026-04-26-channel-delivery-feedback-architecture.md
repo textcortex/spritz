@@ -188,8 +188,6 @@ Slack mapping:
 - source message: Slack event `ts`
 - acknowledgement reaction: `reactions.add`
 - acknowledgement cleanup: `reactions.remove`
-- explicit agent-authored reaction: provider action/tool call that can target a
-  Slack message by channel and timestamp
 - automatic status message: `chat.postMessage`
 - final assistant reply: existing Slack reply path
 
@@ -197,34 +195,31 @@ Slack requirements:
 
 - the app must have `reactions:write` to add and remove reactions
 - existing Slack installs must be reauthorized before reaction feedback works
-- the provider action/tool surface must expose reaction add/remove operations
-  when users should be able to ask the agent to react to messages
-- provider-action tokens must be scoped to the channel or installation they are
-  allowed to mutate; a shared gateway token must not authorize arbitrary
-  caller-supplied Slack channel ids
 - reaction failures such as missing scope, already-reacted, or no-reaction must
   be logged but must not block runtime delivery
 - gateway retries must be idempotent
+- gateway-routed runtimes must not expose direct Slack, Discord, Teams, or other
+  provider-channel send tools
 
 Slack should prefer reaction names such as `eyes` in stored policy. The Slack
 adapter can normalize aliases and provider syntax at the edge.
 
-## Agent-Authored Reactions
+## Deferred Agent-Authored Reactions
 
 Automatic acknowledgement reactions and agent-authored reactions are separate
-capabilities.
+capabilities. This plan implements only automatic acknowledgement reactions.
 
 Automatic acknowledgement reactions are gateway control flow. The gateway adds
 and removes them because a message was accepted for delivery. The runtime should
 not need to decide whether to send these reactions.
 
-Agent-authored reactions are explicit user-requested channel actions. If a user
-asks the agent to "put an emoji on my message", the runtime should be able to
-call a provider action/tool that adds the requested reaction to the target
-message.
+Agent-authored reactions are explicit user-requested channel actions. They are
+not part of the current implementation because the first production requirement
+is reliable gateway-owned delivery feedback.
 
-That action/tool path should still keep provider credentials at the provider
-adapter edge:
+A future implementation may add a narrow Spritz-owned action such as
+`react_to_channel_message`. That future action must still keep provider
+credentials at the provider adapter edge:
 
 - the runtime chooses an action such as `react`
 - the provider adapter validates the action against channel policy and scopes
@@ -239,33 +234,27 @@ For Slack, this requires:
 - `reactions:write` on the Slack app installation
 - clear error reporting when the bot is not allowed to react
 
-The OpenClaw example image exposes this as an MCP tool named
-`slack_react_message`. The tool calls the Spritz channel gateway action
-endpoint, and the gateway performs the Slack API call with its stored provider
-auth. The runtime receives tool success or failure, but it never receives the
-Slack bot token.
-
-The gateway must validate both the action token and the requested target. A
-valid token should carry authority only for specific Slack team/channel targets,
-or for a specific installation whose channel set is resolved by the gateway.
-That prevents a runtime attached to one channel from asking the gateway to react
-inside another installed channel just because it knows the Slack ids.
+Do not implement this by enabling OpenClaw's generic Slack, Discord, Teams, or
+other provider-channel integrations in a Spritz gateway-routed runtime. Those
+integrations are for deployments where OpenClaw owns the provider connection
+directly. In Spritz gateway mode, they give the model a direct provider-send
+path that cannot work without provider tokens in the runtime pod.
 
 The important boundary is:
 
 - automatic delivery feedback is gateway-owned
-- explicit user-requested reactions are agent-authored actions executed through
-  provider tools
+- future explicit user-requested reactions must be narrow Spritz-owned actions,
+  not generic provider-channel tools
 
 ## Runtime Boundary
 
 The runtime should not be asked to add automatic acknowledgement reactions or
 send automatic gateway status messages.
 
-The runtime may still emit normal assistant output through ACP or another
-runtime protocol. It may also request provider actions, such as adding a
-reaction, when the user explicitly asks for that action and the provider action
-surface supports it.
+The runtime should emit normal assistant output through ACP or another runtime
+protocol. In gateway-routed mode, it should not be given direct provider-channel
+send tools for Slack, Discord, Teams, or any future chat provider where Spritz
+owns delivery.
 
 Spritz maps the typed runtime outcome to provider delivery behavior:
 
@@ -302,6 +291,8 @@ That should remain separate from the Spritz gateway path.
 When Spritz receives Slack events and relays prompts to an OpenClaw-backed
 runtime, Spritz owns the Slack UX. OpenClaw should receive a clean runtime
 prompt and should not need Slack credentials, Slack timestamps, or Slack scopes.
+Direct OpenClaw Slack, Discord, Teams, and similar provider-channel integrations
+must be disabled or hidden for these gateway-routed runtimes.
 
 Where practical, Spritz should use the same configuration semantics as OpenClaw
 for concepts such as acknowledgement reaction scope. That keeps behavior
@@ -313,23 +304,11 @@ Spritz should ship portable OpenClaw defaults for the example OpenClaw image and
 for any generated OpenClaw config that Spritz creates while projecting channel
 installation config.
 
-The defaults should make provider-owned OpenClaw deployments behave well out of
+The defaults should make gateway-routed Spritz deployments behave well out of
 the box without adding deployment-specific values:
 
 ```json
 {
-  "mcp": {
-    "servers": {
-      "spritz-channel-actions": {
-        "command": "node",
-        "args": ["/usr/local/bin/spritz-channel-actions-mcp.js"],
-        "env": {
-          "SPRITZ_CHANNEL_ACTIONS_BASE_URL": "${SPRITZ_CHANNEL_ACTIONS_BASE_URL}",
-          "SPRITZ_CHANNEL_ACTIONS_TOKEN": "${SPRITZ_CHANNEL_ACTIONS_TOKEN}"
-        }
-      }
-    }
-  },
   "messages": {
     "ackReaction": "👀",
     "ackReactionScope": "group-all",
@@ -352,19 +331,6 @@ the box without adding deployment-specific values:
 }
 ```
 
-Deployments that enable the channel-action MCP server must give the gateway a
-matching scoped token binding. The portable single-token form is:
-
-```env
-SPRITZ_SLACK_CHANNEL_ACTIONS_TOKEN=change-me
-SPRITZ_SLACK_CHANNEL_ACTIONS_TARGETS=T_example:C_example
-```
-
-For multiple independent runtimes or owners, deployments should mint distinct
-tokens and bind each token only to the team/channel targets that runtime may
-mutate. A gateway may also accept structured token bindings, but the same rule
-holds: authorization is token plus target, not token alone.
-
 These defaults are safe for Spritz because they are:
 
 - provider-neutral OpenClaw settings
@@ -373,14 +339,13 @@ These defaults are safe for Spritz because they are:
   `OPENCLAW_CONFIG_B64`, or `OPENCLAW_CONFIG_FILE`
 - compatible with later channel-policy projection, which should merge channel
   rules without dropping default message feedback settings
-- include a channel-action MCP server so runtimes can intentionally request
-  provider actions without embedding provider credentials
+- avoid direct provider-channel send tools in gateway-routed runtimes
 
 This does not change the ownership rule for Spritz-managed Slack installs. When
 Spritz receives the Slack event, Spritz still owns Slack-visible delivery
-feedback. The OpenClaw defaults matter for OpenClaw deployments where OpenClaw
-owns the provider connection directly, and for making generated OpenClaw config
-complete when Spritz has to create one.
+feedback. Provider-owned OpenClaw deployments may still use OpenClaw's native
+channel integrations, but that is a different mode from Spritz shared-gateway
+delivery.
 
 ## Storage Ownership
 
@@ -412,11 +377,10 @@ tokens or provider-visible feedback artifacts.
 - apply acknowledgement reaction after inbound message acceptance
 - remove acknowledgement reaction on all terminal outcomes when configured
 - ignore non-fatal reaction API errors without hiding them from logs and metrics
-- expose an authenticated gateway action endpoint for explicit agent-authored
-  Slack reactions
-- include a default OpenClaw MCP server that calls the gateway action endpoint
 - add tests for success, already-reacted, no-reaction, missing-scope, no-reply,
   hard-error, and timeout paths
+- disable or hide direct Slack, Discord, Teams, and similar provider-channel
+  integrations in gateway-routed Zeno/OpenClaw runtimes
 
 ### Phase 2 - Shared delivery feedback controller
 
@@ -445,8 +409,6 @@ Implementation should be considered complete only when these cases pass:
 
 - Slack message receives the configured acknowledgement reaction after gateway
   acceptance
-- the agent can independently add a requested Slack reaction through its
-  provider action/tool surface
 - Slack acknowledgement reaction is removed after a normal final reply
 - Slack acknowledgement reaction is removed after `no_reply`
 - Slack acknowledgement reaction is removed after timeout or hard error when
@@ -467,3 +429,5 @@ Implementation should be considered complete only when these cases pass:
   is implemented
 - decide which provider-visible feedback errors should be surfaced in the
   management UI versus logs only
+- design a future Spritz-owned, scoped provider-action surface for explicit
+  agent-authored reactions without exposing generic provider-channel send tools
