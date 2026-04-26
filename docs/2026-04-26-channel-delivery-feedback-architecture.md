@@ -199,6 +199,9 @@ Slack requirements:
 - existing Slack installs must be reauthorized before reaction feedback works
 - the provider action/tool surface must expose reaction add/remove operations
   when users should be able to ask the agent to react to messages
+- provider-action tokens must be scoped to the channel or installation they are
+  allowed to mutate; a shared gateway token must not authorize arbitrary
+  caller-supplied Slack channel ids
 - reaction failures such as missing scope, already-reacted, or no-reaction must
   be logged but must not block runtime delivery
 - gateway retries must be idempotent
@@ -241,6 +244,12 @@ The OpenClaw example image exposes this as an MCP tool named
 endpoint, and the gateway performs the Slack API call with its stored provider
 auth. The runtime receives tool success or failure, but it never receives the
 Slack bot token.
+
+The gateway must validate both the action token and the requested target. A
+valid token should carry authority only for specific Slack team/channel targets,
+or for a specific installation whose channel set is resolved by the gateway.
+That prevents a runtime attached to one channel from asking the gateway to react
+inside another installed channel just because it knows the Slack ids.
 
 The important boundary is:
 
@@ -342,6 +351,19 @@ the box without adding deployment-specific values:
   }
 }
 ```
+
+Deployments that enable the channel-action MCP server must give the gateway a
+matching scoped token binding. The portable single-token form is:
+
+```env
+SPRITZ_SLACK_CHANNEL_ACTIONS_TOKEN=change-me
+SPRITZ_SLACK_CHANNEL_ACTIONS_TARGETS=T_example:C_example
+```
+
+For multiple independent runtimes or owners, deployments should mint distinct
+tokens and bind each token only to the team/channel targets that runtime may
+mutate. A gateway may also accept structured token bindings, but the same rule
+holds: authorization is token plus target, not token alone.
 
 These defaults are safe for Spritz because they are:
 

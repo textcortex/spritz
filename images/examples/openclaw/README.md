@@ -118,7 +118,9 @@ configuration.
 The channel-action MCP server expects `SPRITZ_CHANNEL_ACTIONS_BASE_URL` and
 `SPRITZ_CHANNEL_ACTIONS_TOKEN` when provider actions should be enabled. It calls
 the Spritz channel gateway action API, so provider tokens remain outside the
-runtime.
+runtime. The gateway side must bind that action token to the provider targets it
+may mutate, for example with `SPRITZ_SLACK_CHANNEL_ACTIONS_TARGETS` in the Slack
+gateway.
 
 ## Spritz Open Integration
 

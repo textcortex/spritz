@@ -21,12 +21,8 @@ func (g *slackGateway) handleSlackReactionAction(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method_not_allowed"})
 		return
 	}
-	if strings.TrimSpace(g.cfg.ChannelActionsToken) == "" {
+	if len(g.cfg.ChannelActionTokens) == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "channel_actions_disabled"})
-		return
-	}
-	if !g.authorizeChannelActionRequest(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
 	}
 	defer r.Body.Close()
@@ -43,6 +39,10 @@ func (g *slackGateway) handleSlackReactionAction(w http.ResponseWriter, r *http.
 	payload.Reaction = normalizeSlackReactionName(payload.Reaction)
 	if payload.TeamID == "" || payload.ChannelID == "" || payload.MessageTS == "" || payload.Reaction == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "missing_required_field"})
+		return
+	}
+	if !g.authorizeChannelActionRequest(r, payload.TeamID, payload.ChannelID) {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
 	}
 
@@ -86,16 +86,28 @@ func (g *slackGateway) handleSlackReactionAction(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-func (g *slackGateway) authorizeChannelActionRequest(r *http.Request) bool {
+func (g *slackGateway) authorizeChannelActionRequest(r *http.Request, teamID, channelID string) bool {
 	header := strings.TrimSpace(r.Header.Get("Authorization"))
 	token, ok := strings.CutPrefix(header, "Bearer ")
 	if !ok {
 		return false
 	}
-	expected := strings.TrimSpace(g.cfg.ChannelActionsToken)
 	token = strings.TrimSpace(token)
-	if token == "" || expected == "" || len(token) != len(expected) {
+	if token == "" || strings.TrimSpace(teamID) == "" || strings.TrimSpace(channelID) == "" {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1
+	for _, candidate := range g.cfg.ChannelActionTokens {
+		expected := strings.TrimSpace(candidate.Token)
+		if expected == "" || len(token) != len(expected) {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 {
+			continue
+		}
+		if strings.TrimSpace(candidate.Target.TeamID) == strings.TrimSpace(teamID) &&
+			strings.TrimSpace(candidate.Target.ChannelID) == strings.TrimSpace(channelID) {
+			return true
+		}
+	}
+	return false
 }

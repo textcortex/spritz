@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -21,7 +22,7 @@ type config struct {
 	SlackBotScopes             []string
 	AckReaction                string
 	RemoveAckAfterReply        bool
-	ChannelActionsToken        string
+	ChannelActionTokens        []channelActionToken
 	PresetID                   string
 	BackendBaseURL             string
 	BackendFastAPIBaseURL      string
@@ -42,6 +43,16 @@ type config struct {
 	InstallationPolicyCacheTTL time.Duration
 }
 
+type channelActionToken struct {
+	Token  string
+	Target channelActionTarget
+}
+
+type channelActionTarget struct {
+	TeamID    string
+	ChannelID string
+}
+
 func loadConfig() (config, error) {
 	cfg := config{
 		Addr:                       envOrDefault("SPRITZ_SLACK_GATEWAY_ADDR", ":8080"),
@@ -56,7 +67,6 @@ func loadConfig() (config, error) {
 		SlackBotScopes:             splitCSV(envOrDefault("SPRITZ_SLACK_BOT_SCOPES", "app_mentions:read,channels:history,chat:write,im:history,mpim:history,reactions:write")),
 		AckReaction:                normalizeSlackReactionName(envOrDefault("SPRITZ_SLACK_ACK_REACTION", "eyes")),
 		RemoveAckAfterReply:        parseBoolEnv("SPRITZ_SLACK_REMOVE_ACK_AFTER_REPLY", true),
-		ChannelActionsToken:        strings.TrimSpace(os.Getenv("SPRITZ_SLACK_CHANNEL_ACTIONS_TOKEN")),
 		PresetID:                   strings.TrimSpace(envOrDefault("SPRITZ_SLACK_PRESET_ID", defaultSlackPresetID)),
 		BackendBaseURL:             strings.TrimRight(strings.TrimSpace(os.Getenv("SPRITZ_SLACK_BACKEND_BASE_URL")), "/"),
 		BackendFastAPIBaseURL:      strings.TrimRight(strings.TrimSpace(os.Getenv("SPRITZ_SLACK_BACKEND_FASTAPI_BASE_URL")), "/"),
@@ -76,6 +86,15 @@ func loadConfig() (config, error) {
 		PromptRetryTimeout:         parseDurationEnv("SPRITZ_SLACK_PROMPT_RETRY_TIMEOUT", 8*time.Second),
 		InstallationPolicyCacheTTL: parseDurationEnv("SPRITZ_SLACK_INSTALLATION_POLICY_CACHE_TTL", 10*time.Second),
 	}
+	channelActionTokens, err := parseChannelActionTokens(
+		os.Getenv("SPRITZ_SLACK_CHANNEL_ACTIONS_TOKEN"),
+		os.Getenv("SPRITZ_SLACK_CHANNEL_ACTIONS_TARGETS"),
+		os.Getenv("SPRITZ_SLACK_CHANNEL_ACTIONS_TOKEN_BINDINGS"),
+	)
+	if err != nil {
+		return config{}, err
+	}
+	cfg.ChannelActionTokens = channelActionTokens
 
 	if cfg.PublicURL == "" {
 		return config{}, fmt.Errorf("SPRITZ_SLACK_GATEWAY_PUBLIC_URL is required")
@@ -128,6 +147,78 @@ func loadConfig() (config, error) {
 		return config{}, fmt.Errorf("SPRITZ_SLACK_PRINCIPAL_ID is required")
 	}
 	return cfg, nil
+}
+
+func parseChannelActionTokens(legacyToken, legacyTargets, bindingsRaw string) ([]channelActionToken, error) {
+	tokens := make([]channelActionToken, 0)
+	legacyToken = strings.TrimSpace(legacyToken)
+	for _, rawTarget := range splitCSV(legacyTargets) {
+		if legacyToken == "" {
+			return nil, fmt.Errorf("SPRITZ_SLACK_CHANNEL_ACTIONS_TARGETS requires SPRITZ_SLACK_CHANNEL_ACTIONS_TOKEN")
+		}
+		target, err := parseChannelActionTarget(rawTarget)
+		if err != nil {
+			return nil, fmt.Errorf("SPRITZ_SLACK_CHANNEL_ACTIONS_TARGETS is invalid: %w", err)
+		}
+		tokens = append(tokens, channelActionToken{Token: legacyToken, Target: target})
+	}
+
+	bindingsRaw = strings.TrimSpace(bindingsRaw)
+	if bindingsRaw == "" {
+		return tokens, nil
+	}
+	var bindings []struct {
+		Token   string `json:"token"`
+		Targets []struct {
+			TeamID    string `json:"teamId"`
+			ChannelID string `json:"channelId"`
+		} `json:"targets"`
+	}
+	if err := json.Unmarshal([]byte(bindingsRaw), &bindings); err != nil {
+		return nil, fmt.Errorf("SPRITZ_SLACK_CHANNEL_ACTIONS_TOKEN_BINDINGS is invalid JSON: %w", err)
+	}
+	for index, binding := range bindings {
+		token := strings.TrimSpace(binding.Token)
+		if token == "" {
+			return nil, fmt.Errorf("SPRITZ_SLACK_CHANNEL_ACTIONS_TOKEN_BINDINGS[%d].token is required", index)
+		}
+		if len(binding.Targets) == 0 {
+			return nil, fmt.Errorf("SPRITZ_SLACK_CHANNEL_ACTIONS_TOKEN_BINDINGS[%d].targets is required", index)
+		}
+		for targetIndex, rawTarget := range binding.Targets {
+			target := channelActionTarget{
+				TeamID:    strings.TrimSpace(rawTarget.TeamID),
+				ChannelID: strings.TrimSpace(rawTarget.ChannelID),
+			}
+			if target.TeamID == "" || target.ChannelID == "" {
+				return nil, fmt.Errorf("SPRITZ_SLACK_CHANNEL_ACTIONS_TOKEN_BINDINGS[%d].targets[%d] is invalid", index, targetIndex)
+			}
+			tokens = append(tokens, channelActionToken{Token: token, Target: target})
+		}
+	}
+	return tokens, nil
+}
+
+func parseChannelActionTarget(raw string) (channelActionTarget, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return channelActionTarget{}, fmt.Errorf("target is empty")
+	}
+	separators := []string{":", "/"}
+	for _, separator := range separators {
+		teamID, channelID, ok := strings.Cut(raw, separator)
+		if ok {
+			target := channelActionTarget{
+				TeamID:    strings.TrimSpace(teamID),
+				ChannelID: strings.TrimSpace(channelID),
+			}
+			if target.TeamID == "" || target.ChannelID == "" {
+				return channelActionTarget{}, fmt.Errorf("target %q must be TEAM%sCHANNEL", raw, separator)
+			}
+			return target, nil
+		}
+	}
+	return channelActionTarget{}, fmt.Errorf("target %q must be TEAM:CHANNEL or TEAM/CHANNEL", raw)
 }
 
 func defaultReactBaseURL(publicURL string, spritzBaseURL string) string {

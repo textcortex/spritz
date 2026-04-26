@@ -2372,16 +2372,22 @@ func TestInstallRedirectUsesConfiguredSlackHost(t *testing.T) {
 
 func TestRoutesServeSlackEndpointsUnderConfiguredPublicURLPathPrefix(t *testing.T) {
 	cfg := config{
-		PublicURL:           "https://gateway.example.test/spritz/slack-gateway",
-		SlackClientID:       "client-id",
-		SlackAPIBaseURL:     "https://slack.example.test/api",
-		SlackBotScopes:      []string{"chat:write"},
-		ChannelActionsToken: "action-token",
-		OAuthStateSecret:    "oauth-state-secret",
-		BackendBaseURL:      "https://backend.example.test",
-		SpritzBaseURL:       "https://spritz.example.test",
-		SpritzServiceToken:  "spritz-service-token",
-		PrincipalID:         "shared-slack-gateway",
+		PublicURL:       "https://gateway.example.test/spritz/slack-gateway",
+		SlackClientID:   "client-id",
+		SlackAPIBaseURL: "https://slack.example.test/api",
+		SlackBotScopes:  []string{"chat:write"},
+		ChannelActionTokens: []channelActionToken{{
+			Token: "action-token",
+			Target: channelActionTarget{
+				TeamID:    "T_workspace_1",
+				ChannelID: "C_workspace_1",
+			},
+		}},
+		OAuthStateSecret:   "oauth-state-secret",
+		BackendBaseURL:     "https://backend.example.test",
+		SpritzBaseURL:      "https://spritz.example.test",
+		SpritzServiceToken: "spritz-service-token",
+		PrincipalID:        "shared-slack-gateway",
 	}
 	gateway := newSlackGateway(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
@@ -8146,9 +8152,15 @@ func TestSlackReactionActionAddsReactionWithProviderAuth(t *testing.T) {
 		BackendBaseURL:       backend.URL,
 		BackendInternalToken: "backend-internal-token",
 		PrincipalID:          "shared-slack-gateway",
-		ChannelActionsToken:  "action-token",
-		HTTPTimeout:          5 * time.Second,
-		DedupeTTL:            time.Minute,
+		ChannelActionTokens: []channelActionToken{{
+			Token: "action-token",
+			Target: channelActionTarget{
+				TeamID:    "T_workspace_1",
+				ChannelID: "C_workspace_1",
+			},
+		}},
+		HTTPTimeout: 5 * time.Second,
+		DedupeTTL:   time.Minute,
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	body := bytes.NewBufferString(`{"teamId":"T_workspace_1","channelId":"C_workspace_1","messageTs":"1711387375.000100","reaction":":eyes:"}`)
@@ -8165,6 +8177,53 @@ func TestSlackReactionActionAddsReactionWithProviderAuth(t *testing.T) {
 	}
 	if reactionPayload["channel"] != "C_workspace_1" || reactionPayload["timestamp"] != "1711387375.000100" || reactionPayload["name"] != "eyes" {
 		t.Fatalf("unexpected reaction payload %#v", reactionPayload)
+	}
+}
+
+func TestSlackReactionActionRejectsUnscopedTarget(t *testing.T) {
+	var exchangeCalled atomic.Bool
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		exchangeCalled.Store(true)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "should_not_call_backend"})
+	}))
+	defer backend.Close()
+	var slackCalled atomic.Bool
+	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slackCalled.Store(true)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "should_not_call_slack"})
+	}))
+	defer slackAPI.Close()
+
+	gateway := newSlackGateway(config{
+		SlackAPIBaseURL:      slackAPI.URL,
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		PrincipalID:          "shared-slack-gateway",
+		ChannelActionTokens: []channelActionToken{{
+			Token: "action-token",
+			Target: channelActionTarget{
+				TeamID:    "T_workspace_1",
+				ChannelID: "C_allowed",
+			},
+		}},
+		HTTPTimeout: 5 * time.Second,
+		DedupeTTL:   time.Minute,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	body := bytes.NewBufferString(`{"teamId":"T_workspace_1","channelId":"C_other","messageTs":"1711387375.000100","reaction":"eyes"}`)
+	req := httptest.NewRequest(http.MethodPost, "/internal/channel-actions/slack/reactions", body)
+	req.Header.Set("Authorization", "Bearer action-token")
+	rec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if exchangeCalled.Load() {
+		t.Fatalf("unscoped request should not exchange a channel session")
+	}
+	if slackCalled.Load() {
+		t.Fatalf("unscoped request should not call Slack")
 	}
 }
 
@@ -8246,6 +8305,35 @@ func TestLoadConfigIncludesMPIMHistoryByDefault(t *testing.T) {
 	}
 	if cfg.PresetID != "zeno" {
 		t.Fatalf("expected default preset id zeno, got %q", cfg.PresetID)
+	}
+}
+
+func TestLoadConfigBindsChannelActionTokenTargets(t *testing.T) {
+	t.Setenv("SPRITZ_SLACK_GATEWAY_PUBLIC_URL", "https://gateway.example.test")
+	t.Setenv("SPRITZ_SLACK_CLIENT_ID", "client-id")
+	t.Setenv("SPRITZ_SLACK_CLIENT_SECRET", "client-secret")
+	t.Setenv("SPRITZ_SLACK_SIGNING_SECRET", "signing-secret")
+	t.Setenv("SPRITZ_SLACK_OAUTH_STATE_SECRET", "oauth-state-secret")
+	t.Setenv("SPRITZ_SLACK_BACKEND_BASE_URL", "https://backend.example.test")
+	t.Setenv("SPRITZ_SLACK_BACKEND_INTERNAL_TOKEN", "backend-internal-token")
+	t.Setenv("SPRITZ_SLACK_SPRITZ_BASE_URL", "https://spritz.example.test")
+	t.Setenv("SPRITZ_SLACK_SPRITZ_SERVICE_TOKEN", "spritz-service-token")
+	t.Setenv("SPRITZ_SLACK_PRINCIPAL_ID", "shared-slack-gateway")
+	t.Setenv("SPRITZ_SLACK_CHANNEL_ACTIONS_TOKEN", "action-token")
+	t.Setenv("SPRITZ_SLACK_CHANNEL_ACTIONS_TARGETS", "T_workspace_1:C_workspace_1,T_workspace_2/C_workspace_2")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	if len(cfg.ChannelActionTokens) != 2 {
+		t.Fatalf("expected two scoped channel action tokens, got %#v", cfg.ChannelActionTokens)
+	}
+	if cfg.ChannelActionTokens[0].Target.TeamID != "T_workspace_1" ||
+		cfg.ChannelActionTokens[0].Target.ChannelID != "C_workspace_1" ||
+		cfg.ChannelActionTokens[1].Target.TeamID != "T_workspace_2" ||
+		cfg.ChannelActionTokens[1].Target.ChannelID != "C_workspace_2" {
+		t.Fatalf("unexpected token targets %#v", cfg.ChannelActionTokens)
 	}
 }
 
