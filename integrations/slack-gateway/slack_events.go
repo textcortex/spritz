@@ -18,9 +18,10 @@ import (
 )
 
 const (
-	slackRecoveryStatusText  = "Still waking up. I will continue here shortly."
-	slackRecoveryFailureText = "I could not recover the channel runtime. Please try again."
-	slackAckReactionTimeout  = 2 * time.Second
+	slackRecoveryStatusText         = "Still waking up. I will continue here shortly."
+	slackRecoveryFailureText        = "I could not recover the channel runtime. Please try again."
+	slackAckReactionTimeout         = 2 * time.Second
+	slackGatewayACPReplyInstruction = "Spritz channel gateway will deliver your visible reply. Reply by returning normal assistant text over ACP. Do not call Slack, Discord, Teams, or other provider-channel send tools."
 )
 
 var slackMentionTokenPattern = regexp.MustCompile(`<@[^>]+>`)
@@ -1094,7 +1095,9 @@ func buildSlackPromptTextWithSynthetic(teamID string, event slackEventInner, bot
 	if err != nil {
 		return normalized
 	}
-	return "<spritz-channel-context>" + string(payload) + "</spritz-channel-context>\n\n" + normalized
+	return "<spritz-channel-context>" + string(payload) + "</spritz-channel-context>\n\n" +
+		"<spritz-channel-delivery-instructions>" + slackGatewayACPReplyInstruction + "</spritz-channel-delivery-instructions>\n\n" +
+		normalized
 }
 
 func slackReplyThreadTS(event slackEventInner) string {

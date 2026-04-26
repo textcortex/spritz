@@ -2911,6 +2911,9 @@ func TestSlackEventRoutesToConversationAndReplies(t *testing.T) {
 			if !strings.Contains(text, "\"actor_user_id\":\"U_1\"") {
 				t.Fatalf("expected actor metadata in prompt text, got %q", text)
 			}
+			if !strings.Contains(text, "Reply by returning normal assistant text over ACP") {
+				t.Fatalf("expected ACP reply instruction in prompt text, got %q", text)
+			}
 			if !strings.HasSuffix(text, "\n\nhello") {
 				t.Fatalf("expected normalized prompt body after metadata block, got %q", text)
 			}
@@ -3751,6 +3754,9 @@ func TestBuildSlackPromptTextPrependsTrustedContext(t *testing.T) {
 	}
 	if payload["direct_message"] != false {
 		t.Fatalf("expected non-DM metadata, got %#v", payload["direct_message"])
+	}
+	if !strings.Contains(prompt, "Reply by returning normal assistant text over ACP") {
+		t.Fatalf("expected ACP reply instruction in prompt, got %q", prompt)
 	}
 	if !strings.HasSuffix(prompt, "\n\ncreate a zeno for me") {
 		t.Fatalf("expected normalized user text after metadata block, got %q", prompt)

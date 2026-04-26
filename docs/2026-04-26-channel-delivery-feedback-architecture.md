@@ -256,6 +256,19 @@ protocol. In gateway-routed mode, it should not be given direct provider-channel
 send tools for Slack, Discord, Teams, or any future chat provider where Spritz
 owns delivery.
 
+Gateway prompts should carry the same boundary as an explicit runtime
+instruction:
+
+```text
+Spritz channel gateway will deliver your visible reply. Reply by returning
+normal assistant text over ACP. Do not call Slack, Discord, Teams, or other
+provider-channel send tools.
+```
+
+This instruction is a guardrail, not the only enforcement layer. Runtime config
+must still hide or disable direct provider-channel send tools in gateway-routed
+deployments.
+
 Spritz maps the typed runtime outcome to provider delivery behavior:
 
 ```json
