@@ -141,6 +141,7 @@ A binding can be reported ready only when all of these are true:
 
 ```text
 saved target == rendered binding target
+desired binding revision == active runtime revision, or the equivalent observed revision
 SpritzBinding phase == ready
 active runtime phase == Ready
 ```
@@ -149,6 +150,36 @@ If the target check fails, readiness is false even if the active runtime is
 healthy.
 
 A healthy wrong runtime is still wrong.
+
+## Cached Status Promotion
+
+A deployment may keep its own installation status, such as `provisioning`,
+`ready`, or `disconnected`.
+
+That status is a deployment cache. It is not stronger than the live
+`SpritzBinding` state.
+
+When a deployment status still says `provisioning`, the resolver should refresh
+the binding before rejecting channel traffic or runtime identity exchange. If
+the binding matches the saved target and the active runtime has reached the
+desired binding revision, the deployment should promote its cached installation
+status to `ready` and record the applied revision.
+
+This avoids a permanent stuck state where:
+
+```text
+deployment status = provisioning
+SpritzBinding phase = ready
+active runtime phase = Ready
+active runtime revision = desired binding revision
+```
+
+In that state, the deployment cache is stale.
+The correct repair is to update the deployment cache from the binding, not to
+manually edit the database and not to leave the route closed forever.
+
+If the binding is mismatched, stale, disconnected, missing, or still converging,
+the resolver must keep reporting provisioning.
 
 ## API Need
 
@@ -187,7 +218,16 @@ def resolve_channel_binding(installation):
         )
         return provisioning(binding)
 
-    if binding.ready and binding.active_runtime_ready:
+    if (
+        binding.ready
+        and binding.active_runtime_ready
+        and binding.active_revision == binding.desired_revision
+    ):
+        deployment.record_ready_binding(
+            installation.id,
+            runtime=binding.active_runtime,
+            applied_revision=binding.active_revision,
+        )
         return ready(binding)
 
     return provisioning(binding)
@@ -230,6 +270,8 @@ Add tests for:
 5. active runtime is healthy but target differs: does not return ready
 6. management status path shows provisioning while repair is in progress
 7. route/session path triggers the same repair as the status path
+8. cached deployment status is provisioning but binding is ready at the desired revision: promotes to ready
+9. cached deployment status is provisioning but binding is stale or mismatched: stays provisioning
 
 ## Non-Goals
 
