@@ -18,6 +18,7 @@ const (
 	openclawConfigEnvName     = "OPENCLAW_CONFIG_JSON"
 	openclawConfigB64EnvName  = "OPENCLAW_CONFIG_B64"
 	openclawConfigFileEnvName = "OPENCLAW_CONFIG_FILE"
+	openclawEyesReaction      = "\U0001F440"
 )
 
 type channelInstallationConfigPayload struct {
@@ -147,6 +148,33 @@ func defaultOpenClawConfig() map[string]any {
 			"enabled":        true,
 			"headless":       true,
 			"executablePath": "/usr/bin/chromium",
+		},
+		"messages": defaultOpenClawMessagesConfig(),
+	}
+}
+
+func defaultOpenClawMessagesConfig() map[string]any {
+	statusEmojiConfig := map[string]any{}
+	for _, state := range []string{
+		"thinking",
+		"tool",
+		"coding",
+		"web",
+		"done",
+		"error",
+		"stallSoft",
+		"stallHard",
+		"compacting",
+	} {
+		statusEmojiConfig[state] = openclawEyesReaction
+	}
+	return map[string]any{
+		"ackReaction":         openclawEyesReaction,
+		"ackReactionScope":    "group-all",
+		"removeAckAfterReply": true,
+		"statusReactions": map[string]any{
+			"enabled": true,
+			"emojis":  statusEmojiConfig,
 		},
 	}
 }

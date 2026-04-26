@@ -18,8 +18,10 @@ import (
 )
 
 const (
-	slackRecoveryStatusText  = "Still waking up. I will continue here shortly."
-	slackRecoveryFailureText = "I could not recover the channel runtime. Please try again."
+	slackRecoveryStatusText         = "Still waking up. I will continue here shortly."
+	slackRecoveryFailureText        = "I could not recover the channel runtime. Please try again."
+	slackAckReactionTimeout         = 2 * time.Second
+	slackGatewayACPReplyInstruction = "Spritz channel gateway will deliver your visible reply. Reply by returning normal assistant text over ACP. Do not call Slack, Discord, Teams, or other provider-channel send tools."
 )
 
 var slackMentionTokenPattern = regexp.MustCompile(`<@[^>]+>`)
@@ -612,6 +614,11 @@ func (g *slackGateway) processMessageEventWithDeliveryOptions(
 		success = true
 		return messageEventProcessResult{Outcome: messageEventOutcomeIgnored}, nil
 	}
+	stopAckReaction := func() {}
+	if !options.DryRun {
+		stopAckReaction = g.startSlackAckReaction(ctx, session.ProviderAuth.BotAccessToken, envelope, event)
+	}
+	defer stopAckReaction()
 
 	result, err := g.executeConversationPrompt(ctx, envelope, event, session, promptText)
 	stopRecoveryStatusTimer := func() {}
@@ -758,6 +765,71 @@ func (g *slackGateway) processMessageEventWithDeliveryOptions(
 	processResult.Outcome = messageEventOutcomeDelivered
 	processResult.PostedMessageTS = postedMessageTS
 	return processResult, nil
+}
+
+func (g *slackGateway) startSlackAckReaction(ctx context.Context, token string, envelope slackEnvelope, event slackEventInner) func() {
+	reaction := normalizeSlackReactionName(g.cfg.AckReaction)
+	channelID := strings.TrimSpace(event.Channel)
+	messageTS := strings.TrimSpace(event.TS)
+	if reaction == "" || strings.TrimSpace(token) == "" || channelID == "" || messageTS == "" {
+		return func() {}
+	}
+	done := make(chan struct{})
+	var stopOnce sync.Once
+	go func() {
+		addCtx, cancelAdd := context.WithTimeout(context.WithoutCancel(ctx), slackAckRequestTimeout(g.cfg.HTTPTimeout))
+		err := g.addSlackReaction(addCtx, token, channelID, messageTS, reaction)
+		cancelAdd()
+		if code := slackAPIErrorCode(err); code == "already_reacted" {
+			err = nil
+		}
+		if err != nil {
+			g.logger.Warn(
+				"slack ack reaction add failed",
+				"error", err,
+				"team_id", strings.TrimSpace(envelope.TeamID),
+				"channel_id", channelID,
+				"message_ts", messageTS,
+				"reaction", reaction,
+			)
+			return
+		}
+		select {
+		case <-done:
+		case <-ctx.Done():
+		}
+		if !g.cfg.RemoveAckAfterReply {
+			return
+		}
+		removeCtx, cancelRemove := context.WithTimeout(context.WithoutCancel(context.Background()), slackAckRequestTimeout(g.cfg.HTTPTimeout))
+		defer cancelRemove()
+		err = g.removeSlackReaction(removeCtx, token, channelID, messageTS, reaction)
+		if code := slackAPIErrorCode(err); code == "no_reaction" {
+			err = nil
+		}
+		if err != nil {
+			g.logger.Warn(
+				"slack ack reaction remove failed",
+				"error", err,
+				"team_id", strings.TrimSpace(envelope.TeamID),
+				"channel_id", channelID,
+				"message_ts", messageTS,
+				"reaction", reaction,
+			)
+		}
+	}()
+	return func() {
+		stopOnce.Do(func() {
+			close(done)
+		})
+	}
+}
+
+func slackAckRequestTimeout(configured time.Duration) time.Duration {
+	if configured <= 0 || configured > slackAckReactionTimeout {
+		return slackAckReactionTimeout
+	}
+	return configured
 }
 
 type conversationPromptResult struct {
@@ -1023,7 +1095,9 @@ func buildSlackPromptTextWithSynthetic(teamID string, event slackEventInner, bot
 	if err != nil {
 		return normalized
 	}
-	return "<spritz-channel-context>" + string(payload) + "</spritz-channel-context>\n\n" + normalized
+	return "<spritz-channel-context>" + string(payload) + "</spritz-channel-context>\n\n" +
+		"<spritz-channel-delivery-instructions>" + slackGatewayACPReplyInstruction + "</spritz-channel-delivery-instructions>\n\n" +
+		normalized
 }
 
 func slackReplyThreadTS(event slackEventInner) string {

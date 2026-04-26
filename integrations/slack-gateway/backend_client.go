@@ -20,6 +20,26 @@ type httpStatusError struct {
 	body       string
 }
 
+type slackAPIError struct {
+	method string
+	code   string
+}
+
+func (err *slackAPIError) Error() string {
+	if err.code == "" {
+		return fmt.Sprintf("slack %s failed", err.method)
+	}
+	return fmt.Sprintf("slack %s failed: %s", err.method, err.code)
+}
+
+func slackAPIErrorCode(err error) string {
+	var slackErr *slackAPIError
+	if errors.As(err, &slackErr) {
+		return slackErr.code
+	}
+	return ""
+}
+
 func (err *httpStatusError) Error() string {
 	return fmt.Sprintf(
 		"%s %s failed: %d %s",
@@ -500,6 +520,78 @@ func (g *slackGateway) postSlackMessage(ctx context.Context, token, channel, tex
 		return "", fmt.Errorf("slack chat.postMessage failed: %s", strings.TrimSpace(result.Error))
 	}
 	return strings.TrimSpace(result.TS), nil
+}
+
+func (g *slackGateway) addSlackReaction(ctx context.Context, token, channel, timestamp, reaction string) error {
+	return g.callSlackReactionAPI(ctx, "reactions.add", token, channel, timestamp, reaction)
+}
+
+func (g *slackGateway) removeSlackReaction(ctx context.Context, token, channel, timestamp, reaction string) error {
+	return g.callSlackReactionAPI(ctx, "reactions.remove", token, channel, timestamp, reaction)
+}
+
+func (g *slackGateway) callSlackReactionAPI(ctx context.Context, method, token, channel, timestamp, reaction string) error {
+	reaction = normalizeSlackReactionName(reaction)
+	if strings.TrimSpace(token) == "" {
+		return fmt.Errorf("slack %s failed: token is required", method)
+	}
+	if strings.TrimSpace(channel) == "" {
+		return fmt.Errorf("slack %s failed: channel is required", method)
+	}
+	if strings.TrimSpace(timestamp) == "" {
+		return fmt.Errorf("slack %s failed: timestamp is required", method)
+	}
+	if reaction == "" {
+		return fmt.Errorf("slack %s failed: reaction is required", method)
+	}
+	body := map[string]any{
+		"channel":   strings.TrimSpace(channel),
+		"timestamp": strings.TrimSpace(timestamp),
+		"name":      reaction,
+	}
+	target := g.cfg.SlackAPIBaseURL + "/" + method
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	reqCtx, cancel := g.requestContext(ctx)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, target, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := g.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("slack %s failed: %s", method, resp.Status)
+	}
+	var result struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error,omitempty"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return err
+	}
+	if !result.OK {
+		return &slackAPIError{method: method, code: strings.TrimSpace(result.Error)}
+	}
+	return nil
+}
+
+func normalizeSlackReactionName(raw string) string {
+	value := strings.TrimSpace(raw)
+	value = strings.Trim(value, ":")
+	switch value {
+	case "\U0001F440":
+		return "eyes"
+	default:
+		return value
+	}
 }
 
 func (g *slackGateway) postBackendJSON(ctx context.Context, path string, body any, target any) error {

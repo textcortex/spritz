@@ -19,6 +19,8 @@ type config struct {
 	OAuthStateSecret           string
 	SlackAPIBaseURL            string
 	SlackBotScopes             []string
+	AckReaction                string
+	RemoveAckAfterReply        bool
 	PresetID                   string
 	BackendBaseURL             string
 	BackendFastAPIBaseURL      string
@@ -50,7 +52,9 @@ func loadConfig() (config, error) {
 		SlackSigningSecret:         strings.TrimSpace(os.Getenv("SPRITZ_SLACK_SIGNING_SECRET")),
 		OAuthStateSecret:           strings.TrimSpace(os.Getenv("SPRITZ_SLACK_OAUTH_STATE_SECRET")),
 		SlackAPIBaseURL:            strings.TrimRight(envOrDefault("SPRITZ_SLACK_API_BASE_URL", "https://slack.com/api"), "/"),
-		SlackBotScopes:             splitCSV(envOrDefault("SPRITZ_SLACK_BOT_SCOPES", "app_mentions:read,channels:history,chat:write,im:history,mpim:history")),
+		SlackBotScopes:             splitCSV(envOrDefault("SPRITZ_SLACK_BOT_SCOPES", "app_mentions:read,channels:history,chat:write,im:history,mpim:history,reactions:write")),
+		AckReaction:                normalizeSlackReactionName(envOrDefaultIfUnset("SPRITZ_SLACK_ACK_REACTION", "eyes")),
+		RemoveAckAfterReply:        parseBoolEnv("SPRITZ_SLACK_REMOVE_ACK_AFTER_REPLY", true),
 		PresetID:                   strings.TrimSpace(envOrDefault("SPRITZ_SLACK_PRESET_ID", defaultSlackPresetID)),
 		BackendBaseURL:             strings.TrimRight(strings.TrimSpace(os.Getenv("SPRITZ_SLACK_BACKEND_BASE_URL")), "/"),
 		BackendFastAPIBaseURL:      strings.TrimRight(strings.TrimSpace(os.Getenv("SPRITZ_SLACK_BACKEND_FASTAPI_BASE_URL")), "/"),
@@ -70,7 +74,6 @@ func loadConfig() (config, error) {
 		PromptRetryTimeout:         parseDurationEnv("SPRITZ_SLACK_PROMPT_RETRY_TIMEOUT", 8*time.Second),
 		InstallationPolicyCacheTTL: parseDurationEnv("SPRITZ_SLACK_INSTALLATION_POLICY_CACHE_TTL", 10*time.Second),
 	}
-
 	if cfg.PublicURL == "" {
 		return config{}, fmt.Errorf("SPRITZ_SLACK_GATEWAY_PUBLIC_URL is required")
 	}
@@ -171,6 +174,14 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
+func envOrDefaultIfUnset(key, fallback string) string {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback
+	}
+	return strings.TrimSpace(value)
+}
+
 func parseDurationEnv(key string, fallback time.Duration) time.Duration {
 	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {
@@ -181,6 +192,21 @@ func parseDurationEnv(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return value
+}
+
+func parseBoolEnv(key string, fallback bool) bool {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	switch strings.ToLower(raw) {
+	case "1", "true", "t", "yes", "y", "on":
+		return true
+	case "0", "false", "f", "no", "n", "off":
+		return false
+	default:
+		return fallback
+	}
 }
 
 func splitCSV(raw string) []string {

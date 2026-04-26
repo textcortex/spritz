@@ -21,7 +21,7 @@ FROM node:22-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-ARG OPENCLAW_VERSION=latest
+ARG OPENCLAW_VERSION=2026.4.2
 
 COPY --from=openclaw-ts-build --chmod=0755 /build/examples/dist/openclaw/generate-openclaw-acp-compat.js /usr/local/bin/spritz-generate-openclaw-acp-compat
 COPY --from=openclaw-ts-build --chmod=0755 /build/examples/dist/openclaw/resolve-openclaw-acpx-extension-dir.js /usr/local/bin/spritz-resolve-openclaw-acpx-extension-dir
