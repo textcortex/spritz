@@ -99,7 +99,26 @@ OpenClaw config can be supplied at runtime without rebuilding the image:
 - `OPENCLAW_CONFIG_DIR` (optional): config directory (default: `${HOME}/.openclaw`)
 - `OPENCLAW_CONFIG_PATH` (optional): config file path (default: `${OPENCLAW_CONFIG_DIR}/openclaw.json`)
 
-If none are provided and no config exists, a minimal browser config is written.
+If none are provided and no config exists, the image writes a portable default
+config that enables the bundled browser and OpenClaw's generic message
+acknowledgement UX:
+
+- `messages.ackReaction`: eye reaction
+- `messages.ackReactionScope`: `group-all`
+- `messages.removeAckAfterReply`: `true`
+- `messages.statusReactions.enabled`: `true`
+- all default status-reaction states use the same eye reaction
+- `mcp.servers.spritz-channel-actions`: a bundled provider-action MCP server
+  for explicit actions such as adding or removing Slack reactions
+
+These defaults are provider-neutral OpenClaw settings. Provider credentials and
+provider-specific channel IDs are still supplied by deployment or installation
+configuration.
+
+The channel-action MCP server expects `SPRITZ_CHANNEL_ACTIONS_BASE_URL` and
+`SPRITZ_CHANNEL_ACTIONS_TOKEN` when provider actions should be enabled. It calls
+the Spritz channel gateway action API, so provider tokens remain outside the
+runtime.
 
 ## Spritz Open Integration
 

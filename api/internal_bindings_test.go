@@ -360,6 +360,21 @@ func TestInternalUpsertBindingProjectsInstallationConfigWithoutDroppingOpenClawD
 	if browser["enabled"] != true || browser["executablePath"] != "/usr/bin/chromium" {
 		t.Fatalf("expected OpenClaw browser defaults to be preserved, got %s", openClawConfig)
 	}
+	messages, _ := projected["messages"].(map[string]any)
+	if messages["ackReaction"] != "\U0001F440" || messages["ackReactionScope"] != "group-all" || messages["removeAckAfterReply"] != true {
+		t.Fatalf("expected OpenClaw message feedback defaults to be preserved, got %s", openClawConfig)
+	}
+	statusReactions, _ := messages["statusReactions"].(map[string]any)
+	statusEmojis, _ := statusReactions["emojis"].(map[string]any)
+	if statusReactions["enabled"] != true || statusEmojis["thinking"] != "\U0001F440" || statusEmojis["done"] != "\U0001F440" {
+		t.Fatalf("expected OpenClaw status reaction defaults to be preserved, got %s", openClawConfig)
+	}
+	mcp, _ := projected["mcp"].(map[string]any)
+	mcpServers, _ := mcp["servers"].(map[string]any)
+	channelActions, _ := mcpServers["spritz-channel-actions"].(map[string]any)
+	if channelActions["command"] != "node" {
+		t.Fatalf("expected OpenClaw channel action MCP defaults to be preserved, got %s", openClawConfig)
+	}
 	channelsConfig, _ := projected["channels"].(map[string]any)
 	slackConfig, _ := channelsConfig["slack"].(map[string]any)
 	channels, _ := slackConfig["channels"].(map[string]any)

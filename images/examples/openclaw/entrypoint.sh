@@ -216,6 +216,39 @@ elif [[ ! -f "${config_path}" ]]; then
     "enabled": true,
     "headless": true,
     "executablePath": "/usr/bin/chromium"
+  },
+  "messages": {
+    "ackReaction": "\ud83d\udc40",
+    "ackReactionScope": "group-all",
+    "removeAckAfterReply": true,
+    "statusReactions": {
+      "enabled": true,
+      "emojis": {
+        "thinking": "\ud83d\udc40",
+        "tool": "\ud83d\udc40",
+        "coding": "\ud83d\udc40",
+        "web": "\ud83d\udc40",
+        "done": "\ud83d\udc40",
+        "error": "\ud83d\udc40",
+        "stallSoft": "\ud83d\udc40",
+        "stallHard": "\ud83d\udc40",
+        "compacting": "\ud83d\udc40"
+      }
+    }
+  },
+  "mcp": {
+    "servers": {
+      "spritz-channel-actions": {
+        "command": "node",
+        "args": [
+          "/usr/local/bin/spritz-channel-actions-mcp.js"
+        ],
+        "env": {
+          "SPRITZ_CHANNEL_ACTIONS_BASE_URL": "${SPRITZ_CHANNEL_ACTIONS_BASE_URL}",
+          "SPRITZ_CHANNEL_ACTIONS_TOKEN": "${SPRITZ_CHANNEL_ACTIONS_TOKEN}"
+        }
+      }
+    }
   }
 }
 JSON

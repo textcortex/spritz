@@ -1780,6 +1780,9 @@ func TestWorkspaceTestSubmitDryRunSkipsSlackPostAndMarksPromptSynthetic(t *testi
 
 func TestWorkspaceTestSubmitRealModePostsSlackReply(t *testing.T) {
 	var slackPayload map[string]any
+	var slackCallsMu sync.Mutex
+	slackCalls := []string{}
+	var ackTimestamp string
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1827,13 +1830,31 @@ func TestWorkspaceTestSubmitRealModePostsSlackReply(t *testing.T) {
 	defer backend.Close()
 
 	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat.postMessage" {
+		slackCallsMu.Lock()
+		slackCalls = append(slackCalls, r.URL.Path)
+		slackCallsMu.Unlock()
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode slack payload: %v", err)
+		}
+		switch r.URL.Path {
+		case "/reactions.add":
+			ackTimestamp = fmt.Sprint(payload["timestamp"])
+			if payload["channel"] != "C_workspace_1" || ackTimestamp == "" || payload["name"] != "eyes" {
+				t.Fatalf("unexpected reaction add payload %#v", payload)
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		case "/chat.postMessage":
+			slackPayload = payload
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ts": "1711387376.000100"})
+		case "/reactions.remove":
+			if payload["channel"] != "C_workspace_1" || fmt.Sprint(payload["timestamp"]) != ackTimestamp || payload["name"] != "eyes" {
+				t.Fatalf("unexpected reaction remove payload %#v", payload)
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		default:
 			t.Fatalf("unexpected slack path %s", r.URL.Path)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&slackPayload); err != nil {
-			t.Fatalf("decode slack post payload: %v", err)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ts": "1711387376.000100"})
 	}))
 	defer slackAPI.Close()
 
@@ -1911,6 +1932,8 @@ func TestWorkspaceTestSubmitRealModePostsSlackReply(t *testing.T) {
 		SpritzBaseURL:         spritz.URL,
 		SpritzServiceToken:    "spritz-service-token",
 		PrincipalID:           "shared-slack-gateway",
+		AckReaction:           "eyes",
+		RemoveAckAfterReply:   true,
 		HTTPTimeout:           5 * time.Second,
 		DedupeTTL:             time.Minute,
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -1938,6 +1961,13 @@ func TestWorkspaceTestSubmitRealModePostsSlackReply(t *testing.T) {
 	}
 	if !strings.Contains(fmt.Sprint(slackPayload["text"]), "Hello from concierge") {
 		t.Fatalf("expected concierge reply to be posted, got %#v", slackPayload["text"])
+	}
+	slackCallsMu.Lock()
+	calls := append([]string(nil), slackCalls...)
+	slackCallsMu.Unlock()
+	expectedCalls := []string{"/reactions.add", "/chat.postMessage", "/reactions.remove"}
+	if fmt.Sprint(calls) != fmt.Sprint(expectedCalls) {
+		t.Fatalf("expected slack calls %v, got %v", expectedCalls, calls)
 	}
 	var response map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
@@ -8055,6 +8085,72 @@ func TestLoadConfigRejectsRelativePublicURL(t *testing.T) {
 	}
 }
 
+func TestSlackReactionActionAddsReactionWithProviderAuth(t *testing.T) {
+	var exchangePayload map[string]any
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v1/spritz/channel-sessions/exchange" {
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&exchangePayload); err != nil {
+			t.Fatalf("decode exchange payload: %v", err)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "resolved",
+			"session": map[string]any{
+				"accessToken": "owner-token",
+				"namespace":   "spritz-staging",
+				"providerAuth": map[string]any{
+					"teamId":         "T_workspace_1",
+					"botUserId":      "U_bot",
+					"botAccessToken": "xoxb-installed",
+				},
+			},
+		})
+	}))
+	defer backend.Close()
+
+	var reactionPayload map[string]any
+	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/reactions.add" {
+			t.Fatalf("unexpected slack path %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer xoxb-installed" {
+			t.Fatalf("expected bot token authorization, got %q", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&reactionPayload); err != nil {
+			t.Fatalf("decode reaction payload: %v", err)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	}))
+	defer slackAPI.Close()
+
+	gateway := newSlackGateway(config{
+		SlackAPIBaseURL:      slackAPI.URL,
+		BackendBaseURL:       backend.URL,
+		BackendInternalToken: "backend-internal-token",
+		PrincipalID:          "shared-slack-gateway",
+		ChannelActionsToken:  "action-token",
+		HTTPTimeout:          5 * time.Second,
+		DedupeTTL:            time.Minute,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	body := bytes.NewBufferString(`{"teamId":"T_workspace_1","channelId":"C_workspace_1","messageTs":"1711387375.000100","reaction":":eyes:"}`)
+	req := httptest.NewRequest(http.MethodPost, "/internal/channel-actions/slack/reactions", body)
+	req.Header.Set("Authorization", "Bearer action-token")
+	rec := httptest.NewRecorder()
+	gateway.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if exchangePayload["externalTenantId"] != "T_workspace_1" || exchangePayload["externalChannelId"] != "C_workspace_1" {
+		t.Fatalf("unexpected exchange payload %#v", exchangePayload)
+	}
+	if reactionPayload["channel"] != "C_workspace_1" || reactionPayload["timestamp"] != "1711387375.000100" || reactionPayload["name"] != "eyes" {
+		t.Fatalf("unexpected reaction payload %#v", reactionPayload)
+	}
+}
+
 func TestLoadConfigIncludesMPIMHistoryByDefault(t *testing.T) {
 	t.Setenv("SPRITZ_SLACK_GATEWAY_PUBLIC_URL", "https://gateway.example.test")
 	t.Setenv("SPRITZ_SLACK_CLIENT_ID", "client-id")
@@ -8073,6 +8169,9 @@ func TestLoadConfigIncludesMPIMHistoryByDefault(t *testing.T) {
 	}
 	if !containsString(cfg.SlackBotScopes, "mpim:history") {
 		t.Fatalf("expected default Slack scopes to include mpim:history, got %#v", cfg.SlackBotScopes)
+	}
+	if !containsString(cfg.SlackBotScopes, "reactions:write") {
+		t.Fatalf("expected default Slack scopes to include reactions:write, got %#v", cfg.SlackBotScopes)
 	}
 	if cfg.PresetID != "zeno" {
 		t.Fatalf("expected default preset id zeno, got %q", cfg.PresetID)

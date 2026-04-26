@@ -80,6 +80,7 @@ COPY --chown=dev:dev examples/openclaw/entrypoint.sh /usr/local/bin/spritz-openc
 COPY --from=openclaw-ts-build --chown=dev:dev --chmod=0755 /build/examples/dist/shared/spritz-acp-server.js /usr/local/shared/spritz-acp-server.js
 COPY --from=openclaw-ts-build --chown=dev:dev --chmod=0755 /build/examples/dist/openclaw/acp-server.js /usr/local/bin/spritz-openclaw-acp-server
 COPY --from=openclaw-ts-build --chown=dev:dev --chmod=0755 /build/examples/dist/openclaw/acp-wrapper.js /usr/local/bin/acp-wrapper.js
+COPY --from=openclaw-ts-build --chown=dev:dev --chmod=0755 /build/examples/dist/openclaw/channel-actions-mcp.js /usr/local/bin/spritz-channel-actions-mcp.js
 COPY --from=openclaw-ts-build --chown=dev:dev --chmod=0755 /build/examples/dist/openclaw/gateway-proxy.js /usr/local/bin/gateway-proxy.js
 
 ENTRYPOINT ["/usr/local/bin/spritz-openclaw-entrypoint"]

@@ -18,6 +18,7 @@ const (
 	openclawConfigEnvName     = "OPENCLAW_CONFIG_JSON"
 	openclawConfigB64EnvName  = "OPENCLAW_CONFIG_B64"
 	openclawConfigFileEnvName = "OPENCLAW_CONFIG_FILE"
+	openclawEyesReaction      = "\U0001F440"
 )
 
 type channelInstallationConfigPayload struct {
@@ -147,6 +148,45 @@ func defaultOpenClawConfig() map[string]any {
 			"enabled":        true,
 			"headless":       true,
 			"executablePath": "/usr/bin/chromium",
+		},
+		"messages": defaultOpenClawMessagesConfig(),
+		"mcp": map[string]any{
+			"servers": map[string]any{
+				"spritz-channel-actions": map[string]any{
+					"command": "node",
+					"args":    []any{"/usr/local/bin/spritz-channel-actions-mcp.js"},
+					"env": map[string]any{
+						"SPRITZ_CHANNEL_ACTIONS_BASE_URL": "${SPRITZ_CHANNEL_ACTIONS_BASE_URL}",
+						"SPRITZ_CHANNEL_ACTIONS_TOKEN":    "${SPRITZ_CHANNEL_ACTIONS_TOKEN}",
+					},
+				},
+			},
+		},
+	}
+}
+
+func defaultOpenClawMessagesConfig() map[string]any {
+	statusEmojiConfig := map[string]any{}
+	for _, state := range []string{
+		"thinking",
+		"tool",
+		"coding",
+		"web",
+		"done",
+		"error",
+		"stallSoft",
+		"stallHard",
+		"compacting",
+	} {
+		statusEmojiConfig[state] = openclawEyesReaction
+	}
+	return map[string]any{
+		"ackReaction":         openclawEyesReaction,
+		"ackReactionScope":    "group-all",
+		"removeAckAfterReply": true,
+		"statusReactions": map[string]any{
+			"enabled": true,
+			"emojis":  statusEmojiConfig,
 		},
 	}
 }
