@@ -150,18 +150,6 @@ func defaultOpenClawConfig() map[string]any {
 			"executablePath": "/usr/bin/chromium",
 		},
 		"messages": defaultOpenClawMessagesConfig(),
-		"mcp": map[string]any{
-			"servers": map[string]any{
-				"spritz-channel-actions": map[string]any{
-					"command": "node",
-					"args":    []any{"/usr/local/bin/spritz-channel-actions-mcp.js"},
-					"env": map[string]any{
-						"SPRITZ_CHANNEL_ACTIONS_BASE_URL": "${SPRITZ_CHANNEL_ACTIONS_BASE_URL}",
-						"SPRITZ_CHANNEL_ACTIONS_TOKEN":    "${SPRITZ_CHANNEL_ACTIONS_TOKEN}",
-					},
-				},
-			},
-		},
 	}
 }
 

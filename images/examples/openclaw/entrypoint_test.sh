@@ -237,14 +237,6 @@ if (
 ) {
   throw new Error(`status reaction defaults missing: ${JSON.stringify(cfg)}`);
 }
-const channelActions = cfg.mcp?.servers?.["spritz-channel-actions"];
-if (
-  channelActions?.command !== "node" ||
-  !Array.isArray(channelActions?.args) ||
-  channelActions.args[0] !== "/usr/local/bin/spritz-channel-actions-mcp.js"
-) {
-  throw new Error(`channel action MCP defaults missing: ${JSON.stringify(cfg)}`);
-}
 NODE
 }
 

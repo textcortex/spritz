@@ -235,20 +235,6 @@ elif [[ ! -f "${config_path}" ]]; then
         "compacting": "\ud83d\udc40"
       }
     }
-  },
-  "mcp": {
-    "servers": {
-      "spritz-channel-actions": {
-        "command": "node",
-        "args": [
-          "/usr/local/bin/spritz-channel-actions-mcp.js"
-        ],
-        "env": {
-          "SPRITZ_CHANNEL_ACTIONS_BASE_URL": "${SPRITZ_CHANNEL_ACTIONS_BASE_URL}",
-          "SPRITZ_CHANNEL_ACTIONS_TOKEN": "${SPRITZ_CHANNEL_ACTIONS_TOKEN}"
-        }
-      }
-    }
   }
 }
 JSON

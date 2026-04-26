@@ -22,7 +22,7 @@ docker build -f examples/openclaw/Dockerfile -t spritz-openclaw:latest .
 
 Optional build args:
 
-- `OPENCLAW_VERSION` (default: `latest`)
+- `OPENCLAW_VERSION` (default: `2026.4.2`)
 
 Example:
 
@@ -30,7 +30,7 @@ Example:
 docker build \
   -f examples/openclaw/Dockerfile \
   -t spritz-openclaw:latest \
-  --build-arg OPENCLAW_VERSION=latest \
+  --build-arg OPENCLAW_VERSION=2026.4.2 \
   .
 ```
 
@@ -117,6 +117,11 @@ When this image is used behind a Spritz shared channel gateway, do not enable
 OpenClaw's direct Slack, Discord, Teams, or similar provider-channel tools. The
 runtime should return text over ACP, and the Spritz gateway should own provider
 delivery and automatic acknowledgement reactions.
+
+The default image config does not include provider-action MCP tools for reacting
+to Slack messages. Those tools require a separate action policy and should be
+added only when the runtime is intentionally allowed to perform explicit
+provider actions.
 
 ## Spritz Open Integration
 

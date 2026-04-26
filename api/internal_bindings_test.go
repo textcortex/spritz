@@ -369,12 +369,6 @@ func TestInternalUpsertBindingProjectsInstallationConfigWithoutDroppingOpenClawD
 	if statusReactions["enabled"] != true || statusEmojis["thinking"] != "\U0001F440" || statusEmojis["done"] != "\U0001F440" {
 		t.Fatalf("expected OpenClaw status reaction defaults to be preserved, got %s", openClawConfig)
 	}
-	mcp, _ := projected["mcp"].(map[string]any)
-	mcpServers, _ := mcp["servers"].(map[string]any)
-	channelActions, _ := mcpServers["spritz-channel-actions"].(map[string]any)
-	if channelActions["command"] != "node" {
-		t.Fatalf("expected OpenClaw channel action MCP defaults to be preserved, got %s", openClawConfig)
-	}
 	channelsConfig, _ := projected["channels"].(map[string]any)
 	slackConfig, _ := channelsConfig["slack"].(map[string]any)
 	channels, _ := slackConfig["channels"].(map[string]any)

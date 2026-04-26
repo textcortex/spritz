@@ -21,7 +21,7 @@ FROM node:22-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-ARG OPENCLAW_VERSION=latest
+ARG OPENCLAW_VERSION=2026.4.2
 
 COPY --from=openclaw-ts-build --chmod=0755 /build/examples/dist/openclaw/generate-openclaw-acp-compat.js /usr/local/bin/spritz-generate-openclaw-acp-compat
 COPY --from=openclaw-ts-build --chmod=0755 /build/examples/dist/openclaw/resolve-openclaw-acpx-extension-dir.js /usr/local/bin/spritz-resolve-openclaw-acpx-extension-dir
@@ -80,7 +80,6 @@ COPY --chown=dev:dev examples/openclaw/entrypoint.sh /usr/local/bin/spritz-openc
 COPY --from=openclaw-ts-build --chown=dev:dev --chmod=0755 /build/examples/dist/shared/spritz-acp-server.js /usr/local/shared/spritz-acp-server.js
 COPY --from=openclaw-ts-build --chown=dev:dev --chmod=0755 /build/examples/dist/openclaw/acp-server.js /usr/local/bin/spritz-openclaw-acp-server
 COPY --from=openclaw-ts-build --chown=dev:dev --chmod=0755 /build/examples/dist/openclaw/acp-wrapper.js /usr/local/bin/acp-wrapper.js
-COPY --from=openclaw-ts-build --chown=dev:dev --chmod=0755 /build/examples/dist/openclaw/channel-actions-mcp.js /usr/local/bin/spritz-channel-actions-mcp.js
 COPY --from=openclaw-ts-build --chown=dev:dev --chmod=0755 /build/examples/dist/openclaw/gateway-proxy.js /usr/local/bin/gateway-proxy.js
 
 ENTRYPOINT ["/usr/local/bin/spritz-openclaw-entrypoint"]

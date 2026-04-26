@@ -204,7 +204,7 @@ Slack requirements:
 Slack should prefer reaction names such as `eyes` in stored policy. The Slack
 adapter can normalize aliases and provider syntax at the edge.
 
-## Deferred Agent-Authored Reactions
+## Agent-Authored Reactions
 
 Automatic acknowledgement reactions and agent-authored reactions are separate
 capabilities. This plan implements only automatic acknowledgement reactions.
@@ -234,8 +234,9 @@ For Slack, this requires:
 - `reactions:write` on the Slack app installation
 - clear error reporting when the bot is not allowed to react
 
-Do not implement this by enabling OpenClaw's generic Slack, Discord, Teams, or
-other provider-channel integrations in a Spritz gateway-routed runtime. Those
+Do not implement future explicit reactions by enabling OpenClaw's generic Slack,
+Discord, Teams, or other provider-channel integrations in a Spritz
+gateway-routed runtime. Those
 integrations are for deployments where OpenClaw owns the provider connection
 directly. In Spritz gateway mode, they give the model a direct provider-send
 path that cannot work without provider tokens in the runtime pod.
@@ -245,6 +246,10 @@ The important boundary is:
 - automatic delivery feedback is gateway-owned
 - future explicit user-requested reactions must be narrow Spritz-owned actions,
   not generic provider-channel tools
+
+Current Spritz code should therefore not expose a Slack reaction MCP tool or
+internal provider-action endpoint by default. The only Slack reaction behavior
+in this phase is the gateway's automatic acknowledgement reaction lifecycle.
 
 ## Runtime Boundary
 

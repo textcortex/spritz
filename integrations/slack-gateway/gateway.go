@@ -102,7 +102,6 @@ func (g *slackGateway) routes() http.Handler {
 	g.registerRoute(mux, "/api/settings/channels/", g.handleChannelSettingsAPI)
 	g.registerRoute(mux, "/slack/oauth/callback", g.handleOAuthCallback)
 	g.registerRoute(mux, "/slack/events", g.handleSlackEvents)
-	g.registerRoute(mux, "/internal/channel-actions/slack/reactions", g.handleSlackReactionAction)
 	return mux
 }
 
