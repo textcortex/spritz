@@ -53,7 +53,7 @@ func loadConfig() (config, error) {
 		OAuthStateSecret:           strings.TrimSpace(os.Getenv("SPRITZ_SLACK_OAUTH_STATE_SECRET")),
 		SlackAPIBaseURL:            strings.TrimRight(envOrDefault("SPRITZ_SLACK_API_BASE_URL", "https://slack.com/api"), "/"),
 		SlackBotScopes:             splitCSV(envOrDefault("SPRITZ_SLACK_BOT_SCOPES", "app_mentions:read,channels:history,chat:write,im:history,mpim:history,reactions:write")),
-		AckReaction:                normalizeSlackReactionName(envOrDefault("SPRITZ_SLACK_ACK_REACTION", "eyes")),
+		AckReaction:                normalizeSlackReactionName(envOrDefaultIfUnset("SPRITZ_SLACK_ACK_REACTION", "eyes")),
 		RemoveAckAfterReply:        parseBoolEnv("SPRITZ_SLACK_REMOVE_ACK_AFTER_REPLY", true),
 		PresetID:                   strings.TrimSpace(envOrDefault("SPRITZ_SLACK_PRESET_ID", defaultSlackPresetID)),
 		BackendBaseURL:             strings.TrimRight(strings.TrimSpace(os.Getenv("SPRITZ_SLACK_BACKEND_BASE_URL")), "/"),
@@ -172,6 +172,14 @@ func envOrDefault(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envOrDefaultIfUnset(key, fallback string) string {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback
+	}
+	return strings.TrimSpace(value)
 }
 
 func parseDurationEnv(key string, fallback time.Duration) time.Duration {

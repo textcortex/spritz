@@ -8180,6 +8180,28 @@ func TestLoadConfigIncludesMPIMHistoryByDefault(t *testing.T) {
 	}
 }
 
+func TestLoadConfigAllowsDisablingAckReaction(t *testing.T) {
+	t.Setenv("SPRITZ_SLACK_GATEWAY_PUBLIC_URL", "https://gateway.example.test")
+	t.Setenv("SPRITZ_SLACK_CLIENT_ID", "client-id")
+	t.Setenv("SPRITZ_SLACK_CLIENT_SECRET", "client-secret")
+	t.Setenv("SPRITZ_SLACK_SIGNING_SECRET", "signing-secret")
+	t.Setenv("SPRITZ_SLACK_OAUTH_STATE_SECRET", "oauth-state-secret")
+	t.Setenv("SPRITZ_SLACK_BACKEND_BASE_URL", "https://backend.example.test")
+	t.Setenv("SPRITZ_SLACK_BACKEND_INTERNAL_TOKEN", "backend-internal-token")
+	t.Setenv("SPRITZ_SLACK_SPRITZ_BASE_URL", "https://spritz.example.test")
+	t.Setenv("SPRITZ_SLACK_SPRITZ_SERVICE_TOKEN", "spritz-service-token")
+	t.Setenv("SPRITZ_SLACK_PRINCIPAL_ID", "shared-slack-gateway")
+	t.Setenv("SPRITZ_SLACK_ACK_REACTION", "")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	if cfg.AckReaction != "" {
+		t.Fatalf("expected empty ack reaction to disable Slack ack reactions, got %q", cfg.AckReaction)
+	}
+}
+
 func TestLoadConfigDefaultsBackendFastAPIBaseURLToBackendBaseURL(t *testing.T) {
 	t.Setenv("SPRITZ_SLACK_GATEWAY_PUBLIC_URL", "https://gateway.example.test")
 	t.Setenv("SPRITZ_SLACK_CLIENT_ID", "client-id")
