@@ -1,6 +1,6 @@
 ---
 date: 2026-03-13
-author: Onur Solmaz <onur@textcortex.com>
+author: Onur Solmaz
 title: OpenClaw Integration
 tags: [openclaw, acp, integration]
 ---
@@ -55,6 +55,12 @@ The OpenClaw example entrypoint does the following:
 9. Auto-starts OpenClaw when command is default (`sleep infinity`), unless `OPENCLAW_AUTO_START=false`.
 
 Key implication: direct `/i/{name}` access with `bind=lan` expects real gateway auth.
+
+The current image does not consume a `SPRITZ_RUNTIME_CONTEXT_PATH` file and does
+not write OpenClaw workspace identity files such as `IDENTITY.md` or `SOUL.md`.
+Spritz-side `agentRef` and profile data are control-plane fields used by the API,
+bindings, and UI. OpenClaw-specific identity or behavior must be supplied through
+OpenClaw configuration or deployment-owned workspace preparation.
 
 ## ACP contract in Spritz
 
@@ -169,6 +175,8 @@ For trusted-proxy deployments, replace the `auth` block accordingly.
 
 ## Related docs
 
+- [Runtime Context](2026-04-25-runtime-context.md)
+- [OpenClaw Agent Workspace Model](2026-04-25-openclaw-agent-workspace-model.md)
 - [OpenClaw example runtime README](../images/examples/openclaw/README.md)
 - [Simplest Spritz Deployment Spec](2026-02-24-simplest-spritz-deployment-spec.md)
 - [Portable Authentication and Account Architecture](2026-02-24-portable-authentication-and-account-architecture.md)

@@ -1,13 +1,13 @@
 ---
 date: 2026-03-30
-author: Onur Solmaz <onur@textcortex.com>
+author: Onur Solmaz
 title: Agent Profile API
 tags: [spritz, agents, ui, api, architecture]
 ---
 
 ## Overview
 
-This document defines a provider-agnostic agent profile API for rendering a
+This document defines the provider-agnostic agent profile API for rendering a
 Spritz instance with deployment-owned cosmetic metadata such as:
 
 - name
@@ -120,7 +120,7 @@ knowledge indirectly in annotations or ACP metadata.
 
 ## Canonical resource model
 
-The recommended model is:
+The implemented model is:
 
 ```yaml
 spec:
@@ -158,9 +158,9 @@ Recommended types:
   - canonical UI output
   - what every UI should read
 
-## Proposed type definitions
+## Type Definitions
 
-Suggested CRD additions:
+Implemented CRD types:
 
 ```go
 type SpritzAgentRef struct {
@@ -185,7 +185,7 @@ type SpritzAgentProfileStatus struct {
 }
 ```
 
-Suggested placements:
+Implemented placements:
 
 - `spritz.spec.agentRef`
 - `spritz.spec.profileOverrides`
@@ -215,11 +215,11 @@ This is also cleaner than using only `metadata.annotations` because:
 
 ## Sync model
 
-Spritz should add one extension operation for agent profile sync:
+Spritz supports one extension operation for agent profile sync:
 
 - `agent.profile.sync`
 
-Its input should contain only the facts needed to compute the profile:
+Its input contains only the facts needed to compute the profile:
 
 ```json
 {
@@ -245,7 +245,7 @@ Its input should contain only the facts needed to compute the profile:
 }
 ```
 
-The response should be narrow:
+The response is narrow:
 
 ```json
 {
@@ -259,7 +259,7 @@ The response should be narrow:
 }
 ```
 
-The extension should return profile data only. It should not mutate arbitrary
+The extension returns profile data only. It does not mutate arbitrary
 resource state.
 
 ## Precedence rules
@@ -278,10 +278,10 @@ For the image URL, canonical precedence should be:
 2. synced extension output from `agent.profile.sync`
 3. no image URL
 
-This precedence should be materialized into `status.profile` so the UI does not
+This precedence is materialized into `status.profile` so the UI does not
 need to re-implement the logic in multiple places.
 
-That means the browser should normally read:
+The browser normally reads:
 
 - `status.profile.name`
 - `status.profile.imageUrl`
@@ -291,7 +291,7 @@ generic placeholder.
 
 ## Conversation model
 
-The canonical source of per-instance profile data should stay on the instance
+The canonical source of per-instance profile data stays on the instance
 resource, not on `SpritzConversation`.
 
 Conversation resources already reference the parent instance by `spritzName`.
@@ -302,29 +302,26 @@ If later profiling shows that repeated joins are too expensive, Spritz can add
 an optional derived snapshot to conversation state. That snapshot should still
 be treated as a cache of instance profile data, not the source of truth.
 
-## API and controller changes
+## Implemented API and Controller Behavior
 
-### API changes
+### API behavior
 
-- extend `operator/api/v1/spritz_types.go` with:
+- `operator/api/v1/spritz_types.go` includes:
   - `SpritzAgentRef`
   - `SpritzAgentProfile`
   - `SpritzAgentProfileStatus`
-- update public API serialization so `profile` is included in
-  instance reads and lists
-- keep `status.acp.agentInfo` unchanged
+- public API serialization includes profile data in instance reads and lists
+- `status.acp.agentInfo` remains unchanged and runtime-owned
 
-### Extension framework changes
+### Extension framework behavior
 
-- add `agent.profile.sync` as a supported operation in the extension registry
-- define a typed request and response envelope for profile sync
-- validate that the extension can only return profile fields
+- `agent.profile.sync` is a supported operation in the extension registry
+- profile sync uses a typed request and response envelope
+- profile sync output is limited to profile fields
 
-### Reconciliation changes
+### Create-path behavior
 
-Spritz needs a control-plane component that computes `status.profile`.
-
-Recommended sequence:
+The current implementation computes `status.profile` during create flows:
 
 1. normalize `spec.agentRef` and `spec.profileOverrides`
 2. if overrides fully satisfy the profile, use them directly
@@ -338,8 +335,11 @@ Recommended sequence:
    - `lastSyncedAt`
    - `lastError`
 
-The first implementation can run this logic in the API create/update path plus
-an explicit refresh endpoint if needed.
+Bindings preserve `agentRef` and `profileOverrides` in their rendered template
+spec, but binding reconciliation does not currently compute a separate
+`status.profile` for the binding itself.
+
+## Follow-up Work
 
 The long-term preferred implementation is a reconciliation loop that keeps
 `status.profile` current whenever:
@@ -348,58 +348,35 @@ The long-term preferred implementation is a reconciliation loop that keeps
 - `spec.profileOverrides` changes
 - a caller requests refresh
 
-## Suggested implementation phases
-
-### Phase 1: typed model and UI read path
-
-- add typed `agentRef`, `profileOverrides`, and `profile`
-- add UI helpers that prefer `status.profile`
-- keep ACP metadata as fallback only
-
-This phase creates the durable contract first.
-
-### Phase 2: extension integration
-
-- add `agent.profile.sync`
-- sync profile data during create and update
-- materialize the merged result into `status.profile`
-
-This phase gives deployments a provider-agnostic hook.
-
-### Phase 3: refresh and reconciliation
-
-- add explicit refresh semantics
-- reconcile stale or missing profile data after create
-- support background re-sync without rewriting `spec`
-
-This phase makes external profile data durable over time instead of treating it
-as a one-time create artifact.
+The remaining work is to add explicit refresh semantics and background
+re-sync. Until then, external profile data is primarily a create-time sync
+result.
 
 ## Validation
 
-Required validation:
+Implemented validation includes:
 
-- unit tests for precedence logic
-- unit tests for merge behavior between overrides, synced profile data, ACP
-  metadata, and instance name
-- API tests for instance list and get responses
+- unit tests for profile status merge behavior
+- API tests for create-time profile sync
+- ACP list tests that show `status.profile` drives UI-facing profile output
 - extension tests for:
   - synced
   - missing
   - forbidden
   - invalid
-- reconciliation tests proving `status.profile` updates when
-  `spec.profileOverrides` changes
 - UI tests proving:
   - `status.profile` is preferred
   - ACP metadata remains a fallback
   - instance name remains the final fallback
 
+Refresh/reconciliation tests are still follow-up work because background
+profile reconciliation is not implemented yet.
+
 ## Migration notes
 
 Existing installations may already render from ACP metadata or instance name.
 
-Migration should therefore be additive:
+Migration is additive:
 
 1. introduce the new fields
 2. ship UIs that prefer `status.profile`
